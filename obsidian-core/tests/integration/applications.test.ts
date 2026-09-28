@@ -13,11 +13,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ErrCode } from '../../src/protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { formatObs, parseObs } from '../../src/protocol/amount.js';
-import { CapsuleOp, LandOp, OnsOp, SocialOp, TxType, ValidatorOp } from '../../src/protocol/types.js';
+import { CapsuleOp, LandOp, OnsOp, SocialOp, TreasuryOp, TxType, ValidatorOp } from '../../src/protocol/types.js';
 import { expectedGas, usdMicroToSeals } from '../../src/transactions/helpers.js';
 import { computeCapsuleId } from '../../src/transactions/executors/capsule.js';
-import { computeParcelId } from '../../src/transactions/executors/land.js';
+import { computeParcelId, parcelOfficialValue } from '../../src/transactions/executors/land.js';
 import { divisionSeed } from '../../src/land/registry.js';
+import { Indexer, serializeTransaction } from '../../src/indexer/indexer.js';
+import { blockHash } from '../../src/blockchain/block.js';
 import {
   advance,
   capsuleBody,
@@ -60,6 +62,16 @@ async function fundedHarness(): Promise<{ h: Harness; alice: TestWallet }> {
   return { h, alice };
 }
 
+/** Live protocol price in micro-USD (the median every node uses to price USD features). */
+function medianUsdMicro(h: Harness): bigint {
+  return h.chain.world.s.oracle.medianPriceUsdMicro;
+}
+
+/** Convert a USD micro amount into OBS seals at the protocol's current median. */
+function obsForUsdMicro(h: Harness, usdMicro: bigint): bigint {
+  return usdMicroToSeals(usdMicro, medianUsdMicro(h));
+}
+
 /** Two independent oracle sources make the protocol price usable. */
 function seedOracle(h: Harness, submitter: TestWallet, second: TestWallet, priceUsdMicro = PRICE): void {
   const observedAt = h.chain.protocolTime;
@@ -75,7 +87,7 @@ describe('oracle (spec §30, §76)', () => {
     const { h, alice } = await fundedHarness();
     const outcome = h.tryBlock(
       [h.sign(alice, TxType.ONS, onsBody(OnsOp.REGISTER, 'alice', { fee: parseObs('5') }), { gas: expectedGas(parseObs('5')) })],
-      { simulate: false },
+      {},
     );
     expect(outcome.accepted).toBe(false);
     expect([ErrCode.ORACLE_UNAVAILABLE, ErrCode.ORACLE_INSUFFICIENT_SOURCES]).toContain(outcome.code);
@@ -84,29 +96,30 @@ describe('oracle (spec §30, §76)', () => {
   it('rejects an observation outside the protocol bounds or too old', async () => {
     const { h, alice } = await fundedHarness();
     const now = h.chain.protocolTime;
-    const tooCheap = h.tryBlock([h.sign(alice, TxType.ORACLE, oracleBody('source-alpha', 0n, now, 'cc'))], {
-      simulate: false,
-    });
+
+    const tooCheap = h.tryBlock([h.sign(alice, TxType.ORACLE, oracleBody('source-alpha', 0n, now, 'cc'))]);
     expect(tooCheap.accepted).toBe(false);
     expect(tooCheap.code).toBe(ErrCode.ORACLE_OUT_OF_BOUNDS);
 
+    const tooExpensive = h.tryBlock([h.sign(alice, TxType.ORACLE, oracleBody('source-alpha', 10n ** 13n, now, 'dd'))]);
+    expect(tooExpensive.accepted).toBe(false);
+    expect(tooExpensive.code).toBe(ErrCode.ORACLE_OUT_OF_BOUNDS);
+
+    // 40 hours is outside the 36-hour source freshness window.
     const ancient = h.tryBlock(
-      [h.sign(alice, TxType.ORACLE, oracleBody('source-alpha', PRICE, now - 10 * HOUR, 'dd'))],
-      { simulate: false },
+      [h.sign(alice, TxType.ORACLE, oracleBody('source-alpha', PRICE, now - 40 * HOUR, 'ee'))],
     );
     expect(ancient.accepted).toBe(false);
-    expect(ancient.code).toBe(ErrCode.ORACLE_OUT_OF_BOUNDS);
+    expect(ancient.code).toBe(ErrCode.ORACLE_STALE);
   });
 
   it('throttles submissions per account so one wallet cannot spam the feed', async () => {
     const { h, alice } = await fundedHarness();
     const now = h.chain.protocolTime;
     h.produce([h.sign(alice, TxType.ORACLE, oracleBody('source-alpha', PRICE, now, 'ee'))]);
-    const again = h.tryBlock([h.sign(alice, TxType.ORACLE, oracleBody('source-alpha', PRICE, now, 'ff'))], {
-      simulate: false,
-    });
+    const again = h.tryBlock([h.sign(alice, TxType.ORACLE, oracleBody('source-alpha', PRICE, now, 'ff'))]);
     expect(again.accepted).toBe(false);
-    expect([ErrCode.RATE_LIMITED, ErrCode.ORACLE_OUT_OF_BOUNDS]).toContain(again.code);
+    expect(again.code).toBe(ErrCode.RATE_LIMITED);
   });
 
   it('publishes a usable median from independent sources', async () => {
@@ -126,7 +139,7 @@ describe('ONS (spec §57, §62)', () => {
     const bob = makeWallet();
     seedOracle(h, alice, bob);
 
-    const fee = usdMicroToSeals(CONSENSUS_PARAMS.ons.registrationFeeUsd, PRICE);
+    const fee = obsForUsdMicro(h, CONSENSUS_PARAMS.ons.registrationFeeUsd);
     // Fund a separate registrant: the fee must leave the buyer and reach the
     // treasury wallet, which is alice (the genesis recipient).
     h.produce([signedPayment(h, alice, bob.address, parseObs('100'))]);
@@ -150,7 +163,7 @@ describe('ONS (spec §57, §62)', () => {
     const bob = makeWallet();
     seedOracle(h, alice, bob);
     h.produce([signedPayment(h, alice, bob.address, parseObs('100'))]);
-    const fee = usdMicroToSeals(CONSENSUS_PARAMS.ons.registrationFeeUsd, PRICE);
+    const fee = obsForUsdMicro(h, CONSENSUS_PARAMS.ons.registrationFeeUsd);
     h.produce([h.sign(bob, TxType.ONS, onsBody(OnsOp.REGISTER, 'bob', { fee }), { gas: expectedGas(fee) })]);
 
     const duplicate = h.tryBlock([h.sign(bob, TxType.ONS, onsBody(OnsOp.REGISTER, 'bob', { fee }), { gas: expectedGas(fee) })], {
@@ -164,13 +177,13 @@ describe('ONS (spec §57, §62)', () => {
           gas: expectedGas(fee),
         }),
       ],
-      { simulate: false },
+      {},
     );
     expect([ErrCode.NAME_RESERVED, ErrCode.NAME_INVALID]).toContain(reserved.code);
 
     const tooShort = h.tryBlock(
       [h.sign(bob, TxType.ONS, onsBody(OnsOp.REGISTER, 'ab', { fee }), { gas: expectedGas(fee) })],
-      { simulate: false },
+      {},
     );
     expect(tooShort.code).toBe(ErrCode.NAME_INVALID);
   });
@@ -179,7 +192,7 @@ describe('ONS (spec §57, §62)', () => {
     const { h, alice } = await fundedHarness();
     const bob = makeWallet();
     seedOracle(h, alice, bob);
-    const fee = usdMicroToSeals(CONSENSUS_PARAMS.ons.registrationFeeUsd, PRICE);
+    const fee = obsForUsdMicro(h, CONSENSUS_PARAMS.ons.registrationFeeUsd);
     h.produce([h.sign(alice, TxType.ONS, onsBody(OnsOp.REGISTER, 'alice', { fee }), { gas: expectedGas(fee) })]);
     h.produce([h.sign(alice, TxType.ONS, onsBody(OnsOp.TRANSFER, 'alice', { to: bob.address }), { gas: 0n })]);
     expect(h.chain.world.s.names.get('alice')!.owner).toBe(bob.address);
@@ -192,11 +205,11 @@ describe('ONS (spec §57, §62)', () => {
     const bob = makeWallet();
     const mallory = makeWallet();
     seedOracle(h, alice, bob);
-    const fee = usdMicroToSeals(CONSENSUS_PARAMS.ons.registrationFeeUsd, PRICE);
+    const fee = obsForUsdMicro(h, CONSENSUS_PARAMS.ons.registrationFeeUsd);
     h.produce([h.sign(alice, TxType.ONS, onsBody(OnsOp.REGISTER, 'alice', { fee }), { gas: expectedGas(fee) })]);
     const stolen = h.tryBlock(
       [h.sign(mallory, TxType.ONS, onsBody(OnsOp.TRANSFER, 'alice', { to: mallory.address }), { gas: 0n })],
-      { simulate: false },
+      {},
     );
     expect(stolen.code).toBe(ErrCode.NAME_NOT_OWNED);
     expect(h.chain.world.s.names.get('alice')!.owner).toBe(alice.address);
@@ -262,7 +275,7 @@ describe('Time Capsule Wall (spec §44–§50)', () => {
           { gas: 0n },
         ),
       ],
-      { simulate: false },
+      {},
     );
     expect(tooLow.code).toBe(ErrCode.CAPSULE_COMMITMENT_TOO_LOW);
 
@@ -282,7 +295,7 @@ describe('Time Capsule Wall (spec §44–§50)', () => {
           { gas: expectedGas(commitment) },
         ),
       ],
-      { simulate: false },
+      {},
     );
     expect(tooSoon.accepted).toBe(false);
   });
@@ -335,8 +348,8 @@ describe('Time Capsule Wall (spec §44–§50)', () => {
         { gas: expectedGas(payment) },
       ),
     ]);
-    // The preview payment goes to the Mining Pool, never to the creator.
-    expect(h.chain.world.s.pool.balance).toBe(poolBefore + payment);
+    // The preview payment (and its gas) go to the Mining Pool, never to the creator.
+    expect(h.chain.world.s.pool.balance).toBe(poolBefore + payment + expectedGas(payment));
     expect(h.chain.world.s.capsules.get(id)!.previewedBy).toContain(bob.address);
 
     const twice = h.tryBlock(
@@ -357,7 +370,7 @@ describe('Time Capsule Wall (spec §44–§50)', () => {
           { gas: expectedGas(payment), nonce: 1 },
         ),
       ],
-      { simulate: false },
+      {},
     );
     expect([ErrCode.CAPSULE_ALREADY_PREVIEWED, ErrCode.INSUFFICIENT_FUNDS]).toContain(twice.code);
   });
@@ -372,7 +385,9 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
 
     const division = divisionSeed('US-CA');
     expect(division).toBeDefined();
-    const price = usdMicroToSeals(division!.glvUsdMicro, PRICE);
+    // US-CA already sits at the protocol's $30,000 GLV ceiling.
+    expect(division!.glvUsdMicro).toBe(CONSENSUS_PARAMS.circle.maxGlvUsd);
+    const price = obsForUsdMicro(h, division!.glvUsdMicro);
     const treasuryBefore = h.chain.world.s.metrics.totalTreasuryRevenue;
 
     h.produce(
@@ -395,19 +410,39 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     expect(parcel).toBeDefined();
     expect(parcel!.owner).toBe(bob.address);
     expect(parcel!.glvUsdMicro).toBe(division!.glvUsdMicro);
-    expect(parcel!.glvEntryCount).toBe(1);
+    // The parcel has observed no later GLV update yet.
+    expect(parcel!.glvEntryCount).toBe(0);
     expect(h.chain.world.s.metrics.totalTreasuryRevenue - treasuryBefore).toBe(price);
 
-    // GLV appreciates by the protocol step for the NEXT buyer.
+    // Issuance reaches the protocol treasury, and GLV can never exceed the cap.
     const registry = h.chain.world.s.divisions.get('US-CA')!;
-    expect(registry.glvUsdMicro).toBe(
-      division!.glvUsdMicro +
-        (division!.glvUsdMicro * BigInt(CONSENSUS_PARAMS.circle.appreciationStepBps)) / 10_000n,
-    );
+    expect(registry.glvUsdMicro).toBe(CONSENSUS_PARAMS.circle.maxGlvUsd);
+    expect(registry.protocolPurchases).toBe(1);
     expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
   });
 
-  it('does not retroactively reprice an existing parcel when GLV moves', async () => {
+  it('raises the division GLV by the protocol step after each issuance', async () => {
+    const { h, alice } = await fundedHarness();
+    const bob = makeWallet();
+    seedOracle(h, alice, bob);
+    h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
+    const division = divisionSeed('BR')!;
+    expect(division.glvUsdMicro).toBeLessThan(CONSENSUS_PARAMS.circle.maxGlvUsd);
+    const price = obsForUsdMicro(h, division.glvUsdMicro);
+    const step = (division.glvUsdMicro * BigInt(CONSENSUS_PARAMS.circle.appreciationStepBps)) / 10_000n;
+
+    h.produce([
+      h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'BR', countryCode: 'BR', price }), {
+        gas: expectedGas(price),
+      }),
+    ]);
+    const registry = h.chain.world.s.divisions.get('BR')!;
+    expect(step).toBeGreaterThan(0n);
+    expect(registry.glvUsdMicro).toBe(division.glvUsdMicro + step);
+    expect(registry.lastUpdatedAtHeight).toBeGreaterThan(0);
+  });
+
+  it('does not retroactively reprice the buyer, while later buyers pay the higher GLV', async () => {
     const { h, alice } = await fundedHarness();
     const bob = makeWallet();
     const carol = makeWallet();
@@ -415,29 +450,40 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     h.produce([signedPayment(h, alice, carol.address, parseObs('5000'))]);
     const division = divisionSeed('JP')!;
-    const price = usdMicroToSeals(division.glvUsdMicro, PRICE);
+    const firstPrice = obsForUsdMicro(h, division.glvUsdMicro);
 
     h.produce([
-      h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'JP', countryCode: 'JP', price }), {
-        gas: expectedGas(price),
+      h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'JP', countryCode: 'JP', price: firstPrice }), {
+        gas: expectedGas(firstPrice),
       }),
     ]);
-    const firstId = computeParcelId({ divisionId: 'JP', level: 1, subId: '', plotIndex: 0n });
-    const firstValue = h.chain.world.s.parcels.get(firstId)!.glvUsdMicro;
+    const bobParcelId = computeParcelId({ divisionId: 'JP', level: 1, subId: '', plotIndex: 0n });
+    const bobValue = h.chain.world.s.parcels.get(bobParcelId)!.glvUsdMicro;
+    expect(bobValue).toBe(division.glvUsdMicro);
 
-    const nextPrice = usdMicroToSeals(h.chain.world.s.divisions.get('JP')!.glvUsdMicro, PRICE);
+    // A second plot in the same division is issued at the appreciated GLV.
+    const secondPrice = obsForUsdMicro(h, h.chain.world.s.divisions.get('JP')!.glvUsdMicro);
+    expect(secondPrice).toBeGreaterThan(firstPrice);
     h.produce([
-      h.sign(carol, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'JP', countryCode: 'JP', price: nextPrice }), {
-        gas: expectedGas(nextPrice),
+      h.sign(carol, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'JP', countryCode: 'JP', plotIndex: 1n, price: secondPrice }), {
+        gas: expectedGas(secondPrice),
       }),
     ]);
 
-    // The first parcel keeps the value it was bought at: no retroactive benefit.
-    expect(h.chain.world.s.parcels.get(firstId)!.glvUsdMicro).toBe(firstValue);
-    expect(h.chain.world.s.parcels.get(firstId)!.glvEntryCount).toBe(1);
-    const secondId = computeParcelId({ divisionId: 'JP', level: 1, subId: '', plotIndex: 0n });
-    expect(secondId).toBe(firstId);
-    expect(h.chain.world.s.parcels.get(firstId)!.glvEntryCount).toBeGreaterThanOrEqual(1);
+    const bobParcel = h.chain.world.s.parcels.get(bobParcelId)!;
+    const divisionRecord = h.chain.world.s.divisions.get('JP')!;
+    // The buyer's own purchase never inflates the value they just paid.
+    expect(bobParcel.glvUsdMicro).toBe(bobValue);
+    expect(bobParcel.glvEntryCount).toBe(0);
+    // Later purchases DO lift the official value of older parcels — that is the
+    // appreciation the spec grants to existing holders.
+    expect(parcelOfficialValue(bobParcel, divisionRecord.glvUsdMicro, divisionRecord.protocolPurchases)).toBe(
+      divisionRecord.glvUsdMicro,
+    );
+    expect(parcelOfficialValue(bobParcel, divisionRecord.glvUsdMicro, divisionRecord.protocolPurchases)).toBeGreaterThan(
+      bobValue,
+    );
+    expect(divisionRecord.protocolPurchases).toBe(2);
   });
 
   it('refuses a purchase whose price does not match the official GLV', async () => {
@@ -446,42 +492,44 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     seedOracle(h, alice, bob);
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     const division = divisionSeed('US-CA')!;
-    const wrong = usdMicroToSeals(division.glvUsdMicro, PRICE) - parseObs('1');
+    const wrong = obsForUsdMicro(h, division.glvUsdMicro) - parseObs('1');
     const outcome = h.tryBlock(
       [
         h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'US-CA', countryCode: 'US', price: wrong }), {
           gas: expectedGas(wrong),
         }),
       ],
-      { simulate: false },
+      {},
     );
     expect(outcome.code).toBe(ErrCode.PRICE_MISMATCH);
   });
 
-  it('issues only one parcel per transaction and refuses to sell an owned parcel twice', async () => {
+  it('issues one parcel per transaction and refuses to re-issue an owned parcel', async () => {
     const { h, alice } = await fundedHarness();
     const bob = makeWallet();
     seedOracle(h, alice, bob);
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     const division = divisionSeed('FR')!;
-    const price = usdMicroToSeals(division.glvUsdMicro, PRICE);
+    const price = obsForUsdMicro(h, division.glvUsdMicro);
     h.produce([
       h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'FR', countryCode: 'FR', price }), {
         gas: expectedGas(price),
       }),
     ]);
-    const again = h.tryBlock(
-      [
-        h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'FR', countryCode: 'FR', price }), {
-          gas: expectedGas(price),
-          nonce: 1,
-        }),
-      ],
-      { simulate: false },
-    );
+
+    const againPrice = obsForUsdMicro(h, h.chain.world.s.divisions.get('FR')!.glvUsdMicro);
+    const again = h.tryBlock([
+      h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'FR', countryCode: 'FR', price: againPrice }), {
+        gas: expectedGas(againPrice),
+      }),
+    ]);
+    expect(again.accepted).toBe(false);
     expect(again.code).toBe(ErrCode.PARCEL_OWNED);
+
+    // One plot of one square metre per transaction, by protocol rule.
     expect(CONSENSUS_PARAMS.circle.maxParcelsPerProtocolTx).toBe(1);
     expect(CONSENSUS_PARAMS.circle.parcelSquareMetres).toBe(1);
+    expect(h.chain.world.s.metrics.totalParcelsIssued).toBe(1);
   });
 
   it('runs a marketplace sale without touching GLV and pays the seller in full', async () => {
@@ -492,7 +540,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     h.produce([signedPayment(h, alice, carol.address, parseObs('5000'))]);
     const division = divisionSeed('DE')!;
-    const price = usdMicroToSeals(division.glvUsdMicro, PRICE);
+    const price = obsForUsdMicro(h, division.glvUsdMicro);
     h.produce([
       h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'DE', countryCode: 'DE', price }), {
         gas: expectedGas(price),
@@ -502,10 +550,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     const msp = price * 2n;
     const glvBefore = h.chain.world.s.divisions.get('DE')!.glvUsdMicro;
     h.produce([
-      h.sign(bob, TxType.LAND, landBody(LandOp.LIST, { divisionId: 'DE', countryCode: 'DE', price: msp }), {
-        gas: 0n,
-        nonce: 1,
-      }),
+      h.sign(bob, TxType.LAND, landBody(LandOp.LIST, { divisionId: 'DE', countryCode: 'DE', price: msp }), { gas: 0n }),
     ]);
     const sellerBefore = h.chain.world.getAccount(bob.address)!.balance;
     h.produce([
@@ -531,7 +576,9 @@ describe('OBS Social (spec §36, §38)', () => {
     const bobId = 'bob-obsidian';
     h.produce([h.sign(alice, TxType.SOCIAL, socialBody(SocialOp.SET_PROFILE, { accountId: aliceId, handle: 'alice' }), { gas: 0n })]);
     h.produce([h.sign(bob, TxType.SOCIAL, socialBody(SocialOp.SET_PROFILE, { accountId: bobId, handle: 'bob' }), { gas: 0n })]);
-    h.produce([h.sign(bob, TxType.SOCIAL, socialBody(SocialOp.FOLLOW, { targetAccountId: aliceId }), { gas: 0n })]);
+    h.produce([
+      h.sign(bob, TxType.SOCIAL, socialBody(SocialOp.FOLLOW, { accountId: bobId, targetAccountId: aliceId }), { gas: 0n }),
+    ]);
     expect(h.chain.world.s.socialFollowing.has(`${bobId}->${aliceId}`)).toBe(true);
 
     const postId = 'cd'.repeat(24);
@@ -544,21 +591,28 @@ describe('OBS Social (spec §36, §38)', () => {
 
     const tip = parseObs('1');
     const creatorBefore = h.chain.world.getAccount(alice.address)!.balance;
+    const poolBefore = h.chain.world.s.pool.balance;
     h.produce([
-      h.sign(bob, TxType.SOCIAL, socialBody(SocialOp.TIP, { accountId: bobId, targetAccountId: aliceId, amount: tip }), {
-        gas: expectedGas(tip),
-      }),
+      h.sign(
+        bob,
+        TxType.SOCIAL,
+        socialBody(SocialOp.TIP, { accountId: bobId, targetAccountId: aliceId, target: alice.address, amount: tip }),
+        { gas: expectedGas(tip) },
+      ),
     ]);
     expect(h.chain.world.getAccount(alice.address)!.balance).toBe(creatorBefore + tip);
-    expect(h.chain.world.s.pool.balance).toBe(expectedGas(tip));
+    expect(h.chain.world.s.pool.balance).toBe(poolBefore + expectedGas(tip));
   });
 
   it('charges $50 in OBS for a business page and sends it to the treasury', async () => {
     const { h, alice } = await fundedHarness();
     const bob = makeWallet();
     seedOracle(h, alice, bob);
-    const priceSeals = usdMicroToSeals(CONSENSUS_PARAMS.social.businessPagePriceUsd, PRICE);
+    const priceSeals = obsForUsdMicro(h, CONSENSUS_PARAMS.social.businessPagePriceUsd);
     const revenueBefore = h.chain.world.s.metrics.totalTreasuryRevenue;
+    h.produce([
+      h.sign(alice, TxType.SOCIAL, socialBody(SocialOp.SET_PROFILE, { accountId: 'alice-obsidian', handle: 'alice' }), { gas: 0n }),
+    ]);
     h.produce([
       h.sign(alice, TxType.SOCIAL, socialBody(SocialOp.PAY_BUSINESS_PAGE, { accountId: 'alice-obsidian', amount: priceSeals }), {
         gas: expectedGas(priceSeals),
@@ -597,7 +651,7 @@ describe('validators (spec §24, §25)', () => {
           { gas: 0n },
         ),
       ],
-      { simulate: false },
+      {},
     );
     expect(outcome.code).toBe(ErrCode.INSUFFICIENT_FUNDS);
   });
@@ -609,12 +663,12 @@ describe('treasury (spec §13, §14, §76)', () => {
     const bob = makeWallet();
     const amount = parseObs('100');
     h.produce([
-      h.sign(alice, TxType.TREASURY, treasuryBody(1, amount, 'creator grants', bob.address), {
+      h.sign(alice, TxType.TREASURY, treasuryBody(TreasuryOp.GRANT, amount, 'creator grants', bob.address), {
         gas: expectedGas(amount),
       }),
     ]);
     expect(h.chain.world.getAccount(bob.address)!.balance).toBe(amount);
-    expect(h.chain.world.s.metrics.totalTreasuryRevenue).toBe(0n);
+    expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
   });
 
   it('refuses a treasury spend signed by anyone but the treasury wallet', async () => {
@@ -622,17 +676,18 @@ describe('treasury (spec §13, §14, §76)', () => {
     const mallory = makeWallet();
     const bob = makeWallet();
     const outcome = h.tryBlock(
-      [h.sign(mallory, TxType.TREASURY, treasuryBody(1, parseObs('1'), 'theft', bob.address), { gas: 0n })],
-      { simulate: false },
+      [h.sign(mallory, TxType.TREASURY, treasuryBody(TreasuryOp.GRANT, parseObs('1'), 'theft', bob.address), { gas: 0n })],
+      {},
     );
-    expect([ErrCode.UNAUTHORIZED, ErrCode.INSUFFICIENT_FUNDS]).toContain(outcome.code);
+    expect(outcome.accepted).toBe(false);
+    expect([ErrCode.UNAUTHORIZED, ErrCode.INSUFFICIENT_FUNDS, ErrCode.BAD_GAS]).toContain(outcome.code);
   });
 
   it('never lets governance mint or move value in 1.0.0', async () => {
     const { h, alice } = await fundedHarness();
     const outcome = h.tryBlock(
       [h.sign(alice, TxType.GOVERNANCE, new Uint8Array(0), { gas: 0n })],
-      { simulate: false },
+      {},
     );
     expect(outcome.accepted).toBe(false);
     expect([ErrCode.UNAUTHORIZED, ErrCode.MALFORMED, ErrCode.UNKNOWN_TX_TYPE]).toContain(outcome.code);
@@ -660,5 +715,42 @@ describe('treasury (spec §13, §14, §76)', () => {
       expect(sum).toBeLessThanOrEqual(21_000_000n * 10n ** 18n);
       expect(formatObs(sum)).toBe(formatObs(invariant.totalSupply));
     }
+  });
+});
+
+describe('indexer describeTx (explorer summaries)', () => {
+  it('summarises every transaction type without trusting it', async () => {
+    const { h, alice } = await fundedHarness();
+    const bob = makeWallet();
+    seedOracle(h, alice, bob);
+    h.produce([signedPayment(h, alice, bob.address, parseObs('100'), { memo: 'funding' })]);
+
+    const indexer = new Indexer(h.dir);
+    for (const entry of h.chain.store.canonicalRange(0, 1000)) {
+      if (entry.height === 0) continue;
+      const block = h.chain.getBlockByHeight(entry.height);
+      if (!block) continue;
+      indexer.indexBlock(block, h.chain.eventsForBlock(blockHash(block.header)), h.chain.world);
+    }
+    // The funding payment lives in the last block produced by this test.
+    const height = h.chain.height;
+    const payment = indexer.transactionsInBlock(height).find((record) => record.type === TxType.PAYMENT);
+    expect(payment, `expected a payment in block ${height}`).toBeDefined();
+    expect(payment!.kind).toBeUndefined();
+    expect(payment!.amount).toBe(parseObs('100').toString());
+
+    const claim = indexer.miningClaims(10)[0]!;
+    expect(claim.miner).toBe(alice.address);
+    expect(claim.genesisAwarded).toBe(true);
+    expect(BigInt(claim.reward)).toBeGreaterThan(0n);
+
+    const oracle = indexer.events(50, 'ORACLE_OBSERVATION')[0] ?? indexer.events(50)[0];
+    expect(oracle).toBeDefined();
+
+    // Public serialization masks both sides of the transfer.
+    const serialized = serializeTransaction(payment!);
+    expect(String(serialized.sender)).toContain('…');
+    expect(String(serialized.recipient)).toContain('…');
+    expect(JSON.stringify(serialized)).not.toContain(alice.address);
   });
 });

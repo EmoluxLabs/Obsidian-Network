@@ -1,0 +1,14 @@
+{
+  "name": "Obsidian Network",
+  "short_name": "Obsidian",
+  "description": "Non-custodial wallet, mining, explorer, ONS names, land registry, time capsules and OBS Social — on a proof-of-work chain with a 21,000,000 OBS cap.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#05070c",
+  "theme_color": "#05070c",
+  "icons": [
+    { "src": "/assets/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/assets/logo-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/logo-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

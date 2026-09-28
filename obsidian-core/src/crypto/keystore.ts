@@ -123,11 +123,18 @@ export class Keystore {
 
 /** Resolve the keystore passphrase from the environment without ever logging it. */
 export function keystorePassphraseFromEnv(): string {
-  const value = process.env.OBSIDIAN_KEYSTORE_PASSPHRASE;
+  // Service managers (systemd, container entrypoints) often prefer a file over
+  // an environment variable: /proc/<pid>/environ is readable by the same user,
+  // so a root-owned 0600 file is strictly better than an exported secret.
+  const file = process.env.OBSIDIAN_KEYSTORE_PASSPHRASE_FILE;
+  const value =
+    process.env.OBSIDIAN_KEYSTORE_PASSPHRASE ??
+    (file && existsSync(file) ? readFileSync(file, 'utf8').trim() : undefined);
   if (!value || value.length < 12) {
     throw new Error(
-      'OBSIDIAN_KEYSTORE_PASSPHRASE must be set to at least 12 characters. ' +
-        'Export it in the node service environment; never commit it to disk.',
+      'OBSIDIAN_KEYSTORE_PASSPHRASE (or OBSIDIAN_KEYSTORE_PASSPHRASE_FILE pointing at a ' +
+        'root-owned 0600 file) must provide a passphrase of at least 12 characters. ' +
+        'Never commit the passphrase to the repository.',
     );
   }
   return value;

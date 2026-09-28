@@ -17,6 +17,7 @@ import { signTransaction, encodeSignedTx } from '../../src/transactions/encode.j
 import { generateRecoveryPhrase, deriveWallet } from '../../src/crypto/mnemonic.js';
 import { addressFromPublicKey } from '../../src/crypto/keys.js';
 import { TxType, type TxEnvelope, type Block } from '../../src/protocol/types.js';
+import { ProtocolError } from '../../src/protocol/errors.js';
 import { getNetwork, type NetworkDefinition } from '../../src/protocol/networks.js';
 import { applyBlock } from '../../src/blockchain/state-machine.js';
 import { PARAMS_HASH } from '../../src/blockchain/state-root.js';
@@ -97,7 +98,10 @@ export interface Harness {
     options?: BlockOptions,
   ): { block: Block; state: WorldState };
   /** Build, sign and add a block, returning the verdict instead of throwing. */
-  tryBlock(txs?: TxEnvelope[], options?: BlockOptions): { block: Block; accepted: boolean; code?: string; message?: string };
+  tryBlock(
+    txs?: TxEnvelope[],
+    options?: BlockOptions,
+  ): { block: Block | undefined; accepted: boolean; code?: string; message?: string };
   /** Build, sign and add a block; throws when the block is rejected. */
   produce(txs?: TxEnvelope[], options?: BlockOptions): Block;
   sign(
@@ -240,14 +244,31 @@ export async function createHarness(options: { network?: string; producer?: Test
   };
 
   const tryBlock: Harness['tryBlock'] = (txs = [], options = {}) => {
-    const block = makeBlock(txs, options);
+    // An invalid transaction is rejected while the block is being built (the
+    // harness simulates the state transition to compute the roots). Surface that
+    // as `{accepted: false, code}` instead of throwing, so tests can assert on
+    // the protocol error exactly as a node would report it.
+    let block: Block;
+    try {
+      block = makeBlock(txs, options);
+    } catch (error) {
+      if (error instanceof ProtocolError) {
+        return {
+          block: undefined as unknown as Block,
+          accepted: false,
+          code: error.code,
+          message: error.message,
+        };
+      }
+      throw error;
+    }
     const result = chain.addBlock(block);
     return { block, accepted: result.accepted, code: result.code, message: result.message };
   };
 
   const produce: Harness['produce'] = (txs = [], options = {}) => {
     const outcome = tryBlock(txs, options);
-    if (!outcome.accepted) {
+    if (!outcome.accepted || !outcome.block) {
       throw new Error(`block rejected: ${outcome.code} ${outcome.message}`);
     }
     return outcome.block;

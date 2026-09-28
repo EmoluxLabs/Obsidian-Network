@@ -1,0 +1,33 @@
+# Obsidian interface at the edge.
+#
+# Replace the account/zone values with your own before deploying. The worker is a
+# cache and a proxy in front of the interface — see README.md for the rule it
+# must never break: it never becomes an authority on chain data.
+name = "obsidian-gateway"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+workers_dev = false
+
+# OIDC/service tokens are not needed: this worker performs no privileged action.
+
+[vars]
+# The origin that actually reads Obsidian Core nodes (your interface instance).
+OBSIDIAN_ORIGIN = "https://interface.example"
+# Static asset origin (Pages, R2 or the same interface).
+OBSIDIAN_ASSETS_ORIGIN = "https://interface.example"
+# Seconds a cached chain read may be reused. Keep it short: stale chain data is
+# still chain data, and a user who needs certainty should read a node directly.
+CHAIN_CACHE_SECONDS = "5"
+
+[observability]
+enabled = true
+
+# Route the zone's traffic through this worker.
+[[routes]]
+pattern = "obsidian.example/*"
+zone_name = "obsidian.example"
+
+# Cache API storage for proxied chain reads.
+[[kv_namespaces]]
+binding = "OBSIDIAN_CACHE"
+id = "REPLACE_WITH_A_KV_NAMESPACE_ID"

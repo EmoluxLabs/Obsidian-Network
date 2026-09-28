@@ -8,7 +8,6 @@
 import { sha256 as nobleSha256 } from '@noble/hashes/sha256';
 import { ripemd160 as nobleRipemd160 } from '@noble/hashes/ripemd160';
 import { hmac } from '@noble/hashes/hmac';
-import { createHash } from 'node:crypto';
 
 export function utf8(s: string): Uint8Array {
   return new TextEncoder().encode(s);
@@ -72,11 +71,6 @@ export function domainHash(domain: string, ...chunks: Uint8Array[]): Uint8Array 
   const len = new Uint8Array(4);
   new DataView(len.buffer).setUint32(0, d.length, false);
   return sha256(concatBytes(len, d, ...chunks));
-}
-
-/** Streaming SHA-256 for large artifacts (release checksums, backups). */
-export function sha256FileStream(): import('node:crypto').Hash {
-  return createHash('sha256');
 }
 
 /** Constant-time comparison to avoid timing oracles on digests. */

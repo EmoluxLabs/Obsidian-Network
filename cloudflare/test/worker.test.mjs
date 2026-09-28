@@ -1,0 +1,148 @@
+/**
+ * Worker tests.
+ *
+ * Run with: node --test cloudflare/test/worker.test.mjs
+ *
+ * These prove the one property that matters: the edge is a cache and a proxy,
+ * never an authority. A cached copy of a block list is fine; a cached copy of a
+ * transaction submission, or of somebody's account, would be a lie.
+ */
+
+import { strict as assert } from 'node:assert';
+import test from 'node:test';
+import worker from '../src/worker.js';
+
+/** Minimal Cache API stand-in shaped like Cloudflare's. */
+function makeCache() {
+  const store = new Map();
+  return {
+    default: {
+      async match(request) {
+        const hit = store.get(request.url);
+        return hit ? hit.clone() : undefined;
+      },
+      async put(request, response) {
+        store.set(request.url, response.clone());
+      },
+    },
+    _store: store,
+  };
+}
+
+function makeEnv() {
+  return { OBSIDIAN_ORIGIN: 'https://interface.example', CHAIN_CACHE_SECONDS: '5' };
+}
+
+function makeCtx(cache) {
+  return { cacheApi: cache, waitUntil(promise) { return promise; } };
+}
+
+function upstreamResponse(body, headers = {}) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'x-obsidian-node': 'http://127.0.0.1:8630', ...headers },
+  });
+}
+
+test('a cacheable chain read carries the node that produced it', async () => {
+  const cache = makeCache();
+  globalThis.caches = cache;
+  globalThis.fetch = async () => upstreamResponse({ height: 100 });
+
+  const response = await worker.fetch(new Request('https://obsidian.example/api/rpc?path=/status'), makeEnv(), makeCtx(cache));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-obsidian-node'), 'http://127.0.0.1:8630');
+  assert.equal(response.headers.get('x-obsidian-cache'), 'MISS');
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+});
+
+test('a second identical read is served from the cache, still naming the node', async () => {
+  const cache = makeCache();
+  globalThis.caches = cache;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return upstreamResponse({ height: 100 });
+  };
+
+  const first = await worker.fetch(new Request('https://obsidian.example/api/rpc?path=/blocks'), makeEnv(), makeCtx(cache));
+  const second = await worker.fetch(new Request('https://obsidian.example/api/rpc?path=/blocks'), makeEnv(), makeCtx(cache));
+
+  assert.equal(calls, 1, 'the origin should be asked once');
+  assert.equal(first.headers.get('x-obsidian-cache'), 'MISS');
+  assert.equal(second.headers.get('x-obsidian-cache'), 'HIT');
+  assert.equal(second.headers.get('x-obsidian-node'), 'http://127.0.0.1:8630');
+  await first.text();
+  await second.text();
+});
+
+test('a transaction submission is never cached and never replayed from cache', async () => {
+  const cache = makeCache();
+  globalThis.caches = cache;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return upstreamResponse({ accepted: true, txId: `tx-${calls}` });
+  };
+
+  const send = () =>
+    worker.fetch(
+      new Request('https://obsidian.example/api/rpc?path=/tx/submit', { method: 'POST', body: '{"tx":"00"}' }),
+      makeEnv(),
+      makeCtx(cache),
+    );
+
+  const first = await send();
+  const second = await send();
+  assert.equal(calls, 2);
+  assert.equal((await first.json()).txId, 'tx-1');
+  assert.equal((await second.json()).txId, 'tx-2');
+});
+
+test('account and session routes bypass the cache entirely', async () => {
+  const cache = makeCache();
+  globalThis.caches = cache;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return upstreamResponse({ account: { email: `user${calls}@example.com` } });
+  };
+
+  await worker.fetch(new Request('https://obsidian.example/api/auth/me', { headers: { cookie: 'obsidian_session=abc' } }), makeEnv(), makeCtx(cache));
+  await worker.fetch(new Request('https://obsidian.example/api/auth/me', { headers: { cookie: 'obsidian_session=abc' } }), makeEnv(), makeCtx(cache));
+  assert.equal(calls, 2, 'a session check must always reach the origin');
+});
+
+test('an unreachable origin is reported honestly, not papered over with stale data', async () => {
+  const cache = makeCache();
+  globalThis.caches = cache;
+  globalThis.fetch = async () => {
+    throw new Error('connect ECONNREFUSED');
+  };
+
+  const response = await worker.fetch(new Request('https://obsidian.example/api/rpc?path=/status'), makeEnv(), makeCtx(cache));
+  assert.equal(response.status, 503);
+  const body = await response.json();
+  assert.equal(body.code, 'ERR_ORIGIN_UNREACHABLE');
+  assert.match(body.note, /nodes/i);
+});
+
+test('a gateway with no origin configured refuses to guess one', async () => {
+  const response = await worker.fetch(new Request('https://obsidian.example/'), {}, {});
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, 'ERR_NO_ORIGIN');
+});
+
+test('the worker does not weaken the interface CSP or add its own scripts', async () => {
+  const cache = makeCache();
+  globalThis.caches = cache;
+  globalThis.fetch = async () =>
+    new Response('<!doctype html>landing', {
+      status: 200,
+      headers: { 'content-type': 'text/html', 'content-security-policy': "default-src 'self'; script-src 'self'" },
+    });
+
+  const response = await worker.fetch(new Request('https://obsidian.example/'), makeEnv(), makeCtx(cache));
+  assert.equal(response.headers.get('content-security-policy'), "default-src 'self'; script-src 'self'");
+  assert.match(await response.text(), /landing/);
+});

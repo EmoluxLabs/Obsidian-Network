@@ -21,7 +21,7 @@
  */
 
 import { secp256k1 } from '@noble/curves/secp256k1';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from '@noble/hashes/utils';
 import { sha256, ripemd160, toHex, fromHex, bytesEqual, domainHash, utf8 } from './hash.js';
 import { encodePayload, decodePayload } from './bech32.js';
 
@@ -145,8 +145,21 @@ export function nodeIdFromPublicKey(publicKeyHex: string): string {
   return toHex(digest).slice(0, 40);
 }
 
+/**
+ * Random identifier. Uses WebCrypto when the runtime provides it (browsers and
+ * Node >= 19 both expose `globalThis.crypto`), so the same code path serves the
+ * node software and the browser wallet.
+ */
 export function randomId(): string {
-  return randomUUID();
+  const webcrypto = globalThis.crypto;
+  if (webcrypto && typeof webcrypto.randomUUID === 'function') return webcrypto.randomUUID();
+  return [
+    toHex(randomBytes(4)),
+    toHex(randomBytes(2)),
+    toHex(randomBytes(2)),
+    toHex(randomBytes(2)),
+    toHex(randomBytes(6)),
+  ].join('-');
 }
 
 /** 32 bytes of CSPRNG output as hex — used for nonces, salts, capsule keys. */

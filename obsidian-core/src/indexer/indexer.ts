@@ -19,6 +19,15 @@ import type { WorldState } from '../blockchain/state.js';
 import { blockHash } from '../blockchain/block.js';
 import { shortHash } from '../blockchain/state-root.js';
 import { formatObs } from '../protocol/amount.js';
+import { decodePaymentBody } from '../transactions/executors/payment.js';
+import { decodeMiningBody } from '../transactions/executors/mining.js';
+import { decodeOnsBody } from '../transactions/executors/ons.js';
+import { decodeCapsuleBody } from '../transactions/executors/capsule.js';
+import { decodeLandBody } from '../transactions/executors/land.js';
+import { decodeSocialBody } from '../transactions/executors/social.js';
+import { decodeOracleBody } from '../transactions/executors/oracle.js';
+import { decodeValidatorBody } from '../transactions/executors/validator.js';
+import { decodeTreasuryBody } from '../transactions/executors/treasury.js';
 
 export interface TxIndexRecord {
   txId: string;
@@ -34,6 +43,12 @@ export interface TxIndexRecord {
   timestamp: number;
   memo?: string;
   status: 'INCLUDED';
+  /** Human-facing classification for the explorer (never authoritative). */
+  kind?: string;
+  /** The on-chain object this transaction acted on (parcel id, name, claim id…). */
+  reference?: string;
+  /** Short human-readable note (oracle sources, treasury purpose…). */
+  note?: string;
 }
 
 export interface EventIndexRecord extends ProtocolEvent {
@@ -218,12 +233,83 @@ export class Indexer {
   }
 }
 
-/** Extract the display-relevant fields of a transaction, without trusting them. */
+/**
+ * Extract the display-relevant fields of a transaction for the explorer.
+ *
+ * Every decoder is total: a body this build cannot understand yields an empty
+ * summary rather than an exception, so one unknown transaction can never stop a
+ * node from indexing a block.
+ */
 function describeTx(tx: TxEnvelope): Partial<TxIndexRecord> {
   try {
     switch (tx.type) {
       case TxType.PAYMENT: {
-        return { recipient: undefined, amount: undefined };
+        const body = decodePaymentBody(tx.body);
+        return { recipient: body.to, amount: body.amount.toString() };
+      }
+      case TxType.MINING_CLAIM: {
+        const body = decodeMiningBody(tx.body);
+        return { recipient: undefined, amount: undefined, kind: 'MINING_CLAIM', reference: body.claimId, note: `claim #${body.claimSequence}` };
+      }
+      case TxType.ONS: {
+        const body = decodeOnsBody(tx.body);
+        return {
+          recipient: body.to || body.address || undefined,
+          amount: body.fee > 0n ? body.fee.toString() : undefined,
+          kind: `ONS_${onsOpName(body.op)}`,
+          reference: `${body.name}.obs`,
+        };
+      }
+      case TxType.CAPSULE: {
+        const body = decodeCapsuleBody(tx.body);
+        const amount = body.payment && body.payment > 0n ? body.payment : body.commitment;
+        return {
+          recipient: undefined,
+          amount: amount && amount > 0n ? amount.toString() : undefined,
+          kind: `CAPSULE_${capsuleOpName(body.op)}`,
+          reference: body.capsuleId,
+        };
+      }
+      case TxType.LAND: {
+        const body = decodeLandBody(tx.body);
+        return {
+          recipient: body.to || undefined,
+          amount: body.price && body.price > 0n ? body.price.toString() : undefined,
+          kind: `LAND_${landOpName(body.op)}`,
+          reference: `${body.divisionId}${body.subId ? `/${body.subId}` : ''}#${body.plotIndex}`,
+        };
+      }
+      case TxType.SOCIAL: {
+        const body = decodeSocialBody(tx.body);
+        return {
+          recipient: body.target || undefined,
+          amount: body.amount && body.amount > 0n ? body.amount.toString() : undefined,
+          kind: `SOCIAL_${body.op}`,
+          reference: body.postId || body.accountId || body.handle || undefined,
+        };
+      }
+      case TxType.ORACLE: {
+        const body = decodeOracleBody(tx.body);
+        const sources = body.observations.map((observation) => observation.source).join(', ');
+        return { recipient: undefined, amount: undefined, kind: 'ORACLE', reference: body.submissionId, note: sources };
+      }
+      case TxType.VALIDATOR: {
+        const body = decodeValidatorBody(tx.body);
+        return {
+          recipient: undefined,
+          amount: body.bond > 0n ? body.bond.toString() : undefined,
+          kind: `VALIDATOR_${body.op}`,
+          reference: body.validatorKey.slice(0, 16),
+        };
+      }
+      case TxType.TREASURY: {
+        const body = decodeTreasuryBody(tx.body);
+        return {
+          recipient: body.to || undefined,
+          amount: body.amount > 0n ? body.amount.toString() : undefined,
+          kind: `TREASURY_${body.op}`,
+          note: body.purpose,
+        };
       }
       default:
         return {};
@@ -231,6 +317,18 @@ function describeTx(tx: TxEnvelope): Partial<TxIndexRecord> {
   } catch {
     return {};
   }
+}
+
+function onsOpName(op: number): string {
+  return ['REGISTER', 'UPDATE_ADDRESS', 'TRANSFER', 'RENEW'][op - 1] ?? `OP_${op}`;
+}
+
+function capsuleOpName(op: number): string {
+  return ['CREATE', 'PREVIEW', 'CLAIM', 'OPEN'][op - 1] ?? `OP_${op}`;
+}
+
+function landOpName(op: number): string {
+  return ['PROTOCOL_BUY', 'PROTOCOL_SELL', 'LIST', 'DELIST', 'BUY_LISTED', 'GIFT'][op - 1] ?? `OP_${op}`;
 }
 
 /**

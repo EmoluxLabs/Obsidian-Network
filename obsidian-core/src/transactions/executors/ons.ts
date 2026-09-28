@@ -153,9 +153,13 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       assertAddress(body.to, net, 'recipient');
       assertGas(tx.gas, 0n);
       state.touchAccount(body.to, apply);
+      const previous = record.address;
       record.owner = body.to;
+      // The mapping is chain state and travels with the name: a transferred name
+      // resolves to the new owner's wallet, never back to the seller's.
+      record.address = body.to;
       record.transferCount += 1;
-      state.emit('ONS_TRANSFERRED', { name, from: tx.sender, to: body.to }, apply);
+      state.emit('ONS_TRANSFERRED', { name, from: tx.sender, to: body.to, previousAddress: previous }, apply);
       return { gasBase: 0n, detail: { name, owner: body.to } };
     }
 

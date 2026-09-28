@@ -135,7 +135,10 @@ function validateDescriptor(body: LandBody, net: { name: string }): void {
   if (!divisionId.startsWith(body.countryCode)) {
     reject(ErrCode.PARCEL_NOT_FOUND, 'divisionId does not belong to the declared countryCode');
   }
-  if (!(body.level in DIVISION_LEVEL_CODES)) {
+  // `DIVISION_LEVEL_CODES` maps level NAMES to numbers, so membership must be
+  // tested against its values — testing `body.level in DIVISION_LEVEL_CODES`
+  // would compare a number against the name keys and reject every parcel.
+  if (!(Object.values(DIVISION_LEVEL_CODES) as number[]).includes(body.level)) {
     reject(ErrCode.PARCEL_NOT_FOUND, `unknown administrative level ${body.level} on ${net.name}`);
   }
   if (body.level !== DIVISION_LEVEL_CODES.DIVISION && !body.subId) {
@@ -174,6 +177,16 @@ export function executeLand(
       const price = requirePrice(state, protocolTime);
       const glvAtPurchase = record.glvUsdMicro;
       const priceObs = usdMicroToSeals(glvAtPurchase, price.priceUsdMicro);
+      // The client must quote the official price it was shown. A stale or
+      // tampered quote is rejected instead of silently charging another amount.
+      if (body.price !== priceObs) {
+        reject(ErrCode.PRICE_MISMATCH, 'the quoted price does not match the official GLV price', {
+          expected: priceObs.toString(),
+          received: (body.price ?? 0n).toString(),
+          glvUsdMicro: glvAtPurchase.toString(),
+          priceUsdMicro: price.priceUsdMicro.toString(),
+        });
+      }
       const gas = assertGas(tx.gas, priceObs);
       state.debit(tx.sender, priceObs + gas, apply, 'protocol land purchase + gas');
       if (gas > 0n) {

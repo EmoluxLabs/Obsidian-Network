@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Obsidian Network">
+  <defs>
+    <linearGradient id="face" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd98a"/>
+      <stop offset="0.45" stop-color="#f5b544"/>
+      <stop offset="1" stop-color="#a86a10"/>
+    </linearGradient>
+    <linearGradient id="deep" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2434"/>
+      <stop offset="1" stop-color="#05070c"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="url(#deep)"/>
+  <path d="M64 16 108 46 92 100 36 100 20 46Z" fill="none" stroke="#232f45" stroke-width="3"/>
+  <path d="M64 26 96 48 84 90 44 90 32 48Z" fill="url(#face)"/>
+  <path d="M64 26 64 90 44 90 32 48Z" fill="#ffe6ad" opacity="0.55"/>
+  <path d="M64 26 96 48 84 90 64 90Z" fill="#c8871b" opacity="0.35"/>
+  <path d="M64 40 78 62 64 84 50 62Z" fill="#05070c" opacity="0.72"/>
+  <path d="M64 50 71 62 64 74 57 62Z" fill="#4ad9d9"/>
+</svg>

@@ -6,7 +6,7 @@
  * See /docs/release-process.md.
  */
 
-import { createHash } from 'node:crypto';
+import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
 export const CORE_VERSION = '1.0.0';
@@ -23,11 +23,14 @@ export const WIRE_PROTOCOL_VERSION = 1;
  */
 export const MIN_CORE_VERSION = '1.0.0';
 
-/** Build identifier — deterministic hash of the release identity triple. */
-export const BUILD_ID = createHash('sha256')
-  .update(`obsidian-core:${CORE_VERSION}:${PROTOCOL_VERSION}:${WIRE_PROTOCOL_VERSION}`)
-  .digest('hex')
-  .slice(0, 16);
+/**
+ * Build identifier — deterministic hash of the release identity triple.
+ * Uses the protocol's own SHA-256 implementation so this module is identical in
+ * Node and in a browser bundle.
+ */
+export const BUILD_ID = sha256Hex(
+  utf8(`obsidian-core:${CORE_VERSION}:${PROTOCOL_VERSION}:${WIRE_PROTOCOL_VERSION}`),
+).slice(0, 16);
 
 export interface VersionInfo {
   coreVersion: string;

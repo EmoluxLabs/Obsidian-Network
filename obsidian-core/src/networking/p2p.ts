@@ -128,6 +128,8 @@ export interface P2PMessage {
 interface PeerLink {
   address: string;
   inbound: boolean;
+  /** IP we actually see this peer at — used when it advertises a wildcard host. */
+  remoteIp: string;
   socket: WebSocket;
   nodeId: string;
   identity: string;
@@ -231,6 +233,7 @@ export class P2PService extends EventEmitter {
   private maxInbound: number;
   private maxOutbound: number;
   private connecting = false;
+  private readonly dialing = new Set<string>();
   private server: WebSocketServer | null = null;
   private timers: NodeJS.Timeout[] = [];
   private stopping = false;
@@ -330,8 +333,16 @@ export class P2PService extends EventEmitter {
   async listen(port?: number, host?: string): Promise<number> {
     if (port) this.port = port;
     if (host) this.host = host;
-    if (this.server) return this.port;
-    await this.listenInternal();
+    if (!this.server) {
+      await this.listenInternal();
+      // The maintenance loops must start with the listener, not only with
+      // `start()`: without them a node never re-dials a seed that came online
+      // late, never prunes stale peers and never pings (so it cannot detect a
+      // half-open connection to a crashed peer). Idempotent: a second call is a
+      // no-op because the interval list is already populated.
+      this.scheduleLoops();
+      void this.maintainPeers();
+    }
     return this.port;
   }
 
@@ -403,13 +414,9 @@ export class P2PService extends EventEmitter {
     };
   }
 
-  /** Start the peer-maintenance loops without opening a listener. */
+  /** Open the listener and start the peer-maintenance loops. */
   async start(port?: number, host?: string): Promise<void> {
-    if (port) this.port = port;
-    if (host) this.host = host;
-    await this.listenInternal();
-    this.scheduleLoops();
-    void this.maintainPeers();
+    await this.listen(port, host);
   }
 
   private async listenInternal(): Promise<void> {
@@ -438,13 +445,14 @@ export class P2PService extends EventEmitter {
       });
       server.on('connection', (socket, request) => {
         const remote = request.socket.remoteAddress ?? 'unknown';
-        const port = 0;
-        this.accept(socket, `${remote}:${port}`, true);
+        const port = request.socket.remotePort ?? 0;
+        this.accept(socket, `${remote}:${port}`, true, remote);
       });
     });
   }
 
   private scheduleLoops(): void {
+    if (this.timers.length > 0) return;
     this.timers.push(setInterval(() => void this.maintainPeers(), 15_000).unref());
     this.timers.push(setInterval(() => this.pingAll(), PING_INTERVAL_MS).unref());
     this.timers.push(setInterval(() => this.pruneRelaySets(), 60_000).unref());
@@ -481,10 +489,15 @@ export class P2PService extends EventEmitter {
       const outbound = [...this.links.values()].filter((link) => !link.inbound).length;
       const target = Math.max(2, Math.min(this.maxOutbound, 8));
       if (outbound < target) {
-        const candidates = this.peers
-          .dialable(32)
-          .filter((record) => ![...this.links.values()].some((link) => link.address === record.address))
-          .slice(0, target - outbound);
+        const connected = new Set([...this.links.values()].map((link) => link.address));
+        // Operator-configured seeds come first: if a seed was offline when this
+        // node booted it must still be retried once it comes back, even when
+        // gossip has already supplied us with plenty of other peers.
+        const seeds = this.peers
+          .dialable(64)
+          .filter((record) => record.source === 'seed' && !connected.has(record.address));
+        const rest = this.peers.dialable(32).filter((record) => record.source !== 'seed' && !connected.has(record.address));
+        const candidates = [...seeds, ...rest].slice(0, target - outbound);
         for (const record of candidates) void this.dial(record);
       }
     }
@@ -497,8 +510,29 @@ export class P2PService extends EventEmitter {
   }
 
   private async dial(record: PeerRecord): Promise<void> {
+    // Never dial an address we are already dialling or already connected to:
+    // the boot-time seed dial and the first maintenance sweep would otherwise
+    // open two sockets to the same peer and double-count failures against it.
+    if (this.dialing.has(record.address)) return;
+    if (this.links.size > 0) {
+      const connected = [...this.links.values()];
+      if (connected.some((link) => link.address === record.address)) return;
+      // A peer we know by nodeId is already connected, whatever address we
+      // learned for it this time.
+      if (record.nodeId && connected.some((link) => link.nodeId === record.nodeId)) return;
+    }
+
     const url = `ws://${record.host}:${record.port}`;
+    this.dialing.add(record.address);
     this.peers.recordAttempt(record.address);
+    try {
+      await this.dialOnce(record, url);
+    } finally {
+      this.dialing.delete(record.address);
+    }
+  }
+
+  private async dialOnce(record: PeerRecord, url: string): Promise<void> {
     await new Promise<void>((resolve) => {
       let socket: WebSocket;
       try {
@@ -511,7 +545,7 @@ export class P2PService extends EventEmitter {
       }
       const done = () => resolve();
       socket.on('open', () => {
-        this.accept(socket, record.address, false);
+        this.accept(socket, record.address, false, record.host);
         done();
       });
       socket.on('error', (error) => {
@@ -524,7 +558,7 @@ export class P2PService extends EventEmitter {
 
   // ── Connection handling ────────────────────────────────────────────────────
 
-  private accept(socket: WebSocket, address: string, inbound: boolean): void {
+  private accept(socket: WebSocket, address: string, inbound: boolean, remoteIp = ''): void {
     if (inbound && this.links.size >= this.maxInbound + this.maxOutbound) {
       try {
         socket.close(1013, 'connection limit reached');
@@ -537,6 +571,7 @@ export class P2PService extends EventEmitter {
     const link: PeerLink = {
       address,
       inbound,
+      remoteIp,
       socket,
       nodeId: '',
       identity: '',
@@ -721,11 +756,33 @@ export class P2PService extends EventEmitter {
       return;
     }
 
+    // One connection per peer: both ends dialled each other, or a gossiped hint
+    // led us back to a peer we already talk to. Both sides keep their OLDEST
+    // link for this nodeId and close the newer socket, so exactly one of the two
+    // duplicates survives on each end and they are the two ends of the same
+    // socket. Without this a three-node network keeps opening links until the
+    // connection limits are hit.
+    const duplicate = [...this.links.values()].find((other) => other !== link && other.nodeId && other.nodeId === hello.nodeId);
+    if (duplicate) {
+      this.log.debug('duplicate connection dropped', { address: link.address, nodeId: hello.nodeId, kept: duplicate.address });
+      try {
+        link.socket.close(1000, 'duplicate connection');
+      } catch {
+        /* the socket is already gone */
+      }
+      return;
+    }
+
     if (link.handshakeTimer) {
       clearTimeout(link.handshakeTimer);
       link.handshakeTimer = null;
     }
-    const address = hello.listenPort > 0 ? `${hello.listenHost}:${hello.listenPort}` : link.address;
+    // A node listening on 0.0.0.0 cannot tell us how to reach it, so the address
+    // we know it by is the IP we observed plus its advertised port. Using the
+    // wildcard verbatim would give the same peer two different identities in the
+    // peer table and break reconnection and de-duplication.
+    const advertisedHost = isWildcardHost(hello.listenHost) && link.remoteIp ? link.remoteIp : hello.listenHost;
+    const address = hello.listenPort > 0 ? `${advertisedHost}:${hello.listenPort}` : link.address;
     link.hello = hello;
     link.nodeId = hello.nodeId;
     link.identity = hello.identity;
@@ -961,6 +1018,11 @@ export class P2PService extends EventEmitter {
 /** Hash used for the node id: stable across restarts, not a secret. */
 export function nodeIdFor(identityAddress: string, genesisId: string): string {
   return sha256Hex(utf8(`${identityAddress}|${genesisId}`)).slice(0, 32);
+}
+
+export function isWildcardHost(host: string): boolean {
+  const value = (host ?? '').trim().replace(/^\[|\]$/g, '');
+  return value === '' || value === '0.0.0.0' || value === '::';
 }
 
 export { parsePeerAddress };

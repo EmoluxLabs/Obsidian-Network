@@ -60,6 +60,25 @@ export const PEER_SCORE = {
   max: 200,
 } as const;
 
+/**
+ * How long to wait before dialling a peer that refused our connection.
+ *
+ * A refused socket is not evidence of misbehaviour: seeds come online late,
+ * operators restart nodes, and a laptop dials its seed while the seed is still
+ * booting. Treating that as a ban used to lock a node out of the network for an
+ * hour on a single transient `ECONNREFUSED`. Instead we back off exponentially
+ * — 15s, 30s, 1m, 2m … — capped at {@link PeerStore.banWindowMs}, so a seed
+ * that appears moments later is picked up on the next sweep while a peer that
+ * is genuinely gone stops being dialled constantly.
+ *
+ * Dishonest behaviour (invalid blocks, malformed messages) is *not* covered by
+ * this curve: it still earns the full ban window.
+ */
+export function handshakeRetryDelayMs(failureCount: number, capMs: number, baseMs = 15_000): number {
+  const attempt = Math.max(1, Math.min(Math.floor(failureCount) || 1, 20));
+  return Math.min(baseMs * 2 ** (attempt - 1), capMs);
+}
+
 export function parsePeerAddress(address: string): { host: string; port: number } {
   const trimmed = address.trim().replace(/^wss?:\/\//, '').replace(/\/+$/, '');
   const match = /^\[?([a-zA-Z0-9._:\-]+?)\]?:(\d{1,5})$/.exec(trimmed);
@@ -241,6 +260,9 @@ export class PeerStore {
     record.lastSeen = this.now();
     record.successCount += 1;
     record.failureCount = 0;
+    // A peer we just completed a handshake with is demonstrably reachable, so
+    // any pending retry/ban window is stale — clear it.
+    record.bannedUntil = 0;
     record.score = Math.min(PEER_SCORE.max, record.score + PEER_SCORE.successGain);
     if (details.nodeId) record.nodeId = details.nodeId;
     if (details.identity) record.identity = details.identity;
@@ -279,7 +301,17 @@ export class PeerStore {
           ? PEER_SCORE.handshakeFailurePenalty
           : PEER_SCORE.malformedPenalty;
     record.score += penalty;
-    if (record.score < PEER_SCORE.banBelow) record.bannedUntil = this.now() + this.banWindowMs;
+
+    if (kind === 'handshake') {
+      // Reachability, not honesty: a short exponential retry window. The score
+      // still drops (an unreachable address should rank below a reachable one)
+      // but it is floored, because repeated network errors must not look like
+      // repeated protocol misbehaviour in the operator's peer list.
+      record.bannedUntil = this.now() + handshakeRetryDelayMs(record.failureCount, this.banWindowMs);
+      record.score = Math.max(PEER_SCORE.banBelow, record.score);
+    } else if (record.score < PEER_SCORE.banBelow) {
+      record.bannedUntil = this.now() + this.banWindowMs;
+    }
     this.touch(record);
   }
 
@@ -287,12 +319,18 @@ export class PeerStore {
     return 60 * 60 * 1000;
   }
 
-  /** Drop peers that have failed repeatedly and never succeeded. */
+  /**
+   * Drop peers that have failed repeatedly and never succeeded.
+   *
+   * Operator-configured addresses (`--seeds`, `--peer`) are never forgotten:
+   * they are re-added at boot anyway, so pruning them only loses the score and
+   * backoff history the operator's node accumulated for them.
+   */
   pruneStale(maxIdleMs = 7 * 24 * 60 * 60 * 1000, keepScore = -20): number {
     const time = this.now();
     let removed = 0;
     for (const [address, record] of [...this.records.entries()]) {
-      if (record.source === 'seed') continue;
+      if (record.source === 'seed' || record.source === 'manual') continue;
       const idleTooLong = record.lastSeen > 0 && time - record.lastSeen > maxIdleMs;
       const failing = record.failureCount >= 5 && record.score <= keepScore;
       if (idleTooLong || failing) {

@@ -1,0 +1,431 @@
+/**
+ * Interface server, over real HTTP.
+ *
+ * Nothing here is mocked at the transport layer: the tests start the actual
+ * server on an ephemeral port, point it at a stub Obsidian node that is also a
+ * real HTTP server, and drive it with real requests. That is the only way to
+ * prove the two things this process promises — that the browser never needs to
+ * reach a node directly, and that no unauthenticated caller can create accounts.
+ */
+
+import { createServer, type Server } from 'node:http';
+import { connect } from 'node:net';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { InterfaceServer, type InterfaceConfig } from '../server/index.js';
+import { AccountStore } from '../server/store.js';
+import { type GoogleProfile, type TokenVerifier } from '../server/auth.js';
+
+interface Harness {
+  origin: string;
+  config: InterfaceConfig;
+  fakeNode: Server;
+  nodeUrl: string;
+  signIn: (email: string, options?: { inviteCode?: string; token?: string }) => Promise<Response>;
+  /** Force a health sweep so the proxy has an opinion about the stub node. */
+  poolCheck: () => Promise<void>;
+  close: () => Promise<void>;
+}
+
+const dirs: string[] = [];
+
+function scratch(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'obsidian-interface-'));
+  dirs.push(dir);
+  return dir;
+}
+
+/** A verifier stand-in: the real one is covered in auth.test.ts. */
+function stubVerifier(): TokenVerifier {
+  return {
+    async verify(idToken: string): Promise<GoogleProfile> {
+      if (idToken.startsWith('bad:')) throw new Error('signature verification failed');
+      return {
+        subject: `subject-${idToken}`,
+        email: `${idToken.replace(/[^a-z0-9]/gi, '') || 'user'}@example.com`,
+        emailVerified: true,
+        name: idToken,
+      };
+    },
+  };
+}
+
+async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[] } = {}): Promise<Harness> {
+  const publicDir = join(scratch(), 'public');
+  const coreDir = join(scratch(), 'core');
+  const siteRoot = scratch();
+  for (const dir of [publicDir, coreDir, join(siteRoot, 'landing'), join(siteRoot, 'app'), join(siteRoot, 'explorer')]) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(join(siteRoot, 'landing', 'index.html'), '<!doctype html><title>landing</title>', 'utf8');
+  writeFileSync(join(siteRoot, 'app', 'index.html'), '<!doctype html><title>app</title>', 'utf8');
+  writeFileSync(join(publicDir, 'index.html'), '<!doctype html><title>root</title>', 'utf8');
+  writeFileSync(join(coreDir, 'protocol.js'), 'export const version = "1.0.0";\n', 'utf8');
+
+  const requests: string[] = [];
+  let statusFailures = options.stubStatusFails ?? 0;
+  const fakeNode = createServer((request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    if (request.url === '/status' && statusFailures > 0) {
+      statusFailures -= 1;
+      response.writeHead(500, { 'content-type': 'application/json' });
+      response.end('{"error":"boom"}');
+      return;
+    }
+    if (request.url === '/status') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          height: 42,
+          headHash: 'abc123',
+          genesisId: 'genesis-test',
+          chainId: 7780,
+          networkId: 'obsidian-devnet-1',
+          syncing: false,
+          peers: 2,
+        }),
+      );
+      return;
+    }
+    if (request.url === '/names') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"names":[],"count":0}');
+      return;
+    }
+    if (request.url === '/secret' || request.url === '/admin/keys') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"secret":"should never be proxied"}');
+      return;
+    }
+    if (request.url === '/tx/submit') {
+      let body = '';
+      request.on('data', (chunk) => (body += chunk));
+      request.on('end', () => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ accepted: true, txId: 'tx-from-fake-node', receivedBytes: body.length }));
+      });
+      return;
+    }
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end('{"error":"not found","code":"ERR_NOT_FOUND"}');
+  });
+  await new Promise<void>((resolvePromise) => fakeNode.listen(0, '127.0.0.1', () => resolvePromise()));
+  const address = fakeNode.address();
+  const nodeUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+
+  const config: InterfaceConfig = {
+    host: '127.0.0.1',
+    port: 0,
+    siteRoot,
+    publicDir,
+    coreDir,
+    dataDir: scratch(),
+    nodeUrls: options.nodeUrls ?? [nodeUrl],
+    googleClientId: 'test-client-id',
+    allowedOrigins: [],
+    maxInvitesPerAccount: 5,
+    trustProxy: false,
+    logLevel: 'error',
+  };
+
+  const store = new AccountStore({ dataDir: config.dataDir });
+  const server = new InterfaceServer({ config, store, verifier: stubVerifier() });
+  const port = await server.listen();
+  const origin = `http://127.0.0.1:${port}`;
+
+  return {
+    origin,
+    config,
+    fakeNode,
+    nodeUrl,
+    signIn: (email: string, signInOptions: { inviteCode?: string; token?: string } = {}) =>
+      fetch(`${origin}/api/auth/google`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ idToken: signInOptions.token ?? email, inviteCode: signInOptions.inviteCode }),
+      }),
+    poolCheck: async () => {
+      await server.pool.checkNow();
+    },
+    close: () => server.close(),
+  };
+}
+
+const running: Harness[] = [];
+
+async function harness(options: { stubStatusFails?: number; nodeUrls?: string[] } = {}): Promise<Harness> {
+  const created = await startHarness(options);
+  running.push(created);
+  return created;
+}
+
+afterEach(async () => {
+  while (running.length > 0) {
+    const item = running.pop()!;
+    await item.close();
+    await new Promise<void>((resolvePromise) => item.fakeNode.close(() => resolvePromise()));
+  }
+});
+
+afterAll(() => {
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('site serving', () => {
+  it('serves each product from its own directory and never caches the shell', async () => {
+    const h = await harness();
+    const root = await fetch(`${h.origin}/`);
+    expect(root.status).toBe(200);
+    expect(await root.text()).toContain('landing');
+    expect(root.headers.get('cache-control')).toBe('no-store');
+
+    const app = await fetch(`${h.origin}/app/`);
+    expect(app.status).toBe(200);
+    expect(await app.text()).toContain('app');
+
+    const core = await fetch(`${h.origin}/core/protocol.js`);
+    expect(core.status).toBe(200);
+    expect(core.headers.get('cache-control')).toContain('max-age');
+  });
+
+  it('serves a strict Content-Security-Policy everywhere, and only widens it for the account page', async () => {
+    const h = await harness();
+    const landing = await fetch(`${h.origin}/`);
+    const csp = landing.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).not.toContain('accounts.google.com');
+    expect(landing.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(landing.headers.get('x-frame-options')).toBe('DENY');
+
+    const app = await fetch(`${h.origin}/app/`);
+    const appCsp = app.headers.get('content-security-policy') ?? '';
+    expect(appCsp).toContain('accounts.google.com');
+    expect(appCsp).not.toContain("script-src 'unsafe-inline'");
+  });
+
+  it('refuses a raw request that tries to escape the site root', async () => {
+    const h = await harness();
+    // fetch() would normalise the path client-side, so the traversal is sent as
+    // a raw HTTP request on purpose: the server must reject it, not the client.
+    const raw = await new Promise<string>((resolvePromise, reject) => {
+      const socket = connect(Number(new URL(h.origin).port), '127.0.0.1', () => {
+        socket.write('GET /landing/../../../../etc/passwd HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n');
+      });
+      let data = '';
+      socket.on('data', (chunk) => (data += chunk.toString('utf8')));
+      socket.on('end', () => resolvePromise(data));
+      socket.on('error', reject);
+      socket.setTimeout(5000, () => {
+        socket.destroy();
+        resolvePromise(data);
+      });
+    });
+    expect(raw).not.toContain('root:');
+    expect(raw.split('\r\n')[0]).toMatch(/40[0-9]/);
+  });
+
+  it('answers an unknown path with an honest 404 instead of a mismatched page', async () => {
+    const h = await harness();
+    const response = await fetch(`${h.origin}/definitely-not-a-site`);
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_NOT_FOUND');
+  });
+});
+
+describe('registration is invite-only', () => {
+  it('lets the first account bootstrap and then requires an invite', async () => {
+    const h = await harness();
+
+    const config = await (await fetch(`${h.origin}/api/auth/config`)).json();
+    expect(config).toMatchObject({ inviteOnly: true, accountsExist: false, maxInvitesPerAccount: 5 });
+
+    const first = await h.signIn('founder');
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { account: { accountId: string }; bootstrapped: boolean };
+    expect(firstBody.bootstrapped).toBe(true);
+
+    const cookie = first.headers.get('set-cookie') ?? '';
+    expect(cookie).toContain('obsidian_session=');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Lax');
+    expect(cookie).not.toContain('Secure'); // trustProxy is off in this harness
+
+    const second = await h.signIn('stranger');
+    expect(second.status).toBe(403);
+    expect(((await second.json()) as { code: string }).code).toBe('ERR_INVITE_REQUIRED');
+
+    const badInvite = await h.signIn('stranger', { inviteCode: 'OBS-NOT-REAL' });
+    expect(((await badInvite.json()) as { code: string }).code).toBe('ERR_INVITE_INVALID');
+    void config;
+  });
+
+  it('accepts an invite exactly once and counts it against the issuer', async () => {
+    const h = await harness();
+    const first = await h.signIn('founder');
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+
+    const created = await fetch(`${h.origin}/api/auth/invites`, { method: 'POST', headers: { cookie } });
+    expect(created.status).toBe(201);
+    const invite = ((await created.json()) as { invite: { code: string }; issued: number }).invite.code;
+
+    const guest = await h.signIn('guest', { inviteCode: invite });
+    expect(guest.status).toBe(200);
+
+    const reuse = await h.signIn('second-guest', { inviteCode: invite });
+    expect(reuse.status).toBe(403);
+    expect(((await reuse.json()) as { code: string }).code).toBe('ERR_INVITE_USED');
+
+    const listed = await (await fetch(`${h.origin}/api/auth/invites`, { headers: { cookie } })).json();
+    expect(listed.issued).toBe(1);
+    expect(listed.invites[0].acceptedBy).toBeTruthy();
+  });
+
+  it('enforces the five-invite cap on the server, not in the page', async () => {
+    const h = await harness();
+    const first = await h.signIn('founder');
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+
+    for (let i = 0; i < 5; i += 1) {
+      const response = await fetch(`${h.origin}/api/auth/invites`, { method: 'POST', headers: { cookie } });
+      expect(response.status).toBe(201);
+    }
+    const sixth = await fetch(`${h.origin}/api/auth/invites`, { method: 'POST', headers: { cookie } });
+    expect(sixth.status).toBe(403);
+    expect(((await sixth.json()) as { code: string }).code).toBe('ERR_INVITE_LIMIT');
+  });
+
+  it('never trusts a client-supplied isGoogleUser flag', async () => {
+    const h = await harness();
+    await h.signIn('founder');
+    const response = await fetch(`${h.origin}/api/auth/google`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ idToken: 'bad:forged', inviteCode: undefined, isGoogleUser: true, email: 'admin@example.com' }),
+    });
+    expect(response.status).toBe(401);
+    expect((await response.json()) as { code: string }).toMatchObject({ code: 'ERR_UNAUTHORIZED' });
+  });
+});
+
+describe('sessions', () => {
+  it('requires a session for account endpoints and clears it on logout', async () => {
+    const h = await harness();
+    const anonymous = await fetch(`${h.origin}/api/auth/me`);
+    expect(anonymous.status).toBe(401);
+
+    const signedIn = await h.signIn('founder');
+    const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const me = await fetch(`${h.origin}/api/auth/me`, { headers: { cookie } });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { account: { email: string } }).account.email).toBe('founder@example.com');
+
+    const out = await fetch(`${h.origin}/api/auth/logout`, { method: 'POST', headers: { cookie } });
+    expect(out.headers.get('set-cookie')).toContain('Max-Age=0');
+    const after = await fetch(`${h.origin}/api/auth/me`, { headers: { cookie } });
+    expect(after.status).toBe(401);
+  });
+
+  it('links an advisory wallet address but never stores key material', async () => {
+    const h = await harness();
+    const signedIn = await h.signIn('founder');
+    const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0]!;
+
+    const linked = await fetch(`${h.origin}/api/wallet/link`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ address: 'dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' }),
+    });
+    expect(linked.status).toBe(200);
+
+    const storeFile = join(h.config.dataDir, 'interface-accounts.json');
+    const raw = (await import('node:fs')).readFileSync(storeFile, 'utf8');
+    expect(raw).toContain('dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');
+    expect(raw).not.toContain('privateKey');
+  });
+});
+
+describe('node proxy', () => {
+  it('proxies an allowlisted read and says which node answered', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const response = await fetch(`${h.origin}/api/rpc?path=/names`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-obsidian-node')).toContain('http://127.0.0.1:');
+    expect(await response.json()).toMatchObject({ count: 0 });
+  });
+
+  it('refuses to proxy anything outside the allowlist', async () => {
+    const h = await harness();
+    for (const path of ['/secret', '/admin/keys', '../../etc/passwd', '/etc/passwd']) {
+      const response = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent(path)}`);
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { code: string }).code).toBe('ERR_REJECTED');
+    }
+  });
+
+  it('fails over to another node instead of returning an error page', async () => {
+    // One endpoint answers, the other is a closed port: the read must still work.
+    const healthy = await startHarness();
+    const h = await harness({ nodeUrls: [healthy.nodeUrl, 'http://127.0.0.1:1'] });
+    await h.poolCheck();
+    const response = await fetch(`${h.origin}/api/rpc?path=/names`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-obsidian-node')).toBe(healthy.nodeUrl);
+  });
+
+  it('says "no nodes" honestly when nothing is configured', async () => {
+    const h = await harness({ nodeUrls: [] });
+    const response = await fetch(`${h.origin}/api/rpc?path=/names`);
+    expect([503]).toContain(response.status);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_NO_NODES');
+  });
+
+  it('forwards a transaction submission as a POST', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const response = await fetch(`${h.origin}/api/rpc?path=/tx/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tx: '00' }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accepted: true, txId: 'tx-from-fake-node' });
+  });
+
+  it('reports node health to the browser without leaking internal counters', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const nodes = await (await fetch(`${h.origin}/api/nodes`)).json();
+    expect(nodes.nodes[0]).toMatchObject({ healthy: true, height: 42 });
+    expect(JSON.stringify(nodes)).not.toContain('successes');
+    const health = await (await fetch(`${h.origin}/api/health`)).json();
+    expect(health).toMatchObject({ status: 'ok', healthyNodes: 1 });
+  });
+
+  it('rejects an oversized body instead of buffering it', async () => {
+    const h = await harness();
+    const response = await fetch(`${h.origin}/api/rpc?path=/tx/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'x'.repeat(300 * 1024),
+    });
+    expect(response.status).toBe(413);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_BODY_TOO_LARGE');
+  });
+});
+
+describe('origin policy', () => {
+  it('refuses a cross-origin API call from an origin nobody allowlisted', async () => {
+    const h = await harness();
+    const response = await fetch(`${h.origin}/api/nodes`, { headers: { origin: 'https://evil.example' } });
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_FORBIDDEN');
+  });
+});
+
+void beforeAll;

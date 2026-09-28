@@ -75,11 +75,14 @@ export class RpcServer {
     await new Promise<void>((resolve, reject) => {
       this.server!.once('error', reject);
       this.server!.listen(config.rpcPort, config.rpcHost, () => {
-        this.options.log('info', 'rpc listening', { host: config.rpcHost, port: config.rpcPort });
+        const address = this.server!.address();
+        const bound = typeof address === 'object' && address ? address.port : config.rpcPort;
+        this.options.log('info', 'rpc listening', { host: config.rpcHost, port: bound });
         resolve();
       });
     });
-    return config.rpcPort;
+    const address = this.server.address();
+    return typeof address === 'object' && address ? address.port : config.rpcPort;
   }
 
   async close(): Promise<void> {
@@ -111,8 +114,13 @@ export class RpcServer {
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
       await this.route(request, response, url);
     } catch (error) {
-      this.options.log('error', 'rpc handler failed', { path: request.url, error: (error as Error).message });
-      this.json(response, 500, { error: 'internal error', code: 'ERR_INTERNAL' });
+      const message = (error as Error).message;
+      if (message === 'request body too large') {
+        this.json(response, 413, { error: message, code: 'ERR_BODY_TOO_LARGE' });
+        return;
+      }
+      this.options.log('error', 'rpc handler failed', { path: request.url, error: message });
+      if (!response.headersSent) this.json(response, 500, { error: 'internal error', code: 'ERR_INTERNAL' });
     } finally {
       this.options.log('debug', 'rpc request', {
         path: request.url,
@@ -213,6 +221,7 @@ export class RpcServer {
     if (path === '/tx/encode' && method === 'POST') return this.encodeTx(request, response);
     if (path === '/tx/gas' && method === 'POST') return this.gasQuote(request, response);
     if (path.startsWith('/tx/')) return this.transaction(response, decodeURIComponent(path.slice(4)));
+    if (path.startsWith('/address/')) return this.addressHistory(response, decodeURIComponent(path.slice(9)), url);
     if (path === '/mempool') return this.mempool(response);
     if (path === '/mining/schedule') return this.miningSchedule(response);
     if (path === '/mining/status') return this.miningStatus(response, url);
@@ -586,6 +595,39 @@ export class RpcServer {
       ...serializeTransaction(record),
       confirmations: Math.max(0, this.options.chain.height - record.height + 1),
       confirmed: true,
+    });
+  }
+
+  /**
+   * Public address history. Counterparties are masked (spec §32) and no balance
+   * is ever exposed here — balances are only available through /wallet/balance,
+   * which the wallet calls for the user's own account.
+   */
+  private addressHistory(response: ServerResponse, address: string, url: URL): void {
+    if (!address) {
+      this.json(response, 400, { error: 'an address is required', code: 'ERR_BAD_ADDRESS' });
+      return;
+    }
+    if (!isValidAddress(address, this.options.net.addressHrp)) {
+      this.json(response, 400, { error: 'not a valid address for this network', code: 'ERR_BAD_ADDRESS' });
+      return;
+    }
+    const limit = Math.min(Number(url.searchParams.get('limit') ?? 25) || 25, 100);
+    const history = this.options.indexer.addressHistory(address, limit);
+    // Explorer output is public: claim records must be masked exactly like
+    // `/mining/claims` does, otherwise the query echo the caller already knows
+    // would be the only masked field while `miner` leaked the full address.
+    const claims = this.options.indexer.miningClaims(limit, address).map((claim) => ({
+      ...claim,
+      miner: maskAddress(claim.miner),
+      rewardObs: formatObs(BigInt(claim.reward)),
+    }));
+    this.json(response, 200, {
+      address: maskAddress(address),
+      maskNote: 'Public explorer output: counterparties and this address are partially masked. Balances are never exposed.',
+      transactions: history,
+      miningClaims: claims,
+      counts: { transactions: history.length, miningClaims: claims.length },
     });
   }
 
@@ -1087,7 +1129,10 @@ export class RpcServer {
       return;
     }
     if (tx.chainId !== this.options.net.chainId) {
-      this.json(response, 400, { error: 'transaction belongs to a different network', code: 'ERR_WRONG_CHAIN_ID' });
+      this.json(response, 400, {
+        error: `ERR_WRONG_CHAIN_ID: this node follows ${this.options.net.name} (chain id ${this.options.net.chainId}); the transaction targets chain id ${tx.chainId}`,
+        code: 'ERR_WRONG_CHAIN_ID',
+      });
       return;
     }
     // Provisional simulation against current state: this is what the interface
