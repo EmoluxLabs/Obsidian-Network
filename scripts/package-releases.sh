@@ -161,7 +161,7 @@ echo "→ staging archives under $STAGING"
 stage "$STAGING/obsidian-core" \
   obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/tsconfig.json obsidian-core/tsconfig.test.json obsidian-core/vitest.config.ts \
-  obsidian-core/src obsidian-core/dist obsidian-core/deployment obsidian-core/scripts \
+  obsidian-core/src obsidian-core/dist obsidian-core/config obsidian-core/deployment \
   obsidian-core/README.md .env.example 2>/dev/null || true
 cp LICENSE "$STAGING/obsidian-core/" 2>/dev/null || true
 
@@ -183,7 +183,7 @@ stage "$STAGING/obsidian-cloudflare" \
 stage "$STAGING/obsidian-node-operator" \
   obsidian-core/dist obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/deployment/docker obsidian-core/deployment/systemd obsidian-core/deployment/nginx \
-  obsidian-core/deployment/node.env.example obsidian-core/scripts \
+  obsidian-core/deployment/node.env.example obsidian-core/config \
   docs/node-operator.md docs/protocol.md docs/mining.md docs/api.md docs/security-model.md
 cp scripts/verify-release.sh "$STAGING/obsidian-node-operator/verify-release.sh"
 

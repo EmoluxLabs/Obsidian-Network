@@ -1,7 +1,7 @@
 {
   "name": "@obsidian/core",
   "version": "1.0.0",
-  "description": "Obsidian Core — standalone node software for the Obsidian Network blockchain (OBS).",
+  "description": "Obsidian Core \u2014 standalone node software for the Obsidian Network blockchain (OBS).",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -14,9 +14,7 @@
   "files": [
     "dist",
     "config",
-    "scripts",
     "deployment",
-    "migrations",
     "VERSION",
     "README.md"
   ],

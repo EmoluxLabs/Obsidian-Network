@@ -37,6 +37,21 @@ OBSIDIAN_KEYSTORE_PASSPHRASE_FILE=/etc/obsidian/keystore.pass \
 
 ## 3. Configuration
 
+Ready-made configs ship in `config/` (`mainnet.json`, `testnet.json`,
+`staging.json`, `devnet.json`), and `config/README.md` documents every key. Use
+one with `--config`, or set the same values as `OBSIDIAN_*` environment
+variables, or as flags — later layers win, key by key:
+
+```bash
+node dist/index.js start --config config/mainnet.json
+OBSIDIAN_SEEDS=seed1.example:8631 node dist/index.js start --config config/mainnet.json
+```
+
+The shipped configs leave `seedNodes` empty on purpose: inventing seed hostnames
+would look authoritative while reaching nothing. Point the node at peers you
+know, or at the network's published seed list.
+
+
 Copy `deployment/node.env.example` to `/etc/obsidian/node.env` and edit:
 
 ```ini

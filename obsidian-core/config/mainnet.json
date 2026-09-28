@@ -1,0 +1,31 @@
+{
+  "network": "mainnet",
+  "nodeName": "obsidian-node",
+  "dataDir": "./data/mainnet",
+  "logLevel": "info",
+  "logJson": true,
+
+  "rpcEnabled": true,
+  "rpcHost": "127.0.0.1",
+  "rpcPort": 8630,
+  "rpcCorsOrigins": [],
+  "rpcRateLimitPerMinute": 240,
+  "rpcAllowSubmit": true,
+  "rpcPublicUrl": "",
+  "rpcTrustProxy": false,
+
+  "p2pEnabled": true,
+  "p2pHost": "0.0.0.0",
+  "p2pPort": 8631,
+  "publicHost": "",
+  "seedNodes": [],
+  "maxPeers": 16,
+  "maxInboundPeers": 64,
+
+  "miningEnabled": true,
+  "blockProductionIntervalSeconds": 5,
+  "miningRewardAddress": "",
+
+  "indexerEnabled": true,
+  "strictDataDir": true
+}
