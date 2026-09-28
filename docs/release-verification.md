@@ -71,7 +71,34 @@ genesis claim, moves OBS, replays a transaction, publishes an oracle price and
 registers a `.obs` name — then asserts that all three nodes independently agree.
 It needs ports 39630-39635 free and takes about 40 seconds.
 
-## 6. Verify the chain you are about to trust
+## 6. Run the packages, not just the tests
+
+A build that compiles is not a deployment. The 1.0.0 archives were verified this
+way, from an empty directory, and you can repeat it in a couple of minutes:
+
+```bash
+mkdir -p /tmp/obsidian-verify && cd /tmp/obsidian-verify
+tar -xzf /path/to/obsidian-node-operator-1.0.0.tar.gz
+cd obsidian-core && npm ci --omit=dev
+OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-long-one' \
+  node dist/index.js start --config config/devnet.json --data-dir ./data/devnet &
+curl -s http://127.0.0.1:38630/health | jq '.status, .supplyOk, .genesisId'
+curl -s http://127.0.0.1:38630/audit/compliance | jq -c 'to_entries[] | {(.key): .value.present}'
+```
+
+```bash
+cd /tmp/obsidian-verify && tar -xzf /path/to/obsidian-interface-selfhost-1.0.0.tar.gz
+cd obsidian-interface
+node dist/server/main.js --nodes http://127.0.0.1:38630 --port 8788 &
+curl -s http://127.0.0.1:8788/api/health | jq        # {"status":"ok","healthyNodes":1,...}
+curl -s http://127.0.0.1:8788/mine/ | head -5        # the mine page, served from the package
+curl -sI http://127.0.0.1:8788/js/explorer.js | head -3   # strict CSP on the bundle route
+```
+
+If the interface starts, you have a working reader; if the node answers `/health`
+with `supplyOk: true`, you have a validator whose supply invariant holds.
+
+## 7. Verify the chain you are about to trust
 
 A binary that builds is not the same as a chain that behaves. After starting a
 node, check the properties this project promises:
@@ -88,7 +115,7 @@ with the values in `MANIFEST.json` for the release you downloaded. A node whose
 genesis id differs is on a different chain, and no amount of UI polish changes
 that.
 
-## 7. Verify node metadata signatures
+## 8. Verify node metadata signatures
 
 Peers exchange signed descriptors (`OBSIDIAN:NODE_METADATA:v1`). A node will
 refuse a descriptor whose signature does not verify against the identity key it
@@ -99,7 +126,7 @@ else. `GET /peers` shows the peers you are connected to; from a node binary:
 node dist/index.js node --offline --log-level debug   # see handshake verification lines
 ```
 
-## 8. What verification cannot tell you
+## 9. What verification cannot tell you
 
 * That the code is free of bugs. Read it, or pay someone to; the repository is
   small enough for a careful review of `src/blockchain`, `src/consensus` and

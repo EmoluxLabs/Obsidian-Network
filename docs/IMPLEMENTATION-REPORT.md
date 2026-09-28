@@ -290,9 +290,25 @@ agreeing on height, balances, name records and supply; the interface separately
 reads live data from all three (health, heights, latency) through its allowlisted
 proxy.
 
+**Verified by running the released archives** (`releases/`, built by
+`scripts/package-releases.sh` from the commit in `MANIFEST.json`, digests checked
+with `sha256sum -c SHA256SUMS` and `scripts/verify-release.sh`):
+
+| Artefact | What was actually done with it |
+| --- | --- |
+| `obsidian-node-operator-1.0.0.tar.gz` | extracted to an empty directory, `npm ci --omit=dev`, started on devnet: `/health` reported `status ok`, `supplyOk true` and the expected `genesisId`/`paramsHash`, `/audit/compliance` reported every removed mechanism `present: false`, and the node produced blocks |
+| `obsidian-interface-selfhost-1.0.0.tar.gz` | extracted and started against that node: the landing page, `/mine/` (its own title and shell), `/api/health` (`healthyNodes: 1`), `/api/rpc?path=/status`, `/api/nodes` and `/js/explorer.js` all served correctly, with the strict CSP and `X-Frame-Options: DENY` present; `/api/rpc?path=/../etc/passwd` was refused with `ERR_REJECTED` and an unknown path returned an honest 404 |
+| `SHA256SUMS` | `sha256sum -c` printed OK for all eleven archives |
+| `obsidian-network-source-1.0.0.tar.gz` | the repository at the release commit, produced by `git archive` |
+
+The self-host interface package has no runtime dependencies (Node.js built-ins
+only), which is why it runs straight from the extracted archive.
+
 **Not verified, and stated as such:**
 
-1. **Docker images** — no Docker in the development environment (point 12).
+1. **Docker images** — no Docker in the development environment (point 12). The
+   tarball and zip packages are verified (above); only the container recipes are
+   not.
 2. **Google OAuth against the live endpoint** — token verification is tested
    against injected RSA keys and a JWKS document; the network path to Google was
    not exercised here.

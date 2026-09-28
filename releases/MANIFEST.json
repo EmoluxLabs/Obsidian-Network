@@ -1,0 +1,82 @@
+{
+  "product": "Obsidian Network",
+  "version": "1.0.0",
+  "commit": "098160efd2dfc186f496cc6cf3c343b9ae0b7c04",
+  "builtAt": "2026-09-28T12:47:49Z",
+  "protocolVersion": "1.0.0",
+  "networks": {
+    "mainnet": {
+      "chainId": 7777,
+      "addressPrefix": "obs",
+      "rpcPort": 8630,
+      "p2pPort": 8631
+    },
+    "testnet": {
+      "chainId": 7778,
+      "addressPrefix": "tobs",
+      "rpcPort": 18630,
+      "p2pPort": 18631
+    },
+    "staging": {
+      "chainId": 7779,
+      "addressPrefix": "sobs",
+      "rpcPort": 28630,
+      "p2pPort": 28631
+    },
+    "devnet": {
+      "chainId": 7780,
+      "addressPrefix": "dobs",
+      "rpcPort": 38630,
+      "p2pPort": 38631
+    }
+  },
+  "maximumSupplyObs": "21000000",
+  "genesisAllocationObs": "100000",
+  "assets": [
+    {
+      "name": "obsidian-cloudflare-1.0.0.tar.gz",
+      "bytes": 7812
+    },
+    {
+      "name": "obsidian-cloudflare-1.0.0.zip",
+      "bytes": 10407
+    },
+    {
+      "name": "obsidian-core-1.0.0.tar.gz",
+      "bytes": 429503
+    },
+    {
+      "name": "obsidian-core-1.0.0.zip",
+      "bytes": 561972
+    },
+    {
+      "name": "obsidian-interface-1.0.0.tar.gz",
+      "bytes": 1480910
+    },
+    {
+      "name": "obsidian-interface-1.0.0.zip",
+      "bytes": 1595555
+    },
+    {
+      "name": "obsidian-interface-selfhost-1.0.0.tar.gz",
+      "bytes": 1425924
+    },
+    {
+      "name": "obsidian-interface-selfhost-1.0.0.zip",
+      "bytes": 1517558
+    },
+    {
+      "name": "obsidian-network-source-1.0.0.tar.gz",
+      "bytes": 474055
+    },
+    {
+      "name": "obsidian-node-operator-1.0.0.tar.gz",
+      "bytes": 284768
+    },
+    {
+      "name": "obsidian-node-operator-1.0.0.zip",
+      "bytes": 383648
+    }
+  ],
+  "verification": "sha256sum -c SHA256SUMS, then compare the digests with the published release notes"
+}

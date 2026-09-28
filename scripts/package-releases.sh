@@ -180,19 +180,20 @@ stage "$STAGING/obsidian-interface" \
   obsidian-interface/server obsidian-interface/dist obsidian-interface/scripts \
   obsidian-interface/web obsidian-interface/public obsidian-interface/tests \
   obsidian-interface/deployment obsidian-interface/README.md \
-  landing mine wallet explorer social capsule ons circle developer app audit
+  landing mine wallet explorer social capsule ons circle developer app audit \
+  docs LICENSE
 
 # ── 3. obsidian-cloudflare: gateway only ─────────────────────────────────────
 stage "$STAGING/obsidian-cloudflare" \
   cloudflare/src cloudflare/test cloudflare/terraform cloudflare/wrangler.toml \
-  cloudflare/README.md cloudflare/cloudflare-config.md
+  cloudflare/README.md cloudflare/cloudflare-config.md docs LICENSE
 
 # ── 4. node operator package: what an operator actually installs ─────────────
 stage "$STAGING/obsidian-node-operator" \
   obsidian-core/dist obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/deployment/docker obsidian-core/deployment/systemd obsidian-core/deployment/nginx \
   obsidian-core/deployment/node.env.example obsidian-core/config \
-  docs/node-operator.md docs/protocol.md docs/mining.md docs/api.md docs/security-model.md
+  docs LICENSE
 cp scripts/verify-release.sh "$STAGING/obsidian-node-operator/verify-release.sh"
 
 # ── 5. self-hosted interface package ─────────────────────────────────────────
@@ -201,7 +202,7 @@ stage "$STAGING/obsidian-interface-selfhost" \
   obsidian-interface/package.json obsidian-interface/package-lock.json \
   obsidian-interface/deployment obsidian-interface/tests \
   landing mine wallet explorer social capsule ons circle developer app audit \
-  docs/self-hosting.md docs/release-verification.md
+  docs LICENSE
 
 # ── 6. the whole source tree, straight from git ──────────────────────────────
 echo "→ source archive"
