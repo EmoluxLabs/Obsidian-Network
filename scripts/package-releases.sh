@@ -66,23 +66,47 @@ INTERFACE_TESTS=0
 EDGE_TESTS=0
 CLUSTER_TESTS=0
 
+LOGS="$(mktemp -d)"
+trap 'rm -rf "$LOGS"' EXIT
+
+# Run one gate, keep its full output for diagnosis, and never let a failure
+# disappear into a command substitution: a release gate that fails silently is
+# worse than no gate at all.
+gate() {
+  local label="$1" log="$2"; shift 2
+  echo "→ $label"
+  if ! "$@" >"$log" 2>&1; then
+    echo "" >&2
+    echo "── $label FAILED (full output: $log) ──" >&2
+    tail -60 "$log" >&2
+    echo "─────────────────────────────────────" >&2
+    exit 1
+  fi
+}
+
+# Pull a count out of a suite's output, forgiving ANSI colour.
+count_vitest() { sed -e 's/\x1b\[[0-9;]*m//g' "$1" | sed -n 's/^ *Tests *\([0-9][0-9]*\) passed.*/\1/p' | tail -1; }
+count_node_test() { sed -n 's/^# pass \([0-9][0-9]*\)$/\1/p' "$1" | tail -1; }
+
 if [ "$SKIP_BUILD" = 0 ]; then
   echo "→ building core"
   npm --prefix obsidian-core ci --silent
   npm --prefix obsidian-core run build --silent
-  echo "→ testing core (the suite must pass before anything ships)"
-  CORE_TESTS="$(npm --prefix obsidian-core test --silent 2>&1 | sed -e 's/\x1b\[[0-9;]*m//g' | sed -n 's/^ *Tests *\([0-9][0-9]*\) passed.*/\1/p' | tail -1)"
+  gate "core tests (the suite must pass before anything ships)" "$LOGS/core.log" npm --prefix obsidian-core test --silent
+  CORE_TESTS="$(count_vitest "$LOGS/core.log")"
+
   echo "→ building interface (core → browser modules → bundles → sites → typecheck)"
   npm --prefix obsidian-interface ci --silent
   npm --prefix obsidian-interface run build --silent
-  echo "→ testing interface"
-  INTERFACE_TESTS="$(npm --prefix obsidian-interface test --silent 2>&1 | sed -e 's/\x1b\[[0-9;]*m//g' | sed -n 's/^ *Tests *\([0-9][0-9]*\) passed.*/\1/p' | tail -1)"
-  echo "→ testing edge worker"
-  EDGE_TESTS="$(node --test cloudflare/test/worker.test.mjs 2>&1 | sed -n 's/^# pass \([0-9][0-9]*\)$/\1/p' | tail -1)"
+  gate "interface tests" "$LOGS/interface.log" npm --prefix obsidian-interface test --silent
+  INTERFACE_TESTS="$(count_vitest "$LOGS/interface.log")"
+
+  gate "edge worker tests" "$LOGS/edge.log" node --test cloudflare/test/worker.test.mjs
+  EDGE_TESTS="$(count_node_test "$LOGS/edge.log")"
 
   if [ "$SKIP_E2E" = 0 ]; then
-    echo "→ running the three-node cluster end-to-end test"
-    CLUSTER_TESTS="$(node --test tests/e2e/cluster.test.mjs 2>&1 | sed -n 's/^# pass \([0-9][0-9]*\)$/\1/p' | tail -1)"
+    gate "three-node cluster end-to-end test (this starts real nodes on ports 39630-39635)" "$LOGS/cluster.log" node --test tests/e2e/cluster.test.mjs
+    CLUSTER_TESTS="$(count_node_test "$LOGS/cluster.log")"
   else
     echo "→ cluster end-to-end test skipped (--skip-e2e)"
   fi
