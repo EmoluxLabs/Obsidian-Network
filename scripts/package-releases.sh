@@ -66,8 +66,16 @@ INTERFACE_TESTS=0
 EDGE_TESTS=0
 CLUSTER_TESTS=0
 
-LOGS="$(mktemp -d)"
-trap 'rm -rf "$LOGS"' EXIT
+# RELEASE_LOG_DIR keeps every gate's output: a failed release packaging run is
+# exactly when you want the node logs, not a cleaned-up temp directory.
+if [ -n "${RELEASE_LOG_DIR:-}" ]; then
+  LOGS="$RELEASE_LOG_DIR"
+  mkdir -p "$LOGS"
+else
+  LOGS="$(mktemp -d)"
+  trap 'rm -rf "$LOGS"' EXIT
+fi
+echo "gate logs: $LOGS"
 
 # Run one gate, keep its full output for diagnosis, and never let a failure
 # disappear into a command substitution: a release gate that fails silently is
