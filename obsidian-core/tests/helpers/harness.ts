@@ -15,7 +15,16 @@ import type { WorldState } from '../../src/blockchain/state.js';
 import { buildBlock, blockHash, encodeBlock, decodeBlock } from '../../src/blockchain/block.js';
 import { signTransaction, encodeSignedTx } from '../../src/transactions/encode.js';
 import { generateRecoveryPhrase, deriveWallet } from '../../src/crypto/mnemonic.js';
-import { addressFromPublicKey } from '../../src/crypto/keys.js';
+import { addressFromPublicKey, generateKeyPair, nodeIdFromPublicKey, signDigest } from '../../src/crypto/keys.js';
+import { sha256, toHex, utf8 } from '../../src/crypto/hash.js';
+import { DOMAIN } from '../../src/protocol/domains.js';
+import { NodeRegistryOp } from '../../src/protocol/types.js';
+import {
+  attestationMessage,
+  encodeNodeRegistryBody,
+  heartbeatMessage,
+} from '../../src/transactions/executors/node-registry.js';
+import { nodeRegistrationMessage, rewardPeriodAt } from '../../src/economy/node-rewards.js';
 import { TxType, type TxEnvelope, type Block } from '../../src/protocol/types.js';
 import { ProtocolError } from '../../src/protocol/errors.js';
 import { getNetwork, type NetworkDefinition } from '../../src/protocol/networks.js';
@@ -73,7 +82,7 @@ export interface BlockOptions {
 export interface ForkParent {
   hash: string;
   height: number;
-  cumulativeWork: bigint;
+  cumulativePotWeight: bigint;
   state: WorldState;
 }
 
@@ -174,7 +183,7 @@ export async function createHarness(options: { network?: string; producer?: Test
                 paramsHash: PARAMS_HASH,
                 timestamp,
                 producer: blockProducer.address,
-                cumulativeWork: 0n,
+                cumulativePotWeight: 0n,
                 txCount: txs.length,
                 eventsRoot: '',
                 producerSignature: { publicKey: '', signature: '' },
@@ -194,7 +203,7 @@ export async function createHarness(options: { network?: string; producer?: Test
       producer: blockProducer.address,
       producerPrivateKey: blockProducer.privateKey,
       producerPublicKey: blockProducer.publicKey,
-      parentCumulativeWork: BigInt(head.cumulativeWork),
+      parentCumulativePotWeight: BigInt(head.cumulativePotWeight),
       transactions: txs,
     });
     return block;
@@ -217,7 +226,7 @@ export async function createHarness(options: { network?: string; producer?: Test
           paramsHash: PARAMS_HASH,
           timestamp,
           producer: blockProducer.address,
-          cumulativeWork: 0n,
+          cumulativePotWeight: 0n,
           txCount: txs.length,
           eventsRoot: '',
           producerSignature: { publicKey: '', signature: '' },
@@ -237,7 +246,7 @@ export async function createHarness(options: { network?: string; producer?: Test
       producer: blockProducer.address,
       producerPrivateKey: blockProducer.privateKey,
       producerPublicKey: blockProducer.publicKey,
-      parentCumulativeWork: parent.cumulativeWork,
+      parentCumulativePotWeight: parent.cumulativePotWeight,
       transactions: txs,
     });
     return { block, state: trial.state };
@@ -320,7 +329,7 @@ export function forkParent(harness: Harness, height: number): ForkParent {
   return {
     hash,
     height,
-    cumulativeWork: BigInt(entry.cumulativeWork),
+    cumulativePotWeight: BigInt(entry.cumulativePotWeight),
     state: harness.chain.stateAtHeight(height, hash),
   };
 }
@@ -446,6 +455,137 @@ export function validatorBody(op: number, bond: bigint, validatorKey: string, co
 
 export function treasuryBody(op: number, amount: bigint, purpose: string, to?: string): Uint8Array {
   return encodeTreasuryBody({ op: op as never, amount, purpose, to });
+}
+
+/**
+ * Node runner test identity: a real secp256k1 keypair, used exactly as an
+ * operator would use one — the node key signs the statement, the reward wallet
+ * signs (and pays for) the transaction.
+ */
+export interface TestNode {
+  nodeId: string;
+  publicKey: string;
+  privateKey: string;
+  wallet: TestWallet;
+}
+
+export function makeNode(wallet: TestWallet): TestNode {
+  const keys = generateKeyPair();
+  return {
+    nodeId: nodeIdFromPublicKey(keys.publicKey),
+    publicKey: keys.publicKey,
+    privateKey: keys.privateKey,
+    wallet,
+  };
+}
+
+/** Sign a node statement exactly the way the executor verifies it. */
+export function nodeProof(domain: string, message: string, privateKey: string): string {
+  return toHex(signDigest(sha256(utf8(`${domain}\n${message}`)), privateKey));
+}
+
+export function nodeRegistryBody(params: {
+  op: number;
+  node: TestNode;
+  rewardWallet?: string;
+  proof: string;
+  endpoint?: string;
+  slot?: number;
+  subject?: string;
+  reportedHeight?: number;
+  reason?: string;
+  issuedAt?: number;
+  expiresAt?: number;
+}): Uint8Array {
+  return encodeNodeRegistryBody({
+    op: params.op as never,
+    nodeId: params.node.nodeId,
+    rewardWallet: params.rewardWallet ?? params.node.wallet.address,
+    nodePublicKey: params.node.publicKey,
+    proof: params.proof,
+    endpoint: params.endpoint,
+    slot: params.slot,
+    subject: params.subject,
+    reportedHeight: params.reportedHeight,
+    reason: params.reason,
+    issuedAt: params.issuedAt,
+    expiresAt: params.expiresAt,
+  });
+}
+
+/** Register a node runner the way an operator would, and assert it landed. */
+export function registerNode(harness: Harness, node: TestNode, options: { endpoint?: string } = {}): void {
+  const issuedAt = harness.chain.protocolTime;
+  const expiresAt = issuedAt + 600;
+  const endpoint = options.endpoint ?? '203.0.113.10:8631';
+  const message = nodeRegistrationMessage({
+    networkId: harness.net.networkId,
+    chainId: harness.net.chainId,
+    nodeId: node.nodeId,
+    rewardWallet: node.wallet.address,
+    endpoint,
+    issuedAt,
+    expiresAt,
+  });
+  const proof = nodeProof(DOMAIN.NODE_REGISTRATION, message, node.privateKey);
+  harness.produce([
+    harness.sign(
+      node.wallet,
+      TxType.NODE_REGISTRY,
+      nodeRegistryBody({ op: NodeRegistryOp.REGISTER, node, proof, endpoint, issuedAt, expiresAt }),
+      { gas: 0n },
+    ),
+  ]);
+}
+
+/** Send a heartbeat for the current reward period. */
+export function nodeHeartbeat(harness: Harness, node: TestNode, options: { reportedHeight?: number } = {}): TxEnvelope {
+  const period = rewardPeriodAt(harness.chain.protocolTime);
+  const reportedHeight = options.reportedHeight ?? harness.chain.store.head?.height ?? 0;
+  const record = harness.chain.world.node(node.nodeId);
+  const message = heartbeatMessage({
+    networkId: harness.net.networkId,
+    chainId: harness.net.chainId,
+    nodeId: node.nodeId,
+    period,
+    reportedHeight,
+    endpoint: record?.endpoint ?? '',
+  });
+  const proof = nodeProof(DOMAIN.NODE_HEARTBEAT, message, node.privateKey);
+  return harness.sign(
+    node.wallet,
+    TxType.NODE_REGISTRY,
+    nodeRegistryBody({ op: NodeRegistryOp.HEARTBEAT, node, proof, slot: period, reportedHeight }),
+    { gas: 0n },
+  );
+}
+
+/** One node attests another node's liveness for the current period. */
+export function nodeAttest(harness: Harness, observer: TestNode, subject: TestNode): TxEnvelope {
+  const period = rewardPeriodAt(harness.chain.protocolTime);
+  const reportedHeight = harness.chain.store.head?.height ?? 0;
+  const message = attestationMessage({
+    networkId: harness.net.networkId,
+    chainId: harness.net.chainId,
+    observer: observer.nodeId,
+    subject: subject.nodeId,
+    period,
+    reportedHeight,
+  });
+  const proof = nodeProof(DOMAIN.NODE_ATTESTATION, message, observer.privateKey);
+  return harness.sign(
+    observer.wallet,
+    TxType.NODE_REGISTRY,
+    nodeRegistryBody({
+      op: NodeRegistryOp.ATTEST,
+      node: observer,
+      proof,
+      slot: period,
+      subject: subject.nodeId,
+      reportedHeight,
+    }),
+    { gas: 0n },
+  );
 }
 
 // ── Assertion helpers ────────────────────────────────────────────────────────

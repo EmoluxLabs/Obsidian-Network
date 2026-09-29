@@ -12,6 +12,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { ErrCode } from '../../src/protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
+import { RevenueSource, splitPlatformRevenue } from '../../src/economy/accounting.js';
 import { formatObs, parseObs } from '../../src/protocol/amount.js';
 import { CapsuleOp, LandOp, OnsOp, SocialOp, TreasuryOp, TxType, ValidatorOp } from '../../src/protocol/types.js';
 import { expectedGas, usdMicroToSeals } from '../../src/transactions/helpers.js';
@@ -151,10 +152,15 @@ describe('ONS (spec §57, §62)', () => {
     expect(record!.owner).toBe(bob.address);
     expect(record!.address).toBe(bob.address);
     expect(record!.expiresAt).toBe(block.header.timestamp + CONSENSUS_PARAMS.ons.termSeconds);
-    // Fee (plus gas) left the registrant; the fee reached the treasury wallet.
+    // Fee (plus gas) left the registrant, and the fee was split by the protocol:
+    // 40% to the Node Runner Reward Pool, 60% to the treasury wallet.
     const spent = before - h.chain.world.getAccount(bob.address)!.balance;
     expect(spent).toBe(fee + expectedGas(fee));
-    expect(h.chain.world.s.metrics.totalTreasuryRevenue).toBe(fee);
+    const split = splitPlatformRevenue(fee, RevenueSource.ONS_REGISTRATION);
+    expect(split.nodeRunnerPool + split.treasury).toBe(fee);
+    expect(h.chain.world.s.nodeRewards.balance).toBe(split.nodeRunnerPool);
+    expect(h.chain.world.s.metrics.totalTreasuryFromSplit).toBe(split.treasury);
+    expect(h.chain.world.s.metrics.totalPlatformRevenue).toBe(fee);
     expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
   });
 
@@ -388,7 +394,8 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     // US-CA already sits at the protocol's $30,000 GLV ceiling.
     expect(division!.glvUsdMicro).toBe(CONSENSUS_PARAMS.circle.maxGlvUsd);
     const price = obsForUsdMicro(h, division!.glvUsdMicro);
-    const treasuryBefore = h.chain.world.s.metrics.totalTreasuryRevenue;
+    const treasuryBefore = h.chain.world.s.metrics.totalTreasuryFromSplit;
+    const nodePoolBefore = h.chain.world.s.nodeRewards.balance;
 
     h.produce(
       [
@@ -412,9 +419,14 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     expect(parcel!.glvUsdMicro).toBe(division!.glvUsdMicro);
     // The parcel has observed no later GLV update yet.
     expect(parcel!.glvEntryCount).toBe(0);
-    expect(h.chain.world.s.metrics.totalTreasuryRevenue - treasuryBefore).toBe(price);
+    // Protocol land issuance is qualifying platform revenue: 40% to the node
+    // runner pool, 60% to the treasury, summing back to the price exactly.
+    const landSplit = splitPlatformRevenue(price, RevenueSource.LAND_PROTOCOL_SALE);
+    expect(h.chain.world.s.metrics.totalTreasuryFromSplit - treasuryBefore).toBe(landSplit.treasury);
+    expect(h.chain.world.s.nodeRewards.balance - nodePoolBefore).toBe(landSplit.nodeRunnerPool);
+    expect(landSplit.treasury + landSplit.nodeRunnerPool).toBe(price);
 
-    // Issuance reaches the protocol treasury, and GLV can never exceed the cap.
+    // Issuance reaches the protocol accounts, and GLV can never exceed the cap.
     const registry = h.chain.world.s.divisions.get('US-CA')!;
     expect(registry.glvUsdMicro).toBe(CONSENSUS_PARAMS.circle.maxGlvUsd);
     expect(registry.protocolPurchases).toBe(1);
@@ -604,12 +616,13 @@ describe('OBS Social (spec §36, §38)', () => {
     expect(h.chain.world.s.pool.balance).toBe(poolBefore + expectedGas(tip));
   });
 
-  it('charges $50 in OBS for a business page and sends it to the treasury', async () => {
+  it('charges $50 in OBS for a business page and splits it 40/60 between node runners and the treasury', async () => {
     const { h, alice } = await fundedHarness();
     const bob = makeWallet();
     seedOracle(h, alice, bob);
     const priceSeals = obsForUsdMicro(h, CONSENSUS_PARAMS.social.businessPagePriceUsd);
-    const revenueBefore = h.chain.world.s.metrics.totalTreasuryRevenue;
+    const treasuryBefore = h.chain.world.s.metrics.totalTreasuryFromSplit;
+    const nodePoolBefore = h.chain.world.s.nodeRewards.balance;
     h.produce([
       h.sign(alice, TxType.SOCIAL, socialBody(SocialOp.SET_PROFILE, { accountId: 'alice-obsidian', handle: 'alice' }), { gas: 0n }),
     ]);
@@ -619,7 +632,10 @@ describe('OBS Social (spec §36, §38)', () => {
       }),
     ]);
     expect(h.chain.world.s.social.get('alice-obsidian')!.businessPage).toBe(true);
-    expect(h.chain.world.s.metrics.totalTreasuryRevenue - revenueBefore).toBe(priceSeals);
+    const pageSplit = splitPlatformRevenue(priceSeals, RevenueSource.BUSINESS_PAGE);
+    expect(h.chain.world.s.metrics.totalTreasuryFromSplit - treasuryBefore).toBe(pageSplit.treasury);
+    expect(h.chain.world.s.nodeRewards.balance - nodePoolBefore).toBe(pageSplit.nodeRunnerPool);
+    expect(pageSplit.nodeRunnerPool + pageSplit.treasury).toBe(priceSeals);
   });
 });
 

@@ -22,6 +22,7 @@ import {
 } from '../../protocol/types.js';
 import { assertAddress, assertAmount, assertGas, requirePrice, usdMicroToSeals } from '../helpers.js';
 import { treasuryWallet } from '../../genesis/rules.js';
+import { RevenueSource } from '../../economy/accounting.js';
 import type { ExecutorContext } from '../types.js';
 
 const NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -103,15 +104,11 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
         state.poolInflow(gas, 'ONS gas to mining pool');
         state.s.metrics.totalGasBurnedToPool += gas;
       }
-      if (treasury) {
-        state.credit(treasury, body.fee, apply, 'ONS registration fee to protocol treasury');
-        state.s.metrics.totalTreasuryRevenue += body.fee;
-      } else {
-        // No genesis recipient yet: protocol revenue is held by the pool until
-        // the treasury designation exists on-chain. It is never destroyed and
-        // never silently reassigned.
-        state.poolInflow(body.fee, 'ONS fee held pending treasury designation');
-      }
+      // Qualifying platform revenue: 40% to the Node Runner Reward Pool, 60% to
+      // the treasury. Before a treasury wallet is designated the treasury share
+      // is recorded as unclaimed and held by the pool — never destroyed and
+      // never silently reassigned.
+      state.creditPlatformRevenue(RevenueSource.ONS_REGISTRATION, body.fee, apply, `ONS registration ${name}`);
       const record: OnsRecord = {
         name,
         owner: tx.sender,
@@ -178,12 +175,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
         state.poolInflow(gas, 'ONS gas to mining pool');
         state.s.metrics.totalGasBurnedToPool += gas;
       }
-      if (treasury) {
-        state.credit(treasury, body.fee, apply, 'ONS renewal fee to protocol treasury');
-        state.s.metrics.totalTreasuryRevenue += body.fee;
-      } else {
-        state.poolInflow(body.fee, 'ONS fee held pending treasury designation');
-      }
+      state.creditPlatformRevenue(RevenueSource.ONS_RENEWAL, body.fee, apply, `ONS renewal ${name}`);
       const base = record.expiresAt > protocolTime ? record.expiresAt : protocolTime;
       record.expiresAt = base + CONSENSUS_PARAMS.ons.termSeconds;
       state.emit('ONS_RENEWED', { name, owner: tx.sender, expiresAt: record.expiresAt }, apply);

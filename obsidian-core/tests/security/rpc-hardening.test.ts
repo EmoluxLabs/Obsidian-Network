@@ -219,7 +219,7 @@ describe('explorer privacy (spec §32)', () => {
           paramsHash: '0'.repeat(64),
           timestamp: 1_767_225_600,
           producer: address,
-          cumulativeWork: 1n,
+          cumulativePotWeight: 1n,
           txCount: 0,
           eventsRoot: '0'.repeat(64),
           producerSignature: { publicKey: pair.publicKey, signature: '00' },

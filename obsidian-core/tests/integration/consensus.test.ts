@@ -570,7 +570,7 @@ describe('fork choice and reorganisation', () => {
       parent = {
         hash: blockHash(built.block.header),
         height: built.block.header.height,
-        cumulativeWork: built.block.header.cumulativeWork,
+        cumulativePotWeight: built.block.header.cumulativePotWeight,
         state: built.state,
       };
       forkHead = blockHash(built.block.header);

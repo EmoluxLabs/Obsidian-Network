@@ -40,7 +40,7 @@ import {
   assertBlockSize,
   blockHash,
   buildBlock,
-  blockWork,
+  potWeight,
   decodeBlock,
   encodeBlock,
   summarizeBlock,
@@ -421,8 +421,8 @@ export class ChainManager extends EventEmitter {
     if (header.height !== parentEntry.height + 1) {
       reject(ErrCode.BAD_HEIGHT, `block height ${header.height} does not follow parent ${parentEntry.height}`);
     }
-    const expectedWork = BigInt(parentEntry.cumulativeWork) + blockWork(block.transactions.length);
-    if (header.cumulativeWork !== expectedWork) {
+    const expectedWork = BigInt(parentEntry.cumulativePotWeight) + potWeight(block.transactions.length);
+    if (header.cumulativePotWeight !== expectedWork) {
       reject(ErrCode.BAD_DIFFICULTY, 'cumulative work does not match the parent plus this block');
     }
     assertBlockSignature(block, this.options.net.addressHrp);
@@ -452,9 +452,9 @@ export class ChainManager extends EventEmitter {
       tipEntry && tipEntry.hash === entry.hash
         ? null
         : tipEntry
-          ? { height: tipEntry.height, cumulativeWork: BigInt(tipEntry.cumulativeWork), hash: tipEntry.hash }
+          ? { height: tipEntry.height, cumulativePotWeight: BigInt(tipEntry.cumulativePotWeight), hash: tipEntry.hash }
           : null;
-    const candidate = { height: entry.height, cumulativeWork: BigInt(entry.cumulativeWork), hash: entry.hash };
+    const candidate = { height: entry.height, cumulativePotWeight: BigInt(entry.cumulativePotWeight), hash: entry.hash };
 
     if (!currentTip) {
       // Already the tip (idempotent put) — nothing to reconnect.
@@ -641,7 +641,7 @@ export class ChainManager extends EventEmitter {
       producer: producer.address,
       producerPrivateKey: producer.privateKey,
       producerPublicKey: producer.publicKey,
-      parentCumulativeWork: BigInt(head.cumulativeWork),
+      parentCumulativePotWeight: BigInt(head.cumulativePotWeight),
       transactions: accepted,
     });
   }

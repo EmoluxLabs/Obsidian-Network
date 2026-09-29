@@ -6,6 +6,7 @@
  * ceiling, and the genesis rule.
  */
 
+import { PROTOCOL_VERSION } from '../../src/version.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -162,7 +163,7 @@ describe('transaction forgery and replay', () => {
       privateKeyHex: wallet.privateKey,
       publicKeyHex: wallet.publicKey,
       chainId: h.chain.net.chainId,
-      protocolVersion: '1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
       nonce: 0,
       type: TxType.PAYMENT,
       gas: expectedGas(parseObs('1')),
@@ -178,7 +179,7 @@ describe('transaction forgery and replay', () => {
       privateKeyHex: wallet.privateKey,
       publicKeyHex: wallet.publicKey,
       chainId: h.chain.net.chainId,
-      protocolVersion: '1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
       nonce: 0,
       type: TxType.PAYMENT,
       gas: expectedGas(parseObs('1')),
@@ -201,7 +202,7 @@ describe('transaction forgery and replay', () => {
       privateKeyHex: wallet.privateKey,
       publicKeyHex: wallet.publicKey,
       chainId: 7777,
-      protocolVersion: '1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
       nonce: 0,
       type: TxType.PAYMENT,
       gas: expectedGas(parseObs('1')),

@@ -21,6 +21,9 @@ import type {
   GenesisState,
   Metrics,
   MiningPoolState,
+  NodeEvidenceRecord,
+  NodeRecord,
+  NodeRewardPoolState,
   OnsRecord,
   OracleState,
   ParcelRecord,
@@ -91,6 +94,42 @@ export const PARAMS_HASH: string = sha256Hex(
     w.u64(p.oracle.maxPriceUsdMicro);
     w.u32(p.registry.maxInvitesPerAccount);
     w.u128(p.registry.newAccountBalance);
+    // Proof of Time: the timing rule is consensus, so it is fingerprinted.
+    w.string(p.proofOfTime.consensus);
+    w.string(p.proofOfTime.weightRule);
+    w.u32(p.proofOfTime.difficultyWindowBlocks);
+    w.u32(p.proofOfTime.difficultyTargetSeconds);
+    w.u32(p.proofOfTime.minDifficultyBps);
+    w.u32(p.proofOfTime.maxDifficultyBps);
+    w.u32(p.proofOfTime.minBlockSpacingMs);
+    w.u64(BigInt(p.proofOfTime.timeRateWindowSeconds));
+    // Node runner rewards: the 40/60 split and every scoring input are
+    // consensus. A node built with a different split has a different params
+    // hash and is refused at the handshake instead of silently forking.
+    w.u32(p.nodeRewards.nodePoolShareBps);
+    w.u32(p.nodeRewards.treasuryShareBps);
+    w.u64(BigInt(p.nodeRewards.periodSeconds));
+    w.u32(p.nodeRewards.minUptimeBps);
+    w.u32(p.nodeRewards.minScoreBps);
+    w.u32(p.nodeRewards.minAttesters);
+    w.u32(p.nodeRewards.bootstrapUptimeBps);
+    w.u32(p.nodeRewards.maxAttestationsPerAttester);
+    w.u32(p.nodeRewards.heartbeatsPerPeriod);
+    w.u32(p.nodeRewards.maxFaultReportsPerReporterPerPeriod);
+    w.u32(p.nodeRewards.faultPenaltyBps);
+    w.u32(p.nodeRewards.responsiveHeightLag);
+    w.u32(p.nodeRewards.scoreWeights.uptimeBps);
+    w.u32(p.nodeRewards.scoreWeights.participationBps);
+    w.u32(p.nodeRewards.scoreWeights.reliabilityBps);
+    w.u32(p.nodeRewards.scoreWeights.responsivenessBps);
+    w.u32(p.nodeRewards.participationWeights.blocksBps);
+    w.u32(p.nodeRewards.participationWeights.coverageBps);
+    w.u32(p.nodeRewards.maxNodeShareBps);
+    w.u32(p.nodeRewards.walletChangeDelayPeriods);
+    w.u32(p.nodeRewards.evidenceWindowPeriods);
+    w.u32(p.nodeRewards.minRegistrationBlocks);
+    w.u64(BigInt(p.nodeRewards.proofMaxValiditySeconds));
+    w.u128(p.nodeRewards.registrationBond);
   }),
 ).slice(0, 32);
 
@@ -283,11 +322,85 @@ function encodeMetrics(w: Writer, m: Metrics): void {
   w.u128(m.totalGasBurnedToPool);
   w.u128(m.totalFeesToPool);
   w.u128(m.totalTreasuryRevenue);
+  w.u128(m.totalPlatformRevenue);
+  w.u128(m.totalNodeRewardRevenue);
+  w.u128(m.totalTreasuryFromSplit);
+  w.u128(m.totalNodeRewardsPaid);
+  w.u32(m.registeredNodes);
   w.u128(m.totalCreatorEarnings);
   w.u128(m.totalTips);
   w.u32(m.totalCapsulesCreated);
   w.u32(m.totalParcelsIssued);
   w.u32(m.totalNamesRegistered);
+}
+
+function encodeNode(w: Writer, n: NodeRecord): void {
+  w.string(n.nodeId);
+  w.string(n.rewardWallet);
+  w.string(n.nodePublicKey);
+  w.string(n.endpoint);
+  w.u32(n.registeredAtHeight);
+  w.u64(BigInt(Math.trunc(n.registeredAt)));
+  w.u128(n.bond);
+  w.u32(n.deregisteredAtHeight ?? 0);
+  w.string(n.pendingWallet ?? '');
+  w.i128(BigInt(n.pendingWalletEffectivePeriod ?? -1));
+  w.u32(n.pendingWalletRequestedAtHeight ?? 0);
+  w.u128(n.lifetimeReward);
+  w.u32(n.settledPeriods.length);
+  for (const period of [...n.settledPeriods].sort((a, b) => a - b)) w.i128(BigInt(period));
+}
+
+function encodeNodeEvidence(w: Writer, e: NodeEvidenceRecord): void {
+  w.string(e.nodeId);
+  w.i128(BigInt(e.period));
+  w.u32(e.heartbeats);
+  w.u32(e.attesters.length);
+  for (const attester of [...e.attesters].sort()) w.string(attester);
+  w.u32(e.blocksProduced);
+  w.u32(e.attested.length);
+  for (const subject of [...e.attested].sort()) w.string(subject);
+  w.u32(e.faults);
+  w.u32(e.faultReporters.length);
+  for (const reporter of [...e.faultReporters].sort()) w.string(reporter);
+  w.u32(e.staleHeartbeats);
+  w.u32(e.invalidAttestations);
+  w.u32(e.lastReportedHeight);
+}
+
+function encodeNodeRewards(w: Writer, p: NodeRewardPoolState): void {
+  w.u128(p.balance);
+  w.u128(p.bondedSeals);
+  w.u128(p.lifetimeInflow);
+  w.u128(p.lifetimeDistributed);
+  w.i128(BigInt(p.lastSettledPeriod));
+  w.i128(BigInt(p.blockCountPeriod));
+  w.u32(p.blockCount);
+  w.u128(p.unclaimedRevenue);
+  const sources = [...p.revenueBySource].sort((a, b) => (a.source < b.source ? -1 : 1));
+  w.u32(sources.length);
+  for (const entry of sources) {
+    w.string(entry.source);
+    w.u128(entry.total);
+  }
+  w.u32(p.recentSettlements.length);
+  for (const settlement of p.recentSettlements) {
+    w.i128(BigInt(settlement.period));
+    w.u128(settlement.poolSeals);
+    w.u128(settlement.distributedSeals);
+    w.u128(settlement.carriedSeals);
+    w.u32(settlement.eligibleNodes);
+    w.u32(settlement.scoredNodes);
+    w.u32(settlement.atHeight);
+    w.u32(settlement.payouts.length);
+    for (const payout of settlement.payouts) {
+      w.string(payout.nodeId);
+      w.string(payout.rewardWallet);
+      w.u128(payout.amount);
+      w.u32(payout.scoreBps);
+      w.u32(payout.shareBps);
+    }
+  }
 }
 
 /** Serialize the whole consensus state into canonical bytes. */
@@ -354,6 +467,22 @@ export function encodeState(state: MutableState): Uint8Array {
     w.u32(request.requestedAtHeight);
     w.string(request.evidenceHash);
   }
+
+  // Node runner registry, evidence and pool: every field can decide a future
+  // payout, so all of it is committed. Omitting any of it would let two nodes
+  // disagree about money without their state roots disagreeing.
+  const nodeIds = [...state.nodes.keys()].sort();
+  w.u32(nodeIds.length);
+  for (const id of nodeIds) encodeNode(w, state.nodes.get(id)!);
+
+  const evidenceKeys = [...state.nodeEvidence.keys()].sort();
+  w.u32(evidenceKeys.length);
+  for (const key of evidenceKeys) {
+    w.string(key);
+    encodeNodeEvidence(w, state.nodeEvidence.get(key)!);
+  }
+
+  encodeNodeRewards(w, state.nodeRewards);
 
   const paramsHash = PARAMS_HASH;
   w.string(paramsHash);

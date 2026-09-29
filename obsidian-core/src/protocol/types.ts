@@ -60,6 +60,53 @@ export enum TxType {
   VALIDATOR = 8,
   TREASURY = 9,
   GOVERNANCE = 10,
+  /**
+   * Node Runner registry. Carries the signed statements that make node-runner
+   * rewards measurable: registration with a proof of reward-wallet ownership,
+   * wallet changes, deregistration, liveness heartbeats, peer attestations and
+   * peer fault reports. None of these carry an amount: the protocol computes
+   * every payout from the evidence it collects here (see src/economy/node-rewards.ts).
+   */
+  NODE_REGISTRY = 11,
+}
+
+/** Operations inside a NODE_REGISTRY transaction. */
+export enum NodeRegistryOp {
+  REGISTER = 1,
+  CHANGE_WALLET = 2,
+  DEREGISTER = 3,
+  /** A signed liveness statement from the node itself, valid within a slot. */
+  HEARTBEAT = 4,
+  /** A signed statement from one node about another node's liveness. */
+  ATTEST = 5,
+  /** A signed report that another node behaved incorrectly. */
+  REPORT_FAULT = 6,
+}
+
+export interface NodeRegistryBody {
+  op: NodeRegistryOp;
+  /** 64 hex characters: the hash of the node identity public key. */
+  nodeId: string;
+  /** Address that receives this node's rewards. Never the key itself. */
+  rewardWallet: string;
+  /** Compressed secp256k1 public key of the node identity (66 hex chars). */
+  nodePublicKey: string;
+  /** Signature over the operation's domain-separated message (128 hex chars). */
+  proof: string;
+  /** Informational endpoint hint. Never an identity, never trusted for scoring. */
+  endpoint?: string;
+  /** Monotonic slot for heartbeats/attestations, derived from protocol time. */
+  slot?: number;
+  /** For ATTEST / REPORT_FAULT: the subject node. */
+  subject?: string;
+  /** Height the reporting node claims to be at, verified against chain tolerance. */
+  reportedHeight?: number;
+  /** For REPORT_FAULT: short machine-readable reason stored on-chain. */
+  reason?: string;
+  /** Protocol time the statement was issued at (registration proofs). */
+  issuedAt?: number;
+  /** Protocol time the statement stops being valid (registration proofs). */
+  expiresAt?: number;
 }
 
 // ── Payments ─────────────────────────────────────────────────────────────────
@@ -277,7 +324,7 @@ export interface BlockHeader {
   /** Producer (validator) address; must be registered for this height's slot. */
   producer: string;
   /** Accumulated work used by the deterministic fork-choice rule. */
-  cumulativeWork: bigint;
+  cumulativePotWeight: bigint;
   /** Number of transactions in the block (redundant, tamper-evident). */
   txCount: number;
   /** Root of protocol events emitted by the block (indexers verify this). */
@@ -562,6 +609,118 @@ export interface MiningPoolState {
   settledClaims: number;
 }
 
+/**
+ * A registered node runner.
+ *
+ * IDENTITY → OPERATOR → REWARD WALLET
+ *   `nodeId` is the hash of a secp256k1 public key the operator holds. It is the
+ *   identity: it survives an IP change, a hosting migration, a new machine and a
+ *   new domain. The IP address, hostname or endpoint a node advertises is a hint
+ *   stored beside the record and is NEVER used as identity or as evidence.
+ *
+ *   `rewardWallet` is the address that receives this node's share of the Node
+ *   Runner Reward Pool. It is bound by a secp256k1 signature from that wallet's
+ *   own key over a domain-separated message, so nobody can point someone else's
+ *   wallet at a node they run.
+ *
+ * REWARD UNIQUENESS
+ *   One reward wallet may back exactly one node, and one node may have exactly
+ *   one reward wallet at a time. `rewardWalletOf` in state.ts is the reverse
+ *   index every registration checks, which is what stops one machine presenting
+ *   itself as ten nodes and collecting ten shares.
+ */
+export interface NodeRecord {
+  nodeId: string;
+  /** Address that receives rewards. Bound by signature, never by trust. */
+  rewardWallet: string;
+  /** Compressed secp256k1 public key of the node identity, hex. */
+  nodePublicKey: string;
+  /** Endpoint hint for operators to find each other. Never an identity. */
+  endpoint: string;
+  registeredAtHeight: number;
+  registeredAt: ProtocolTimeSeconds;
+  /** Bond locked from the reward wallet at registration, returned at exit. */
+  bond: bigint;
+  /** Set when the node deregisters; it stops earning immediately. */
+  deregisteredAtHeight?: number;
+  /** Wallet change in flight: signed by the new wallet, effective at a period. */
+  pendingWallet?: string;
+  pendingWalletEffectivePeriod?: number;
+  pendingWalletRequestedAtHeight?: number;
+  /** Lifetime rewards credited to this node's wallets, for the operator UI. */
+  lifetimeReward: bigint;
+  /** Periods already settled for this node, capped to the evidence window. */
+  settledPeriods: number[];
+}
+
+/** Per-period, per-node evidence, written only by block routines. */
+export interface NodeEvidenceRecord {
+  nodeId: string;
+  period: number;
+  /** Heartbeats accepted in the period (one per slot, replayed ones rejected). */
+  heartbeats: number;
+  /** Distinct nodes that attested this node in the period. */
+  attesters: string[];
+  /** Blocks this node produced inside the period. */
+  blocksProduced: number;
+  /** Distinct peers this node attested inside the period. */
+  attested: string[];
+  /** Fault reports attributed to this node (penalised only when corroborated). */
+  faults: number;
+  /** Distinct nodes that filed a fault report about this node in the period. */
+  faultReporters: string[];
+  /** Heartbeats that carried a height outside the protocol tolerance. */
+  staleHeartbeats: number;
+  /** Attestations from this node that contradicted protocol state. */
+  invalidAttestations: number;
+  /** Reported height of the last heartbeat/attestation in the period. */
+  lastReportedHeight: number;
+}
+
+/**
+ * The Node Runner Reward Pool: the 40% share of qualifying platform revenue,
+ * held as a protocol balance and paid out once per period by the block routine.
+ *
+ * `unpaidRevenue` is the part of qualifying revenue that arrived before the
+ * genesis rule had designated a treasury wallet. It is not lost and it is not
+ * income for anyone: when the designation exists, the recorded amount is split
+ * by the same 40/60 rule. Recording it separately is what makes that provable.
+ */
+export interface NodeRewardPoolState {
+  /** Seals held for node runners (already split from platform revenue). */
+  balance: bigint;
+  /** Registration bonds held by the protocol. Returned in full at deregistration. */
+  bondedSeals: bigint;
+  /** Reward period the block counter below belongs to (-1 = not started). */
+  blockCountPeriod: number;
+  /** Blocks counted inside `blockCountPeriod`, used to score participation. */
+  blockCount: number;
+  /** Lifetime inflow into the pool. */
+  lifetimeInflow: bigint;
+  /** Lifetime amount paid out to registered nodes. */
+  lifetimeDistributed: bigint;
+  /** Last period settled by the block routine (0 = none yet). */
+  lastSettledPeriod: number;
+  /** Rewards settled in the last few periods, newest last (explorer audit). */
+  recentSettlements: NodeRewardSettlement[];
+  /** Qualifying revenue received before a treasury wallet existed. */
+  unclaimedRevenue: bigint;
+  /** Lifetime qualifying platform revenue, by source. */
+  revenueBySource: Array<{ source: string; total: bigint }>;
+}
+
+export interface NodeRewardSettlement {
+  period: number;
+  poolSeals: bigint;
+  distributedSeals: bigint;
+  carriedSeals: bigint;
+  eligibleNodes: number;
+  scoredNodes: number;
+  atHeight: number;
+  /** nodeId → amount credited, in registration order (lexicographic). */
+  payouts: Array<{ nodeId: string; rewardWallet: string; amount: bigint; scoreBps: number; shareBps: number }>;
+}
+
 export interface Metrics {
   /** Accounts that claimed inside the active-miner window at this height. */
   activeMiners: number;
@@ -576,6 +735,16 @@ export interface Metrics {
   totalGasBurnedToPool: bigint;
   totalFeesToPool: bigint;
   totalTreasuryRevenue: bigint;
+  /** Qualifying platform revenue before the 40/60 split. */
+  totalPlatformRevenue: bigint;
+  /** Lifetime amount of qualifying revenue routed to the Node Runner Reward Pool. */
+  totalNodeRewardRevenue: bigint;
+  /** Lifetime amount of qualifying revenue routed to the treasury. */
+  totalTreasuryFromSplit: bigint;
+  /** Lifetime node runner rewards paid out of the pool. */
+  totalNodeRewardsPaid: bigint;
+  /** Registered (non-deregistered) node runners at this height. */
+  registeredNodes: number;
   totalCreatorEarnings: bigint;
   totalTips: bigint;
   totalCapsulesCreated: number;
@@ -618,6 +787,12 @@ export interface StateSnapshot {
   recentClaimIds: Record<string, number>;
   /** Follow edges "followerAccount->followedAccount", sorted, for the graph. */
   socialFollowing: string[];
+  /** Registered node runners, keyed by nodeId. Consensus state: rewards depend on it. */
+  nodes: Record<string, NodeRecord>;
+  /** Per-period node evidence, keyed "period:nodeId". */
+  nodeEvidence: Record<string, NodeEvidenceRecord>;
+  /** Node Runner Reward Pool and revenue accounting. */
+  nodeRewards: NodeRewardPoolState;
   /** Pending verification requests awaiting platform attestation. */
   verificationRequests: Record<
     string,

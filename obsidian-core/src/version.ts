@@ -9,10 +9,10 @@
 import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
-export const CORE_VERSION = '1.0.0';
+export const CORE_VERSION = '1.1.0';
 
 /** Consensus protocol version implemented by this build. */
-export const PROTOCOL_VERSION = '1.0.0';
+export const PROTOCOL_VERSION = '1.1.0';
 
 /** Wire/peer protocol version. */
 export const WIRE_PROTOCOL_VERSION = 1;
@@ -21,7 +21,7 @@ export const WIRE_PROTOCOL_VERSION = 1;
  * Minimum Obsidian Core version permitted to peer with this build.
  * Peers below this version are rejected during handshake (hard fork guard).
  */
-export const MIN_CORE_VERSION = '1.0.0';
+export const MIN_CORE_VERSION = '1.1.0';
 
 /**
  * Build identifier — deterministic hash of the release identity triple.

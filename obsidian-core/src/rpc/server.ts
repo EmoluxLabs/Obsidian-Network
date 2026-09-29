@@ -39,6 +39,10 @@ import { encodePaymentBody, decodePaymentBody, paymentBaseAmount } from '../tran
 import { expectedGas, usdMicroToSeals } from '../transactions/helpers.js';
 import { decodeValidatorBody, encodeValidatorBody } from '../transactions/executors/validator.js';
 import { decodeTreasuryBody, encodeTreasuryBody } from '../transactions/executors/treasury.js';
+import { decodeNodeRegistryBody, encodeNodeRegistryBody } from '../transactions/executors/node-registry.js';
+import { medianTimePast, potDifficulty, timeRate } from '../consensus/time.js';
+import { nodeRewardParams, rewardPeriodAt, scoreNode } from '../economy/node-rewards.js';
+import { NOT_PLATFORM_REVENUE } from '../economy/accounting.js';
 import { decodeOracleBody, encodeOracleBody } from '../transactions/executors/oracle.js';
 import { TxType } from '../protocol/types.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
@@ -223,6 +227,11 @@ export class RpcServer {
     if (path.startsWith('/tx/')) return this.transaction(response, decodeURIComponent(path.slice(4)));
     if (path.startsWith('/address/')) return this.addressHistory(response, decodeURIComponent(path.slice(9)), url);
     if (path === '/mempool') return this.mempool(response);
+    if (path === '/pot') return this.proofOfTime(response);
+    if (path === '/nodes/registry') return this.nodeRegistry(response, url);
+    if (path === '/nodes/rewards') return this.nodeRewards(response, url);
+    if (path.startsWith('/nodes/status/')) return this.nodeStatus(response, decodeURIComponent(path.slice(14)));
+    if (path === '/revenue') return this.revenue(response);
     if (path === '/mining/schedule') return this.miningSchedule(response);
     if (path === '/mining/status') return this.miningStatus(response, url);
     if (path === '/mining/claims') return this.miningClaims(response, url);
@@ -348,6 +357,16 @@ export class RpcServer {
         confirmationDepthSoft: CONSENSUS_PARAMS.block.confirmationDepthSoft,
         confirmationDepthHard: CONSENSUS_PARAMS.block.confirmationDepthHard,
       },
+      proofOfTime: {
+        consensus: CONSENSUS_PARAMS.proofOfTime.consensus,
+        shortName: CONSENSUS_PARAMS.proofOfTime.shortName,
+        weightRule: CONSENSUS_PARAMS.proofOfTime.weightRule,
+        difficultyTargetSeconds: CONSENSUS_PARAMS.proofOfTime.difficultyTargetSeconds,
+        difficultyWindowBlocks: CONSENSUS_PARAMS.proofOfTime.difficultyWindowBlocks,
+        timeRateWindowSeconds: CONSENSUS_PARAMS.proofOfTime.timeRateWindowSeconds,
+        timeRateUnit: CONSENSUS_PARAMS.proofOfTime.timeRateUnit,
+      },
+      nodeRewards: nodeRewardParams(),
       consensus: {
         forkChoice: CONSENSUS_PARAMS.consensus.forkChoice,
         minValidatorBondObs: formatObs(CONSENSUS_PARAMS.consensus.minValidatorBond),
@@ -547,7 +566,7 @@ export class RpcServer {
       summary: summarizeBlock(block, 0),
       header: {
         ...block.header,
-        cumulativeWork: block.header.cumulativeWork.toString(),
+        cumulativePotWeight: block.header.cumulativePotWeight.toString(),
         producer: block.header.producer,
         producerSignature: {
           publicKey: block.header.producerSignature.publicKey,
@@ -642,6 +661,242 @@ export class RpcServer {
         sender: maskAddress(entry.sender),
         gas: entry.gas,
       })),
+    });
+  }
+
+  /**
+   * GET /pot — the Proof of Time state of this chain.
+   *
+   * Everything here is derived from blocks this node holds, so a client can
+   * recompute it from /blocks and disagree if the node lies.
+   */
+  private proofOfTime(response: ServerResponse): void {
+    const chain = this.options.chain;
+    const head = chain.store.head;
+    const ancestors = head
+      ? chain.store.ancestorBlocks(head.hash, CONSENSUS_PARAMS.proofOfTime.difficultyWindowBlocks)
+      : [];
+    const difficulty = potDifficulty(ancestors, head?.height ?? 0);
+    const rate = timeRate(ancestors);
+    this.json(response, 200, {
+      consensus: CONSENSUS_PARAMS.proofOfTime.consensus,
+      shortName: CONSENSUS_PARAMS.proofOfTime.shortName,
+      weightRule: CONSENSUS_PARAMS.proofOfTime.weightRule,
+      explanation:
+        'Obsidian is a Proof of Time chain: block production is scheduled by the validator rotation and gated by protocol time, ' +
+        'not by a computational race. Hashing secures identity and integrity; it is not the consensus competition.',
+      height: head?.height ?? 0,
+      protocolTime: chain.protocolTime,
+      medianTimePast: medianTimePast(ancestors),
+      cumulativePotWeight: (head?.cumulativePotWeight ?? '0').toString(),
+      difficulty: {
+        difficultyBps: difficulty.difficultyBps,
+        requiredSpacingMs: difficulty.requiredSpacingMs,
+        observedSpacingMs: difficulty.observedSpacingMs,
+        targetSeconds: CONSENSUS_PARAMS.proofOfTime.difficultyTargetSeconds,
+        windowBlocks: difficulty.windowBlocks,
+        warmingUp: difficulty.warmingUp,
+        role: 'MEASUREMENT',
+        note: 'PoT Difficulty reports how block spacing tracks the protocol target. Block acceptance is gated by median time past, strict monotonicity and the future-drift bound.',
+      },
+      timeRate: rate,
+      timeAuthority: {
+        authoritative: 'PROTOCOL_TIME_FROM_CHAIN',
+        neverAuthoritative: ['BROWSER_CLOCK', 'DEVICE_CLOCK', 'WEBSITE_SERVER', 'CLOUDFLARE', 'DATABASE_INSERT_ORDER'],
+        maxFutureDriftSeconds: CONSENSUS_PARAMS.block.maxFutureDriftSeconds,
+        medianTimePastWindow: CONSENSUS_PARAMS.block.medianTimePastWindow,
+      },
+    });
+  }
+
+  /**
+   * GET /nodes/registry — registered node runners and their verified evidence.
+   * No wallet balances are exposed; the reward wallet is public because the
+   * payout itself is public chain data.
+   */
+  private nodeRegistry(response: ServerResponse, url: URL): void {
+    const state = this.options.chain.world;
+    const period = rewardPeriodAt(this.options.chain.protocolTime);
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? '100') || 100));
+    const nodes = state.registeredNodes().slice(0, limit).map((node) => {
+      const evidence = state.s.nodeEvidence.get(`${period}:${node.nodeId}`);
+      return {
+        nodeId: node.nodeId,
+        rewardWallet: node.rewardWallet,
+        endpoint: node.endpoint || null,
+        registeredAtHeight: node.registeredAtHeight,
+        bondObs: formatObs(node.bond),
+        lifetimeRewardObs: formatObs(node.lifetimeReward),
+        pendingWallet: node.pendingWallet ?? null,
+        pendingWalletEffectivePeriod: node.pendingWalletEffectivePeriod ?? null,
+        currentPeriod: {
+          period,
+          heartbeats: evidence?.heartbeats ?? 0,
+          attesters: evidence?.attesters.length ?? 0,
+          blocksProduced: evidence?.blocksProduced ?? 0,
+          attestationsMade: evidence?.attested.length ?? 0,
+          faults: evidence?.faults ?? 0,
+          staleHeartbeats: evidence?.staleHeartbeats ?? 0,
+        },
+      };
+    });
+    this.json(response, 200, {
+      period,
+      count: nodes.length,
+      registeredNodes: state.s.metrics.registeredNodes,
+      nodes,
+      note: 'every field is recomputed from chain state; nodes cannot self-report uptime, participation or efficiency',
+    });
+  }
+
+  /** GET /nodes/rewards — the pool, the split and the settled periods. */
+  private nodeRewards(response: ServerResponse, url: URL): void {
+    const state = this.options.chain.world;
+    const pool = state.s.nodeRewards;
+    const limit = Math.min(30, Math.max(1, Number(url.searchParams.get('limit') ?? '10') || 10));
+    const settlements = pool.recentSettlements.slice(-limit).reverse();
+    this.json(response, 200, {
+      split: {
+        nodePoolBps: CONSENSUS_PARAMS.nodeRewards.nodePoolShareBps,
+        treasuryBps: CONSENSUS_PARAMS.nodeRewards.treasuryShareBps,
+        description: '40% of qualifying platform revenue funds node runners; 60% goes to the protocol treasury wallet',
+      },
+      pool: {
+        balanceObs: formatObs(pool.balance),
+        bondedObs: formatObs(pool.bondedSeals),
+        lifetimeInflowObs: formatObs(pool.lifetimeInflow),
+        lifetimeDistributedObs: formatObs(pool.lifetimeDistributed),
+        unclaimedTreasuryRevenueObs: formatObs(pool.unclaimedRevenue),
+        lastSettledPeriod: pool.lastSettledPeriod,
+        currentPeriod: rewardPeriodAt(this.options.chain.protocolTime),
+        periodSeconds: CONSENSUS_PARAMS.nodeRewards.periodSeconds,
+      },
+      scoring: nodeRewardParams(),
+      settlements: settlements.map((settlement) => ({
+        period: settlement.period,
+        atHeight: settlement.atHeight,
+        poolObs: formatObs(settlement.poolSeals),
+        distributedObs: formatObs(settlement.distributedSeals),
+        carriedObs: formatObs(settlement.carriedSeals),
+        eligibleNodes: settlement.eligibleNodes,
+        scoredNodes: settlement.scoredNodes,
+        payouts: settlement.payouts.map((payout) => ({
+          nodeId: payout.nodeId,
+          rewardWallet: payout.rewardWallet,
+          amountObs: formatObs(payout.amount),
+          scoreBps: payout.scoreBps,
+          shareBps: payout.shareBps,
+        })),
+      })),
+    });
+  }
+
+  /** GET /nodes/status/:nodeId — one operator's own view, all of it verified. */
+  private nodeStatus(response: ServerResponse, nodeId: string): void {
+    const state = this.options.chain.world;
+    const node = state.node(nodeId);
+    if (!node) {
+      this.json(response, 404, { error: 'node is not registered', code: 'ERR_NODE_NOT_REGISTERED', nodeId });
+      return;
+    }
+    const period = rewardPeriodAt(this.options.chain.protocolTime);
+    const nodes = state.registeredNodes();
+    const evidence = state.s.nodeEvidence.get(`${period}:${nodeId}`);
+    const peerUniverse = nodes.length;
+    const heartbeats = evidence?.heartbeats ?? 0;
+    const score = scoreNode({
+      liveness: {
+        registered: node.deregisteredAtHeight === undefined,
+        heartbeats,
+        distinctAttesters: evidence?.attesters.length ?? 0,
+        peerUniverse,
+      },
+      participation: {
+        blocksProduced: evidence?.blocksProduced ?? 0,
+        blocksExpected: Math.max(1, Math.floor(state.s.nodeRewards.blockCount / Math.max(1, peerUniverse))),
+        attestationsMade: evidence?.attested.length ?? 0,
+      },
+      reliability: { faults: evidence?.faults ?? 0, invalidAttestations: evidence?.invalidAttestations ?? 0 },
+      responsiveness: {
+        responsiveHeartbeats: heartbeats - (evidence?.staleHeartbeats ?? 0),
+        staleHeartbeats: evidence?.staleHeartbeats ?? 0,
+      },
+    });
+    const settled = state.s.nodeRewards.recentSettlements
+      .filter((settlement) => settlement.payouts.some((payout) => payout.nodeId === nodeId))
+      .map((settlement) => {
+        const payout = settlement.payouts.find((entry) => entry.nodeId === nodeId)!;
+        return {
+          period: settlement.period,
+          atHeight: settlement.atHeight,
+          amountObs: formatObs(payout.amount),
+          scoreBps: payout.scoreBps,
+          shareBps: payout.shareBps,
+          rewardWallet: payout.rewardWallet,
+        };
+      });
+    this.json(response, 200, {
+      nodeId,
+      rewardWallet: node.rewardWallet,
+      registered: node.deregisteredAtHeight === undefined,
+      deregisteredAtHeight: node.deregisteredAtHeight ?? null,
+      registeredAtHeight: node.registeredAtHeight,
+      endpoint: node.endpoint || null,
+      bondObs: formatObs(node.bond),
+      lifetimeRewardObs: formatObs(node.lifetimeReward),
+      pendingWalletChange: node.pendingWallet
+        ? { wallet: node.pendingWallet, effectivePeriod: node.pendingWalletEffectivePeriod ?? null }
+        : null,
+      currentPeriod: period,
+      score,
+      evidence: {
+        heartbeats,
+        expectedHeartbeats: CONSENSUS_PARAMS.nodeRewards.heartbeatsPerPeriod,
+        attesters: evidence?.attesters ?? [],
+        blocksProduced: evidence?.blocksProduced ?? 0,
+        attestationsMade: evidence?.attested.length ?? 0,
+        faults: evidence?.faults ?? 0,
+        faultReporters: evidence?.faultReporters ?? [],
+        staleHeartbeats: evidence?.staleHeartbeats ?? 0,
+        lastReportedHeight: evidence?.lastReportedHeight ?? 0,
+      },
+      settledRewards: settled,
+      note: 'the score above is recomputed by every node from this same evidence; nothing here is self-reported',
+    });
+  }
+
+  /** GET /revenue — platform revenue accounting, by category and by source. */
+  private revenue(response: ServerResponse): void {
+    const state = this.options.chain.world;
+    const metrics = state.s.metrics;
+    const pool = state.s.nodeRewards;
+    this.json(response, 200, {
+      qualifyingPlatformRevenueObs: formatObs(metrics.totalPlatformRevenue),
+      split: {
+        nodeRunnerPoolObs: formatObs(metrics.totalNodeRewardRevenue),
+        treasuryObs: formatObs(metrics.totalTreasuryFromSplit),
+        nodePoolBps: CONSENSUS_PARAMS.nodeRewards.nodePoolShareBps,
+        treasuryBps: CONSENSUS_PARAMS.nodeRewards.treasuryShareBps,
+        sumsBack:
+          metrics.totalNodeRewardRevenue + metrics.totalTreasuryFromSplit + pool.unclaimedRevenue ===
+          metrics.totalPlatformRevenue,
+      },
+      bySource: pool.revenueBySource
+        .map((entry) => ({ source: entry.source, totalObs: formatObs(entry.total) }))
+        .sort((a, b) => (a.source < b.source ? -1 : 1)),
+      accounts: {
+        miningPoolObs: formatObs(state.s.pool.balance),
+        nodeRunnerPoolObs: formatObs(pool.balance),
+        nodeBondsObs: formatObs(pool.bondedSeals),
+        unclaimedTreasuryRevenueObs: formatObs(pool.unclaimedRevenue),
+        treasuryWallet: state.s.genesis.treasuryWallet || null,
+      },
+      notPlatformRevenue: NOT_PLATFORM_REVENUE.map((entry) => ({ kind: entry.name, because: entry.because })),
+      gas: {
+        destination: CONSENSUS_PARAMS.gas.destination,
+        note: 'transaction gas funds the Mining Pool and is never counted as platform revenue',
+        lifetimeObs: formatObs(metrics.totalGasBurnedToPool),
+      },
     });
   }
 
@@ -1450,6 +1705,8 @@ export function encodeBodyFor(type: string, payload: Record<string, unknown>): U
       return encodeTreasuryBody(payload as never);
     case 'ORACLE':
       return encodeOracleBody(payload as never);
+    case 'NODE_REGISTRY':
+      return encodeNodeRegistryBody(payload as never);
     default:
       throw new Error(`unknown transaction type ${type}`);
   }
@@ -1473,6 +1730,8 @@ export function decodeBodyFor(type: string, bytes: Uint8Array): unknown {
       return decodeValidatorBody(bytes);
     case 'TREASURY':
       return decodeTreasuryBody(bytes);
+    case 'NODE_REGISTRY':
+      return decodeNodeRegistryBody(bytes);
     case 'ORACLE':
       return decodeOracleBody(bytes);
     default:

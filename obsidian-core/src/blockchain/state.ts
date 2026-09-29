@@ -21,6 +21,10 @@ import type {
   GenesisState,
   Metrics,
   MiningPoolState,
+  NodeEvidenceRecord,
+  NodeRecord,
+  NodeRewardPoolState,
+  NodeRewardSettlement,
   MiningState,
   OnsRecord,
   OracleState,
@@ -32,6 +36,8 @@ import type {
   ValidatorState,
 } from '../protocol/types.js';
 import { MAX_SUPPLY_SEALS } from '../protocol/amount.js';
+import { assertSplitInvariant, splitPlatformRevenue, type RevenueSource } from '../economy/accounting.js';
+import { treasuryWallet } from '../genesis/rules.js';
 
 /** The only two authorised issuance sources in the Obsidian protocol. */
 export type IssuanceSource = 'GENESIS_ALLOCATION' | 'MINING_REWARD';
@@ -75,6 +81,21 @@ export function emptyPoolState(): MiningPoolState {
   };
 }
 
+export function emptyNodeRewardPool(): NodeRewardPoolState {
+  return {
+    balance: 0n,
+    bondedSeals: 0n,
+    lifetimeInflow: 0n,
+    lifetimeDistributed: 0n,
+    lastSettledPeriod: 0,
+    blockCountPeriod: -1,
+    blockCount: 0,
+    recentSettlements: [],
+    unclaimedRevenue: 0n,
+    revenueBySource: [],
+  };
+}
+
 export function emptyMetrics(): Metrics {
   return {
     activeMiners: 0,
@@ -87,6 +108,11 @@ export function emptyMetrics(): Metrics {
     totalGasBurnedToPool: 0n,
     totalFeesToPool: 0n,
     totalTreasuryRevenue: 0n,
+    totalPlatformRevenue: 0n,
+    totalNodeRewardRevenue: 0n,
+    totalTreasuryFromSplit: 0n,
+    totalNodeRewardsPaid: 0n,
+    registeredNodes: 0,
     totalCreatorEarnings: 0n,
     totalTips: 0n,
     totalCapsulesCreated: 0,
@@ -116,6 +142,14 @@ export interface MutableState {
   recentClaimIds: Map<string, number>;
   validators: Set<string>;
   socialFollowing: Set<string>;
+  /** Registered node runners, keyed by nodeId (lexicographic iteration). */
+  nodes: Map<string, NodeRecord>;
+  /** Per-period evidence, keyed `${period}:${nodeId}`. */
+  nodeEvidence: Map<string, NodeEvidenceRecord>;
+  /** Reverse index: reward wallet → nodeId. One wallet may back one node only. */
+  nodeWallets: Map<string, string>;
+  /** Node Runner Reward Pool plus platform-revenue accounting. */
+  nodeRewards: NodeRewardPoolState;
   verificationRequests: Map<
     string,
     { tier: 'BLUE' | 'GOLD'; requestedBy: string; requestedAtHeight: number; evidenceHash: string }
@@ -173,6 +207,10 @@ export class WorldState {
       recentClaimIds: new Map(),
       validators: new Set(),
       socialFollowing: new Set(),
+      nodes: new Map(),
+      nodeEvidence: new Map(),
+      nodeWallets: new Map(),
+      nodeRewards: emptyNodeRewardPool(),
       verificationRequests: new Map(),
     };
   }
@@ -201,6 +239,16 @@ export class WorldState {
       recentClaimIds: { ...Object.fromEntries(this.s.recentClaimIds) },
       validators: [...this.s.validators].sort(),
       socialFollowing: [...this.s.socialFollowing].sort(),
+      nodes: Object.fromEntries([...this.s.nodes.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
+      nodeEvidence: Object.fromEntries([...this.s.nodeEvidence.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
+      nodeRewards: {
+        ...this.s.nodeRewards,
+        recentSettlements: this.s.nodeRewards.recentSettlements.map((settlement: NodeRewardSettlement) => ({
+          ...settlement,
+          payouts: settlement.payouts.map((payout: NodeRewardSettlement['payouts'][number]) => ({ ...payout })),
+        })),
+        revenueBySource: this.s.nodeRewards.revenueBySource.map((entry: { source: string; total: bigint }) => ({ ...entry })),
+      },
       verificationRequests: Object.fromEntries(
         [...this.s.verificationRequests.entries()].sort(([a], [b]) => (a < b ? -1 : 1)),
       ),
@@ -230,6 +278,37 @@ export class WorldState {
     s.recentClaimIds = new Map(Object.entries(snapshot.recentClaimIds));
     s.validators = new Set(snapshot.validators);
     s.socialFollowing = new Set(snapshot.socialFollowing ?? []);
+    for (const [k, v] of Object.entries(snapshot.nodes ?? {})) {
+      s.nodes.set(k, { ...v, bond: BigInt(v.bond), lifetimeReward: BigInt(v.lifetimeReward), settledPeriods: [...(v.settledPeriods ?? [])] });
+      s.nodeWallets.set(v.rewardWallet, k);
+      if (v.pendingWallet) s.nodeWallets.set(v.pendingWallet, k);
+    }
+    for (const [k, v] of Object.entries(snapshot.nodeEvidence ?? {})) {
+      s.nodeEvidence.set(k, {
+        ...v,
+        attesters: [...v.attesters],
+        attested: [...v.attested],
+        faultReporters: [...(v.faultReporters ?? [])],
+      });
+    }
+    if (snapshot.nodeRewards) {
+      s.nodeRewards = {
+        ...snapshot.nodeRewards,
+        unclaimedRevenue: BigInt(snapshot.nodeRewards.unclaimedRevenue),
+        balance: BigInt(snapshot.nodeRewards.balance),
+        bondedSeals: BigInt(snapshot.nodeRewards.bondedSeals ?? 0n),
+        lifetimeInflow: BigInt(snapshot.nodeRewards.lifetimeInflow),
+        lifetimeDistributed: BigInt(snapshot.nodeRewards.lifetimeDistributed),
+        recentSettlements: (snapshot.nodeRewards.recentSettlements ?? []).map((settlement: NodeRewardSettlement) => ({
+          ...settlement,
+          payouts: settlement.payouts.map((payout: NodeRewardSettlement['payouts'][number]) => ({ ...payout, amount: BigInt(payout.amount) })),
+        })),
+        revenueBySource: (snapshot.nodeRewards.revenueBySource ?? []).map((entry: { source: string; total: bigint }) => ({
+          ...entry,
+          total: BigInt(entry.total),
+        })),
+      };
+    }
     s.verificationRequests = new Map(Object.entries(snapshot.verificationRequests ?? {}));
     return new WorldState(s);
   }
@@ -452,6 +531,12 @@ export class WorldState {
     for (const account of this.s.accounts.values()) {
       if (account.validator) sum += account.validator.bond;
     }
+    // The Node Runner Reward Pool and the registration bonds are both
+    // protocol-held value. They are not in anyone's liquid balance, so the
+    // invariant must count them explicitly or every node payout would look like
+    // a supply mismatch.
+    sum += this.s.nodeRewards.balance;
+    sum += this.s.nodeRewards.bondedSeals;
     if (sum !== this.s.metrics.totalSupply) {
       return {
         ok: false,
@@ -492,6 +577,187 @@ export class WorldState {
   }
 
   /** Snapshot counts used by metrics derived at each block. */
+  // ── Node runner registry ──────────────────────────────────────────────────
+  //
+  // These accessors are the ONLY way consensus code touches node records, so the
+  // invariants they enforce (one reward wallet per node, one node per wallet,
+  // evidence always keyed by period) hold everywhere by construction.
+
+  node(nodeId: string): NodeRecord | undefined {
+    return this.s.nodes.get(nodeId);
+  }
+
+  /** Reverse lookup: which node, if any, has claimed this reward wallet. */
+  nodeByRewardWallet(wallet: string): string | undefined {
+    return this.s.nodeWallets.get(wallet);
+  }
+
+  registeredNodes(): NodeRecord[] {
+    return [...this.s.nodes.values()]
+      .filter((node) => node.deregisteredAtHeight === undefined)
+      .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
+  }
+
+  putNode(node: NodeRecord): void {
+    this.s.nodeWallets.set(node.rewardWallet, node.nodeId);
+    if (node.pendingWallet) this.s.nodeWallets.set(node.pendingWallet, node.nodeId);
+    this.s.nodes.set(node.nodeId, node);
+    this.s.metrics.registeredNodes = this.registeredNodes().length;
+  }
+
+  removeNodeWallet(wallet: string, nodeId: string): void {
+    if (this.s.nodeWallets.get(wallet) === nodeId) this.s.nodeWallets.delete(wallet);
+  }
+
+  /** Evidence bucket for one (period, node). Created empty on first write. */
+  nodeEvidenceFor(period: number, nodeId: string): NodeEvidenceRecord {
+    const key = `${period}:${nodeId}`;
+    let record = this.s.nodeEvidence.get(key);
+    if (!record) {
+      record = {
+        nodeId,
+        period,
+        heartbeats: 0,
+        attesters: [],
+        blocksProduced: 0,
+        attested: [],
+        faults: 0,
+        faultReporters: [],
+        staleHeartbeats: 0,
+        invalidAttestations: 0,
+        lastReportedHeight: 0,
+      };
+      this.s.nodeEvidence.set(key, record);
+    }
+    return record;
+  }
+
+  /** Drop evidence for periods older than the retention window (bounded state). */
+  pruneNodeEvidence(currentPeriod: number): void {
+    const oldest = currentPeriod - CONSENSUS_PARAMS.nodeRewards.evidenceWindowPeriods;
+    for (const [key, record] of this.s.nodeEvidence) {
+      if (record.period < oldest) this.s.nodeEvidence.delete(key);
+    }
+  }
+
+  // ── Platform revenue accounting ───────────────────────────────────────────
+  //
+  // Every qualifying revenue flow goes through here. It performs the 40/60
+  // split, credits each side, records the source, and keeps the accounting
+  // identities that tests assert:
+  //
+  //   totalPlatformRevenue = totalNodeRewardRevenue + totalTreasuryFromSplit
+  //   nodeRewards.balance  = Σ inflows − Σ node payouts
+  //
+  // When no treasury wallet exists yet (nobody mined the genesis allocation),
+  // the treasury share is not silently abandoned: it is credited to the Mining
+  // Pool so the value stays protocol-owned and visible, and the amount owed to
+  // the future treasury is recorded in `unclaimedRevenue`.
+
+  creditPlatformRevenue(
+    source: string,
+    amount: bigint,
+    ctx: ApplyContext,
+    reason: string,
+  ): { nodePool: bigint; treasury: bigint; unclaimed: bigint } {
+    if (amount <= 0n) reject(ErrCode.AMOUNT_NEGATIVE, 'platform revenue must be positive');
+    const split = splitPlatformRevenue(amount, source as RevenueSource);
+    assertSplitInvariant(split);
+
+    this.s.nodeRewards.balance += split.nodeRunnerPool;
+    this.s.nodeRewards.lifetimeInflow += split.nodeRunnerPool;
+    this.delta('CREDIT', 'nodeRewards.balance', split.nodeRunnerPool.toString(), `${reason} (node runner pool)`);
+
+    const existing = this.s.nodeRewards.revenueBySource.find((entry) => entry.source === source);
+    if (existing) existing.total += amount;
+    else this.s.nodeRewards.revenueBySource.push({ source, total: amount });
+
+    this.s.metrics.totalPlatformRevenue += amount;
+    this.s.metrics.totalNodeRewardRevenue += split.nodeRunnerPool;
+
+    const treasury = treasuryWallet(this);
+    let unclaimed = 0n;
+    if (treasury) {
+      this.credit(treasury, split.treasury, ctx, `${reason} (treasury share)`);
+      this.s.metrics.totalTreasuryFromSplit += split.treasury;
+      this.s.metrics.totalTreasuryRevenue += split.treasury;
+    } else {
+      // Protocol-owned, not income: tracked, spendable only through the pool,
+      // and recorded as owed so the future treasury can claim its share.
+      this.s.nodeRewards.unclaimedRevenue += split.treasury;
+      this.poolInflow(split.treasury, `${reason} (treasury share pending a designated treasury wallet)`);
+      unclaimed = split.treasury;
+    }
+
+    this.emit('PLATFORM_REVENUE', {
+      source,
+      amount: amount.toString(),
+      nodePoolBps: split.nodePoolBps,
+      treasuryBps: split.treasuryBps,
+      nodeRunnerPool: split.nodeRunnerPool.toString(),
+      treasuryShare: split.treasury.toString(),
+      treasuryDesignated: Boolean(treasury),
+      unclaimed: unclaimed.toString(),
+    }, ctx);
+
+    return { nodePool: split.nodeRunnerPool, treasury: split.treasury, unclaimed };
+  }
+
+  /**
+   * Lock a node runner's registration bond. The seals move out of the wallet and
+   * are held by the protocol, counted by the supply invariant and returned in
+   * full at deregistration — never burned, never redistributed.
+   */
+  lockNodeBond(address: string, amount: bigint, ctx: ApplyContext, reason: string): void {
+    if (amount <= 0n) return;
+    this.debit(address, amount, ctx, reason);
+    this.s.nodeRewards.bondedSeals += amount;
+    this.delta('CREDIT', 'nodeRewards.bondedSeals', amount.toString(), reason);
+  }
+
+  releaseNodeBond(address: string, amount: bigint, ctx: ApplyContext, reason: string): void {
+    if (amount <= 0n) return;
+    if (this.s.nodeRewards.bondedSeals < amount) {
+      reject(ErrCode.INSUFFICIENT_FUNDS, 'node runner bonds do not cover this refund');
+    }
+    this.s.nodeRewards.bondedSeals -= amount;
+    this.credit(address, amount, ctx, reason);
+    this.delta('DEBIT', 'nodeRewards.bondedSeals', amount.toString(), reason);
+  }
+
+  /** Pay node runner rewards out of the pool. Only the settlement routine calls this. */
+  nodeRewardOutflow(amount: bigint, ctx: ApplyContext, reason: string): void {
+    if (amount <= 0n) return;
+    if (this.s.nodeRewards.balance < amount) {
+      reject(ErrCode.INSUFFICIENT_FUNDS, 'node runner pool cannot cover this payout', {
+        requested: amount.toString(),
+        available: this.s.nodeRewards.balance.toString(),
+      });
+    }
+    this.s.nodeRewards.balance -= amount;
+    this.s.nodeRewards.lifetimeDistributed += amount;
+    this.s.metrics.totalNodeRewardsPaid += amount;
+    this.delta('DEBIT', 'nodeRewards.balance', amount.toString(), reason);
+  }
+
+  /** Split revenue before the treasury exists, once a treasury is designated. */
+  claimUnclaimedRevenue(ctx: ApplyContext): bigint {
+    const owed = this.s.nodeRewards.unclaimedRevenue;
+    const treasury = treasuryWallet(this);
+    if (owed <= 0n || !treasury) return 0n;
+    if (this.s.pool.balance < owed) {
+      // Should be impossible: the amount is credited to the pool when recorded.
+      reject(ErrCode.INSUFFICIENT_FUNDS, 'unclaimed revenue is not covered by the mining pool');
+    }
+    this.s.pool.balance -= owed;
+    this.s.nodeRewards.unclaimedRevenue = 0n;
+    this.credit(treasury, owed, ctx, 'treasury share recorded before the treasury wallet was designated');
+    this.s.metrics.totalTreasuryFromSplit += owed;
+    this.s.metrics.totalTreasuryRevenue += owed;
+    this.emit('UNCLAIMED_REVENUE_SETTLED', { treasury, amount: owed.toString() }, ctx);
+    return owed;
+  }
+
   recountActiveMiners(): number {
     const window = CONSENSUS_PARAMS.mining.activeMinerWindowSeconds;
     const cutoff = this.s.timestamp - window;

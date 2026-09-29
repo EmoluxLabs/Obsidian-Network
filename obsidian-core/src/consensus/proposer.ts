@@ -1,5 +1,20 @@
 /**
- * Proposer selection and fork choice.
+ * Proposer selection and fork choice — the mechanical heart of Proof of Time.
+ *
+ * There is no hash-puzzle race, no nonce search and no competition to spend
+ * computation. Authority to produce a block is a function of TIME and of the
+ * validator schedule:
+ *
+ *   - the proposer of a height is the validator whose slot the protocol clock
+ *     hands the turn to;
+ *   - a block may only be produced once protocol time has advanced past its
+ *     parent (median time past, plus PoT Difficulty — see src/consensus/time.ts);
+ *   - the chain a node adopts is the one carrying the most verified state and
+ *     the most verified time (PoT Weight, then height), never the one that
+ *     burned the most computation.
+ *
+ * Any node with the chain can recompute every one of those decisions, and a
+ * node that lies about time is rejected the same way a forged signature would be.
  *
  * PROPOSER SELECTION
  *   Deterministic round-robin over the active validator set, sorted by address:
@@ -11,15 +26,19 @@
  *   mode, where any node may propose; the first registered validator closes it.
  *
  * FORK CHOICE
- *   Heaviest chain wins: greatest cumulativeWork, then greatest height, then
+ *   The chain with the greatest PoT Weight wins, then the greatest height, then
  *   the lowest block hash (a fully deterministic tie-break, so two honest nodes
- *   never disagree about the head).
+ *   never disagree about the head). PoT Weight counts verified blocks and
+ *   verified transactions — the state a chain carries — not spent computation.
  */
 
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import type { WorldState } from '../blockchain/state.js';
 import type { Block } from '../protocol/types.js';
 import { blockHash } from '../blockchain/block.js';
+import { medianTimePast, validateBlockTime } from './time.js';
+
+export { medianTimePast };
 
 /** Address scheduled to propose at `height`, or null in genesis-open mode. */
 export function scheduledProposer(state: WorldState, height: number): string | null {
@@ -30,7 +49,7 @@ export function scheduledProposer(state: WorldState, height: number): string | n
 
 export interface ForkChoiceInput {
   height: number;
-  cumulativeWork: bigint;
+  cumulativePotWeight: bigint;
   hash: string;
 }
 
@@ -39,7 +58,7 @@ export interface ForkChoiceInput {
  * `b`, -1 when `b` wins, 0 when they are equivalent (same block).
  */
 export function compareTips(a: ForkChoiceInput, b: ForkChoiceInput): number {
-  if (a.cumulativeWork !== b.cumulativeWork) return a.cumulativeWork > b.cumulativeWork ? 1 : -1;
+  if (a.cumulativePotWeight !== b.cumulativePotWeight) return a.cumulativePotWeight > b.cumulativePotWeight ? 1 : -1;
   if (a.height !== b.height) return a.height > b.height ? 1 : -1;
   if (a.hash === b.hash) return 0;
   return a.hash < b.hash ? 1 : -1;
@@ -48,7 +67,7 @@ export function compareTips(a: ForkChoiceInput, b: ForkChoiceInput): number {
 export function tipOf(block: Block): ForkChoiceInput {
   return {
     height: block.header.height,
-    cumulativeWork: block.header.cumulativeWork,
+    cumulativePotWeight: block.header.cumulativePotWeight,
     hash: blockHash(block.header),
   };
 }
@@ -70,57 +89,45 @@ export function isProposerAllowed(state: WorldState, producer: string, height: n
   return scheduled === null || scheduled === producer;
 }
 
-/** Median time past over the last `params.block.medianTimePastWindow` blocks. */
-export function medianTimePast(ancestors: Array<{ timestamp: number }>): number {
-  if (ancestors.length === 0) return 0;
-  const window = CONSENSUS_PARAMS.block.medianTimePastWindow;
-  const slice = ancestors.slice(0, window).map((a) => a.timestamp).sort((x, y) => x - y);
-  const middle = Math.floor(slice.length / 2);
-  return slice.length % 2 === 1 ? slice[middle] : Math.floor((slice[middle - 1] + slice[middle]) / 2);
-}
 
 export interface TimestampCheck {
   ok: boolean;
   reason?: string;
   medianTimePast: number;
+  /** Minimum timestamp the protocol would accept for this position. */
+  minimumTimestamp?: number;
 }
 
 /**
- * Timestamp validity for a candidate block.
+ * Timestamp validity for a candidate block: Proof of Time, expressed as a rule.
  *
- *   medianTimePast(ancestors) < timestamp <= now + maxFutureDriftSeconds
+ *   timestamp >  median time past of the last `medianTimePastWindow` ancestors
+ *   timestamp >= parent timestamp + PoT Difficulty spacing (seconds)
+ *   timestamp <= this node's clock + maxFutureDriftSeconds
  *
- * This is the ONLY clock the protocol trusts, and it is bounded by the parent
- * chain, not by the machine that happens to be validating.
+ * The first two clauses are derived entirely from chain data, so every node
+ * computes the same answer. The third is the only place a validating node's own
+ * clock appears, and it can only reject a block that claims the future: a node
+ * with a broken clock cannot make an old block acceptable, it can only fall
+ * behind honest peers. That asymmetry is what stops "my device clock says it is
+ * 3am" from ever mattering to consensus.
+ *
+ * Delegates to src/consensus/time.ts so the rule lives in exactly one place.
  */
 export function checkBlockTimestamp(
   timestamp: number,
   ancestorTimestamps: number[],
   localTimeSeconds: number,
 ): TimestampCheck {
-  const mtp = medianTimePast(ancestorTimestamps.map((t) => ({ timestamp: t })));
-  if (ancestorTimestamps.length > 0 && timestamp <= mtp) {
-    return { ok: false, reason: `timestamp ${timestamp} is not later than median time past ${mtp}`, medianTimePast: mtp };
+  const ancestors = ancestorTimestamps.map((value) => ({ timestamp: value }));
+  const verdict = validateBlockTime({ timestamp }, ancestors, localTimeSeconds);
+  if (verdict.ok) {
+    return { ok: true, medianTimePast: verdict.medianTimePast, minimumTimestamp: verdict.minimumTimestamp };
   }
-  // Strict monotonicity against the parent. Protocol time drives mining
-  // eligibility, so it must never be able to stall: every accepted block
-  // advances chain time by at least one second, while the producer can never
-  // reach further ahead than the drift limit below.
-  const parentTimestamp = ancestorTimestamps[0];
-  if (parentTimestamp !== undefined && timestamp <= parentTimestamp) {
-    return {
-      ok: false,
-      reason: `timestamp ${timestamp} does not advance the parent timestamp ${parentTimestamp}`,
-      medianTimePast: mtp,
-    };
-  }
-  const drift = CONSENSUS_PARAMS.block.maxFutureDriftSeconds;
-  if (timestamp > localTimeSeconds + drift) {
-    return {
-      ok: false,
-      reason: `timestamp ${timestamp} is more than ${drift}s ahead of local time`,
-      medianTimePast: mtp,
-    };
-  }
-  return { ok: true, medianTimePast: mtp };
+  return {
+    ok: false,
+    reason: verdict.reason,
+    medianTimePast: verdict.medianTimePast,
+    minimumTimestamp: verdict.minimumTimestamp,
+  };
 }

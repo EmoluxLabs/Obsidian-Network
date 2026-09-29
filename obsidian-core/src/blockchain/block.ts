@@ -31,7 +31,7 @@ export function encodeHeaderForHash(header: BlockHeader): Uint8Array {
   w.string(header.paramsHash);
   w.u64(BigInt(Math.trunc(header.timestamp)));
   w.string(header.producer);
-  w.u128(header.cumulativeWork);
+  w.u128(header.cumulativePotWeight);
   w.u32(header.txCount);
   w.string(header.eventsRoot);
   return w.finish();
@@ -42,8 +42,17 @@ export function blockHash(header: BlockHeader): string {
   return toHex(domainHash(DOMAIN.BLOCK_HEADER, encodeHeaderForHash(header)));
 }
 
-/** Work contributed by one block: 1 + accepted transaction count. */
-export function blockWork(txCount: number): bigint {
+/**
+ * PoT Weight contributed by one block: 1 + accepted transaction count.
+ *
+ * This is the quantity the fork-choice rule accumulates. It measures the
+ * verified state a block carries forward (blocks and transactions), not any
+ * computation spent producing it — which is what makes the rule a Proof of Time
+ * rule rather than a Proof of Work rule. A block is only valid if its producer
+ * held the scheduled time slot, so accumulating weight is the same as
+ * accumulating verified time.
+ */
+export function potWeight(txCount: number): bigint {
   return 1n + BigInt(txCount);
 }
 
@@ -62,7 +71,7 @@ export function encodeBlock(block: Block): Uint8Array {
   w.string(block.header.paramsHash);
   w.u64(BigInt(Math.trunc(block.header.timestamp)));
   w.string(block.header.producer);
-  w.u128(block.header.cumulativeWork);
+  w.u128(block.header.cumulativePotWeight);
   w.u32(block.header.txCount);
   w.string(block.header.eventsRoot);
   w.string(block.header.producerSignature.publicKey);
@@ -85,7 +94,7 @@ export function decodeBlock(bytes: Uint8Array): Block {
   const paramsHash = r.string();
   const timestamp = Number(r.u64());
   const producer = r.string();
-  const cumulativeWork = r.u128();
+  const cumulativePotWeight = r.u128();
   const txCount = r.u32();
   const eventsRoot = r.string();
   const publicKey = r.string();
@@ -102,7 +111,7 @@ export function decodeBlock(bytes: Uint8Array): Block {
     paramsHash,
     timestamp,
     producer,
-    cumulativeWork,
+    cumulativePotWeight,
     txCount,
     eventsRoot,
     producerSignature: { publicKey, signature },
@@ -121,7 +130,7 @@ export interface BuildBlockOptions {
   producer: string;
   producerPrivateKey: string;
   producerPublicKey: string;
-  parentCumulativeWork: bigint;
+  parentCumulativePotWeight: bigint;
   transactions: TxEnvelope[];
 }
 
@@ -137,7 +146,7 @@ export function buildBlock(options: BuildBlockOptions): Block {
     paramsHash: PARAMS_HASH,
     timestamp: options.timestamp,
     producer: options.producer,
-    cumulativeWork: options.parentCumulativeWork + blockWork(options.transactions.length),
+    cumulativePotWeight: options.parentCumulativePotWeight + potWeight(options.transactions.length),
     txCount: options.transactions.length,
     eventsRoot: options.eventsRoot,
     producerSignature: { publicKey: options.producerPublicKey, signature: '' },

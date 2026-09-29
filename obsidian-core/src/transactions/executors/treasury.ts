@@ -3,9 +3,11 @@
  *
  * Two rules define this executor:
  *
- *   1. PAY_REVENUE moves funds from the signer's OWN balance to the designated
- *      treasury wallet. It can never mint, never overdraw, and never touch
- *      another user's balance.
+ *   1. PAY_REVENUE moves funds from the signer's OWN balance into the protocol's
+ *      two revenue accounts: 40% to the Node Runner Reward Pool and 60% to the
+ *      designated treasury wallet (or, before a treasury wallet exists, to the
+ *      recorded unclaimed-revenue account). It can never mint, never overdraw,
+ *      and never touch another user's balance.
  *
  *   2. GRANT moves funds from the treasury wallet to a recipient, and must be
  *      signed by the treasury wallet itself. It is the foundation's normal
@@ -21,6 +23,7 @@ import { ErrCode, reject } from '../../protocol/errors.js';
 import { TreasuryOp, type TreasuryBody, type TxEnvelope } from '../../protocol/types.js';
 import { assertAddress, assertAmount, assertGas } from '../helpers.js';
 import { treasuryWallet } from '../../genesis/rules.js';
+import { RevenueSource } from '../../economy/accounting.js';
 import type { ExecutorContext } from '../types.js';
 
 export function decodeTreasuryBody(body: Uint8Array): TreasuryBody {
@@ -64,19 +67,39 @@ export function executeTreasury(
     case TreasuryOp.PAY_REVENUE: {
       const gas = assertGas(tx.gas, body.amount);
       state.debit(tx.sender, body.amount + gas, apply, 'protocol revenue payment + gas');
-      state.credit(treasury, body.amount, apply, 'protocol revenue received by treasury');
       if (gas > 0n) {
         state.poolInflow(gas, 'treasury payment gas to mining pool');
         state.s.metrics.totalGasBurnedToPool += gas;
       }
-      state.s.metrics.totalTreasuryRevenue += body.amount;
+      // Qualifying platform revenue is split 40/60 between the Node Runner
+      // Reward Pool and the treasury, in exact integer arithmetic: the node
+      // share is floored and the treasury receives the remainder, so the two
+      // parts always add back to the amount. Unclaimed revenue is recorded, not
+      // pocketed, if no treasury wallet has been designated yet.
+      const split = state.creditPlatformRevenue(
+        RevenueSource.EXPLICIT_PAYMENT,
+        body.amount,
+        apply,
+        `protocol revenue payment: ${body.purpose}`,
+      );
       state.emit('TREASURY_REVENUE', {
         payer: tx.sender,
         treasury,
         amount: body.amount.toString(),
         purpose: body.purpose,
+        nodeRunnerPool: split.nodePool.toString(),
+        treasuryShare: split.treasury.toString(),
+        unclaimed: split.unclaimed.toString(),
       }, apply);
-      return { gasBase: body.amount, detail: { treasury, amount: body.amount.toString() } };
+      return {
+        gasBase: body.amount,
+        detail: {
+          treasury,
+          amount: body.amount.toString(),
+          nodeRunnerPool: split.nodePool.toString(),
+          treasuryShare: split.treasury.toString(),
+        },
+      };
     }
 
     case TreasuryOp.GRANT: {

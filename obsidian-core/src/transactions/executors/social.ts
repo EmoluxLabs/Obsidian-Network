@@ -28,6 +28,7 @@ import {
 import { treasuryWallet } from '../../genesis/rules.js';
 import { fromHex, toHex, sha256, utf8, domainHash } from '../../crypto/hash.js';
 import { DOMAIN } from '../../protocol/domains.js';
+import { RevenueSource } from '../../economy/accounting.js';
 import type { ExecutorContext } from '../types.js';
 
 const HANDLE_PATTERN = /^[a-z0-9_](?:[a-z0-9_.]{1,22})[a-z0-9_]$/;
@@ -298,8 +299,9 @@ export function executeSocial(
       const priceObs = usdMicroToSeals(CONSENSUS_PARAMS.social.businessPagePriceUsd, price.priceUsdMicro);
       const gas = assertGas(tx.gas, priceObs);
       state.debit(tx.sender, priceObs + gas, apply, 'business page activation + gas');
-      state.credit(treasury, priceObs, apply, 'business page revenue to treasury');
-      state.s.metrics.totalTreasuryRevenue += priceObs;
+      // Qualifying platform revenue: split 40/60 before anything reaches the
+      // treasury (see src/economy/accounting.ts).
+      state.creditPlatformRevenue(RevenueSource.BUSINESS_PAGE, priceObs, apply, `business page ${accountId}`);
       if (gas > 0n) {
         state.poolInflow(gas, 'business page gas to mining pool');
         state.s.metrics.totalGasBurnedToPool += gas;

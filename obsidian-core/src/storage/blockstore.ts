@@ -38,7 +38,7 @@ export interface IndexEntry {
   timestamp: number;
   txCount: number;
   producer: string;
-  cumulativeWork: string;
+  cumulativePotWeight: string;
   size: number;
   file: string;
 }
@@ -172,7 +172,7 @@ export class BlockStore {
       timestamp: block.header.timestamp,
       txCount: block.transactions.length,
       producer: block.header.producer,
-      cumulativeWork: block.header.cumulativeWork.toString(),
+      cumulativePotWeight: block.header.cumulativePotWeight.toString(),
       size: bytes.length,
       file,
     };
@@ -279,6 +279,26 @@ export class BlockStore {
   }
 
   /** Fork-aware ancestor walk used by timestamp and difficulty checks. */
+  /**
+   * The `count` most recent ancestors of `hash` (nearest parent first) with the
+   * fields Proof of Time needs: timestamp and transaction count.
+   *
+   * PoT Difficulty and Time-Rate are computed from chain history every node
+   * already stores, so this is a read, never a network call and never a
+   * self-report.
+   */
+  ancestorBlocks(hash: string, count: number): Array<{ hash: string; height: number; timestamp: number; txCount: number }> {
+    const out: Array<{ hash: string; height: number; timestamp: number; txCount: number }> = [];
+    let cursor: string | undefined = hash;
+    while (cursor && out.length < count) {
+      const entry: IndexEntry | undefined = this.index.get(cursor);
+      if (!entry) break;
+      out.push({ hash: entry.hash, height: entry.height, timestamp: entry.timestamp, txCount: entry.txCount });
+      cursor = entry.height === 0 ? undefined : entry.prevHash || undefined;
+    }
+    return out;
+  }
+
   ancestorTimestamps(hash: string, count: number): number[] {
     const out: number[] = [];
     let cursor: string | undefined = hash;

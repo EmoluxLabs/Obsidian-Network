@@ -26,6 +26,18 @@ export const DOMAIN = {
   AUCTION_BID: 'OBSIDIAN:AUCTION_BID:v1',
   RELEASE_SIGNATURE: 'OBSIDIAN:RELEASE:v1',
   API_TOKEN: 'OBSIDIAN:API_TOKEN:v1',
+  /** Node runner registration: proves the operator controls the reward wallet. */
+  NODE_REGISTRATION: 'OBSIDIAN:NODE_REGISTRATION:v1',
+  /** Reward wallet change: signed by the incoming wallet, delayed by a period. */
+  NODE_WALLET_CHANGE: 'OBSIDIAN:NODE_WALLET_CHANGE:v1',
+  /** Deregistration: releases the bond back to the reward wallet. */
+  NODE_DEREGISTRATION: 'OBSIDIAN:NODE_DEREGISTRATION:v1',
+  /** Liveness heartbeat signed by the node identity key. */
+  NODE_HEARTBEAT: 'OBSIDIAN:NODE_HEARTBEAT:v1',
+  /** Attestation signed by an observing node about another node. */
+  NODE_ATTESTATION: 'OBSIDIAN:NODE_ATTESTATION:v1',
+  /** Fault report signed by an observing node about another node. */
+  NODE_FAULT_REPORT: 'OBSIDIAN:NODE_FAULT_REPORT:v1',
 } as const;
 
 export type DomainTag = (typeof DOMAIN)[keyof typeof DOMAIN];

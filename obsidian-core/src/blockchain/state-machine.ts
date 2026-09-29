@@ -27,6 +27,7 @@ import type { NetworkDefinition } from '../protocol/networks.js';
 import { validateTxStructure, decodeSignedTx } from '../transactions/encode.js';
 import { executeTransaction } from '../transactions/index.js';
 import { processNameExpiry } from '../transactions/executors/ons.js';
+import { processNodeRewardRoutine } from '../economy/settlement.js';
 import { processCapsuleUnlocks } from '../transactions/executors/capsule.js';
 import { processValidatorBookkeeping } from '../transactions/executors/validator.js';
 import { merkleRootHex } from './merkle.js';
@@ -140,6 +141,9 @@ export function runBlockRoutines(
   };
   processNameExpiry(routineContext);
   processCapsuleUnlocks(routineContext);
+  // Proof of Time node rewards settle by period, inside consensus, with no
+  // operator or service online — see src/economy/settlement.ts.
+  processNodeRewardRoutine(routineContext);
   processValidatorBookkeeping(routineContext, options.missedProposers ?? []);
   state.recountActiveMiners();
   return state.takeEvents();

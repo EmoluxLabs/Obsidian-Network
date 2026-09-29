@@ -215,7 +215,7 @@ export interface BlockDetail {
     paramsHash: string;
     timestamp: number;
     producer: string;
-    cumulativeWork: string;
+    cumulativePotWeight: string;
     producerSignature: { publicKey: string; signature: string };
   };
   transactions: Array<{ id: string; type: string; sender: string; nonce: number; gas: string; validUntil: number; size: number }>;

@@ -19,6 +19,7 @@ import { executeSocial } from './executors/social.js';
 import { executeOracle } from './executors/oracle.js';
 import { executeValidator } from './executors/validator.js';
 import { executeTreasury, executeGovernance } from './executors/treasury.js';
+import { executeNodeRegistry } from './executors/node-registry.js';
 
 export function executeTransaction(ctx: ExecutorContext, tx: TxEnvelope): ExecutorResult {
   switch (tx.type) {
@@ -44,6 +45,8 @@ export function executeTransaction(ctx: ExecutorContext, tx: TxEnvelope): Execut
       return executeTreasury(ctx, tx);
     case TxType.GOVERNANCE:
       return executeGovernance(tx);
+    case TxType.NODE_REGISTRY:
+      return executeNodeRegistry(ctx, tx);
     default:
       reject(ErrCode.UNKNOWN_TX_TYPE, `transaction type ${tx.type} is not supported by this protocol version`);
   }

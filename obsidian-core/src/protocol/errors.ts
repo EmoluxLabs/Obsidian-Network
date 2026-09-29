@@ -86,6 +86,19 @@ export enum ErrCode {
   BAD_PRODUCER = 'ERR_BAD_PRODUCER',
   NOT_PRODUCER_TURN = 'ERR_NOT_PRODUCER_TURN',
 
+  // Node runner registry (Proof of Time node rewards)
+  NODE_NOT_REGISTERED = 'ERR_NODE_NOT_REGISTERED',
+  NODE_ALREADY_REGISTERED = 'ERR_NODE_ALREADY_REGISTERED',
+  NODE_WALLET_IN_USE = 'ERR_NODE_WALLET_IN_USE',
+  NODE_BAD_ENDPOINT = 'ERR_NODE_BAD_ENDPOINT',
+  NODE_BOND_REQUIRED = 'ERR_NODE_BOND_REQUIRED',
+  NODE_HEARTBEAT_TOO_SOON = 'ERR_NODE_HEARTBEAT_TOO_SOON',
+  NODE_BAD_SUBJECT = 'ERR_NODE_BAD_SUBJECT',
+  NODE_ATTEST_LIMIT = 'ERR_NODE_ATTEST_LIMIT',
+  NODE_FAULT_LIMIT = 'ERR_NODE_FAULT_LIMIT',
+  NODE_WALLET_CHANGE_PENDING = 'ERR_NODE_WALLET_CHANGE_PENDING',
+  NODE_PROOF_EXPIRED = 'ERR_NODE_PROOF_EXPIRED',
+
   // Fees
   GAS_REQUIRED = 'ERR_GAS_REQUIRED',
 
@@ -172,6 +185,17 @@ export const ERR_MESSAGES: Record<ErrCode, string> = {
   [ErrCode.ORPHAN_BLOCK]: 'Parent block is unknown; queued as an orphan.',
   [ErrCode.BAD_PRODUCER]: 'Producer address is not registered as a validator.',
   [ErrCode.NOT_PRODUCER_TURN]: 'Producer is not the scheduled proposer for this height.',
+  [ErrCode.NODE_NOT_REGISTERED]: 'This node identity is not registered for node runner rewards.',
+  [ErrCode.NODE_ALREADY_REGISTERED]: 'This node identity is already registered.',
+  [ErrCode.NODE_WALLET_IN_USE]: 'This reward wallet already backs another registered node.',
+  [ErrCode.NODE_BAD_ENDPOINT]: 'The endpoint hint is not a usable host:port, or is longer than the protocol allows.',
+  [ErrCode.NODE_BOND_REQUIRED]: 'Registering a node runner requires the registration bond in the reward wallet.',
+  [ErrCode.NODE_HEARTBEAT_TOO_SOON]: 'This node already sent its heartbeat for the current reward period.',
+  [ErrCode.NODE_BAD_SUBJECT]: 'The subject node is not a registered node runner.',
+  [ErrCode.NODE_ATTEST_LIMIT]: 'This node reached the per-period attestation limit.',
+  [ErrCode.NODE_FAULT_LIMIT]: 'This node reached the per-period fault report limit.',
+  [ErrCode.NODE_WALLET_CHANGE_PENDING]: 'A reward wallet change is already pending for this node.',
+  [ErrCode.NODE_PROOF_EXPIRED]: 'The signed node statement is outside its validity window.',
   [ErrCode.GAS_REQUIRED]: 'Transaction does not carry the protocol-required gas.',
   [ErrCode.INTERNAL]: 'Internal node error.',
   [ErrCode.RATE_LIMITED]: 'Rate limit exceeded.',

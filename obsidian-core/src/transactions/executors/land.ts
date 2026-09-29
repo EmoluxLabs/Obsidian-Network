@@ -40,6 +40,7 @@ import {
 } from '../helpers.js';
 import { treasuryWallet } from '../../genesis/rules.js';
 import { divisionSeed, normaliseDivisionId, DIVISION_LEVEL_CODES } from '../../land/registry.js';
+import { RevenueSource } from '../../economy/accounting.js';
 import type { ExecutorContext } from '../types.js';
 
 export function decodeLandBody(body: Uint8Array): LandBody {
@@ -193,12 +194,10 @@ export function executeLand(
         state.poolInflow(gas, 'land gas to mining pool');
         state.s.metrics.totalGasBurnedToPool += gas;
       }
-      if (treasury) {
-        state.credit(treasury, priceObs, apply, 'protocol land issuance revenue to treasury');
-        state.s.metrics.totalTreasuryRevenue += priceObs;
-      } else {
-        state.poolInflow(priceObs, 'land revenue held pending treasury designation');
-      }
+      // Protocol land issuance is qualifying platform revenue: the protocol is
+      // the seller. Split 40/60 like every other platform sale. A user-to-user
+      // marketplace sale is NOT revenue and never reaches this path.
+      state.creditPlatformRevenue(RevenueSource.LAND_PROTOCOL_SALE, priceObs, apply, `protocol land issuance ${parcelId}`);
 
       const parcel: ParcelRecord = {
         parcelId,
