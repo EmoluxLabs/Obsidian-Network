@@ -11,7 +11,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient, type MiningStatus, type MiningSchedule } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
-import { el, obs, duration, spinner, toast, kv, badge, table, short, when } from '../lib/ui.js';
+import { el, obs, duration, spinner, toast, kv, badge, table, short, when, rewardLine, rewardPerClaim } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 
@@ -123,7 +123,7 @@ function drawClaim(): void {
       button.textContent = 'Submitting…';
       const result = await operations.claim(client, walletInstance);
       toast(`Claim accepted into the mempool: ${result.txId.slice(0, 16)}…`, 'success');
-      await waitForInclusion(state.nextClaimSequence);
+      await waitForInclusion(state.nextClaimId);
       await refresh();
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -154,14 +154,16 @@ function drawClaim(): void {
   );
 }
 
-async function waitForInclusion(claimSequence: number): Promise<void> {
+async function waitForInclusion(claimId: string): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
     const address = Wallet.storedAddress();
     if (!address) return;
     const claims = await client.miningClaims(address, 5).catch(() => undefined);
     if (!claims) continue;
-    const found = claims.claims.some((claim) => Number(claim.claimSequence ?? -1) === claimSequence);
+    // Claims are identified on chain by claim id (the replay guard), not by a
+    // per-address sequence number, so that is what the list is matched on.
+    const found = claims.claims.some((claim) => claim.claimId === claimId);
     if (found) {
       toast('Claim mined into a block.', 'success');
       return;
@@ -190,10 +192,10 @@ async function loadSchedule(): Promise<void> {
       el('h2', {}, 'Mining schedule'),
       kv([
         ['Active miners (30-day window)', String(schedule.activeMiners)],
-        ['Reward per day now', `${obs(schedule.rewardPerDayObs)} OBS`],
-        ['Reward per claim now', `${obs(schedule.rewardPerClaimObs)} OBS`],
-        ['Reduction steps applied', String(schedule.reductionSteps)],
-        ['Hard floor', schedule.floorReached ? badge('at floor — 0.0002 OBS/day', 'warn') : '0.0002 OBS/day'],
+        ['Reward per day now', rewardLine(schedule)],
+        ['Reward per claim now', rewardPerClaim(schedule)],
+        ['Reduction step', `−${schedule.reductionPercentPerStep}% per ${schedule.reductionStepMiners.toLocaleString()} active miners`],
+        ['Hard floor', `${obs(schedule.floorDailyObs || schedule.floorDailySeals)} OBS/day`],
       ]),
       el('h3', {}, 'Schedule'),
       table(['Active miners', 'Reward per day'], tiers),
@@ -217,13 +219,13 @@ async function loadHistory(): Promise<void> {
       claims.claims.length === 0
         ? el('p', {}, 'No claims found for this address yet.')
         : table(
-            ['Sequence', 'Claim id', 'Reward', 'Block', 'When'],
+            ['Claim id', 'Reward', 'Block', 'When', 'Genesis'],
             claims.claims.map((claim) => [
-              String(claim.claimSequence ?? '—'),
-              el('span', { class: 'mono' }, short(String(claim.claimId ?? ''), 12)),
-              `${obs(String(claim.reward ?? '0'))} OBS`,
+              el('span', { class: 'mono' }, short(String(claim.claimId ?? claim.txId ?? ''), 14)),
+              `${obs(claim.rewardObs ?? claim.reward ?? '0')} OBS`,
               String(claim.height ?? '—'),
               when(Number(claim.timestamp ?? 0)),
+              claim.genesisAwarded ? badge('genesis allocation', 'ok') : el('span', { class: 'muted' }, '—'),
             ]),
           ),
     );

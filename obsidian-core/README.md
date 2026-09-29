@@ -26,7 +26,7 @@ it does not exist.
 ```bash
 npm ci
 npm run build          # tsc → dist/
-npm test               # 154 tests: unit, integration, security, peer policy
+npm test               # 156 tests: unit, integration, security, peer policy
 npm start              # node dist/index.js start --config config/mainnet.json
 ```
 

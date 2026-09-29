@@ -27,7 +27,7 @@ import { simulateTransactions } from '../blockchain/state-machine.js';
 import { blockHash, summarizeBlock } from '../blockchain/block.js';
 import { paramsHashUtf8, PARAMS_HASH } from '../blockchain/state-root.js';
 import { genesisDocumentFor } from '../genesis/initialize.js';
-import { divisionSeed, listCountries, searchDivisions } from '../land/registry.js';
+import { divisionSeed, listCountries, listDivisions, searchDivisions } from '../land/registry.js';
 import { CORE_VERSION, MIN_CORE_VERSION, PROTOCOL_VERSION, versionInfo } from '../version.js';
 import { isValidAddress, ID_HRP } from '../crypto/keys.js';
 import { encodeCapsuleBody, decodeCapsuleBody } from '../transactions/executors/capsule.js';
@@ -229,6 +229,7 @@ export class RpcServer {
     if (path === '/names') return this.names(response, url);
     if (path.startsWith('/names/')) return this.name(response, decodeURIComponent(path.slice(7)));
     if (path === '/land/countries') return this.json(response, 200, { countries: listCountries() });
+    if (path === '/land/divisions') return this.landDivisions(response, url);
     if (path === '/land/search') return this.landSearch(response, url);
     if (path.startsWith('/land/division/')) return this.landDivision(response, decodeURIComponent(path.slice(15)));
     if (path === '/land/parcels') return this.landParcels(response, url);
@@ -745,6 +746,41 @@ export class RpcServer {
       expiresAt: record.expiresAt,
       transferCount: record.transferCount,
       resolved: true,
+    });
+  }
+
+  /**
+   * First-level divisions of one country. Reads the shipped registry table and
+   * overlays the current GLV from chain state, so a division that has moved
+   * (appreciation on protocol purchases, depreciation on buy-backs) reports the
+   * live value rather than the static seed.
+   */
+  private landDivisions(response: ServerResponse, url: URL): void {
+    const country = (url.searchParams.get('country') ?? '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(country)) {
+      this.json(response, 400, { error: 'country must be an ISO 3166-1 alpha-2 code', code: 'ERR_BAD_COUNTRY' });
+      return;
+    }
+    const divisions = listDivisions(country).map((division) => {
+      const record = this.options.chain.world.s.divisions.get(division.divisionId);
+      const current = record?.glvUsdMicro ?? division.glvUsdMicro;
+      return {
+        divisionId: division.divisionId,
+        name: division.name,
+        level: division.level,
+        weight: division.weight,
+        baseGlvUsd: formatUsd(division.glvUsdMicro),
+        glvUsd: formatUsd(current),
+        protocolPurchases: record?.protocolPurchases ?? 0,
+        protocolBuybacks: record?.protocolBuybacks ?? 0,
+        lastUpdatedAtHeight: record?.lastUpdatedAtHeight ?? null,
+      };
+    });
+    this.json(response, 200, {
+      country,
+      divisions,
+      count: divisions.length,
+      note: 'Divisions come from the protocol geography table; GLVs are current chain state.',
     });
   }
 

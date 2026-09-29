@@ -10,8 +10,10 @@ The interface is a *cache with an allowlist*, never an authority:
   fetched from a node and re-fetched on the next page.
 * It never holds a wallet key or a recovery phrase. Wallets are created and
   transactions are signed **in the browser**, and only signed bytes are relayed.
-* Its `/api/rpc` proxy is an exact-route allowlist. There is no SPA fallback:
-  an unknown path is an honest 404.
+* Its `/api/rpc` proxy is an exact-route allowlist: the route is matched, the
+  query string is forwarded to the node (`/blocks?limit=`, `/mining/status?address=`),
+  and anything off the list is refused with `ERR_REJECTED`. There is no SPA
+  fallback: an unknown path is an honest 404.
 * It stops rather than guessing: no healthy node ⇒ `503 ERR_NO_HEALTHY_NODE`, a
   genesis mismatch between nodes is flagged instead of blended.
 
@@ -25,7 +27,9 @@ The interface is a *cache with an allowlist*, never an authority:
 ```bash
 npm ci
 npm run build     # compile the server, typecheck, bundle the browser apps, write the 11 site shells
-npm test          # 61 tests: auth, invites, store, node pool, HTTP server, config discovery
+npm test          # 112 tests: auth, invites, store, node pool, HTTP server, config discovery,
+                  # amount formatters, jsdom page tests, and a suite that drives the real
+                  # pages against a real obsidian-core node (needs `npm run build` first)
 ```
 
 `npm run build` writes:

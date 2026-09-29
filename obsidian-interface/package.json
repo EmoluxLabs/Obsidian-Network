@@ -1,7 +1,7 @@
 {
   "name": "@obsidian/interface",
   "version": "1.0.0",
-  "description": "Obsidian Interface \u2014 self-hostable web interface for the Obsidian Network (wallet, miner, explorer, ONS, social, capsules, circle).",
+  "description": "Obsidian Interface — self-hostable web interface for the Obsidian Network (wallet, miner, explorer, ONS, social, capsules, circle).",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -21,6 +21,7 @@
   "devDependencies": {
     "@types/node": "22.7.5",
     "esbuild": "0.24.0",
+    "jsdom": "^25.0.1",
     "typescript": "5.6.3",
     "vitest": "2.1.3"
   },

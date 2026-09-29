@@ -16,7 +16,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations, commitContent, randomHex } from '../lib/operations.js';
-import { el, obs, spinner, toast, kv, badge, table, short, when, relativeTime } from '../lib/ui.js';
+import { el, obs, obsFromSeals, sealsFromObs, spinner, toast, kv, badge, table, short, when, relativeTime } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const wall = el('section', { class: 'card' }, spinner('reading the wall…'));
@@ -133,16 +133,43 @@ function capsuleFile(input: { digest: string; nonce: string; content: string; te
   ].join('\n');
 }
 
+/**
+ * The Time Travel multiplier is a protocol constant (1000). It is read from the
+ * node's `/params` so a future parameter change prices correctly instead of
+ * hard-coding 1000 into the interface.
+ */
+let timeTravelMultiplier = 1000n;
+void client
+  .params()
+  .then((params) => {
+    const value = params.capsules?.timeTravelMultiplier;
+    if (value && /^\d+$/.test(value)) timeTravelMultiplier = BigInt(value);
+  })
+  .catch(() => {
+    /* the protocol default stands; the node validates the payment anyway */
+  });
+
 async function loadStats(): Promise<void> {
-  const { capsules } = await client.capsules({ limit: 200 }).catch(() => ({ capsules: [] }));
-  const sealed = capsules.filter((capsule) => capsule.status === 'sealed' || capsule.locked === true).length;
-  const unlocked = capsules.length - sealed;
-  const lockedTotal = capsules.reduce((sum, capsule) => sum + BigInt(String(capsule.commitment ?? '0')), 0n);
+  // The node aggregates these from chain state; summing strings in the browser
+  // produced a second, unverifiable answer that disagreed with every node.
+  // A failing node is reported where the numbers would have been — an unhandled
+  // promise rejection is not a user interface.
+  let wall;
+  try {
+    ({ stats: wall } = await client.capsules({ limit: 100 }));
+  } catch (error) {
+    stats.replaceChildren(el('p', { class: 'error' }, `Capsule statistics unavailable: ${(error as Error).message}`));
+    return;
+  }
   stats.replaceChildren(
-    stat('Capsules on the wall', String(capsules.length)),
-    stat('Still sealed', String(sealed)),
-    stat('Unlocked', String(unlocked)),
-    stat('OBS locked in capsules', `${obs(lockedTotal.toString())} OBS`, 'transfers to the Mining Pool at unlock'),
+    stat('Capsules on the wall', wall.total.toLocaleString()),
+    stat('Still sealed', wall.locked.toLocaleString()),
+    stat('Unlocked', wall.unlocked.toLocaleString()),
+    stat('OBS locked in capsules', `${obs(wall.totalLockedObs)} OBS`, 'transfers to the Mining Pool at unlock, even if the creator never returns'),
+    stat('Returned to the pool', `${obs(wall.totalReturnedToPoolObs)} OBS`),
+    stat('Time Travel revenue', `${obs(wall.totalTimeTravelRevenueObs)} OBS`),
+    stat('Largest commitment', `${obs(wall.largestCommitmentObs)} OBS`),
+    stat('Next unlock', wall.nearestUnlock ? when(wall.nearestUnlock) : 'nothing sealed'),
   );
 }
 
@@ -156,18 +183,20 @@ async function loadWall(): Promise<void> {
         : table(
             ['Capsule', 'Creator', 'Locked', 'Unlocks', 'State', ''],
             capsules.map((capsule) => {
-              const id = String(capsule.capsuleId ?? capsule.id ?? '');
+              const id = capsule.capsuleId;
               const unlockAt = Number(capsule.unlockAt ?? 0);
-              const locked = unlockAt > Math.floor(Date.now() / 1000);
-              const preview = el('button', { class: 'ghost small', type: 'button' }, 'Time travel preview');
-              preview.addEventListener('click', () => void previewCapsule(id, String(capsule.commitment ?? '0')));
+              // State comes from the chain (LOCKED / UNLOCKED): the browser clock
+              // is never the authority on whether a capsule is still sealed.
+              const sealed = String(capsule.status).toUpperCase() === 'LOCKED';
+              const preview = el('button', { class: 'ghost small', type: 'button' }, 'Time travel preview 1000×');
+              preview.addEventListener('click', () => void previewCapsule(id, capsule.commitmentObs, timeTravelMultiplier));
               return [
-                el('span', { class: 'mono' }, short(id, 10)),
+                el('span', { class: 'mono' }, short(id, 12)),
                 el('span', { class: 'mono' }, short(String(capsule.owner ?? ''), 10)),
-                `${obs(String(capsule.commitment ?? '0'))} OBS`,
+                `${obs(capsule.commitmentObs)} OBS`,
                 `${when(unlockAt)}`,
-                locked ? badge('sealed', 'warn') : badge('unlocked', 'ok'),
-                locked ? preview : el('span', { class: 'muted' }, 'revealed'),
+                sealed ? badge('sealed', 'warn') : badge('unlocked', 'ok'),
+                sealed ? preview : el('span', { class: 'muted' }, 'revealed'),
               ];
             }),
           ),
@@ -178,13 +207,13 @@ async function loadWall(): Promise<void> {
   }
 }
 
-async function previewCapsule(capsuleId: string, commitmentSeals: string): Promise<void> {
+async function previewCapsule(capsuleId: string, commitmentObs: string, multiplier: bigint): Promise<void> {
   const passphrase = window.prompt('Time Travel costs 1000× the locked commitment, paid to the Mining Pool. Unlock your wallet to continue.');
   if (!passphrase) return;
   try {
     const wallet = await Wallet.unlock(passphrase);
-    const payment = (BigInt(commitmentSeals) * 1000n).toString();
-    const paymentObs = `${payment.slice(0, Math.max(0, payment.length - 18)) || '0'}.${payment.padStart(19, '0').slice(-18)}`;
+    // Exact integer maths: the node recomputes this price and rejects a guess.
+    const paymentObs = obsFromSeals(sealsFromObs(commitmentObs) * multiplier);
     const result = await operations.previewCapsule(client, wallet, { capsuleId, paymentObs, previewChunk: '' });
     toast(`Preview access recorded on chain: ${result.txId.slice(0, 16)}…`, 'success');
     await loadWall();

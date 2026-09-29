@@ -10,7 +10,7 @@
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
-import { el, spinner, kv, badge, table, when, toast } from '../lib/ui.js';
+import { el, obs, spinner, kv, badge, table, when, toast } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const panel = el('section', { class: 'card' }, spinner('asking every reachable node…'));
@@ -58,9 +58,12 @@ void (async () => {
       table(['Mechanism', 'State', 'Node detail'], rows),
       el('h3', {}, 'Supply and genesis'),
       kv([
-        ['Total supply', `${String(supply.totalObs ?? status.supplyObs ?? '—')} OBS`],
-        ['Hard cap', `${String(supply.maxObs ?? status.maxSupplyObs ?? '21,000,000')} OBS`],
-        ['Invariant', String((supply as { invariantOk?: boolean }).invariantOk ?? 'reported by the node')],
+        // The node names these `totalSupplyObs` / `maxSupplyObs`: reading a
+        // field that does not exist prints "undefined OBS" beside a healthy chain.
+        ['Total supply', `${obs(supply.totalSupplyObs || status.supplyObs)} OBS`],
+        ['Hard cap', `${obs(supply.maxSupplyObs || status.maxSupplyObs)} OBS`],
+        ['Invariant', supply.invariantOk ? 'supply invariant holds (recomputed by this node)' : 'FAILED — investigate'],
+        ['Issuance sources', supply.issuanceSources.length > 0 ? supply.issuanceSources.join(', ') : 'none yet'],
         ['Genesis allocation', status.genesis ? `${status.genesis.allocationObs} OBS to ${status.genesis.allocationClaimed ? 'the first valid mining claim (claimed)' : 'the first valid mining claim (unclaimed)'}` : '—'],
         ['Treasury wallet', el('span', { class: 'mono' }, status.genesis?.treasuryWallet ?? '—')],
         ['Designation', 'the wallet that received the genesis allocation is the on-chain treasury: platform revenue is routed there, user funds never are'],

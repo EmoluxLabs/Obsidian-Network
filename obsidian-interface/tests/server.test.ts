@@ -89,6 +89,12 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
       );
       return;
     }
+    if (request.url?.startsWith('/blocks') || request.url?.startsWith('/mining/status') || request.url?.startsWith('/names?prefix')) {
+      // Echo the URL so a test can prove the query reached the node.
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ receivedUrl: request.url }));
+      return;
+    }
     if (request.url === '/names') {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end('{"names":[],"count":0}');
@@ -366,6 +372,37 @@ describe('node proxy', () => {
       expect(response.status).toBe(400);
       expect(((await response.json()) as { code: string }).code).toBe('ERR_REJECTED');
     }
+  });
+
+  it('forwards a query-carrying read with its query intact', async () => {
+    // Regression: the allowlist used to match the whole `path` value, so every
+    // parameterised read (/blocks?limit=, /mining/status?address=, /names?prefix=,
+    // /land/search?q=…) was refused by an interface that looked healthy.
+    const h = await harness();
+    await h.poolCheck();
+    for (const path of ['/blocks?limit=15', '/names?prefix=emo', '/mining/status?address=obs1abc']) {
+      const response = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent(path)}`);
+      expect(response.status).toBe(200);
+      expect((await response.json()) as { receivedUrl?: string }).toMatchObject({ receivedUrl: path });
+    }
+  });
+
+  it('still refuses a disallowed route that carries a query', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    for (const path of ['/secret?x=1', '/admin/keys?token=1', '../../etc/passwd?x=1']) {
+      const response = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent(path)}`);
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { code: string }).code).toBe('ERR_REJECTED');
+    }
+  });
+
+  it('refuses an absurdly long proxied path instead of forwarding it', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const response = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent(`/names?prefix=${'a'.repeat(600)}`)}`);
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_REJECTED');
   });
 
   it('fails over to another node instead of returning an error page', async () => {

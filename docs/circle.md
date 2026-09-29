@@ -5,8 +5,17 @@ market, not through an admin dashboard:
 
 ```
 Earth → country → first-level division (state/province/governorate)
-      → city → district → street → parcel (1 m²)
+      → parcel (≤ 1 m², addressed by division + level + sub-id + plot index)
 ```
+
+The geography table that ships with the node contains countries and their
+**first-level divisions** (ISO 3166-2) with a weight per division. Finer
+granularity below that level is *not* in the shipped table: a parcel carries the
+buyer-supplied `level`, `subId`, `plotIndex` and optional GPS coordinates
+(`latMicro`/`lonMicro`, stored as signed 1e-6 degrees), and its identity is the
+hash of division + level + sub-id + plot index. Search matches country names,
+country codes, division names and division ids; it does not resolve streets,
+landmarks or coordinates to a division.
 
 ## 1. Values
 
@@ -18,8 +27,9 @@ Earth → country → first-level division (state/province/governorate)
 
 Division GLVs are set at deployment from published economic data (population,
 economic activity, infrastructure, tourism) and bounded between **$100 and
-$30,000 per m²**. The full country/division list is served by
-`GET /land/countries`.
+$30,000 per m²**. `GET /land/countries` lists countries with division counts and
+their GLV, and `GET /land/divisions?country=NG` lists a country's divisions with
+the GLV each division carries right now.
 
 ## 2. Buying from the protocol market
 
@@ -68,16 +78,22 @@ transfer tax", and no admin approval step.
 ## 6. Searching
 
 ```bash
-curl -s "http://127.0.0.1:8630/land/search?q=Enugu" | jq
-curl -s "http://127.0.0.1:8630/land/search?q=6.45,7.51" | jq     # GPS
-curl -s "http://127.0.0.1:8630/land/quote/NG-EN" | jq            # price a division
-curl -s "http://127.0.0.1:8630/land/parcels?divisionId=NG-EN" | jq
+curl -s "http://127.0.0.1:8630/land/countries" | jq                     # countries + GLV
+curl -s "http://127.0.0.1:8630/land/divisions?country=NG" | jq          # divisions + current GLV
+curl -s "http://127.0.0.1:8630/land/search?q=Enugu" | jq                # match divisions
+curl -s "http://127.0.0.1:8630/land/quote/NG-EN" | jq                   # price a division
+curl -s "http://127.0.0.1:8630/land/parcels?divisionId=NG-EN" | jq      # parcels in a division
 ```
 
-Search accepts a country name or code, a state/province, a city, a district, a
-street, a landmark or a `lat,lon` pair, and returns both matching divisions and
-matching parcels. Every field in a parcel record — GLV at purchase, ILV, MSP,
-official value now, area, coordinates, owner — comes from chain state.
+Search matches a country name or code, a division name or a division id, and
+returns matching divisions. Parcels are then read per division. Every field in a
+parcel record — GLV, ILV, MSP, area, plot index, owner — comes from chain state,
+and the coordinates a buyer supplied are part of the parcel's body on chain.
+
+**Not implemented:** resolving a city, district, street, landmark or `lat,lon`
+pair to a division. The shipped geography table stops at first-level divisions,
+so a coordinate lookup would have to invent an answer; the interface says what
+it matches instead.
 
 ## 7. What the protocol deliberately does not do
 

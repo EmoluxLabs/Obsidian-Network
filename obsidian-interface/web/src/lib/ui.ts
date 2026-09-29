@@ -44,27 +44,136 @@ export function clear(node: Element): void {
   node.replaceChildren();
 }
 
-/** Format a seal amount (string from the node) for display. */
-export function obs(value: string | bigint | undefined | null, decimals = 8): string {
+/**
+ * Format an Obsidian amount exactly, without ever going through a float.
+ *
+ * The node speaks two languages for the same quantity and both are exact:
+ *
+ *   - seal counts   — integer strings, 10^18 seals = 1 OBS (`/status.supplySeals`)
+ *   - OBS decimals  — `"100000.000000000000000000"` (`/supply.totalSupplyObs`)
+ *
+ * Feeding a decimal to a seal formatter (or the reverse) does not throw, it
+ * just displays the wrong number: 1000000000000000 seals read as a decimal is
+ * 1, and a decimal read as a seal count is 0. So this accepts either, detects
+ * which one it was given, and never rounds through a float.
+ */
+export function obs(value: string | bigint | number | undefined | null, decimals = 8): string {
   if (value === undefined || value === null) return '—';
-  const text = typeof value === 'bigint' ? value.toString() : value;
+  const text = typeof value === 'bigint' ? value.toString() : String(value).trim();
+  if (text === '' || !/^-?\d+(\.\d+)?$/.test(text)) return '—';
   const negative = text.startsWith('-');
   const digits = negative ? text.slice(1) : text;
-  const whole = digits.length > 18 ? digits.slice(0, digits.length - 18) : '0';
-  const fraction = digits.padStart(19, '0').slice(digits.length > 18 ? digits.length - 18 : digits.length - 18);
-  const trimmed = fraction.slice(0, decimals).replace(/0+$/, '');
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const [wholePart, givenFraction] = digits.split('.');
+  let whole: string;
+  let fraction: string;
+  if (givenFraction === undefined) {
+    // Seal count: the last 18 digits are the fractional part of one OBS.
+    const padded = digits.padStart(19, '0');
+    whole = padded.slice(0, padded.length - 18);
+    fraction = padded.slice(-18);
+  } else {
+    whole = wholePart;
+    fraction = givenFraction.padEnd(18, '0').slice(0, 18);
+  }
+  const trimmed = fraction.slice(0, Math.max(0, decimals)).replace(/0+$/, '');
+  const grouped = whole.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return `${negative ? '-' : ''}${grouped}${trimmed ? `.${trimmed}` : ''}`;
 }
 
-export function usd(microUsd: string | number | bigint | undefined, digits = 2): string {
+/** Exact seals → exact OBS decimal string. Used to build transaction bodies. */
+export function obsFromSeals(seals: bigint): string {
+  if (seals < 0n) throw new Error('amounts are never negative');
+  const whole = seals / 10n ** 18n;
+  const fraction = (seals % 10n ** 18n).toString().padStart(18, '0');
+  return `${whole}.${fraction}`;
+}
+
+/** Exact OBS decimal string → exact seals. Rejects anything that is not a plain amount. */
+export function sealsFromObs(value: string | bigint): bigint {
+  const text = typeof value === 'bigint' ? value.toString() : String(value).trim();
+  if (!/^\d+(\.\d{0,18})?$/.test(text)) throw new Error(`not an OBS amount: ${value}`);
+  const [whole, fraction = ''] = text.split('.');
+  return BigInt(whole) * 10n ** 18n + BigInt(fraction.padEnd(18, '0') || '0');
+}
+
+/**
+ * Format micro-USD (a node integer string) as dollars: `usd('50000000')` = `$50.00`.
+ * A string that is already formatted (`"$50.1"`) passes through untouched.
+ */
+export function usd(microUsd: string | number | bigint | undefined | null, digits = 2): string {
   if (microUsd === undefined || microUsd === null) return '—';
-  let micro: number;
-  if (typeof microUsd === 'bigint') micro = Number(microUsd);
-  else if (typeof microUsd === 'string') micro = Number(microUsd);
-  else micro = microUsd;
-  if (!Number.isFinite(micro)) return '—';
-  return `$${(micro / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+  const text = typeof microUsd === 'bigint' ? microUsd.toString() : String(microUsd).trim();
+  if (text === '') return '—';
+  if (text.startsWith('$')) return text;
+  if (!/^-?\d+$/.test(text)) return '—';
+  const value = BigInt(text);
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  const whole = (abs / 1_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const fraction = (abs % 1_000_000n).toString().padStart(6, '0').slice(0, Math.max(0, digits)).replace(/0+$/, '');
+  return `${negative ? '-' : ''}$${whole}${fraction ? `.${fraction}` : ''}`;
+}
+
+/**
+ * Format whole dollars. `/land/countries.glvUsd` is `"20403"` — dollars, not
+ * micro-USD — and reading it as micro-USD would print `$0.02` for `$20,403`.
+ */
+export function usdDollars(dollars: string | number | bigint | undefined | null, digits = 0): string {
+  if (dollars === undefined || dollars === null) return '—';
+  const text = typeof dollars === 'bigint' ? dollars.toString() : String(dollars).trim();
+  if (text === '') return '—';
+  if (text.startsWith('$')) return text;
+  if (!/^-?\d+(\.\d+)?$/.test(text)) return '—';
+  const [whole, fraction = ''] = text.split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const trimmed = fraction.slice(0, Math.max(0, digits)).replace(/0+$/, '');
+  return `$${grouped}${trimmed ? `.${trimmed}` : ''}`;
+}
+
+/**
+ * Whole-dollar string → micro-USD, exact. `/params.social.businessPagePriceUsd`
+ * arrives as `"50.00"` (dollars), while fees are computed in micro-USD, and
+ * converting through a float would round the protocol fee.
+ */
+export function usdMicroFromDollars(dollars: string | number | bigint): bigint {
+  const text = typeof dollars === 'bigint' ? dollars.toString() : String(dollars).trim();
+  if (!/^\d+(\.\d{0,6})?$/.test(text)) throw new Error(`not a USD amount: ${dollars}`);
+  const [whole, fraction = ''] = text.split('.');
+  return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0') || '0');
+}
+
+/** Pass through an amount the node already formatted (`"$50.1"`). */
+export function usdText(text: string | undefined | null): string {
+  if (text === undefined || text === null || text === '') return '—';
+  return String(text);
+}
+
+/**
+ * Reward amounts from `/mining/schedule` or `/mining/status`. `obs()` accepts
+ * both exact shapes, so a node that sends `dailyRewardObs` and one that sends
+ * `dailyRewardSeals` both display the real number instead of `0 OBS`.
+ */
+export function rewardLine(schedule: { dailyRewardSeals?: string; dailyRewardObs?: string; rewardPerDayObs?: string }): string {
+  return `${obs(schedule.dailyRewardObs ?? schedule.dailyRewardSeals ?? schedule.rewardPerDayObs)} OBS`;
+}
+
+export function rewardPerClaim(schedule: { claimRewardSeals?: string; claimRewardObs?: string; rewardPerClaimObs?: string }): string {
+  return `${obs(schedule.claimRewardObs ?? schedule.claimRewardSeals ?? schedule.rewardPerClaimObs)} OBS`;
+}
+
+/** A protocol price is only a price when the node says the feed is usable. */
+export function oraclePriceText(oracle: { usable?: boolean; priceUsd?: string; priceUsdMicro?: string } | undefined): string {
+  if (!oracle || oracle.usable !== true) return 'no price yet';
+  if (oracle.priceUsd !== undefined && oracle.priceUsd !== '') return usdText(oracle.priceUsd);
+  return usd(oracle.priceUsdMicro ?? '0');
+}
+
+/** The oracle median in micro-USD, or undefined when the feed is stale or too thin. */
+export function oraclePriceMicro(oracle: { usable?: boolean; priceUsdMicro?: string } | undefined): bigint | undefined {
+  if (!oracle || oracle.usable !== true) return undefined;
+  const micro = oracle.priceUsdMicro ?? '';
+  if (!/^\d+$/.test(micro) || micro === '0') return undefined;
+  return BigInt(micro);
 }
 
 export function relativeTime(timestampSeconds: number): string {

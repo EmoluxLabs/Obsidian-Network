@@ -196,6 +196,53 @@ export function searchDivisions(query: string, limit = 25): SearchHit[] {
   return hits.slice(0, limit);
 }
 
+/**
+ * Every first-level division of one country, with the GLV the protocol gives it.
+ *
+ * `listCountries()` returns counts only, so an interface that wanted to offer
+ * Earth → country → division navigation had to guess division ids. This is the
+ * registry, not chain state: current GLVs come from the node's state store and
+ * are overlaid by the RPC handler.
+ */
+export function listDivisions(countryCode: string): Array<{
+  divisionId: string;
+  name: string;
+  weight: number;
+  glvUsdMicro: bigint;
+  glvUsd: string;
+  level: number;
+}> {
+  const code = countryCode.trim().toUpperCase();
+  const country = geography.countries.find((entry) => entry.code === code);
+  if (!country) return [];
+  const divisions = country.divisions ?? [];
+  if (divisions.length === 0) {
+    const glv = baseGlvUsdMicro(country);
+    return [
+      {
+        divisionId: country.code,
+        name: country.name,
+        weight: 1,
+        glvUsdMicro: glv,
+        glvUsd: (glv / 1_000_000n).toString(),
+        level: 1,
+      },
+    ];
+  }
+  return divisions.map((division) => {
+    const weight = division.weight ?? 1;
+    const glv = baseGlvUsdMicro(country, weight);
+    return {
+      divisionId: normaliseDivisionId(division.id),
+      name: division.name,
+      weight,
+      glvUsdMicro: glv,
+      glvUsd: (glv / 1_000_000n).toString(),
+      level: 1,
+    };
+  });
+}
+
 export function listCountries(): Array<{
   code: string;
   name: string;

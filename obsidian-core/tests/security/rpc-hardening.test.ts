@@ -313,6 +313,29 @@ function fieldNames(value: unknown, out = new Set<string>()): Set<string> {
   return out;
 }
 
+describe('Circle registry reads', () => {
+  it('lists a country first-level divisions with live GLVs', async () => {
+    const response = await get('/land/divisions?country=NG');
+    expect(response.status).toBe(200);
+    const body = response.body as { country: string; divisions: Array<Record<string, unknown>>; count: number };
+    expect(body.country).toBe('NG');
+    expect(body.count).toBeGreaterThan(0);
+    for (const division of body.divisions) {
+      expect(String(division.divisionId).startsWith('NG-') || division.divisionId === 'NG').toBe(true);
+      expect(String(division.glvUsd).startsWith('$')).toBe(true);
+      expect(typeof division.protocolPurchases).toBe('number');
+    }
+  });
+
+  it('refuses a country code that is not alpha-2 and answers an unknown code honestly', async () => {
+    expect((await get('/land/divisions?country=Nigeria')).status).toBe(400);
+    expect((await get('/land/divisions?country=NG-GEN')).status).toBe(400);
+    const unknown = await get('/land/divisions?country=ZZ');
+    expect(unknown.status).toBe(200);
+    expect((unknown.body as { divisions: unknown[] }).divisions).toEqual([]);
+  });
+});
+
 describe('private material never crosses the wire', () => {
   it('no route echoes a private key, mnemonic or keystore secret', async () => {
     const forbiddenFields = ['privatekey', 'secretkey', 'mnemonic', 'seedphrase', 'recoveryphrase', 'passphrase'];
@@ -332,6 +355,9 @@ describe('private material never crosses the wire', () => {
       '/mempool',
       '/names',
       '/land/countries',
+      '/land/divisions?country=NG',
+      '/land/search?q=Lagos',
+      '/land/parcels',
       '/capsules',
       '/social/feed',
       '/network',

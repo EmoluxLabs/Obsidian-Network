@@ -10,7 +10,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
-import { el, obs, usd, spinner, toast, kv, badge, table, short, when } from '../lib/ui.js';
+import { el, obsFromSeals, usd, usdMicroFromDollars, oraclePriceMicro, oraclePriceText, spinner, toast, kv, badge, table, short } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const lookup = el('input', { id: 'ons-lookup', placeholder: 'name.obs', autocomplete: 'off' });
@@ -60,10 +60,9 @@ async function doLookup(name: string): Promise<void> {
       el('h2', {}, `${name}`),
       kv([
         ['Resolves to', el('span', { class: 'mono' }, String(record.address ?? '—'))],
-        ['Registered at height', String(record.registeredAt ?? '—')],
+        ['Registered at height', String(record.registeredAtHeight ?? '—')],
         ['Expires at height', String(record.expiresAt ?? '—')],
-        ['Transferable', record.transferable === false ? badge('no', 'warn') : badge('yes', 'ok')],
-        ['Fee paid', record.fee ? `${obs(String(record.fee))} OBS` : '—'],
+        ['Transfers', record.transferCount === 0 ? 'never transferred' : String(record.transferCount)],
       ]),
       el('p', { class: 'fineprint' }, 'The record above was read from a node. Two nodes that disagree about a name are on different chains, and the interface will tell you which one it is reading.'),
     );
@@ -78,16 +77,23 @@ async function doLookup(name: string): Promise<void> {
 }
 
 async function drawRegister(): Promise<void> {
+  // The fee is a dollar price in the protocol table (`ons.registrationFeeUsd`)
+  // converted at the node's oracle median. Both numbers come from this node;
+  // neither is a constant in the page, and the node validates the result.
   let priceObs = '0';
-  let medianPrice = '';
+  let feeUsdMicro = 0n;
+  let oracleUsable = false;
+  let medianText = '—';
+  let sourceCount = 0;
   try {
-    const oracle = await client.oracle();
-    medianPrice = (oracle as { medianPriceUsd?: string }).medianPriceUsd ?? '';
-    const params = (await client.params()) as { ons?: { registrationUsdMicro?: string; feeUsdMicro?: string } };
-    const feeUsdMicro = params.ons?.registrationUsdMicro ?? params.ons?.feeUsdMicro;
-    if (feeUsdMicro && medianPrice) {
-      const seals = (BigInt(feeUsdMicro) * 10n ** 18n) / BigInt(medianPrice);
-      priceObs = (Number(seals) / 1e18).toString();
+    const [oracle, params] = await Promise.all([client.oracle(), client.params()]);
+    const micro = oraclePriceMicro(oracle);
+    oracleUsable = micro !== undefined;
+    medianText = oraclePriceText(oracle);
+    sourceCount = oracle.sourceCount;
+    if (micro !== undefined) {
+      feeUsdMicro = usdMicroFromDollars(params.ons.registrationFeeUsd);
+      priceObs = obsFromSeals((feeUsdMicro * 10n ** 18n) / micro);
     }
   } catch {
     /* handled below */
@@ -112,12 +118,13 @@ async function drawRegister(): Promise<void> {
 
   registerPanel.replaceChildren(
     el('h2', {}, 'Register a name'),
-    medianPrice
+    oracleUsable
       ? kv([
-          ['Protocol price', `${usd(medianPrice)} / OBS (median of independent oracle submissions)`],
-          ['Registration fee', `${priceObs} OBS (≈ $5.00, paid in OBS at that price)`],
+          ['Protocol price', `${medianText} / OBS (median of ${sourceCount} independent oracle submissions)`],
+          ['Registration fee', `${priceObs} OBS (${usd(feeUsdMicro.toString())}, paid in OBS at that price)`],
+          ['Term', 'one year from the block that includes the registration, renewable by the owner'],
         ])
-      : el('p', { class: 'error' }, 'The protocol price is unavailable or stale, so registration is closed right now. The node refuses the transaction rather than charging a guessed amount.'),
+      : el('p', { class: 'error' }, 'The protocol price feed is stale or has fewer than two independent sources, so registration is closed right now. The node would reject the transaction rather than charge a guessed amount.'),
     el('div', { class: 'field' }, el('label', { for: 'ons-name' }, 'Name'), name),
     el('div', { class: 'row' }, create),
     el('p', { class: 'fineprint' }, 'After registration you can transfer the name to any wallet address, or point it at a different address you own, by signing one transaction.'),
@@ -132,12 +139,12 @@ async function loadRecent(): Promise<void> {
       names.length === 0
         ? el('p', { class: 'muted' }, 'No names registered yet. The first one sets the tone.')
         : table(
-            ['Name', 'Owner', 'Registered', 'State'],
+            ['Name', 'Owner', 'Registered at height', 'Expires at height'],
             names.slice(0, 25).map((record) => [
-              el('span', { class: 'mono' }, String(record.name ?? '—')),
+              el('span', { class: 'mono' }, record.name),
               el('span', { class: 'mono' }, short(String(record.address ?? ''), 12)),
-              when(Number(record.registeredAtTimestamp ?? 0)) || String(record.registeredAt ?? '—'),
-              badge('owned', 'ok'),
+              String(record.registeredAtHeight ?? '—'),
+              String(record.expiresAt ?? '—'),
             ]),
           ),
     );

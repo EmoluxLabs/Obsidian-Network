@@ -34,9 +34,11 @@ Error shape is stable:
 | `GET /mining/claims?address=&limit=` | claims with sequence, reward, block, timestamp |
 | `GET /names?prefix=` | registered names |
 | `GET /names/<name>` | one ONS record |
-| `GET /land/countries` | countries with divisions and GLVs |
-| `GET /land/search?q=` | divisions and parcels matching a place, landmark or `lat,lon` |
+| `GET /land/countries` | countries with division counts and GLVs |
+| `GET /land/divisions?country=NG` | every first-level division of one country, with its current GLV |
+| `GET /land/search?q=` | divisions matching a country name/code, a division name or a division id |
 | `GET /land/parcels?divisionId=&owner=&limit=` | parcels in a division or owned by an address |
+| `GET /land/parcelid/` | the canonical parcel id for a division + level + sub-id + plot index |
 | `GET /land/parcel/<parcelId>` | one parcel: area, GLV at purchase, ILV, official value, MSP |
 | `GET /land/quote/<divisionId>` | current protocol price for 1 m² of that division |
 | `GET /capsules?status=&limit=` | the capsule wall with commitments and unlock times |

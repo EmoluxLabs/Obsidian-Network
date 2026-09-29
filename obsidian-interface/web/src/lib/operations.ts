@@ -234,7 +234,7 @@ export const operations = {
     wallet: Wallet,
     input: { divisionId: string; countryCode: string; level?: number; subId?: string; plotIndex?: bigint; latMicro?: number; lonMicro?: number },
   ): Promise<SubmitResult> {
-    const quote = (await client.landQuote(input.divisionId)) as { priceObs?: string; glvUsdMicro?: string };
+    const quote = await client.landQuote(input.divisionId);
     const price = parseObs(quote.priceObs ?? '0');
     if (price <= 0n) throw new Error('this division has no protocol price yet (the oracle must publish a price first)');
     const ctx = await context(client, wallet);

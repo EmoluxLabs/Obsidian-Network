@@ -66,6 +66,20 @@ export interface InterfaceDependencies {
   log: (level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Record<string, unknown>) => void;
 }
 
+/**
+ * Split a proxied RPC path into its route and query.
+ *
+ * The route allowlist matches routes, not whole request strings: a path like
+ * `/mining/status?address=obs1…` must be checked as `/mining/status` and then
+ * forwarded with its query intact, otherwise every parameterised read is
+ * refused by an interface that looks like it works.
+ */
+function splitPathAndQuery(raw: string): [string, string] {
+  const index = raw.indexOf('?');
+  if (index === -1) return [raw, ''];
+  return [raw.slice(0, index), raw.slice(index + 1)];
+}
+
 const SESSION_COOKIE = 'obsidian_session';
 const MAX_BODY_BYTES = 256 * 1024;
 /** Hard ceiling on how much of an oversized body we are willing to drain. */
@@ -458,7 +472,21 @@ export class InterfaceServer {
    * forwarded blindly, so this can never become an open proxy.
    */
   private async proxy(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
-    const target = url.searchParams.get('path') ?? '/status';
+    const raw = url.searchParams.get('path') ?? '/status';
+    if (raw.length > 512) {
+      this.json(response, 400, { error: 'rpc path is too long', code: 'ERR_REJECTED' });
+      return;
+    }
+    // Split the query off before the allowlist check. Every list and status
+    // route carries a query (`/blocks?limit=`, `/mining/status?address=`,
+    // `/names?prefix=`…), so matching the whole string against the route table
+    // rejected the majority of real reads while single-segment routes passed.
+    const [target, query = ''] = splitPathAndQuery(raw);
+    if (query.length > 512) {
+      this.json(response, 400, { error: 'rpc query is too long', code: 'ERR_REJECTED' });
+      return;
+    }
+    const upstreamTarget = query ? `${target}?${query}` : target;
     const allowed =
       target === '/status' ||
       target === '/health' ||
@@ -491,7 +519,7 @@ export class InterfaceServer {
       target.startsWith('/social/') ||
       target.startsWith('/audit/');
     if (!allowed) {
-      this.json(response, 400, { error: `route "${target}" is not exposed by the interface proxy`, code: 'ERR_REJECTED' });
+      this.json(response, 400, { error: `route "${upstreamTarget}" is not exposed by the interface proxy`, code: 'ERR_REJECTED' });
       return;
     }
 
@@ -509,7 +537,7 @@ export class InterfaceServer {
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 8000);
-        const upstream = await fetch(`${node.url}${target}`, {
+        const upstream = await fetch(`${node.url}${upstreamTarget}`, {
           method,
           headers: payload ? { 'content-type': 'application/json' } : undefined,
           body: payload,

@@ -15,7 +15,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations, randomHex } from '../lib/operations.js';
-import { el, obs, usd, spinner, toast, kv, short, when } from '../lib/ui.js';
+import { el, obs, obsFromSeals, usd, usdMicroFromDollars, oraclePriceMicro, spinner, toast, kv, short, when } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const feed = el('section', { class: 'card', id: 'feed' }, spinner('reading the feed from the chain…'));
@@ -131,7 +131,7 @@ async function loadFeed(): Promise<void> {
             'ul',
             { class: 'feed social-feed' },
             ...posts.map((post) => {
-              const accountId = String(post.accountId ?? '');
+              const accountId = post.authorAccountId;
               const tipAmount = el('input', { class: 'tip-input', placeholder: 'Tip (OBS)', value: '1' });
               const tip = el('button', { class: 'ghost small', type: 'button' }, 'Tip');
               tip.addEventListener('click', () => void tipPost(accountId, String(post.postId ?? ''), tipAmount.value));
@@ -143,12 +143,12 @@ async function loadFeed(): Promise<void> {
                 el(
                   'header',
                   {},
-                  el('strong', {}, String(post.displayName ?? post.handle ?? accountId.slice(0, 10))),
-                  el('span', { class: 'mono muted' }, short(accountId, 10)),
-                  el('span', { class: 'muted' }, when(Number(post.timestamp ?? 0))),
+                  el('strong', {}, `@${accountId}`),
+                  el('span', { class: 'mono muted' }, short(post.author, 14)),
+                  el('span', { class: 'muted' }, when(post.createdAt)),
                 ),
                 el('p', {}, String(post.content ?? '')),
-                el('footer', {}, tipAmount, tip, follow, el('span', { class: 'muted' }, `${post.tipTotal ? `${obs(String(post.tipTotal))} OBS tipped` : 'no tips yet'}`)),
+                el('footer', {}, tipAmount, tip, follow, el('span', { class: 'muted' }, `${post.likes} like${post.likes === 1 ? '' : 's'} · block ${post.createdAtHeight}`)),
               );
             }),
           ),
@@ -198,18 +198,21 @@ async function followAccount(targetAccountId: string): Promise<void> {
 
 /** Business pages: $50-equivalent in OBS, paid to the treasury, split 70/30 on page revenue. */
 export async function businessPage(accountId: string): Promise<void> {
-  const oracle = await client.oracle();
-  const median = (oracle as { medianPriceUsd?: string }).medianPriceUsd;
-  if (!median) {
-    toast('The protocol price is unavailable, so the page price cannot be computed. The node would refuse the transaction anyway.', 'error');
+  // The dollar price and the OBS conversion both come from the node: the fee is
+  // `businessPagePriceUsd` at the protocol's current median, never a constant.
+  const [oracle, params] = await Promise.all([client.oracle(), client.params()]);
+  const micro = oraclePriceMicro(oracle);
+  if (!micro) {
+    toast('The protocol price feed is stale or too thin, so the page price cannot be computed. The node would refuse the transaction anyway.', 'error');
     return;
   }
-  const priceObs = (50_000_000n * 10n ** 18n) / BigInt(median);
-  const passphrase = window.prompt(`A business page costs ${usd('50000000')} in OBS today (${Number(priceObs) / 1e18} OBS), paid to the treasury. Unlock to continue.`);
+  const priceUsdMicro = usdMicroFromDollars(params.social.businessPagePriceUsd);
+  const priceObs = priceUsdMicro * 10n ** 18n / micro;
+  const passphrase = window.prompt(`A business page costs ${usd(priceUsdMicro.toString())} in OBS today (${obs(priceObs)} OBS), paid to the treasury. Unlock to continue.`);
   if (!passphrase) return;
   try {
     const wallet = await Wallet.unlock(passphrase);
-    await operations.buyBusinessPage(client, wallet, { accountId, priceObs: (Number(priceObs) / 1e18).toString() });
+    await operations.buyBusinessPage(client, wallet, { accountId, priceObs: obsFromSeals(priceObs) });
     toast('Business page purchase signed and submitted. Creator split: 70% to you, 30% to the treasury.', 'success');
   } catch (error) {
     toast((error as Error).message, 'error');

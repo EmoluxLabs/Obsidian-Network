@@ -19,7 +19,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
-import { el, obs, usd, spinner, toast, kv, badge, table, short } from '../lib/ui.js';
+import { el, obs, usd, usdDollars, usdText, spinner, toast, kv, table, short } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const navigation = el('section', { class: 'card' }, spinner('loading the atlas…'));
@@ -57,61 +57,104 @@ void boot();
 async function boot(): Promise<void> {
   try {
     const { countries } = await client.landCountries();
-    const cards = countries.map((country) => {
-      const code = String(country.code ?? '');
-      const divisions = (country.divisions as Array<Record<string, unknown>> | undefined) ?? [];
-      const list = el('ul', {});
-      for (const division of divisions.slice(0, 10)) {
-        const item = el('li', {});
-        const open = el('button', { class: 'link-button', type: 'button' }, String(division.name ?? division.id ?? '—'));
-        open.addEventListener('click', () => void showDivision(code, division));
-        item.append(open, el('span', { class: 'muted' }, ` GLV ${usd(String(division.glvUsdMicro ?? '0'))}`));
-        list.append(item);
-      }
-      return el(
-        'article',
-        { class: 'country-card' },
-        el('strong', {}, String(country.name ?? (code || '—'))),
-        el('span', { class: 'mono' }, code),
-        divisions.length > 0 ? list : el('p', { class: 'muted' }, 'No divisions configured.'),
+    const byContinent = new Map<string, typeof countries>();
+    for (const country of countries) {
+      const key = country.continent || 'Other';
+      byContinent.set(key, [...(byContinent.get(key) ?? []), country]);
+    }
+    const sections = [...byContinent.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([continent, entries]) =>
+        el(
+          'section',
+          { class: 'continent' },
+          el('h3', {}, `${continent} (${entries.length})`),
+          el(
+            'div',
+            { class: 'country-grid' },
+            ...entries.map((country) => {
+              const open = el('button', { class: 'country-card', type: 'button', id: `country-${country.code}` });
+              open.append(
+                el('strong', {}, country.name),
+                el('span', { class: 'mono' }, country.code),
+                el('span', { class: 'muted' }, `${country.divisionCount} division${country.divisionCount === 1 ? '' : 's'} · GLV ${usdDollars(country.glvUsd)}`),
+              );
+              open.addEventListener('click', () => void loadDivisions(country.code, country.name));
+              return open;
+            }),
+          ),
+        ),
       );
-    });
     navigation.replaceChildren(
       el('h2', {}, 'Atlas'),
-      el('p', { class: 'muted' }, `${countries.length} countries with divisions configured on this chain. Pick a division to price a plot of at most one square metre.`),
-      el('div', { class: 'country-grid' }, ...cards.slice(0, 60)),
+      el('p', { class: 'muted' }, `${countries.length} countries from the protocol geography table. Pick a country, then a first-level division, to price a plot of at most one square metre.`),
+      ...sections,
     );
   } catch (error) {
     navigation.replaceChildren(el('h2', {}, 'Atlas'), el('p', { class: 'error' }, (error as Error).message));
   }
 }
 
-async function showDivision(countryCode: string, division: Record<string, unknown>): Promise<void> {
-  const divisionId = String(division.id ?? '');
+/** Earth → country → division. Divisions come from the node's registry route. */
+async function loadDivisions(countryCode: string, countryName: string): Promise<void> {
+  detailPanel.replaceChildren(spinner(`loading divisions of ${countryName}…`));
+  try {
+    const { divisions, count } = await client.landDivisions(countryCode);
+    detailPanel.replaceChildren(
+      el('h2', {}, `${countryName} (${countryCode})`),
+      el('p', { class: 'muted' }, `${count} first-level divisions carry a GLV on this chain.`),
+      divisions.length === 0
+        ? el('p', { class: 'muted' }, 'This country has no divisions configured in the protocol table.')
+        : table(
+            ['Division', 'GLV now', 'Protocol purchases', 'Buy-backs', 'Price a plot'],
+            divisions.map((division) => {
+              const price = el('button', { class: 'link-button', type: 'button' }, 'quote 1 m²');
+              price.addEventListener('click', () => void showDivision(countryCode, division.divisionId, division.name));
+              return [
+                el('span', {}, `${division.name} `, el('span', { class: 'mono muted' }, division.divisionId)),
+                usdText(division.glvUsd),
+                String(division.protocolPurchases),
+                String(division.protocolBuybacks),
+                price,
+              ];
+            }),
+          ),
+    );
+  } catch (error) {
+    detailPanel.replaceChildren(el('h2', {}, countryName), el('p', { class: 'error' }, (error as Error).message));
+  }
+}
+
+async function showDivision(countryCode: string, divisionId: string, divisionName: string): Promise<void> {
   detailPanel.replaceChildren(spinner(`pricing ${divisionId}…`));
   try {
     const quote = await client.landQuote(divisionId);
     detailPanel.replaceChildren(
-      el('h2', {}, `${division.name ?? divisionId}`),
+      el('h2', {}, `${divisionName} · ${divisionId}`),
       kv([
-        ['Division id', el('span', { class: 'mono' }, divisionId)],
-        ['Level', String(division.level ?? '1 (first-level division)')],
-        ['GLV now', `${usd(String(quote.glvUsdMicro ?? division.glvUsdMicro ?? '0'))} / m²`],
-        ['Protocol price for 1 m²', `${obs(String(quote.priceObs ?? '0'))} OBS`],
-        ['Protocol price source', String(quote.priceSource ?? 'protocol oracle median (2+ independent sources)')],
-        ['Purchases recorded', String(quote.purchases ?? '—')],
+        ['GLV now', `${usdText(quote.glvUsd)} / m²`],
+        ['Protocol price for 1 m²', quote.priceObs ? `${obs(quote.priceObs)} OBS` : '—'],
+        ['Gas for that purchase', quote.gasObs ? `${obs(quote.gasObs)} OBS` : '—'],
+        ['Protocol price feed', `${usdText(quote.obsPriceUsd)} / OBS from ${quote.sourceCount} source${quote.sourceCount === 1 ? '' : 's'}`],
+        ['Buy-back value (ILV)', quote.oracleUsable ? 'current GLV at buy-back time on chain' : 'USD pricing closed'],
       ]),
-      el('div', { class: 'row' }, buyButton(countryCode, divisionId)),
+      el('p', { class: quote.oracleUsable ? 'fineprint' : 'error' }, quote.note),
+      el('div', { class: 'row' }, buyButton(countryCode, divisionId, quote.oracleUsable)),
       el('p', { class: 'fineprint' }, 'One plot of at most 1 m² per transaction, and the GLV moves between purchases — the next buyer pays the updated price, never a stale one.'),
     );
     void loadParcels(divisionId);
   } catch (error) {
-    detailPanel.replaceChildren(el('h2', {}, String(division.name ?? divisionId)), el('p', { class: 'error' }, (error as Error).message));
+    detailPanel.replaceChildren(el('h2', {}, `${divisionName} · ${divisionId}`), el('p', { class: 'error' }, (error as Error).message));
   }
 }
 
-function buyButton(countryCode: string, divisionId: string): HTMLElement {
-  const button = el('button', { class: 'primary', type: 'button' }, 'Buy 1 m² from the protocol market');
+function buyButton(countryCode: string, divisionId: string, oracleUsable: boolean): HTMLElement {
+  const button = el(
+    'button',
+    { class: 'primary', type: 'button', disabled: oracleUsable ? undefined : 'disabled' },
+    oracleUsable ? 'Buy 1 m² from the protocol market' : 'Pricing closed — protocol price feed unusable',
+  );
+  if (!oracleUsable) return button;
   button.addEventListener('click', async () => {
     const passphrase = window.prompt('Unlock your wallet passphrase to buy this plot');
     if (!passphrase) return;
@@ -130,23 +173,24 @@ function buyButton(countryCode: string, divisionId: string): HTMLElement {
 async function loadParcels(divisionId: string): Promise<void> {
   parcelsPanel.replaceChildren(spinner());
   try {
-    const { parcels } = await client.landParcels({ divisionId, limit: 25 });
+    const { parcels, total } = await client.landParcels({ divisionId, limit: 25 });
     parcelsPanel.replaceChildren(
-      el('h2', {}, 'Parcels in this division'),
+      el('h2', {}, `Parcels in this division (${total} on chain)`),
       parcels.length === 0
-        ? el('p', { class: 'muted' }, 'No parcels sold in this division yet.')
+        ? el('p', { class: 'muted' }, 'No parcel has been released by the protocol market in this division yet.')
         : table(
-            ['Parcel', 'Owner', 'Area', 'GLV at purchase', 'Official value now', 'MSP', 'State'],
+            ['Parcel', 'Owner', 'Area', 'GLV now', 'ILV', 'MSP', 'Issued at'],
             parcels.map((parcel) => [
-              el('span', { class: 'mono' }, short(String(parcel.parcelId ?? parcel.id ?? ''), 10)),
-              el('span', { class: 'mono' }, short(String(parcel.owner ?? ''), 10)),
-              `${parcel.areaCm2 ? `${(Number(parcel.areaCm2) / 10_000).toFixed(2)} m²` : '1.00 m²'}`,
-              usd(String(parcel.glvUsdMicroAtPurchase ?? parcel.glvUsdMicro ?? '0')),
-              usd(String(parcel.officialValueUsdMicro ?? '0')),
-              parcel.mspObs ? `${obs(String(parcel.mspObs))} OBS` : el('span', { class: 'muted' }, 'not listed'),
-              parcel.listed ? badge('listed', 'ok') : badge('owned', 'neutral'),
+              el('span', { class: 'mono' }, short(parcel.parcelId, 12)),
+              el('span', { class: 'mono' }, short(parcel.owner, 10)),
+              `${parcel.squareMetres} m²`,
+              usdText(parcel.glvUsd),
+              parcel.ilvUsd ? usdText(parcel.ilvUsd) : el('span', { class: 'muted' }, '—'),
+              parcel.mspObs ? `${obs(parcel.mspObs)} OBS` : el('span', { class: 'muted' }, 'not listed'),
+              String(parcel.issuedAtHeight ?? '—'),
             ]),
           ),
+      el('p', { class: 'fineprint' }, 'Owner addresses are masked by the node before they leave it. A parcel is chain state: a transfer is a signed transaction, never a row in a company database.'),
     );
   } catch (error) {
     parcelsPanel.replaceChildren(el('h2', {}, 'Parcels in this division'), el('p', { class: 'error' }, (error as Error).message));
@@ -157,28 +201,29 @@ async function searchLand(term: string): Promise<void> {
   if (!term) return;
   parcelsPanel.replaceChildren(spinner(`searching “${term}”…`));
   try {
-    const result = await client.landSearch(term);
-    const parcels = (result.parcels as Array<Record<string, unknown>> | undefined) ?? [];
-    const divisions = (result.divisions as Array<Record<string, unknown>> | undefined) ?? [];
+    const { results } = await client.landSearch(term);
     parcelsPanel.replaceChildren(
       el('h2', {}, `Results for “${term}”`),
-      divisions.length > 0
-        ? table(['Division', 'Level', 'GLV', 'Country'], divisions.map((division) => [String(division.name ?? division.id ?? '—'), String(division.level ?? '—'), usd(String(division.glvUsdMicro ?? '0')), String(division.countryCode ?? '—')]))
-        : el('p', { class: 'muted' }, 'No division matched.'),
-      parcels.length > 0
-        ? table(
-            ['Parcel', 'Owner', 'Division', 'Listed at'],
-            parcels.map((parcel) => [
-              el('span', { class: 'mono' }, short(String(parcel.parcelId ?? ''), 12)),
-              el('span', { class: 'mono' }, short(String(parcel.owner ?? ''), 12)),
-              String(parcel.divisionId ?? parcel.division ?? '—'),
-              parcel.mspObs ? `${obs(String(parcel.mspObs))} OBS` : '—',
-            ]),
-          )
-        : el('p', { class: 'muted' }, 'No parcel matched (try a country, a state, a district, or “lat,lon”).'),
+      results.length === 0
+        ? el('p', { class: 'muted' }, 'No division matched. Search matches country names, country codes, division names and division ids from the protocol table.')
+        : table(
+            ['Division', 'Id', 'GLV now', 'Country', 'Price a plot'],
+            results.map((hit) => {
+              const price = el('button', { class: 'link-button', type: 'button' }, 'quote 1 m²');
+              price.addEventListener('click', () => void showDivision(hit.countryCode, hit.divisionId, hit.name));
+              const glv = hit.glvUsdMicro ? usd(hit.glvUsdMicro) : usdDollars(hit.glvUsd ?? '0');
+              return [
+                el('span', {}, hit.name),
+                el('span', { class: 'mono' }, hit.divisionId),
+                glv,
+                el('span', { class: 'mono' }, hit.countryCode),
+                price,
+              ];
+            }),
+          ),
+      el('p', { class: 'fineprint' }, 'Every GLV above is derived by the node from the shipped geography table plus this chain\'s purchase and buy-back history.'),
     );
   } catch (error) {
     parcelsPanel.replaceChildren(el('h2', {}, 'Search'), el('p', { class: 'error' }, (error as Error).message));
   }
 }
-

@@ -10,7 +10,7 @@
  */
 
 import { layout } from '../lib/shell.js';
-import { ObsidianClient, type BlockSummary } from '../lib/client.js';
+import { ObsidianClient, type BlockDetail, type BlockSummary } from '../lib/client.js';
 import { el, obs, spinner, toast, kv, badge, table, short, relativeTime, when } from '../lib/ui.js';
 
 const client = new ObsidianClient();
@@ -63,7 +63,7 @@ async function loadChainStats(): Promise<void> {
         ['Params hash', el('span', { class: 'mono' }, short(status.paramsHash, 16))],
         ['Protocol version', status.protocolVersion],
         ['Supply', `${obs(status.supplyObs)} OBS of ${obs(status.maxSupplyObs)} OBS`],
-        ['Mining pool', String((supply as { poolObs?: string }).poolObs ?? '—')],
+        ['Mining pool', `${obs(supply.poolBalanceObs)} OBS`],
         ['Peers', String(status.peers)],
         ['Last block', `${relativeTime(status.lastBlockTimestamp)} (${when(status.lastBlockTimestamp)})`],
         ['Genesis allocation', status.genesis ? `${status.genesis.allocationClaimed ? 'claimed' : 'unclaimed'} · ${obs(status.genesis.allocationObs)} OBS` : '—'],
@@ -88,8 +88,8 @@ async function loadBlocks(): Promise<void> {
         blocks.map((block: BlockSummary) => [
           el('a', { class: 'mono link', href: `#/block/${block.height}` }, String(block.height)),
           el('a', { class: 'mono link', href: `#/block/${block.hash}` }, short(block.hash, 12)),
-          String(block.transactionCount),
-          `${block.sizeBytes} B`,
+          String(block.txCount),
+          `${block.size} B`,
           relativeTime(block.timestamp),
         ]),
       ),
@@ -109,10 +109,10 @@ async function search(term: string): Promise<void> {
       resultPanel.replaceChildren(
         el('h2', {}, `ONS · ${term.toLowerCase()}`),
         kv([
-          ['Owner (public key hash)', el('span', { class: 'mono' }, short(String(record.address ?? ''), 14))],
-          ['Registered at height', String(record.registeredAt ?? record.height ?? '—')],
+          ['Resolves to (wallet address)', el('span', { class: 'mono' }, short(record.address, 18))],
+          ['Registered at height', String(record.registeredAtHeight ?? '—')],
           ['Expires at height', String(record.expiresAt ?? '—')],
-          ['Status', record.transferable === false ? badge('locked', 'warn') : badge('transferable', 'ok')],
+          ['Transfers', record.transferCount === 0 ? badge('never transferred', 'neutral') : badge(`${record.transferCount} transfers`, 'ok')],
         ]),
         el('p', { class: 'fineprint' }, 'A name maps to exactly one wallet. Transfers are blockchain state transitions, not rows in a company database.'),
       );
@@ -131,12 +131,13 @@ async function search(term: string): Promise<void> {
       el('h2', {}, `Transaction ${short(term, 14)}`),
       kv([
         ['Included in block', String(tx.height ?? 'mempool')],
-        ['Type', String(tx.type ?? tx.kind ?? '—')],
-        ['Amount', tx.amount !== undefined && tx.amount !== null ? `${obs(String(tx.amount))} OBS` : '—'],
-        ['Gas paid', tx.gas !== undefined ? `${obs(String(tx.gas))} OBS` : '—'],
+        ['Type', String(tx.kind ?? tx.type ?? '—')],
+        ['Amount', tx.amount !== undefined && tx.amount !== null ? `${obs(tx.amount)} OBS` : '—'],
+        ['Gas paid', tx.gas !== undefined ? `${obs(tx.gas)} OBS` : '—'],
         ['Timestamp', tx.timestamp ? `${when(Number(tx.timestamp))}` : 'pending'],
-        ['Sender', el('span', { class: 'mono' }, short(String(tx.senderMasked ?? tx.sender ?? '—'), 14))],
-        ['Recipient', el('span', { class: 'mono' }, short(String(tx.recipientMasked ?? tx.recipient ?? '—'), 14))],
+        ['Sender (masked by the node)', el('span', { class: 'mono' }, short(String(tx.sender ?? '—'), 18))],
+        ['Recipient (masked by the node)', el('span', { class: 'mono' }, short(String(tx.recipient ?? '—'), 18))],
+        ['Confirmations', String(tx.confirmations ?? '—')],
       ]),
       el('p', { class: 'fineprint' }, 'Addresses shown here are masked by the node before they leave it: an explorer page cannot be used to look up a wallet\'s holdings.'),
     );
@@ -146,30 +147,32 @@ async function search(term: string): Promise<void> {
   }
 }
 
-async function renderBlock(blockRef: { height?: number; hash?: string; [key: string]: unknown }): Promise<void> {
-  const height = Number(blockRef.height ?? 0);
-  const txs = (blockRef.transactions as Array<Record<string, unknown>> | undefined) ?? [];
+async function renderBlock(block: BlockDetail): Promise<void> {
+  const txs = block.transactions;
   resultPanel.replaceChildren(
-    el('h2', {}, `Block ${height}`),
+    el('h2', {}, `Block ${block.header.height}`),
     kv([
-      ['Block id', el('span', { class: 'mono' }, short(String(blockRef.hash ?? ''), 20))],
-      ['Parent', el('span', { class: 'mono' }, short(String(blockRef.prevHash ?? ''), 20))],
-      ['Producer', el('span', { class: 'mono' }, short(String(blockRef.producer ?? ''), 16))],
-      ['Timestamp', `${when(Number(blockRef.timestamp ?? 0))}`],
+      ['Block id', el('span', { class: 'mono' }, short(block.hash, 24))],
+      ['Parent', el('span', { class: 'mono' }, short(block.header.prevHash, 24))],
+      ['Producer', el('span', { class: 'mono' }, short(block.header.producer, 18))],
+      ['Timestamp', `${when(block.header.timestamp)} (${relativeTime(block.header.timestamp)})`],
       ['Transactions', String(txs.length)],
-      ['Size', `${blockRef.sizeBytes ?? '—'} B`],
+      ['Size', `${block.summary.size} B`],
+      ['State root', el('span', { class: 'mono' }, short(block.header.stateRoot, 24))],
+      ['Confirmations', String(block.confirmations)],
     ]),
     txs.length > 0
       ? table(
-          ['Transaction id', 'Type', 'Amount', 'Recipient'],
+          ['Transaction id', 'Type', 'Gas', 'Sender (masked)'],
           txs.map((tx) => [
-            el('span', { class: 'mono' }, short(String(tx.txId ?? ''), 14)),
-            String(tx.kind ?? tx.type ?? '—'),
-            tx.amount ? `${obs(String(tx.amount))} OBS` : '—',
-            el('span', { class: 'mono' }, short(String(tx.recipientMasked ?? '—'), 12)),
+            el('span', { class: 'mono' }, short(tx.id, 18)),
+            String(tx.type),
+            `${obs(tx.gas)} OBS`,
+            el('span', { class: 'mono' }, short(tx.sender, 14)),
           ]),
         )
       : el('p', { class: 'muted' }, 'This block contains no transactions.'),
+    el('p', { class: 'fineprint' }, 'Block producers and transaction senders are masked by the node before they leave it.'),
   );
 }
 

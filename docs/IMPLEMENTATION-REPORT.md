@@ -30,8 +30,8 @@ transaction executors.
   data directory written by another network is refused at startup.
 
 **Verification:** `cd obsidian-core && npm ci && npm run build && npm test` →
-**154 tests in 7 files, all passing** (consensus 42, applications 27, protocol
-security 19, RPC hardening 16, crypto/amounts 26, mining schedule 17, peer retry
+**156 tests in 7 files, all passing** (consensus 42, applications 27, protocol
+security 19, RPC hardening 18, crypto/amounts 26, mining schedule 17, peer retry
 and ban policy 7).
 
 On top of that, `node --test tests/e2e/cluster.test.mjs` (11 tests) starts three
@@ -170,7 +170,7 @@ so the state machine cannot quietly reintroduce it. Procedure and expected outpu
 | OBS Social | profiles, posts, comments, follows, DMs (client-side encrypted), tipping 100% to the creator, business pages at $50-equivalent with the 70/30 split (30% → treasury) |
 | ONS | `.obs` names mapped to exactly one wallet, transferable, **mapping stored as blockchain state** |
 | Time Capsule Wall | immutable commitments, ≥0.0001 OBS lock, unlock transfers the lock to the Mining Pool without the creator online, 1000× Time Travel preview paid to the pool once per capsule per account for 30 s, plus capsule statistics |
-| Obsidian Circle | Earth → country → state → city → district → street → parcelle navigation, search by place/landmark/GPS, GLV/ILV/MSP fields, USD pricing paid in OBS at the protocol price, one ≤1 m² plot per transaction with the GLV updated between purchases, no retroactive benefit for the buyer, buybacks that pay the current GLV and reduce it, a marketplace that never moves the GLV, and gifting at standard gas |
+| Obsidian Circle | Earth → country → first-level division navigation (`/land/countries`, `/land/divisions?country=`, `/land/quote/`), search by country/division and id, GLV/ILV/MSP fields, USD pricing paid in OBS at the protocol price, one ≤1 m² plot per transaction with the GLV updated between purchases, no retroactive benefit for the buyer, buybacks that pay the current GLV and reduce it, a marketplace that never moves the GLV, and gifting at standard gas. Sub-division/street/landmark/`lat,lon` search is **not implemented** (see §15, gap 5) |
 
 **Verification:** `tests/integration/applications.test.ts` (27 tests) exercises
 ONS registration/transfer/update, capsule create/preview/unlock economics, land
@@ -197,13 +197,33 @@ never return balances and never echo key material.
   validation of its own prerequisites, systemd unit, nginx config, Dockerfile and
   compose file, all under `obsidian-interface/deployment/`.
 
-**Verification:** `obsidian-interface/tests/` — **61 tests** over the real HTTP
-server: invite-only registration, invite reuse, the five-invite cap, session
-lifecycle, origin policy, header policy, allowlist rejection, failover between a
-healthy and a dead node, honest 503s, 413 on oversized bodies, and an honest 404
-instead of a mismatched fallback page. During development the interface was run
-against the three-node devnet: `/api/nodes` reported all three healthy
-(heights 33/33/33, latencies 16–23 ms) and `/api/rpc` served live chain reads.
+**Verification:** `obsidian-interface/tests/` — **112 tests** in three layers.
+
+1. **HTTP server (21 + 12 + 11 + 12 + 8 tests)**: invite-only registration,
+   invite reuse, the five-invite cap, session lifecycle, origin policy, header
+   policy, allowlist rejection, failover between a healthy and a dead node,
+   honest 503s, 413 on oversized bodies, an honest 404 instead of a mismatched
+   fallback page, and the read proxy forwarding a query-carrying route
+   (`/blocks?limit=`, `/mining/status?address=`, `/names?prefix=`) instead of
+   refusing it.
+2. **Amount formatting (18 tests)**: the two exact shapes a node uses — seal
+   counts (`10^18` seals = 1 OBS) and OBS decimal strings — plus micro-USD,
+   whole-dollar registry values and the exact dollar → OBS conversion the fee
+   pages perform. No floating point anywhere in an amount path.
+3. **Browser pages (23 jsdom tests + 7 live-node tests)**: the shipped page
+   modules are imported into a DOM and driven. The fixture suite covers the
+   landing page's three CTAs, all eleven pages mounting masthead/main/heading
+   with no inline handlers, the shared navigation, wallet creation (asserting no
+   private key, recovery phrase or passphrase ever reaches storage or the
+   network), the short-passphrase refusal and the existing-vault unlock. The
+   live-node suite starts a real `obsidian-core` node on loopback ports and
+   reads it through the real page modules: landing numbers, the explorer's block
+   table and block detail, the mining schedule, the land registry, empty states,
+   and browser-side wallet creation with a node reachable.
+
+During development the interface was also run against the three-node devnet:
+`/api/nodes` reported all three healthy (heights 33/33/33, latencies 16–23 ms)
+and `/api/rpc` served live chain reads.
 
 ## 11. Cloudflare as gateway and hosting only — **done, tested**
 
@@ -272,14 +292,14 @@ logo exists elsewhere, replace `assets/logo.svg` and re-run
 
 ## 15. Final status — **what is verified, what is not**
 
-**Verified by automated tests in this workspace (233 tests, all passing):**
+**Verified by automated tests in this workspace (286 tests, all passing):**
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
 | `obsidian-core` unit | 50 | canonical encoding, hashing, addresses, amounts, mining schedule, peer retry policy |
 | `obsidian-core` integration | 69 | consensus, blocks, reorg rules, all nine transaction types, indexer |
-| `obsidian-core` security | 35 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking |
-| `obsidian-interface` | 61 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery |
+| `obsidian-core` security | 37 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route |
+| `obsidian-interface` | 112 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests |
 | `cloudflare` | 7 | cache/proxy semantics, honest failures, no CSP weakening |
 | `tests/e2e/cluster.test.mjs` | 11 | three real nodes: genesis claim, payment + gas, replay, oracle, ONS, supply invariant, explorer masking, protocol-time eligibility |
 
@@ -304,6 +324,30 @@ with `sha256sum -c SHA256SUMS` and `scripts/verify-release.sh`):
 The self-host interface package has no runtime dependencies (Node.js built-ins
 only), which is why it runs straight from the extracted archive.
 
+**Verified by driving the browser pages against a live node:** the live-node
+suite starts a real node (the built `obsidian-core/dist/index.js`, devnet
+config, loopback ports, its own data directory), waits for it to produce blocks,
+then imports the shipped page modules into a DOM with `fetch` pointed at that
+node. This layer exists because it caught a class of bug that neither the
+server tests nor the type checker could: the interface was reading field names
+no node has ever sent.
+
+| Found by | Symptom in the browser | Fix |
+| --- | --- | --- |
+| Live-node UI suite | `Reward / day` read `undefined` and printed `0 OBS` while the node sent `dailyRewardObs` / `dailyRewardSeals` | pages read the node's names; `obs()` now formats seal counts *and* decimal strings exactly |
+| Live-node UI suite | `Protocol price` always read `no price yet`: the page asked for `medianPriceUsd`, the node sends `priceUsd` + `priceUsdMicro` + `usable` | oracle reads go through `oraclePriceText` / `oraclePriceMicro`, which refuse a stale or thin feed |
+| Live-node UI suite | Explorer block rows showed `undefined` transactions and `undefined B` (`transactionCount`/`sizeBytes` vs the node's `txCount`/`size`) | `BlockSummary` and the block detail now match the node |
+| Live-node UI suite | ONS registration computed a fee from `ons.registrationUsdMicro`, which does not exist, so the fee was `0 OBS` | the fee is `ons.registrationFeeUsd` (dollars) converted at the node's median in exact integer maths |
+| Live-node UI suite | Circle listed every country as `$0.02` (whole-dollar `glvUsd` read as micro-USD) and showed no divisions at all | new node route `GET /land/divisions?country=XX`; the atlas drills Earth → country → division → quote, and dollar values are formatted per field |
+| Live-node UI suite | Capsule wall read `commitment` and compared status to `'sealed'`; the node sends `commitmentObs` and `LOCKED` | wall and Time Travel pricing read chain state and the protocol multiplier |
+| HTTP server tests | **Every parameterised read through the interface proxy was refused** (`/blocks?limit=`, `/mining/status?address=`, `/names?prefix=`, `/land/search?q=`, `/capsules?limit=`, `/social/feed?limit=`) because the allowlist matched the whole `path` value including its query | the proxy splits route from query, allowlists the route, and forwards the query (regression test included) |
+
+A field the node never sends is an `undefined` in the browser: it must not be
+possible to ship that again, so the response interfaces in
+`obsidian-interface/web/src/lib/client.ts` describe the node's payloads exactly
+and the pages read them without casts. `npm run typecheck` fails when they drift,
+and the live-node suite fails when the *data* drifts.
+
 **Not verified, and stated as such:**
 
 1. **Docker images** — no Docker in the development environment (point 12). The
@@ -314,10 +358,16 @@ only), which is why it runs straight from the extracted archive.
    not exercised here.
 3. **Long-run stability** — no multi-day soak test was performed, so memory
    growth over weeks of operation is unknown.
-4. **A real browser session** — the page code is type-checked, bundled and
-   browser-safety-checked, and every server interaction is tested over HTTP, but
-   no headless browser drove the UI in this environment.
-5. **Economic parameters** — the mining schedule, gas rate, land GLV formula and
+4. **A real browser engine** — the page modules are driven in jsdom against a
+   real node (layout, DOM, events, WebCrypto), and the bundles are type-checked
+   and browser-safety-checked, but no Chromium/Firefox build was run here, so
+   rendering, CSS and exotic browser APIs are unverified.
+5. **Sub-division, street, landmark and GPS land search** — the Circle registry
+   ships country and first-level division geometry (ISO 3166-2) with GLVs per
+   division; searching by city, district, street, landmark or `lat,lon` is not
+   implemented, and the search box says what it does match instead of pretending
+   otherwise.
+6. **Economic parameters** — the mining schedule, gas rate, land GLV formula and
    oracle bounds are implemented exactly as specified and tested for correctness;
    whether they are the *right* numbers for production is a design decision
    outside what tests can answer.

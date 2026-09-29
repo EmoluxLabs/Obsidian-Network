@@ -9,7 +9,7 @@
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
-import { el, obs, usd, badge, spinner } from '../lib/ui.js';
+import { el, obs, badge, spinner, rewardLine, rewardPerClaim, oraclePriceText } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 
@@ -126,9 +126,13 @@ void (async () => {
       stat('Blocks', status.height.toLocaleString()),
       stat('Supply', `${obs(status.supplyObs)} OBS`, `of 21,000,000`),
       stat('Peers', String(status.peers)),
-      stat('Reward / day', schedule ? `${obs(schedule.rewardPerDayObs)} OBS` : '—', schedule ? `${obs(schedule.rewardPerClaimObs)} per claim` : ''),
+      stat('Reward / day', schedule ? rewardLine(schedule) : '—', schedule ? `${rewardPerClaim(schedule)} per claim` : ''),
       stat('Active miners', String(schedule?.activeMiners ?? 0)),
-      stat('Protocol price', oracle && (oracle as { medianPriceUsd?: string }).medianPriceUsd ? usd((oracle as { medianPriceUsd: string }).medianPriceUsd) : 'no price yet'),
+      stat(
+        'Protocol price',
+        oraclePriceText(oracle),
+        oracle?.usable ? `${oracle.sourceCount} independent sources` : 'USD features stay closed until the feed is usable',
+      ),
     );
 
     chains.replaceChildren(

@@ -209,8 +209,7 @@ async function drawDashboard(wallet: Wallet, passphrase: string): Promise<void> 
   async function refreshHistory(): Promise<void> {
     try {
       const history = await client.addressHistory(wallet.address, 20);
-      const entries = (history as { history?: Array<Record<string, unknown>>; transactions?: Array<Record<string, unknown>> });
-      const list = entries.history ?? entries.transactions ?? [];
+      const list = history.transactions;
       historyBox.replaceChildren(
         el('h3', {}, 'Recent activity'),
         list.length === 0

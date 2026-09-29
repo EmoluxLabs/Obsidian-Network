@@ -28,8 +28,8 @@ decide a claim.
 ## Repository layout
 
 ```
-obsidian-core/          the node: consensus, p2p, rpc, indexer, state machine, 154 tests
-obsidian-interface/     the reader: HTTP server, browser wallet, 11 sites, 61 tests
+obsidian-core/          the node: consensus, p2p, rpc, indexer, state machine, 156 tests
+obsidian-interface/     the reader: HTTP server, browser wallet, 11 sites, 112 tests
 cloudflare/             the edge: a worker that caches and proxies, 7 tests
 docs/                   protocol, mining, wallet, security model, operators, API, report
 releases/               versioned archives, SHA256SUMS, MANIFEST.json
@@ -91,8 +91,8 @@ directory written by another network is refused rather than mixed.
 ## Verify everything
 
 ```bash
-cd obsidian-core       && npm ci && npm run build && npm test   # 154 tests
-cd ../obsidian-interface && npm ci && npm run build && npm test # 61 tests
+cd obsidian-core       && npm ci && npm run build && npm test   # 156 tests
+cd ../obsidian-interface && npm ci && npm run build && npm test # 112 tests (includes a live-node UI suite)
 cd ../cloudflare       && node --test test/worker.test.mjs      # 7 tests
 cd .. && ./scripts/package-releases.sh                          # archives + SHA256SUMS
 cd releases && sha256sum -c SHA256SUMS && ./verify-release.sh obsidian-core-1.0.0.tar.gz --with-tests
