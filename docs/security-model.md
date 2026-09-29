@@ -87,12 +87,24 @@ The arrow never points backwards. Concretely:
 | Unauthorised treasury spend | treasury transactions must be signed by the treasury wallet | `tests/integration/applications.test.ts` |
 | Peer-table poisoning / self-inflicted network partition | a refused socket is retried with exponential back-off instead of being banned, and dedupe by `nodeId` keeps exactly one live link per peer so duplicated connections cannot crowd out honest ones | `obsidian-core/tests/unit/peer-retry.test.ts` |
 | Dishonest peer feeding bad blocks | invalid blocks and malformed messages cost score and earn a one-hour ban; reachability failures never do | same |
+| Manipulated device clock used to mine early | eligibility is evaluated against block timestamps; a node's own clock can only reject a future-dated block, never admit a backdated one | `obsidian-core/tests/unit/proof-of-time.test.ts` |
+| Producer back-dating or stalling chain time | timestamp must exceed median time past and strictly exceed the parent's; protocol time never falls behind the chain head | same, plus `tests/integration/consensus.test.ts` |
+| Node claiming uptime it did not have | there is no field for it: uptime is counted from heartbeats that **other** registered nodes attested, and unattested heartbeats score zero | `obsidian-core/tests/unit/node-rewards.test.ts` |
+| Operator registering someone else's wallet to steal rewards | the reward wallet itself must sign the registration transaction, and the node key must sign the statement | `tests/integration/node-runners.test.ts` |
+| Sybil node farm | one wallet backs one node, each node costs a 100 OBS bond, any single node is capped at 5% of a period, and a fleet cannot attest itself | same |
+| Stolen node key redirecting rewards | a wallet change must be submitted by the **current** reward wallet and takes effect a period later; accrued rewards are never redirected | same |
+| Replayed node registration proof | proofs carry `issuedAt`/`expiresAt` checked against protocol time, capped at one hour | same |
+| Reward period settled twice | `lastSettledPeriod` is consensus state, and settlement is a block routine rather than a callable endpoint | same |
+| Platform revenue silently diverted | the 40/60 split is exact integer arithmetic inside the state transition, asserted to sum back to the amount on every credit | `tests/unit/node-rewards.test.ts` |
 
 ## 5. What a security review should look at first
 
 1. `obsidian-core/src/blockchain/state-machine.ts` — the state transition itself.
 2. `obsidian-core/src/transactions/executors/*` — per-type authorisation rules.
-3. `obsidian-core/src/consensus/*` — fork choice, difficulty, finality bounds.
-4. `obsidian-interface/web/src/lib/wallet.ts` — the only code that touches keys.
-5. `obsidian-interface/server/index.ts` — the trust boundary between browser and
+3. `obsidian-core/src/consensus/*` — proposer schedule, PoT time rules, fork
+   choice, finality bounds.
+4. `obsidian-core/src/economy/*` — the revenue split, node scoring and the
+   settlement routine (the only code that pays anyone who is not a miner).
+5. `obsidian-interface/web/src/lib/wallet.ts` — the only code that touches keys.
+6. `obsidian-interface/server/index.ts` — the trust boundary between browser and
    node.

@@ -67,6 +67,26 @@ No. Tips go 100% to the creator. The protocol's revenue comes from gas (to the
 Mining Pool), ONS registration fees, land protocol sales, the $50 business page
 and the network's 30% share of monetised creator revenue — all recorded on chain.
 
+**Where does that revenue go?**
+Qualifying platform revenue is split 40/60 the moment it is received: 40% to the
+Node Runner Reward Pool, 60% to the treasury wallet designated by the genesis
+rule. Gas is the exception — it funds the Mining Pool and is never treated as
+platform revenue. Read `/revenue` from any node, or see
+[node-runner-rewards.md](node-runner-rewards.md).
+
+**Is Obsidian a proof-of-work coin?**
+No. It is **Proof of Time**. Nobody earns the right to produce a block by
+computing more than anyone else; block production is scheduled and gated by
+protocol time. The chain still uses SHA-256 and ECDSA — for block ids, state
+roots and signatures — because that is how integrity and identity work, not
+because computation buys authority. See [proof-of-time.md](proof-of-time.md).
+
+**Can I earn by running a node?**
+Yes: 40% of qualifying platform revenue. You register a reward wallet (proving
+you control it), stay online, stay in sync, and let other nodes attest that they
+saw you. You cannot tell the protocol how well you did — there is no field for
+it. See [node-runner-rewards.md](node-runner-rewards.md).
+
 **Is there an exchange inside the product?**
 No. There is no native exchange, no order book and no custody. Price discovery
 happens on external markets, and the protocol only consumes a price for its own

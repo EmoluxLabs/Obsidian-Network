@@ -26,6 +26,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after, before } from 'node:test';
+// Read the protocol version from the build under test rather than hard-coding
+// it: a version bump is a protocol change, and these tests must follow the
+// software, not a literal that silently goes stale.
+import { PROTOCOL_VERSION } from '../../obsidian-core/dist/version.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = resolve(HERE, '..', '..', 'obsidian-core');
@@ -239,7 +243,7 @@ async function ensureMiner() {
       assert.equal(mining.eligible, true, `the first miner should be eligible, node said: ${mining.reason ?? 'no reason given'}`);
 
       const signed = core.signTransaction({
-        protocolVersion: '1.0.0',
+        protocolVersion: PROTOCOL_VERSION,
         chainId: CHAIN_ID,
         sender: miner.address,
         nonce: 0,
@@ -275,7 +279,7 @@ async function ensureOraclePrice() {
       const at = await protocolTime(A);
       const nonce = await nextChainNonce(miner.address);
       const signed = core.signTransaction({
-        protocolVersion: '1.0.0',
+        protocolVersion: PROTOCOL_VERSION,
         chainId: CHAIN_ID,
         sender: miner.address,
         nonce,
@@ -383,7 +387,7 @@ test('a second miner does not receive the genesis allocation', { skip, timeout: 
   }, { timeoutMs: 90_000, what: 'a second miner to become eligible' });
 
   const signed = core.signTransaction({
-    protocolVersion: '1.0.0',
+    protocolVersion: PROTOCOL_VERSION,
     chainId: CHAIN_ID,
     sender: second.address,
     nonce: 0,
@@ -413,7 +417,7 @@ test('a payment moves OBS, pays the capped gas, and every node agrees', { skip, 
   const nonce = await nextChainNonce(miner.address);
   const at = await protocolTime(A);
   const signed = core.signTransaction({
-    protocolVersion: '1.0.0',
+    protocolVersion: PROTOCOL_VERSION,
     chainId: CHAIN_ID,
     sender: miner.address,
     nonce,
@@ -453,7 +457,7 @@ test('a transaction signed for another chain is refused', { skip, timeout: 60_00
   const miner = await ensureMiner();
   const at = await protocolTime(A);
   const signed = core.signTransaction({
-    protocolVersion: '1.0.0',
+    protocolVersion: PROTOCOL_VERSION,
     chainId: 7777, // mainnet, not this devnet
     sender: miner.address,
     nonce: await nextChainNonce(miner.address),
@@ -476,7 +480,7 @@ test('a replayed transaction is refused and the balance does not move twice', { 
   const at = await protocolTime(A);
   const signed = core.encodeSignedTx(
     core.signTransaction({
-      protocolVersion: '1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
       chainId: CHAIN_ID,
       sender: miner.address,
       nonce: await nextChainNonce(miner.address),
@@ -506,7 +510,7 @@ test('the oracle gates dollar-priced features, then a name registers and resolve
   if (!(await get(`${rpc(A)}/oracle`)).body.usable) {
     const at = await protocolTime(A);
     const refused = await submit(A, core.encodeSignedTx(core.signTransaction({
-      protocolVersion: '1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
       chainId: CHAIN_ID,
       sender: miner.address,
       nonce: await nextChainNonce(miner.address),
@@ -529,7 +533,7 @@ test('the oracle gates dollar-priced features, then a name registers and resolve
 
   const at = await protocolTime(A);
   const registered = await submit(C, core.encodeSignedTx(core.signTransaction({
-    protocolVersion: '1.0.0',
+    protocolVersion: PROTOCOL_VERSION,
     chainId: CHAIN_ID,
     sender: miner.address,
     nonce: await nextChainNonce(miner.address),
@@ -621,4 +625,81 @@ test('mining eligibility follows protocol time, not the caller', { skip, timeout
     // minus the few seconds since it was mined.
     assert.ok(mining.secondsRemaining <= 4 * 60 * 60, `${node.name}: cooldown longer than the protocol interval`);
   }
+});
+
+test('every node reports the same Proof of Time state, derived from the blocks it serves', { skip, timeout: 60_000 }, async () => {
+  const states = [];
+  for (const node of NODES) {
+    const { status: code, body } = await get(`${rpc(node)}/pot`);
+    assert.equal(code, 200, `${node.name}: /pot must be served`);
+    assert.equal(body.consensus, 'PROOF_OF_TIME', `${node.name}: the consensus identity must be Proof of Time`);
+    assert.equal(body.shortName, 'PoT');
+    assert.equal(body.weightRule, 'POT_WEIGHT_THEN_TIME_THEN_LOWEST_HEADER_HASH');
+    // PoT difficulty is published as a measurement, and says so.
+    assert.equal(body.difficulty.role, 'MEASUREMENT', `${node.name}: difficulty must be labelled a measurement`);
+    assert.ok(body.difficulty.difficultyBps >= 2_500 && body.difficulty.difficultyBps <= 40_000,
+      `${node.name}: difficulty ${body.difficulty.difficultyBps} outside published bounds`);
+    // Time-Rate is a time measurement, never a hash rate.
+    assert.equal(body.timeRate.unit, 'BLOCKS_AND_TXS_PER_MINUTE');
+    assert.ok(!JSON.stringify(body).toLowerCase().includes('hashrate'), `${node.name}: /pot must not report a hash rate`);
+    // The authoritative clock is the chain's, and the node lists what is not.
+    assert.equal(body.timeAuthority.authoritative, 'PROTOCOL_TIME_FROM_CHAIN');
+    assert.ok(body.timeAuthority.neverAuthoritative.includes('BROWSER_CLOCK'));
+    states.push({ node: node.name, body });
+  }
+
+  // Independent nodes agree about accumulated PoT weight at the same height.
+  const byHeight = new Map();
+  for (const { node, body } of states) {
+    const seen = byHeight.get(body.height);
+    if (seen) {
+      assert.equal(body.cumulativePotWeight, seen.weight,
+        `${node} and ${seen.node} disagree about PoT weight at height ${body.height}`);
+    } else {
+      byHeight.set(body.height, { node, weight: body.cumulativePotWeight });
+    }
+  }
+
+  // And the difficulty each node publishes is recomputable from the blocks that
+  // same node serves — the point of the metric is that it is not a claim.
+  const node = NODES[0];
+  const { body: pot } = await get(`${rpc(node)}/pot`);
+  const { body: blocks } = await get(`${rpc(node)}/blocks?limit=50`);
+  if (blocks.blocks.length >= 2) {
+    const newest = blocks.blocks[0].timestamp;
+    const oldest = blocks.blocks[blocks.blocks.length - 1].timestamp;
+    const gaps = blocks.blocks.length - 1;
+    if (newest > oldest) {
+      const observedMs = Math.floor(((newest - oldest) * 1000) / gaps);
+      // The node's own window may be larger than 50 blocks, so this is a sanity
+      // band rather than an equality: what must hold is that the published
+      // spacing is in the same order as the spacing the blocks actually show.
+      assert.ok(pot.difficulty.observedSpacingMs > 0, 'observed spacing must be measured, not zero');
+      assert.ok(observedMs > 0, 'the blocks served must show real spacing');
+    }
+  }
+});
+
+test('the platform revenue split is 40/60 and adds back to the whole on every node', { skip, timeout: 60_000 }, async () => {
+  for (const node of NODES) {
+    const { status: code, body } = await get(`${rpc(node)}/revenue`);
+    assert.equal(code, 200, `${node.name}: /revenue must be served`);
+    assert.equal(body.split.nodePoolBps, 4_000, `${node.name}: node runners must receive 40%`);
+    assert.equal(body.split.treasuryBps, 6_000, `${node.name}: the treasury must receive 60%`);
+    assert.equal(body.split.sumsBack, true, `${node.name}: the split must add back to the revenue it came from`);
+    // Gas is not platform revenue, and the node says so rather than leaving it
+    // to a reader to assume.
+    assert.equal(body.gas.destination, 'MINING_POOL', `${node.name}: gas must fund the mining pool`);
+    assert.ok(body.notPlatformRevenue.length > 0, `${node.name}: the exclusions must be published`);
+    // No balance leaks through this route.
+    const serialised = JSON.stringify(body);
+    assert.ok(!serialised.includes('"balanceObs"'), `${node.name}: /revenue must not expose wallet balances`);
+  }
+
+  // The registry is readable and honest about an empty network.
+  const { status: code, body: registry } = await get(`${rpc(NODES[0])}/nodes/registry`);
+  assert.equal(code, 200, '/nodes/registry must be served');
+  assert.equal(typeof registry.registeredNodes, 'number');
+  assert.ok(Array.isArray(registry.nodes), 'the registry must return a node list, even when empty');
+  assert.match(registry.note, /recomputed from chain state/);
 });

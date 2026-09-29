@@ -83,8 +83,11 @@ node rather than from this sentence.
 
 ## 6. What mining is not
 
-* It is not a browser hashrate contest. Consensus does not depend on how long a
-  tab stays open (see the code path; the only requirement is a signed claim).
+* It is not a browser hashrate contest, and it is not a hashrate contest of any
+  other kind: Obsidian is a Proof of Time chain, so no participant gains
+  anything by computing faster. Consensus does not depend on how long a tab
+  stays open either — the only requirement is a signed claim that the protocol
+  clock permits. See [proof-of-time.md](proof-of-time.md).
 * It is not instantaneous wealth: at launch a claim pays 0.000166666666666666
   OBS. The schedule is designed to distribute 21,000,000 OBS over a very long
   horizon and to fall as participation rises.

@@ -172,3 +172,46 @@ are the one who must upgrade.
   malformed message can earn the full one-hour ban. Only the second kind is
   evidence about a peer's honesty. See `docs/security-model.md` for the scoring
   table.
+
+## Earning node runner rewards
+
+40% of qualifying platform revenue is paid to independent node runners. Running
+a node does not earn anything by itself — the protocol pays for measured
+participation, and it needs to know which wallet is yours.
+
+```
+Run Obsidian Core           → it prints your node id (20 bytes of hex)
+Sync and peer               → a node that is behind or unreachable scores nothing
+Register a reward wallet    → NODE_REGISTRY / REGISTER, signed by BOTH the node
+                              identity key and the reward wallet, with a 100 OBS
+                              bond that is returned in full when you leave
+Heartbeat and attest        → once per period, plus attestations for the peers
+                              you can actually see
+Get paid                    → settlement happens inside a block at the end of
+                              each period; nothing needs to be running on your
+                              side for the payout to occur
+```
+
+Two things are worth being explicit about:
+
+* **Your private keys are never requested.** The node identity key stays on the
+  node; the reward wallet key stays wherever you keep it and only ever signs a
+  transaction. No configuration setting, RPC route or web form accepts a private
+  key.
+* **You cannot report your own performance.** There is no uptime field, no
+  efficiency field and no hash-rate field anywhere in the protocol. Your uptime
+  comes from other nodes attesting yours, your participation from blocks the
+  chain shows you produced, and your reliability from faults independent peers
+  corroborated.
+
+Check your own node at any time:
+
+```bash
+curl -s localhost:8630/nodes/status/<your-node-id> | jq
+curl -s localhost:8630/nodes/rewards | jq '.pool, .settlements[0]'
+curl -s localhost:8630/revenue | jq '.split'
+```
+
+The same view, rendered: `/node/` in the interface. Full rules, the exact
+scoring formula and the Sybil-resistance argument:
+[node-runner-rewards.md](node-runner-rewards.md).

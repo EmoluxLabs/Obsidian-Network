@@ -8,7 +8,8 @@ chain state rather than as rows in a company database.
 * Chain id / network id: `7777` / `obsidian-mainnet-1` (plus testnet `7778`,
   staging `7779`, devnet `7780`)
 * Address prefix: `obs` (testnet `tobs`, staging `sobs`, devnet `dobs`)
-* Protocol version: `1.0.0`
+* Protocol version: `1.1.0`
+* Consensus: **Proof of Time (PoT)** — see [proof-of-time.md](proof-of-time.md)
 
 ## 1. Blocks
 
@@ -21,11 +22,16 @@ chain state rather than as rows in a company database.
 | Maximum reorganisation depth | 256 blocks |
 | Median-time-past window | 11 blocks |
 | Allowed clock drift | 60 seconds |
-| Fork choice | most accumulated work → longest → lowest header hash |
+| Fork choice | most accumulated **PoT Weight** → most time (height) → lowest header hash |
+| PoT Difficulty target / window | 5 seconds / 720 blocks (a measurement, not a gate) |
+| Time-Rate window | 24 hours |
 
-A block header commits to height, parent hash, timestamp, difficulty,
-transactions root, events root, state root, protocol version, producer and the
-producer's signature. A block whose header does not validate is discarded; a
+A block header commits to height, parent hash, timestamp, cumulative PoT
+Weight, transactions root, events root, state root, params hash, protocol
+version, producer and the producer's signature. There is no nonce field and no
+difficulty target in the header: the right to produce a block comes from the
+validator schedule and from protocol time having advanced, never from a
+computational race (see [proof-of-time.md](proof-of-time.md)). A block whose header does not validate is discarded; a
 block whose **transactions** do not validate is rejected as a whole.
 
 The producer is selected by the protocol (work plus per-height permit), so a node

@@ -28,6 +28,13 @@ const CACHEABLE_RPC_PREFIXES = [
   '/api/rpc?path=/oracle',
   '/api/rpc?path=/network',
   '/api/rpc?path=/audit',
+  // Proof of Time state and the node runner registry are public, read-only and
+  // change at most once per block, so they cache exactly like /status does.
+  // `/nodes/status/` is included deliberately: it exposes no balance, only the
+  // score and evidence the chain already publishes to everyone.
+  '/api/rpc?path=/pot',
+  '/api/rpc?path=/revenue',
+  '/api/rpc?path=/nodes',
 ];
 
 const NEVER_CACHE = ['/api/auth/', '/api/wallet/', '/api/nodes/refresh'];

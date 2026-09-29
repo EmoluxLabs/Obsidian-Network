@@ -16,7 +16,7 @@ Error shape is stable:
 | --- | --- |
 | `GET /health` | status, core/protocol versions, network, chain id, genesis id, params hash, height, peers, syncing, supplyOk |
 | `GET /status` | everything in `/health` plus total blocks, supply, treasury wallet, `genesisAllocationClaimed`, last block timestamp |
-| `GET /params` | protocol parameters, including `paramsHash` |
+| `GET /params` | protocol parameters, including `paramsHash`, `proofOfTime` and `nodeRewards` |
 | `GET /version` | version metadata and the minimum supported core version |
 | `GET /genesis` | the genesis document, its id and hash |
 | `GET /supply` | total, maximum, mining pool, treasury, per-metric breakdown, invariant result |
@@ -29,6 +29,11 @@ Error shape is stable:
 | `GET /tx/<txid>` | transaction description, masked addresses, inclusion height |
 | `GET /address/<address>?limit=` | activity for an address, masked; **never** a balance |
 | `GET /mempool` | pending transactions |
+| `GET /pot` | Proof of Time state: consensus identity, fork-choice rule, median time past, accumulated PoT Weight, PoT Difficulty (a measurement, with `role: MEASUREMENT`), Time-Rate, and which clock is authoritative |
+| `GET /revenue` | qualifying platform revenue, the 40/60 split totals, a per-source breakdown, every protocol-held balance, and the flows that are explicitly not platform revenue |
+| `GET /nodes/registry?limit=` | registered node runners with the current period's verified evidence (heartbeats, attesters, blocks produced, attestations made, faults) |
+| `GET /nodes/rewards?limit=` | the Node Runner Reward Pool, the scoring parameters, and every settled period with its per-node payouts |
+| `GET /nodes/status/<nodeId>` | one node: its score and four components, the reasons behind them, the recorded evidence, and its settled rewards |
 | `GET /mining/schedule` | active miners, reward per day and per claim, floor state |
 | `GET /mining/status?address=` | eligibility, seconds remaining, next claim id and sequence, reward |
 | `GET /mining/claims?address=&limit=` | claims with sequence, reward, block, timestamp |
@@ -59,6 +64,15 @@ Error shape is stable:
 | `POST /wallet/balance` | `{ "address": "obs1…" }` | balance of an address you already know |
 | `POST /wallet/quote` | `{ "address": "obs1…" }` | balance, next nonce and gas estimate for planning |
 | `POST /rpc` | JSON-RPC envelope | for clients that prefer JSON-RPC |
+
+Node runners submit their registry statements as ordinary signed transactions of
+type `NODE_REGISTRY` (11) through `POST /tx/submit` — there is no privileged
+endpoint, no admin route and nothing that accepts a private key. The body is
+encoded with `POST /tx/encode` using `"type": "NODE_REGISTRY"`, and the
+operations are `REGISTER`, `CHANGE_WALLET`, `DEREGISTER`, `HEARTBEAT`, `ATTEST`
+and `REPORT_FAULT`. Each carries a signature made by the node identity key over
+a domain-separated message that names the network, the chain and the reward
+period; see [node-runner-rewards.md](node-runner-rewards.md).
 
 A node never accepts a transaction it cannot verify: signature, nonce, gas,
 balance, replay status, network id and protocol version are all checked before the

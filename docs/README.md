@@ -9,6 +9,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | Document | What it answers |
 | --- | --- |
 | [protocol.md](protocol.md) | How the chain works: blocks, transactions, state roots, consensus, the four networks |
+| [proof-of-time.md](proof-of-time.md) | What Proof of Time is, how time is established and verified, PoT Difficulty, Time-Rate, and why cryptographic hashing does not make this a proof-of-work chain |
 | [mining.md](mining.md) | How OBS is issued, how a claim works, why your device clock is irrelevant |
 | [wallet.md](wallet.md) | Where keys live, what a backup actually is, what "non-custodial" costs you |
 | [security-model.md](security-model.md) | What is trusted, what is not, and the honest limitations |
@@ -30,6 +31,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | Document | Audience |
 | --- | --- |
 | [node-operator.md](node-operator.md) | Anyone running a node: ports, keystore, seeds, monitoring, upgrades, backups |
+| [node-runner-rewards.md](node-runner-rewards.md) | The 40/60 revenue split, registering a reward wallet, how uptime and participation are measured without self-reporting, and how payouts are settled |
 | [self-hosting.md](self-hosting.md) | Anyone running the interface: systemd, Docker, nginx, Cloudflare |
 | [api.md](api.md) | Every RPC route, with the fields it returns |
 | [transaction-format.md](transaction-format.md) | Canonical encoding, signing, gas, and how to submit without the interface |
