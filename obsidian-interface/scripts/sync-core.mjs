@@ -21,9 +21,32 @@ if (!existsSync(coreDist)) {
   process.exit(1);
 }
 
-const KEEP = ['crypto', 'protocol', 'transactions', 'land', 'mining', 'genesis', 'version.js', 'version.d.ts'];
-// Modules that exist in the node build but must never reach a browser.
-const DROP = new Set(['keystore.js', 'keystore.js.map', 'keystore.d.ts']);
+// `economy` carries the revenue split and the node reward scoring. Both are
+// pure arithmetic over consensus parameters, and the browser needs them to
+// build transaction bodies and to explain a payout the same way a node does.
+const KEEP = [
+  'crypto',
+  'protocol',
+  'transactions',
+  'land',
+  'mining',
+  'genesis',
+  'economy',
+  'consensus',
+  'version.js',
+  'version.d.ts',
+];
+// Modules that exist in the node build but must never reach a browser:
+// the encrypted keystore (node-only file I/O) and the settlement routine
+// (it mutates world state, which only a node may do).
+const DROP = new Set([
+  'keystore.js',
+  'keystore.js.map',
+  'keystore.d.ts',
+  'settlement.js',
+  'settlement.js.map',
+  'settlement.d.ts',
+]);
 rmSync(target, { recursive: true, force: true });
 mkdirSync(target, { recursive: true });
 

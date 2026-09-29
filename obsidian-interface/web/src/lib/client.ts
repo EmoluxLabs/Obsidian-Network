@@ -178,6 +178,173 @@ export interface ChainParams {
   paramsHashBytes: number;
 }
 
+/** GET /pot — the chain's Proof of Time state, recomputable from /blocks. */
+export interface ProofOfTimeState {
+  consensus: string;
+  shortName: string;
+  weightRule: string;
+  explanation: string;
+  height: number;
+  protocolTime: number;
+  medianTimePast: number;
+  cumulativePotWeight: string;
+  difficulty: {
+    difficultyBps: number;
+    requiredSpacingMs: number;
+    observedSpacingMs: number;
+    targetSeconds: number;
+    windowBlocks: number;
+    warmingUp: boolean;
+    role: string;
+    note: string;
+  };
+  timeRate: {
+    blocksPerMinute: number;
+    transactionsPerMinute: number;
+    blocks: number;
+    transactions: number;
+    windowSeconds: number;
+    observedSpacingMs: number;
+    difficultyBps: number;
+    unit: string;
+    method: string;
+  };
+  timeAuthority: {
+    authoritative: string;
+    neverAuthoritative: string[];
+    maxFutureDriftSeconds: number;
+    medianTimePastWindow: number;
+  };
+}
+
+export interface NodeRunnerRecord {
+  nodeId: string;
+  rewardWallet: string;
+  endpoint: string | null;
+  registeredAtHeight: number;
+  bondObs: string;
+  lifetimeRewardObs: string;
+  pendingWallet: string | null;
+  pendingWalletEffectivePeriod: number | null;
+  currentPeriod: {
+    period: number;
+    heartbeats: number;
+    attesters: number;
+    blocksProduced: number;
+    attestationsMade: number;
+    faults: number;
+    staleHeartbeats: number;
+  };
+}
+
+export interface NodeRegistryResponse {
+  period: number;
+  count: number;
+  registeredNodes: number;
+  nodes: NodeRunnerRecord[];
+  note: string;
+}
+
+export interface NodeRewardsResponse {
+  split: { nodePoolBps: number; treasuryBps: number; description: string };
+  pool: {
+    balanceObs: string;
+    bondedObs: string;
+    lifetimeInflowObs: string;
+    lifetimeDistributedObs: string;
+    unclaimedTreasuryRevenueObs: string;
+    lastSettledPeriod: number;
+    currentPeriod: number;
+    periodSeconds: number;
+  };
+  scoring: {
+    nodePoolBps: number;
+    treasuryBps: number;
+    periodSeconds: number;
+    minUptimeBps: number;
+    minScoreBps: number;
+    maxNodeShareBps: number;
+    minAttesters: number;
+    walletChangeDelayPeriods: number;
+    evidenceWindowPeriods: number;
+    scoreWeights: { uptimeBps: number; participationBps: number; reliabilityBps: number; responsivenessBps: number };
+  };
+  settlements: Array<{
+    period: number;
+    atHeight: number;
+    poolObs: string;
+    distributedObs: string;
+    carriedObs: string;
+    eligibleNodes: number;
+    scoredNodes: number;
+    payouts: Array<{ nodeId: string; rewardWallet: string; amountObs: string; scoreBps: number; shareBps: number }>;
+  }>;
+}
+
+export interface NodeStatusResponse {
+  nodeId: string;
+  rewardWallet: string;
+  registered: boolean;
+  deregisteredAtHeight: number | null;
+  registeredAtHeight: number;
+  endpoint: string | null;
+  bondObs: string;
+  lifetimeRewardObs: string;
+  pendingWalletChange: { wallet: string; effectivePeriod: number | null } | null;
+  currentPeriod: number;
+  score: {
+    uptimeBps: number;
+    participationBps: number;
+    reliabilityBps: number;
+    responsivenessBps: number;
+    scoreBps: number;
+    weight: number;
+    eligible: boolean;
+    reasons: string[];
+  };
+  evidence: {
+    heartbeats: number;
+    expectedHeartbeats: number;
+    attesters: string[];
+    blocksProduced: number;
+    attestationsMade: number;
+    faults: number;
+    faultReporters: string[];
+    staleHeartbeats: number;
+    lastReportedHeight: number;
+  };
+  settledRewards: Array<{
+    period: number;
+    atHeight: number;
+    amountObs: string;
+    scoreBps: number;
+    shareBps: number;
+    rewardWallet: string;
+  }>;
+  note: string;
+}
+
+export interface RevenueResponse {
+  qualifyingPlatformRevenueObs: string;
+  split: {
+    nodeRunnerPoolObs: string;
+    treasuryObs: string;
+    nodePoolBps: number;
+    treasuryBps: number;
+    sumsBack: boolean;
+  };
+  bySource: Array<{ source: string; totalObs: string }>;
+  accounts: {
+    miningPoolObs: string;
+    nodeRunnerPoolObs: string;
+    nodeBondsObs: string;
+    unclaimedTreasuryRevenueObs: string;
+    treasuryWallet: string | null;
+  };
+  notPlatformRevenue: Array<{ kind: string; because: string }>;
+  gas: { destination: string; note: string; lifetimeObs: string };
+}
+
 export interface SupplyState {
   totalSupplyObs: string;
   totalSupplySeals: string;
@@ -511,6 +678,43 @@ export class ObsidianClient {
 
   network(): Promise<{ network: { name: string; chainId: number; addressHrp: string; p2pMagic?: string } }> {
     return this.request('/network');
+  }
+
+  /**
+   * GET /pot. A node that answers with a partial body is treated as not
+   * supporting the route: half a PoT state would render as `undefined` in the
+   * interface, which is exactly the kind of invented output this project
+   * refuses to ship.
+   */
+  async proofOfTime(): Promise<ProofOfTimeState> {
+    const payload = await this.request<Partial<ProofOfTimeState>>('/pot');
+    if (
+      !payload ||
+      typeof payload.consensus !== 'string' ||
+      typeof payload.shortName !== 'string' ||
+      !payload.difficulty ||
+      !payload.timeRate ||
+      !payload.timeAuthority
+    ) {
+      throw new ChainError('this node did not return a Proof of Time state', 502, 'ERR_MALFORMED');
+    }
+    return payload as ProofOfTimeState;
+  }
+
+  nodeRegistry(limit = 100): Promise<NodeRegistryResponse> {
+    return this.request(`/nodes/registry?limit=${limit}`);
+  }
+
+  nodeRewards(limit = 10): Promise<NodeRewardsResponse> {
+    return this.request(`/nodes/rewards?limit=${limit}`);
+  }
+
+  nodeStatus(nodeId: string): Promise<NodeStatusResponse> {
+    return this.request(`/nodes/status/${encodeURIComponent(nodeId)}`);
+  }
+
+  revenue(): Promise<RevenueResponse> {
+    return this.request('/revenue');
   }
 
   miningSchedule(): Promise<MiningSchedule> {

@@ -29,7 +29,7 @@ const SITES = [
     bundle: 'landing',
     title: 'Obsidian Network — a decentralised ledger and the apps built on it',
     description:
-      'Obsidian Network is a proof-of-work blockchain with a hard cap of 21,000,000 OBS. Mine, hold keys you own, register .obs names, seal time capsules and register land — all as chain state.',
+      'Obsidian Network is a Proof of Time (PoT) blockchain with a hard cap of 21,000,000 OBS. Mine, hold keys you own, register .obs names, seal time capsules and register land — all as chain state.',
   },
   {
     id: 'mine',
@@ -93,6 +93,14 @@ const SITES = [
     bundle: 'app',
     title: 'Account & invites — Obsidian Network',
     description: 'Invite-only accounts, node health and optional wallet linking. Keys never leave your browser.',
+  },
+  {
+    id: 'node',
+    path: 'node',
+    bundle: 'node',
+    title: 'Node runners — Obsidian Network',
+    description:
+      'Run an Obsidian Core node and earn 40% of qualifying platform revenue. Uptime, participation and reliability are measured by the protocol from evidence other nodes attested — never self-reported.',
   },
   {
     id: 'audit',

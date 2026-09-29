@@ -15,7 +15,7 @@ const root = resolve(here, '..');
 const outdir = join(root, 'public', 'js');
 const nodePaths = [join(root, '..', 'obsidian-core', 'node_modules'), join(root, 'node_modules')];
 
-const pages = ['landing', 'mine', 'wallet', 'explorer', 'social', 'capsule', 'ons', 'circle', 'developer', 'app', 'audit'];
+const pages = ['landing', 'mine', 'wallet', 'explorer', 'social', 'capsule', 'ons', 'circle', 'developer', 'app', 'audit', 'node'];
 
 rmSync(outdir, { recursive: true, force: true });
 

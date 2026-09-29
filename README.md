@@ -1,6 +1,6 @@
 # Obsidian Network
 
-**A proof-of-work blockchain with a hard cap of 21,000,000 OBS, and the products
+**A Proof of Time (PoT) blockchain with a hard cap of 21,000,000 OBS, and the products
 built directly on its state.** Mining, payments, `.obs` names, a land registry,
 time capsules and a social network are all chain state — not rows in a company
 database.

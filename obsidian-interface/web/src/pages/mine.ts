@@ -8,7 +8,7 @@
  */
 
 import { layout } from '../lib/shell.js';
-import { ObsidianClient, type MiningStatus, type MiningSchedule } from '../lib/client.js';
+import { ObsidianClient, type MiningStatus } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
 import { el, obs, duration, spinner, toast, kv, badge, table, short, when, rewardLine, rewardPerClaim } from '../lib/ui.js';
@@ -182,7 +182,11 @@ async function unlockWallet(): Promise<Wallet | undefined> {
 
 async function loadSchedule(): Promise<void> {
   try {
-    const schedule: MiningSchedule = await client.miningSchedule();
+    const [schedule, pot] = await Promise.all([
+      client.miningSchedule(),
+      // Optional: older nodes have no /pot, and the schedule must still render.
+      client.proofOfTime().catch(() => undefined),
+    ]);
     const tiers = [0, 100_000, 200_000, 400_000, 800_000, 1_600_000, 3_200_000].map((miners) => {
       const perDay = 0.001 * Math.pow(0.995, Math.floor(miners / 100_000));
       const floored = Math.max(perDay, 0.0002);
@@ -199,7 +203,28 @@ async function loadSchedule(): Promise<void> {
       ]),
       el('h3', {}, 'Schedule'),
       table(['Active miners', 'Reward per day'], tiers),
-      el('p', { class: 'fineprint' }, 'Active miner = at least one valid claim in the last 30 days. The schedule is recomputed from chain state by every node; the website merely formats it.'),
+      el('h3', {}, 'Proof of Time'),
+      kv([
+        ['Consensus', pot ? `${pot.consensus.replace(/_/g, ' ').toLowerCase()} (${pot.shortName})` : 'Proof of Time (PoT)'],
+        [
+          'Authoritative clock',
+          pot
+            ? `${pot.timeAuthority.authoritative.replace(/_/g, ' ').toLowerCase()} · chain time ${pot.protocolTime}, median time past ${pot.medianTimePast}`
+            : 'protocol time from the chain',
+        ],
+        [
+          'Time-Rate',
+          pot && pot.timeRate.windowSeconds > 0
+            ? `${pot.timeRate.blocksPerMinute.toFixed(2)} blocks/min · ${pot.timeRate.transactionsPerMinute.toFixed(2)} tx/min`
+            : 'not measurable yet',
+        ],
+      ]),
+      el(
+        'p',
+        { class: 'fineprint' },
+        'Active miner = at least one valid claim in the last 30 days. The schedule is recomputed from chain state by every node; the website merely formats it. ' +
+          'Your claim window is measured in protocol time: changing your device clock changes the countdown you see and nothing the protocol accepts.',
+      ),
     );
   } catch (error) {
     schedulePanel.replaceChildren(el('h2', {}, 'Mining schedule'), el('p', { class: 'error' }, (error as Error).message));

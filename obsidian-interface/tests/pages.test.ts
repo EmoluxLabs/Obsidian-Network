@@ -159,6 +159,45 @@ const BLOCKS_FIXTURE = {
  * client asks for `/api/rpc?path=/status`, so the path arrives percent-encoded:
  * decode before routing or every read silently falls through to the empty body.
  */
+/** `/pot` exactly as a node serves it. */
+const POT_FIXTURE = {
+  consensus: 'PROOF_OF_TIME',
+  shortName: 'PoT',
+  weightRule: 'POT_WEIGHT_THEN_TIME_THEN_LOWEST_HEADER_HASH',
+  explanation: 'Obsidian is a Proof of Time chain.',
+  height: 12,
+  protocolTime: 1_790_597_010,
+  medianTimePast: 1_790_596_950,
+  cumulativePotWeight: '30',
+  difficulty: {
+    difficultyBps: 10_000,
+    requiredSpacingMs: 5_000,
+    observedSpacingMs: 5_000,
+    targetSeconds: 5,
+    windowBlocks: 12,
+    warmingUp: false,
+    role: 'MEASUREMENT',
+    note: 'PoT Difficulty reports how block spacing tracks the protocol target.',
+  },
+  timeRate: {
+    blocksPerMinute: 12,
+    transactionsPerMinute: 4,
+    blocks: 12,
+    transactions: 4,
+    windowSeconds: 55,
+    observedSpacingMs: 5_000,
+    difficultyBps: 10_000,
+    unit: 'BLOCKS_AND_TXS_PER_MINUTE',
+    method: '11 verified blocks and 4 verified transactions over 55s of protocol time',
+  },
+  timeAuthority: {
+    authoritative: 'PROTOCOL_TIME_FROM_CHAIN',
+    neverAuthoritative: ['BROWSER_CLOCK', 'DEVICE_CLOCK', 'WEBSITE_SERVER'],
+    maxFutureDriftSeconds: 60,
+    medianTimePastWindow: 11,
+  },
+};
+
 function chainFixture(url: string): { status: number; body: unknown } {
   const path = decodeURIComponent(url);
   if (path.includes('/mining/schedule')) return { status: 200, body: SCHEDULE_FIXTURE };
@@ -199,6 +238,7 @@ function chainFixture(url: string): { status: number; body: unknown } {
   if (path.includes('/audit/decentralization')) return { status: 200, body: { nodes: 1, activeMiners: 1 } };
   if (path.includes('/peers')) return { status: 200, body: { peers: [], count: 0 } };
   if (path.includes('/validators')) return { status: 200, body: { validators: [], count: 0 } };
+  if (path.includes('/pot')) return { status: 200, body: POT_FIXTURE };
   if (path.includes('/status')) return { status: 200, body: STATUS_FIXTURE };
   return { status: 200, body: {} };
 }
@@ -265,7 +305,7 @@ describe('landing page', () => {
 
     const text = document.body.textContent ?? '';
     expect(text).toContain('21,000,000 OBS');
-    expect(text).toContain('Proof-of-work');
+    expect(text).toContain('Proof of Time');
 
     // The scope rule the product owner set: a description page, not a button hub.
     const ctas = [...document.querySelectorAll('a.cta')].map((node) => node.textContent?.trim());
@@ -346,7 +386,18 @@ describe('every page renders', () => {
     await settle();
 
     const links = [...document.querySelectorAll('nav.nav a')].map((node) => node.getAttribute('href'));
-    expect(links).toEqual(['/mine/', '/wallet/', '/explorer/', '/ons/', '/circle/', '/capsule/', '/social/', '/developer/', '/app/']);
+    expect(links).toEqual([
+      '/mine/',
+      '/wallet/',
+      '/explorer/',
+      '/ons/',
+      '/circle/',
+      '/capsule/',
+      '/social/',
+      '/node/',
+      '/developer/',
+      '/app/',
+    ]);
   });
 });
 
@@ -508,5 +559,221 @@ describe('pages read the field names the node really sends', () => {
     expect(text).toContain('sealed');                // status LOCKED, not "unlocked"
     expect(text).toContain('1000×');                 // Time Travel price, from /params
     expect(text).not.toContain('undefined');
+  });
+});
+
+/**
+ * The node runner page.
+ *
+ * The rule this page has to honour is the one an operator cannot verify by
+ * looking: it must never display a metric the protocol did not compute. These
+ * tests drive the real module and check both halves — the economics it shows
+ * everyone, and what it does when the evidence is empty or the node is unknown.
+ */
+const REVENUE_FIXTURE = {
+  qualifyingPlatformRevenueObs: '100.000000000000000000',
+  split: {
+    nodeRunnerPoolObs: '40.000000000000000000',
+    treasuryObs: '60.000000000000000000',
+    nodePoolBps: 4000,
+    treasuryBps: 6000,
+    sumsBack: true,
+  },
+  bySource: [{ source: 'ONS_REGISTRATION', totalObs: '100.000000000000000000' }],
+  accounts: {
+    miningPoolObs: '3.500000000000000000',
+    nodeRunnerPoolObs: '40.000000000000000000',
+    nodeBondsObs: '100.000000000000000000',
+    unclaimedTreasuryRevenueObs: '0.000000000000000000',
+    treasuryWallet: 'dobs1aaaaa…zzzzzz',
+  },
+  notPlatformRevenue: [{ kind: 'user-to-user transfer', because: 'the sender owns the funds' }],
+  gas: { destination: 'MINING_POOL', note: 'gas funds the Mining Pool', lifetimeObs: '0.020000000000000000' },
+};
+
+const REWARDS_FIXTURE = {
+  split: { nodePoolBps: 4000, treasuryBps: 6000, description: '40% node runners, 60% treasury' },
+  pool: {
+    balanceObs: '40.000000000000000000',
+    bondedObs: '100.000000000000000000',
+    lifetimeInflowObs: '40.000000000000000000',
+    lifetimeDistributedObs: '0.000000000000000000',
+    unclaimedTreasuryRevenueObs: '0.000000000000000000',
+    lastSettledPeriod: 0,
+    currentPeriod: 20726,
+    periodSeconds: 86400,
+  },
+  scoring: {
+    nodePoolBps: 4000,
+    treasuryBps: 6000,
+    periodSeconds: 86400,
+    minUptimeBps: 5000,
+    minScoreBps: 1000,
+    maxNodeShareBps: 500,
+    minAttesters: 2,
+    walletChangeDelayPeriods: 1,
+    evidenceWindowPeriods: 3,
+    scoreWeights: { uptimeBps: 4000, participationBps: 2500, reliabilityBps: 2000, responsivenessBps: 1500 },
+  },
+  settlements: [],
+};
+
+const REGISTRY_FIXTURE = {
+  period: 20726,
+  count: 1,
+  registeredNodes: 1,
+  nodes: [
+    {
+      nodeId: 'a1'.repeat(20),
+      rewardWallet: 'dobs1aaaaa…zzzzzz',
+      endpoint: '203.0.113.10:8631',
+      registeredAtHeight: 5,
+      bondObs: '100.000000000000000000',
+      lifetimeRewardObs: '0.000000000000000000',
+      pendingWallet: null,
+      pendingWalletEffectivePeriod: null,
+      currentPeriod: { period: 20726, heartbeats: 1, attesters: 0, blocksProduced: 2, attestationsMade: 0, faults: 0, staleHeartbeats: 0 },
+    },
+  ],
+  note: 'every field is recomputed from chain state',
+};
+
+function nodeAnswer(url: string): { status: number; body: unknown } | undefined {
+  if (url.includes('path=%2Frevenue')) return { status: 200, body: REVENUE_FIXTURE };
+  if (url.includes('path=%2Fnodes%2Frewards')) return { status: 200, body: REWARDS_FIXTURE };
+  if (url.includes('path=%2Fnodes%2Fregistry')) return { status: 200, body: REGISTRY_FIXTURE };
+  return undefined;
+}
+
+describe('node runner page', () => {
+  it('shows the 40/60 split with the amounts the node reported', async () => {
+    respond = (url) => nodeAnswer(url) ?? { status: 404, body: {} };
+    await import('../web/src/pages/node.js');
+    await settle();
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('40%');
+    expect(text).toContain('60%');
+    expect(text).toContain('Node Runner Reward Pool');
+    // The amounts come from the node, not from a percentage the page computed.
+    // Read the two branches out of the DOM so the assertion is about what an
+    // operator actually sees, not about where the string happens to land.
+    const branches = [...document.querySelectorAll('.flow-branch')].map((node) => node.textContent ?? '');
+    expect(branches).toHaveLength(2);
+    expect(branches[0]).toContain('40%');
+    expect(branches[0]).toContain('Node Runner Reward Pool');
+    expect(branches[0]).toMatch(/\b40\b/);
+    expect(branches[1]).toContain('60%');
+    expect(branches[1]).toContain('Treasury wallet');
+    expect(branches[1]).toMatch(/\b60\b/);
+    expect(text).toContain('verified'); // the sums-back check
+  });
+
+  it('lists a registered node with the evidence recorded about it', async () => {
+    respond = (url) => nodeAnswer(url) ?? { status: 404, body: {} };
+    await import('../web/src/pages/node.js');
+    await settle();
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('a1'.repeat(20));
+    expect(text).toContain('Registered nodes (1)');
+    expect(text).toContain('every field is recomputed from chain state');
+  });
+
+  it('says a period has not settled instead of rendering an empty payout table', async () => {
+    respond = (url) => nodeAnswer(url) ?? { status: 404, body: {} };
+    await import('../web/src/pages/node.js');
+    await settle();
+
+    expect(document.body.textContent).toContain('No reward period has closed on this chain yet');
+  });
+
+  it('reports the failure when the node is unreachable, and invents nothing', async () => {
+    respond = () => ({ status: 503, body: { error: 'no healthy node' } });
+    await import('../web/src/pages/node.js');
+    await settle();
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('Could not read the reward economics');
+    // No fabricated score, percentage or payout may appear.
+    expect(text).not.toMatch(/\b100%\b/);
+    expect(text).not.toContain('efficiency: 100');
+  });
+
+  it('refuses a malformed node id before making a request', async () => {
+    respond = (url) => nodeAnswer(url) ?? { status: 404, body: {} };
+    await import('../web/src/pages/node.js');
+    await settle();
+
+    const input = document.querySelector<HTMLInputElement>('#node-id')!;
+    input.value = 'not-a-node-id';
+    calls.length = 0;
+    document.querySelector<HTMLFormElement>('form.stack')!.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    await settle();
+
+    expect(calls.some((call) => call.url.includes('nodes%2Fstatus'))).toBe(false);
+  });
+});
+
+describe('Proof of Time in the interface', () => {
+  it('shows the chain\'s PoT state on the explorer, with the real numbers', async () => {
+    respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
+    await import('../web/src/pages/explorer.js');
+    await settle();
+
+    const stats = document.querySelector('#chain-stats')!.textContent ?? '';
+    expect(stats).toContain('proof of time (PoT)');
+    expect(stats).toContain('100.00% of target');
+    expect(stats).toContain('12.00 blocks/min');
+    expect(stats).toContain('protocol time from chain — never your browser clock');
+    expect(stats).not.toContain('hashrate');
+    expect(stats).not.toContain('undefined');
+  });
+
+  it('never describes Obsidian as a proof-of-work chain on the landing page', async () => {
+    respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
+    await import('../web/src/pages/landing.js');
+    await settle();
+
+    const text = (document.body.textContent ?? '').toLowerCase();
+    expect(text).toContain('proof of time');
+
+    // "Proof of Time, not Proof of Work" is an allowed contrast — what is
+    // forbidden is any sentence that calls THIS network proof-of-work, or that
+    // sells its security as computation.
+    expect(text).not.toMatch(/(is|as)\s+a\s+proof[- ]of[- ]work/);
+    expect(text).not.toMatch(/proof[- ]of[- ]work\s+(blockchain|chain|network|consensus)/);
+    expect(text).not.toContain('hash rate');
+    expect(text).not.toContain('hashrate');
+    expect(text).not.toContain('mining rig');
+    expect(text).not.toContain('energy-intensive');
+  });
+
+  it('degrades honestly on a node that has no /pot route', async () => {
+    respond = (url) => {
+      if (!url.includes('/api/rpc')) return { status: 404, body: {} };
+      if (decodeURIComponent(url).includes('/pot')) return { status: 404, body: { error: 'not found', code: 'ERR_NOT_FOUND' } };
+      return chainFixture(url);
+    };
+    await import('../web/src/pages/explorer.js');
+    await settle();
+
+    const stats = document.querySelector('#chain-stats')!.textContent ?? '';
+    // The panel still renders, the consensus name is still correct, and the
+    // measurements say "—" instead of pretending to a number.
+    expect(stats).toContain('Proof of Time (PoT)');
+    expect(stats).toContain('Height');
+    expect(stats).not.toContain('undefined');
+    expect(stats).not.toContain('NaN');
+  });
+
+  it('tells a miner which clock decides, on the mining page', async () => {
+    respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
+    await import('../web/src/pages/mine.js');
+    await settle();
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('protocol time from chain');
+    expect(text).toContain('changing your device clock changes the countdown you see and nothing the protocol accepts');
   });
 });

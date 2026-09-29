@@ -19,6 +19,7 @@ export const SITES: Site[] = [
   { id: 'circle', href: '/circle/', label: 'Circle', blurb: 'Land registry' },
   { id: 'capsule', href: '/capsule/', label: 'Capsules', blurb: 'Time locks' },
   { id: 'social', href: '/social/', label: 'Social', blurb: 'OBS Social' },
+  { id: 'node', href: '/node/', label: 'Node runners', blurb: 'Rewards & registry' },
   { id: 'developer', href: '/developer/', label: 'Developers', blurb: 'Build on OBS' },
   { id: 'app', href: '/app/', label: 'Account', blurb: 'Invites & nodes' },
 ];
@@ -49,7 +50,17 @@ export function layout(options: { current: string; title: string; tagline: strin
       el(
         'a',
         { class: 'brand', href: '/' },
-        el('span', { class: 'brand-mark', 'aria-hidden': 'true' }, '◆'),
+        // The official OBS coin. Served from /assets so the same file backs the
+        // favicon, the manifest icons and every static site shell.
+        el('img', {
+          class: 'brand-mark',
+          src: '/assets/logo.svg',
+          width: '34',
+          height: '34',
+          alt: '',
+          'aria-hidden': 'true',
+          decoding: 'async',
+        }),
         el(
           'span',
           {},
@@ -71,7 +82,7 @@ export function layout(options: { current: string; title: string; tagline: strin
     el(
       'div',
       {},
-      el('p', {}, 'Obsidian Network — a proof-of-work chain with a hard cap of 21,000,000 OBS.'),
+      el('p', {}, 'Obsidian Network — a Proof of Time (PoT) chain with a hard cap of 21,000,000 OBS.'),
       el(
         'p',
         { class: 'muted' },
@@ -84,6 +95,7 @@ export function layout(options: { current: string; title: string; tagline: strin
       el('a', { href: '/developer/' }, 'Node software & releases'),
       el('a', { href: '/explorer/' }, 'Explorer'),
       el('a', { href: '/audit/' }, 'Compliance audit'),
+      el('a', { href: '/node/' }, 'Node runner rewards'),
     ),
   );
 

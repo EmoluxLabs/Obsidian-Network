@@ -20,7 +20,7 @@ function cta(href: string, label: string, kind: 'primary' | 'secondary' | 'quiet
 const hero = el(
   'section',
   { class: 'hero' },
-  el('p', { class: 'eyebrow' }, 'Proof-of-work · 21,000,000 OBS hard cap · no company in the middle'),
+  el('p', { class: 'eyebrow' }, 'Proof of Time · 21,000,000 OBS hard cap · no company in the middle'),
   el('h2', {}, 'A public ledger you can verify yourself,', el('br'), 'and the products built on it.'),
   el(
     'p',
@@ -50,12 +50,13 @@ const pillars = el(
   el(
     'article',
     { class: 'pillar' },
-    el('h3', {}, 'Mining, decided by the protocol'),
+    el('h3', {}, 'Proof of Time, not Proof of Work'),
     el(
       'p',
       {},
-      'One claim every four hours, six claims a day, paid from a fixed schedule that halves with adoption and never goes below 0.0002 OBS a day. ' +
-        'Eligibility comes from block timestamps — never from your device clock.',
+      'Obsidian secures itself with verifiable time, not with a computational race. Blocks are produced on a validator schedule and accepted only when ' +
+        'protocol time has genuinely advanced, so nobody buys authority with electricity. Mining is a claim every four hours, six a day, on a fixed ' +
+        'schedule that falls with adoption and never below 0.0002 OBS a day — and eligibility comes from block timestamps, never from your device clock.',
     ),
   ),
   el(
@@ -78,6 +79,17 @@ const pillars = el(
       {},
       'Names, parcels, capsules, posts, tips, validator bonds and oracle prices are chain state with a Merkle root every node recomputes. ' +
         'The interface here is a window; it can be replaced by any node operator.',
+    ),
+  ),
+  el(
+    'article',
+    { class: 'pillar' },
+    el('h3', {}, 'The nodes get paid'),
+    el(
+      'p',
+      {},
+      '40% of qualifying platform revenue goes to independent node runners and 60% to the protocol treasury — split inside the state transition, ' +
+        'not by an invoice. A node earns from uptime, participation and reliability that other nodes attested; it cannot report its own numbers.',
     ),
   ),
   el(

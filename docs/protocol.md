@@ -1,6 +1,6 @@
 # Obsidian protocol
 
-Obsidian is a proof-of-work blockchain with a fixed maximum supply of
+Obsidian is a Proof of Time (PoT) blockchain with a fixed maximum supply of
 **21,000,000 OBS** and a state machine that carries application data — names,
 parcels, capsules, social posts, oracle prices, validator bonds — as first-class
 chain state rather than as rows in a company database.

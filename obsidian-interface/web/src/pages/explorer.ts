@@ -47,11 +47,15 @@ async function boot(): Promise<void> {
 
 async function loadChainStats(): Promise<void> {
   try {
-    const [status, supply, network, audit] = await Promise.all([
+    const [status, supply, network, audit, pot] = await Promise.all([
       client.status(),
       client.supply(),
       client.network(),
       client.requestSafe<Record<string, unknown>>('/audit/decentralization'),
+      // Optional: an older node predates /pot, and the explorer must still work
+      // against it rather than failing the whole panel. A partial answer counts
+      // as "unsupported" — see client.proofOfTime().
+      client.proofOfTime().catch(() => undefined),
     ]);
     statsPanel.replaceChildren(
       el('h2', {}, 'Chain'),
@@ -62,10 +66,30 @@ async function loadChainStats(): Promise<void> {
         ['Genesis id', el('span', { class: 'mono' }, status.genesisId)],
         ['Params hash', el('span', { class: 'mono' }, short(status.paramsHash, 16))],
         ['Protocol version', status.protocolVersion],
+        ['Consensus', pot ? `${pot.consensus.replace(/_/g, ' ').toLowerCase()} (${pot.shortName})` : 'Proof of Time (PoT)'],
+        [
+          'PoT difficulty',
+          pot
+            ? pot.difficulty.warmingUp
+              ? 'warming up — fewer blocks than the measurement window'
+              : `${(pot.difficulty.difficultyBps / 100).toFixed(2)}% of target · observed ${(pot.difficulty.observedSpacingMs / 1000).toFixed(2)}s between blocks`
+            : '—',
+        ],
+        [
+          'Time-Rate',
+          pot && pot.timeRate.windowSeconds > 0
+            ? `${pot.timeRate.blocksPerMinute.toFixed(2)} blocks/min · ${pot.timeRate.transactionsPerMinute.toFixed(2)} tx/min`
+            : 'not measurable yet — fewer than two blocks in the window',
+        ],
+        ['Accumulated PoT weight', pot ? el('span', { class: 'mono' }, pot.cumulativePotWeight) : '—'],
         ['Supply', `${obs(status.supplyObs)} OBS of ${obs(status.maxSupplyObs)} OBS`],
         ['Mining pool', `${obs(supply.poolBalanceObs)} OBS`],
         ['Peers', String(status.peers)],
         ['Last block', `${relativeTime(status.lastBlockTimestamp)} (${when(status.lastBlockTimestamp)})`],
+        [
+          'Time authority',
+          pot ? `${pot.timeAuthority.authoritative.replace(/_/g, ' ').toLowerCase()} — never your browser clock` : '—',
+        ],
         ['Genesis allocation', status.genesis ? `${status.genesis.allocationClaimed ? 'claimed' : 'unclaimed'} · ${obs(status.genesis.allocationObs)} OBS` : '—'],
       ]),
       ...(audit

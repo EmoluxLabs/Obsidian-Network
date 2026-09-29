@@ -510,6 +510,13 @@ export class InterfaceServer {
       target === '/mining/schedule' ||
       target === '/mining/status' ||
       target === '/mining/claims' ||
+      // Proof of Time state and the node runner reward registry: read-only,
+      // and already free of wallet balances at the node.
+      target === '/pot' ||
+      target === '/revenue' ||
+      target === '/nodes/registry' ||
+      target === '/nodes/rewards' ||
+      target.startsWith('/nodes/status/') ||
       target.startsWith('/block/') ||
       target.startsWith('/tx/') ||
       target.startsWith('/address/') ||
