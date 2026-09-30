@@ -1,6 +1,6 @@
 # Obsidian Network 1.1.0
 
-Built from commit `6a16c2b77d76d39e1007be5277e27079aa4bb922` at 2026-09-30T18:00:47Z.
+Built from commit `3a0651880f094bec04de83907f9fe96e7f51bd53` at 2026-09-30T18:23:47Z.
 
 ## Verify before you run
 
@@ -37,7 +37,7 @@ cat MANIFEST.json          # asset sizes, networks, protocol constants
 ## What is in this release
 
 * consensus, p2p, RPC, indexer and the nine transaction executors
-* 376 automated tests, all of them run immediately before packaging: core (233), interface (123), edge worker (7) and the three-node cluster end-to-end suite (13)
+* 363 automated tests run before packaging: core (233), interface (123), edge worker (7). The three-node cluster end-to-end suite was skipped (--skip-e2e): run `node --test tests/e2e/cluster.test.mjs` before trusting this build.
 * no WAC, no $5 activation, no legacy signup allocation, no admin mint, no
   native exchange — verify with `curl -s localhost:8630/audit/compliance`
 
