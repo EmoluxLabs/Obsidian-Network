@@ -1,6 +1,6 @@
 # Obsidian Network 1.1.0
 
-Built from commit `5c9576c0d34d5f428031134796ee27d2449e2009` at 2026-09-29T15:35:51Z.
+Built from commit `39d7edaf91bfe944952a500d491c2a9c59dbad66` at 2026-09-30T16:35:01Z.
 
 ## Verify before you run
 
