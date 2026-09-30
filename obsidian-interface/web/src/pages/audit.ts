@@ -72,9 +72,12 @@ void (async () => {
     );
 
     if (decentralisation) {
+      // Raw JSON.stringify dumps were unreadable here and `String(value)`
+      // produced "[object Object]" on the explorer. Both reports are rendered
+      // as the question/answer and dependency tables they actually are.
       decPanel.replaceChildren(
         el('h2', {}, 'Decentralisation'),
-        kv(Object.entries(decentralisation).map(([key, value]) => [key, typeof value === 'object' ? JSON.stringify(value) : String(value)])),
+        ...decentralisationRows(decentralisation),
         el('p', { class: 'fineprint' }, 'Mining distribution, node counts and validator participation are recomputed by each node from the chain it holds.'),
       );
     } else {
@@ -85,3 +88,79 @@ void (async () => {
     toast((error as Error).message, 'error');
   }
 })();
+
+interface AuditQuestion {
+  question?: unknown;
+  answer?: unknown;
+  evidence?: unknown;
+}
+
+interface AuditDependency {
+  component?: unknown;
+  scope?: unknown;
+  consensusImpact?: unknown;
+}
+
+/** Turn /audit/decentralization into readable rows rather than a JSON dump. */
+function decentralisationRows(audit: Record<string, unknown>): HTMLElement[] {
+  const rows: HTMLElement[] = [];
+
+  const questions = Array.isArray(audit.questions) ? (audit.questions as AuditQuestion[]) : [];
+  if (questions.length > 0) {
+    const allNo = questions.every((entry) => String(entry.answer).toUpperCase() === 'NO');
+    rows.push(
+      el(
+        'p',
+        { class: 'muted' },
+        `${questions.length} single-point-of-failure questions${allNo ? ', every one answered NO by this node' : ''}.`,
+      ),
+      kv(
+        questions.map((entry) => [
+          String(entry.question ?? '—'),
+          el('span', {}, el('strong', {}, String(entry.answer ?? '—')), ` — ${String(entry.evidence ?? '')}`),
+        ]),
+      ),
+    );
+  }
+
+  const dependencies = Array.isArray(audit.centralisedDependencies)
+    ? (audit.centralisedDependencies as AuditDependency[])
+    : [];
+  if (dependencies.length > 0) {
+    rows.push(
+      el('h3', {}, 'Centralised dependencies'),
+      el(
+        'p',
+        { class: 'muted' },
+        'Named on purpose. Each is scoped so that losing it cannot stop or corrupt consensus.',
+      ),
+      kv(
+        dependencies.map((entry) => [
+          String(entry.component ?? '—'),
+          `${String(entry.scope ?? '—')} · consensus impact: ${String(entry.consensusImpact ?? '—')}`,
+        ]),
+      ),
+    );
+  }
+
+  const known = new Set(['questions', 'centralisedDependencies']);
+  const rest = Object.entries(audit).filter(([key]) => !known.has(key));
+  if (rest.length > 0) {
+    rows.push(
+      kv(
+        rest.map(([key, value]) => [
+          key,
+          Array.isArray(value)
+            ? `${value.length} ${value.length === 1 ? 'entry' : 'entries'}`
+            : typeof value === 'object' && value !== null
+              ? Object.entries(value as Record<string, unknown>)
+                  .map(([k, v]) => `${k}: ${String(v)}`)
+                  .join(' · ')
+              : String(value),
+        ]),
+      ),
+    );
+  }
+
+  return rows;
+}

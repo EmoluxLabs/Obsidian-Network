@@ -92,9 +92,7 @@ async function loadChainStats(): Promise<void> {
         ],
         ['Genesis allocation', status.genesis ? `${status.genesis.allocationClaimed ? 'claimed' : 'unclaimed'} · ${obs(status.genesis.allocationObs)} OBS` : '—'],
       ]),
-      ...(audit
-        ? [el('div', {}, el('h3', {}, 'Decentralisation'), kv(Object.entries(audit).slice(0, 8).map(([key, value]) => [key, String(value)])))]
-        : []),
+      ...(audit ? [decentralisationSummary(audit)] : []),
       el('p', { class: 'fineprint' }, 'Every field above is recomputed by each node from the chain. Balances are deliberately absent: the explorer surface never exposes them.'),
     );
   } catch (error) {
@@ -146,7 +144,7 @@ async function search(term: string): Promise<void> {
       const parcel = await client.landParcel(term);
       resultPanel.replaceChildren(
         el('h2', {}, `Parcel · ${term}`),
-        kv(Object.entries(parcel).slice(0, 10).map(([key, value]) => [key, String(value)])),
+        kv(Object.entries(parcel).slice(0, 10).map(([key, value]) => [key, readable(value)])),
       );
       return;
     }
@@ -213,3 +211,96 @@ void (async () => {
     void search(value);
   }
 })();
+
+/**
+ * Render a value that may be a scalar, an array or a nested object.
+ *
+ * `String(value)` on an array of objects produces the useless
+ * "[object Object],[object Object]" — a real defect once seen on the explorer.
+ * Anything structured is summarised instead of stringified.
+ */
+function readable(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (Array.isArray(value)) {
+    if (value.length === 0) return 'none';
+    return value.every((entry) => typeof entry !== 'object' || entry === null)
+      ? value.map((entry) => String(entry)).join(', ')
+      : `${value.length} ${value.length === 1 ? 'entry' : 'entries'}`;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return 'none';
+    return entries.map(([key, inner]) => `${key}: ${String(inner)}`).join(' · ');
+  }
+  return String(value);
+}
+
+interface AuditQuestion {
+  question?: unknown;
+  answer?: unknown;
+  evidence?: unknown;
+}
+
+interface AuditDependency {
+  component?: unknown;
+  scope?: unknown;
+  consensusImpact?: unknown;
+}
+
+/**
+ * The node's /audit/decentralization report, rendered as what it actually is:
+ * a list of attack questions with their answers, and the centralised
+ * dependencies with their (bounded) consensus impact.
+ */
+function decentralisationSummary(audit: Record<string, unknown>): HTMLElement {
+  const children: (HTMLElement | string)[] = [el('h3', {}, 'Decentralisation')];
+
+  const questions = Array.isArray(audit.questions) ? (audit.questions as AuditQuestion[]) : [];
+  if (questions.length > 0) {
+    const allNo = questions.every((entry) => String(entry.answer).toUpperCase() === 'NO');
+    children.push(
+      el(
+        'p',
+        { class: 'muted' },
+        `${questions.length} single-point-of-failure questions${allNo ? ', every one answered NO by this node' : ''}.`,
+      ),
+    );
+    children.push(
+      kv(
+        questions.map((entry) => [
+          String(entry.question ?? '—'),
+          el('span', {}, el('strong', {}, String(entry.answer ?? '—')), ` — ${String(entry.evidence ?? '')}`),
+        ]),
+      ),
+    );
+  }
+
+  const dependencies = Array.isArray(audit.centralisedDependencies)
+    ? (audit.centralisedDependencies as AuditDependency[])
+    : [];
+  if (dependencies.length > 0) {
+    children.push(el('h3', {}, 'Centralised dependencies'));
+    children.push(
+      el(
+        'p',
+        { class: 'muted' },
+        'Named on purpose. Each one is scoped so that losing it cannot stop or corrupt consensus.',
+      ),
+    );
+    children.push(
+      kv(
+        dependencies.map((entry) => [
+          String(entry.component ?? '—'),
+          `${String(entry.scope ?? '—')} · consensus impact: ${String(entry.consensusImpact ?? '—')}`,
+        ]),
+      ),
+    );
+  }
+
+  // Anything the node adds later still renders, just without bespoke styling.
+  const known = new Set(['questions', 'centralisedDependencies']);
+  const rest = Object.entries(audit).filter(([key]) => !known.has(key));
+  if (rest.length > 0) children.push(kv(rest.map(([key, value]) => [key, readable(value)])));
+
+  return el('div', {}, ...children);
+}

@@ -199,6 +199,28 @@ describe('browser pages against a live node', () => {
     expect(stats).toContain('dobs1');                           // the network's address prefix
   });
 
+  it('explorer renders the decentralisation report, never "[object Object]"', async () => {
+    // Regression: the panel rendered `String(value)` over /audit/decentralization,
+    // whose `questions` and `centralisedDependencies` are arrays of objects. The
+    // page showed a row of "[object Object],[object Object],…" to every visitor.
+    const audit = (await (await fetch(`${NODE_URL}/audit/decentralization`)).json()) as {
+      questions: Array<{ question: string; answer: string }>;
+      centralisedDependencies: Array<{ component: string }>;
+    };
+    expect(audit.questions.length).toBeGreaterThan(0);
+    expect(audit.centralisedDependencies.length).toBeGreaterThan(0);
+
+    await import('../web/src/pages/explorer.js');
+    await settle();
+
+    const stats = document.querySelector('#chain-stats')?.textContent ?? '';
+    expect(stats).not.toContain('[object Object]');
+    expect(stats).toContain(audit.questions[0].question);
+    expect(stats).toContain(audit.centralisedDependencies[0].component);
+    expect(stats).toContain('Centralised dependencies');
+    expect(stats).not.toContain('undefined');
+  });
+
   it('explorer renders a real block detail by height', async () => {
     const status = (await (await fetch(`${NODE_URL}/status`)).json()) as { height: number };
     // The page reads the hash once, when it boots (deep links from the block table).
