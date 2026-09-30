@@ -19,6 +19,12 @@ export interface AuthConfig {
   googleClientId: string;
   maxInvitesPerAccount: number;
   accountsExist: boolean;
+  /**
+   * Whether this deployment has a Genesis Invitation and whether it has been
+   * spent. Never contains the invitation or its hash — only these two flags
+   * cross the wire.
+   */
+  genesisInvite?: { configured: boolean; redeemed: boolean };
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {

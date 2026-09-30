@@ -27,7 +27,7 @@ layout({
       'section',
       { class: 'notice' },
       el('strong', {}, 'Invite-only, on purpose. '),
-      'Registration here is capped: the first account on a fresh deployment bootstraps the interface, and every account after that needs an unused invite from someone already inside. ' +
+      'Registration here is capped: the first account on a fresh deployment must present the single-use Genesis Invitation the operator holds offline, and every account after that needs an unused invite from someone already inside. ' +
         'Each account may issue at most five invites, enforced by the server, not by this page. Creating a wallet needs no account at all.',
     ),
     authPanel,
@@ -59,14 +59,33 @@ async function drawAuth(): Promise<void> {
     return;
   }
 
-  const inviteInput = el('input', { id: 'invite-code', placeholder: config.accountsExist ? 'Invite code (required)' : 'First account: no invite needed', disabled: config.accountsExist ? undefined : 'disabled' });
+  // The first account needs the Genesis Invitation; later accounts need a
+  // member invite. Either way the field is required — it is never disabled,
+  // because there is no longer any registration path without a credential.
+  const inviteInput = el('input', {
+    id: 'invite-code',
+    placeholder: config.accountsExist ? 'Invite code (required)' : 'Genesis Invitation (required)',
+  });
   const statusLine = el('p', { class: 'fineprint' }, config.googleClientId ? 'Sign-in uses Google Identity Services; the ID token is verified by this server against Google\'s public keys.' : 'Google sign-in is not configured on this deployment, so accounts cannot be created here.');
 
   authPanel.replaceChildren(
     el('h2', {}, 'Sign in'),
     kv([
       ['Invite-only', config.inviteOnly ? badge('yes', 'ok') : badge('no', 'warn')],
-      ['Accounts exist', config.accountsExist ? 'yes — an invite code is required' : 'no — the first account bootstraps this interface'],
+      [
+        'Accounts exist',
+        config.accountsExist
+          ? 'yes — an invite code from a member is required'
+          : 'no — the first account needs the Genesis Invitation',
+      ],
+      [
+        'Genesis Invitation',
+        config.genesisInvite?.redeemed
+          ? badge('redeemed', 'ok')
+          : config.genesisInvite?.configured
+            ? badge('unspent', 'warn')
+            : badge('not configured', 'warn'),
+      ],
       ['Invites per account', String(config.maxInvitesPerAccount)],
     ]),
     el('div', { class: 'field' }, el('label', { for: 'invite-code' }, 'Invite code'), inviteInput),
