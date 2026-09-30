@@ -58,7 +58,7 @@ tar -xzf obsidian-network-source-1.0.0.tar.gz
 cd obsidian-network-1.0.0/obsidian-core
 npm ci && npm run build && npm test        # 233 tests
 cd ../obsidian-interface
-npm ci && npm run build && npm test        # 122 tests
+npm ci && npm run build && npm test        # 123 tests
 cd ../cloudflare
 node --test test/worker.test.mjs           # 7 tests
 cd ..

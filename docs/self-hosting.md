@@ -11,7 +11,7 @@ git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network/obsidian-interface
 npm ci
 npm run build      # builds core → copies browser-safe modules → bundles 11 sites → typecheck
-npm test           # 122 tests: tokens, store, node pool, real HTTP server, config discovery, formatters, browser pages, live node
+npm test           # 123 tests: tokens, store, node pool, real HTTP server, config discovery, formatters, browser pages, live node
 npm run verify     # typecheck + build + test in one shot
 ```
 

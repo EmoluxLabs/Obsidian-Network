@@ -180,7 +180,7 @@ stage "$STAGING/obsidian-interface" \
   obsidian-interface/server obsidian-interface/dist obsidian-interface/scripts \
   obsidian-interface/web obsidian-interface/public obsidian-interface/tests \
   obsidian-interface/deployment obsidian-interface/README.md \
-  landing mine wallet explorer social capsule ons circle developer app audit \
+  landing mine wallet explorer social capsule ons circle developer node app audit \
   docs LICENSE
 
 # ── 3. obsidian-cloudflare: gateway only ─────────────────────────────────────
@@ -201,7 +201,7 @@ stage "$STAGING/obsidian-interface-selfhost" \
   obsidian-interface/dist obsidian-interface/public obsidian-interface/web/core \
   obsidian-interface/package.json obsidian-interface/package-lock.json \
   obsidian-interface/deployment obsidian-interface/tests \
-  landing mine wallet explorer social capsule ons circle developer app audit \
+  landing mine wallet explorer social capsule ons circle developer node app audit \
   docs LICENSE
 
 # ── 6. the whole source tree, straight from git ──────────────────────────────

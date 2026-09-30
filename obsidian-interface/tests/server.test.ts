@@ -482,4 +482,22 @@ describe('site directories', () => {
     expect(generated.length).toBeGreaterThan(0);
     expect([...served].sort()).toEqual([...generated].sort());
   });
+
+  it('ships every generated site in the release archives', async () => {
+    // A fourth list: the packaging script stages site directories by name. When
+    // /node/ was added it was missed here, so the interface and self-host
+    // archives shipped without the node runner site even though the repo and
+    // the running server both had it. Landing is generated into the archive
+    // root rather than staged as a directory of its own, so it is exempt.
+    const generator = await readFile(new URL('../scripts/build-sites.mjs', import.meta.url), 'utf8');
+    const generated = [...generator.matchAll(/^\s*id: '([a-z]+)',$/gm)].map((match) => match[1]);
+    const script = await readFile(new URL('../../scripts/package-releases.sh', import.meta.url), 'utf8');
+    const stageLines = [...script.matchAll(/^\s*landing [a-z ]+\\$/gm)].map((match) => match[0]);
+
+    expect(stageLines.length).toBeGreaterThan(0);
+    for (const line of stageLines) {
+      const staged = new Set(line.trim().replace(/\\$/, '').trim().split(/\s+/));
+      for (const site of generated) expect(staged.has(site)).toBe(true);
+    }
+  });
 });
