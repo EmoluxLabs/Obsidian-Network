@@ -1,6 +1,6 @@
 # Obsidian Network 1.1.0
 
-Built from commit `d2a19a86c7f68a1b943aa0a4f8e5d45028198c59` at 2026-09-30T17:09:44Z.
+Built from commit `6a16c2b77d76d39e1007be5277e27079aa4bb922` at 2026-09-30T18:00:47Z.
 
 ## Verify before you run
 
@@ -46,10 +46,11 @@ cat MANIFEST.json          # asset sizes, networks, protocol constants
 Docker images are built, started and probed by the `docker` job in CI on every
 push — including a full node + interface compose stack whose chain height is
 observed to advance, and a check that stopping the interface does not stop
-consensus. They are not built in the authoring workspace, which has no Docker
-daemon. To verify on your own machine:
+consensus. To verify on your own machine:
 
 ```bash
 bash obsidian-core/deployment/docker/verify.sh
 bash obsidian-interface/deployment/docker/verify.sh
 ```
+
+See `docs/IMPLEMENTATION-REPORT.md` item 12 for what that proves.
