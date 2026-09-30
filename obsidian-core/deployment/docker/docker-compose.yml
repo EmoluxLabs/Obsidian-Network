@@ -18,6 +18,10 @@ services:
     environment:
       OBSIDIAN_NETWORK: ${OBSIDIAN_NETWORK:-mainnet}
       OBSIDIAN_NODE_NAME: ${OBSIDIAN_NODE_NAME:-docker-node}
+      # Pinned because each network has different default ports (devnet RPC is
+      # 38630). The published ports below assume 8630/8631 whatever the network.
+      OBSIDIAN_RPC_PORT: 8630
+      OBSIDIAN_P2P_PORT: 8631
       OBSIDIAN_KEYSTORE_PASSPHRASE: ${OBSIDIAN_KEYSTORE_PASSPHRASE:?set OBSIDIAN_KEYSTORE_PASSPHRASE}
       OBSIDIAN_SEEDS: ${OBSIDIAN_SEEDS:-}
       OBSIDIAN_MINE: ${OBSIDIAN_MINE:-true}

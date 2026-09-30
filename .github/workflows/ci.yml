@@ -50,6 +50,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          # There is no lockfile at the repository root; name them explicitly
+          # or setup-node fails with "Dependencies lock file is not found".
+          cache-dependency-path: |
+            obsidian-core/package-lock.json
+            obsidian-interface/package-lock.json
       # The interface build compiles the core first and syncs the browser-safe
       # subset, so core dependencies have to be present.
       - run: npm ci
@@ -226,6 +231,9 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: |
+            obsidian-core/package-lock.json
+            obsidian-interface/package-lock.json
       - run: npm ci
         working-directory: obsidian-core
       - run: npm ci

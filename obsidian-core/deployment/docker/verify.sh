@@ -23,6 +23,11 @@ docker run -d --name "$NAME" \
   -e OBSIDIAN_NETWORK=devnet \
   -e OBSIDIAN_KEYSTORE_PASSPHRASE="$PASSPHRASE" \
   -e OBSIDIAN_MINE=true \
+  `# Each network has its own default ports (devnet RPC is 38630, mainnet` \
+  `# 8630). The image EXPOSEs 8630/8631, so pin them or the published port` \
+  `# points at nothing and the health check can never answer.` \
+  -e OBSIDIAN_RPC_PORT=8630 \
+  -e OBSIDIAN_P2P_PORT=8631 \
   "$IMAGE" start --mine >/dev/null
 
 cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
