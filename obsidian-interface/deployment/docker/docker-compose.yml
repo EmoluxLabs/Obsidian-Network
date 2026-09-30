@@ -12,9 +12,10 @@ services:
     build:
       # Context is the repository root: the browser bundle is compiled from the
       # same core modules the node runs.
-      context: ../..
+      # Repository root: the Dockerfile builds obsidian-core first.
+      context: ../../..
       dockerfile: obsidian-interface/deployment/docker/Dockerfile
-    image: obsidian/interface:1.0.0
+    image: obsidian/interface:1.1.0
     restart: unless-stopped
     environment:
       OBSIDIAN_NODE_URLS: ${OBSIDIAN_NODE_URLS:-http://host.docker.internal:8630}

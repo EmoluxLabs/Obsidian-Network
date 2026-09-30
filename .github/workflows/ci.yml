@@ -152,6 +152,70 @@ jobs:
           '
           kill $pid
 
+  docker:
+    name: docker images build, boot and serve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # A Dockerfile in a repository is not evidence that anything is
+      # deployable (§119). These steps build the images, start them, and talk
+      # to them. If this job is green, the container recipes work.
+      - name: Docker is available on the runner
+        run: docker version && docker compose version
+
+      - name: Node image builds, starts, and serves a compliant chain
+        run: bash obsidian-core/deployment/docker/verify.sh
+
+      - name: Interface image builds, starts, and serves the sites
+        run: bash obsidian-interface/deployment/docker/verify.sh
+
+      # The real deployment shape: a node and an interface as one stack, with
+      # the interface reading through the node over the compose network.
+      - name: The full stack comes up and the interface reaches the node
+        env:
+          OBSIDIAN_KEYSTORE_PASSPHRASE: ci-only-not-a-real-passphrase
+          OBSIDIAN_NETWORK: devnet
+        working-directory: obsidian-core/deployment/docker
+        run: |
+          set -euo pipefail
+          docker compose up -d --build
+          echo "waiting for the interface to become healthy"
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8788/api/health >/dev/null 2>&1; then
+              echo "interface healthy after ${i}s"; break
+            fi
+            sleep 1
+            [ "$i" = 90 ] && { docker compose ps; docker compose logs; exit 1; }
+          done
+
+          # Every site the build generates must be served by the container.
+          for p in / /mine/ /wallet/ /explorer/ /social/ /capsule/ /ons/ /circle/ /developer/ /node/ /app/ /audit/; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8788$p")
+            printf '%-14s %s\n' "$p" "$code"
+            [ "$code" = "200" ] || { echo "site $p did not return 200"; docker compose logs; exit 1; }
+          done
+
+          # The interface must be reading through the node, not inventing data.
+          curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/status' | grep -q '"genesisId"'
+          curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/pot' | grep -q 'PROOF_OF_TIME'
+          curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/supply' | grep -q '"invariantOk":true'
+
+          # The chain must actually be advancing inside the container.
+          h1=$(curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/status' | grep -o '"height":[0-9]*' | head -1 | cut -d: -f2)
+          sleep 15
+          h2=$(curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/status' | grep -o '"height":[0-9]*' | head -1 | cut -d: -f2)
+          echo "height $h1 -> $h2"
+          [ "$h2" -gt "$h1" ] || { echo "the containerised chain is not producing blocks"; docker compose logs; exit 1; }
+
+          # Stopping the interface must not stop consensus.
+          docker compose stop interface
+          sleep 8
+          docker compose exec -T node node -e "fetch('http://127.0.0.1:8630/status').then(r=>r.json()).then(s=>{console.log('node height without the interface:',s.height);process.exit(0)}).catch(()=>process.exit(1))"
+
+          docker compose down -v
+
   releases:
     name: release archives build from this commit
     runs-on: ubuntu-latest

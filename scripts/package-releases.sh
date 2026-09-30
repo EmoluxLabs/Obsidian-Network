@@ -295,11 +295,19 @@ ${TEST_SUMMARY}
 * no WAC, no \$5 activation, no legacy signup allocation, no admin mint, no
   native exchange — verify with \`curl -s localhost:8630/audit/compliance\`
 
-## What is not
+## Containers
 
-Docker images were not built in the development environment (Docker is
-unavailable there). Run \`deployment/docker/verify.sh\` on your machine before
-relying on the container recipes; see \`docs/IMPLEMENTATION-REPORT.md\` item 12.
+Docker images are built, started and probed by the \`docker\` job in CI on every
+push — including a full node + interface compose stack whose chain height is
+observed to advance, and a check that stopping the interface does not stop
+consensus. To verify on your own machine:
+
+\`\`\`bash
+bash obsidian-core/deployment/docker/verify.sh
+bash obsidian-interface/deployment/docker/verify.sh
+\`\`\`
+
+See \`docs/IMPLEMENTATION-REPORT.md\` item 12 for what that proves.
 NOTES
 
 echo "→ release notes and digests"

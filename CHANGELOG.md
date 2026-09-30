@@ -61,7 +61,8 @@ under 1.0.0 rules and will not. Launch from 1.1.0.
   checklist.
 * **Continuous integration** (`.github/workflows/ci.yml`) running all four test
   suites, the invariant check, mainnet genesis determinism, a live mainnet node
-  boot with a supply-invariant assertion, and a full release packaging run.
+  boot with a supply-invariant assertion, a **Docker job** that builds both
+  images and runs the full compose stack, and a full release packaging run.
 * `SECURITY.md`, `CONTRIBUTING.md` and this changelog.
 
 ### Changed
@@ -78,6 +79,9 @@ under 1.0.0 rules and will not. Launch from 1.1.0.
   build instead of hardcoding a version string.
 * `scripts/verify-release.sh` now looks for `SHA256SUMS` beside the archive
   before beside itself, so verifying a downloaded release works the obvious way.
+* `docker compose` now builds the interface image from the repository root, as
+  its Dockerfile requires; the previous context (`../../../obsidian-interface`)
+  would have failed the build. Image tags corrected from `1.0.0` to `1.1.0`.
 * The source release archive no longer contains `releases/` (it was recursively
   embedding every other archive: 46 MB → 742 KB).
 
@@ -107,10 +111,10 @@ from the packaged release archive reporting height 0, supply 0,
 
 ### Not production ready
 
-Docker images were not built during development (Docker was unavailable in that
-environment). The recipes in `deployment/docker/` are unverified by execution —
-run `deployment/docker/verify.sh` before relying on them. See
-`docs/IMPLEMENTATION-REPORT.md` item 12.
+Nothing is shipped in this release labelled production ready that has not been
+executed. The container recipes, previously unverified, are now built and run by
+CI on every push; see item 12 of `docs/IMPLEMENTATION-REPORT.md` for exactly
+what that job proves and what it does not.
 
 ---
 
