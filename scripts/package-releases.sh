@@ -195,6 +195,9 @@ stage "$STAGING/obsidian-node-operator" \
   obsidian-core/deployment/node.env.example obsidian-core/config \
   docs LICENSE
 cp scripts/verify-release.sh "$STAGING/obsidian-node-operator/verify-release.sh"
+# The launch runbook asks operators to check the economic invariants against the
+# build they are about to run, so the checker ships with the build.
+cp scripts/check-invariants.mjs "$STAGING/obsidian-node-operator/check-invariants.mjs"
 
 # ── 5. self-hosted interface package ─────────────────────────────────────────
 stage "$STAGING/obsidian-interface-selfhost" \

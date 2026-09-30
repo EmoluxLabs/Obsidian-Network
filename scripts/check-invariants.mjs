@@ -19,13 +19,25 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 
+// This script runs from three different layouts: the repository (scripts/ next
+// to obsidian-core/), the node operator release package (this file at the root,
+// obsidian-core/ beside it), and whatever directory an operator happens to be
+// standing in. Look in all of them rather than assuming one.
 const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, '..');
-const built = join(root, 'obsidian-core', 'dist', 'protocol', 'params.js');
+const candidates = [
+  join(here, '..', 'obsidian-core', 'dist', 'protocol', 'params.js'), // repository
+  join(here, 'obsidian-core', 'dist', 'protocol', 'params.js'),       // release package
+  join(here, '..', 'dist', 'protocol', 'params.js'),                  // inside obsidian-core
+  join(process.cwd(), 'obsidian-core', 'dist', 'protocol', 'params.js'),
+  join(process.cwd(), 'dist', 'protocol', 'params.js'),
+];
 
-if (!existsSync(built)) {
-  console.error(`obsidian-core is not built: ${built} is missing.`);
-  console.error('run: npm --prefix obsidian-core run build');
+const built = candidates.find((path) => existsSync(path));
+
+if (!built) {
+  console.error('could not find a built obsidian-core. Looked in:');
+  for (const path of candidates) console.error(`  ${path}`);
+  console.error('\nbuild it first:  npm --prefix obsidian-core run build');
   process.exit(2);
 }
 
