@@ -20,7 +20,7 @@
 
 import { generateMnemonic as bip39Generate, validateMnemonic, mnemonicToSeedSync } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
-import { hmacSha256, utf8 } from './hash.js';
+import { hmacSha256, utf8, toHex, fromHex } from './hash.js';
 import { keyPairFromPrivateKey, type KeyPair } from './keys.js';
 import { secp256k1 } from '@noble/curves/secp256k1';
 
@@ -68,14 +68,14 @@ function deriveChildPrivateKey(parent: Uint8Array, index: number): Uint8Array {
   const I = hmacSha256(utf8('Bitcoin seed'), data);
   const IL = I.slice(0, 32);
   const IR = I.slice(32);
-  const parentInt = BigInt(`0x${Buffer.from(parent).toString('hex')}`);
-  const ilInt = BigInt(`0x${Buffer.from(IL).toString('hex')}`);
+  const parentInt = BigInt(`0x${toHex(parent)}`);
+  const ilInt = BigInt(`0x${toHex(IL)}`);
   const order = secp256k1.CURVE.n;
   const child = (ilInt + parentInt) % order;
   if (child === 0n) throw new Error('derived child key is zero; use the next index');
   let hex = child.toString(16);
   if (hex.length < 64) hex = hex.padStart(64, '0');
-  const childKey = Uint8Array.from(Buffer.from(hex, 'hex'));
+  const childKey = fromHex(hex);
   // IR retained for chain-code continuity in future extended-key APIs.
   void IR;
   return childKey;

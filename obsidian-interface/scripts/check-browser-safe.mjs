@@ -15,7 +15,21 @@ if (!existsSync(outdir)) {
   process.exit(1);
 }
 
-const banned = [/from\s*["']node:/, /require\(\s*["']node:/, /\bprocess\.env\b/];
+// Node built-in *imports* are only half the risk. A Node **global** that the
+// bundler happily leaves in place (Buffer, process, __dirname, global) throws
+// "X is not defined" in the browser at runtime, which is exactly the class of
+// bug a build-time check exists to prevent. `Buffer` reached the shipped wallet
+// bundle once via BIP-32 derivation; it must never happen silently again.
+const banned = [
+  /from\s*["']node:/,
+  /require\(\s*["']node:/,
+  /\bprocess\.env\b/,
+  /\bBuffer\s*\./,
+  /\bnew\s+Buffer\b/,
+  /\b__dirname\b/,
+  /\b__filename\b/,
+  /\bglobal\s*\./,
+];
 let failures = 0;
 for (const file of readdirSync(outdir)) {
   if (!file.endsWith('.js')) continue;
