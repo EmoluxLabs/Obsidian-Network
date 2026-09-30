@@ -1,6 +1,6 @@
 # Obsidian Network — implementation report
 
-**Version 1.1.0 · protocol 1.1.0 · fourteen deliverables, seventeen answers.**
+**Version 1.1.0 · protocol 1.1.0 · fourteen deliverables, eighteen answers.**
 
 This report follows the fifteen required points in order. It states what exists,
 what was verified, and — where it applies — what is **not** production ready. No
@@ -276,17 +276,23 @@ verified* rather than *working*.
 
 ## 13. Documentation — **done**
 
-`docs/` contains 17 documents: protocol, mining, wallet, ONS, capsules, circle,
-social, explorer, security model (including a candid limitations section), FAQ,
-removal report, node operator guide, self-hosting guide, API reference,
-transaction format, release verification, and this report. Every document
+`docs/` contains 21 documents: protocol, Proof of Time, mining, wallet, ONS,
+capsules, circle, social, explorer, security model (including a candid
+limitations section), FAQ, removal report, node operator guide, node runner
+rewards, self-hosting guide, API reference, transaction format, release
+verification, the mainnet launch runbook, the documentation index, and this
+report. At the repository root there are also `CHANGELOG.md` (with
+consensus-breaking releases flagged as such), `CONTRIBUTING.md` and
+`SECURITY.md`. Every document
 describes observable behaviour and names the command that shows it.
 
 ## 14. Coin logo and brand assets — **done, authored here**
 
 No image file was ever present in the workspace, so the mark was **authored as
-geometry** in `assets/logo.svg` (a faceted obsidian hexagon with a cyan core) and
-rasterised by `assets/render-logo.py`, a dependency-free renderer, into
+geometry** in `assets/logo.svg` — the OBS coin: a black minted disc with a
+brushed-silver rim that catches light top-left, a ring of 22 stars, a
+circuit-trace inner ring and a silver slashed O at the centre. It is rasterised
+by `assets/render-logo.py`, a dependency-free renderer, into
 `logo-512.png`, `logo-192.png`, `logo-32.png`, `favicon.ico` and a web manifest.
 The same assets are served by the interface at `/assets/`. If a different official
 logo exists elsewhere, replace `assets/logo.svg` and re-run
@@ -382,6 +388,50 @@ proofs, foreign wallets, duplicate wallets, missing bond, expired proofs,
 replayed heartbeats, self-attestation, unauthorised wallet changes, bond return,
 double settlement, state-root convergence), plus the cluster suite's split
 check. Operator UI at `/node/`; documentation in `docs/node-runner-rewards.md`.
+
+## 18. Launch readiness and continuous verification — **done, tested**
+
+The gap between "the code is correct" and "the network can be launched" is
+operational, and it is now closed.
+
+* **`docs/mainnet-launch.md`** is the runbook: verifying the release you intend
+  to run, choosing a bootstrap set of at least three independently operated
+  nodes, disciplining the clock (Proof of Time makes NTP an operational
+  requirement, not a nicety), creating node identities, the start sequence,
+  confirming every node reports an **identical params hash** before announcing
+  anything, watching the genesis allocation event and confirming the recipient
+  is the same on every node, bringing up the interface and the edge, the
+  monitoring signals with their halt conditions, what to do if the launch goes
+  wrong before and after the allocation is claimed, and a 20-line checklist.
+* **`scripts/check-invariants.mjs`** asserts **50** economic and protocol
+  invariants against the built parameters — the 21,000,000 cap, the 100,000
+  genesis allocation, zero at registration, the 4-hour/6-claim schedule, the
+  0.0002 OBS floor, gas at 2 bps capped at 0.01 OBS returning to the mining
+  pool, the 40/60 split, the 70/30 creator split, the $50 business page, the
+  5-invite limit, the $100–$30,000 GLV bounds, the capsule minimum and 1000×
+  multiplier, and the absence of WAC, mining KYC and a native exchange. It exits
+  non-zero on drift; that was confirmed by mutating a parameter in the build and
+  watching it fail, then restoring it.
+* **CI** (`.github/workflows/ci.yml`) runs on every push: core build, typecheck
+  and 233 tests; interface build and 123 tests; the 7 edge worker tests; the 13
+  three-node cluster tests; the 50 invariants; **mainnet genesis determinism**
+  (the same genesis id twice); a **real mainnet node boot** asserting
+  `invariantOk: true`, the 21,000,000 cap and all 16 removed features still
+  absent; and a full `package-releases.sh` run whose archives are checksum
+  verified and uploaded.
+* **`scripts/verify-release.sh`** now finds `SHA256SUMS` beside the archive as
+  well as beside itself, and exits non-zero both when a digest mismatches and
+  when an archive is not listed at all — so it can gate a deployment script.
+  Both failure modes were tested by tampering with a copy of a real archive.
+
+**Verification observed:** mainnet genesis id
+`20a787220fa49a2d8a41276b370705a16add75ba`, hash
+`43d0b6d29a99a84955ebd1797231c4d0b887c684c342d7ce4360a5668ade0ebc`, identical
+across repeated runs; a mainnet node started from the packaged
+`obsidian-node-operator-1.1.0.tar.gz` reporting height 0, total supply
+`0.000000000000000000`, `invariantOk: true` and params hash
+`5ed3d6409bd4e723f83f00469e976062`; `node scripts/check-invariants.mjs` →
+*protocol 1.1.0: all 50 invariants hold*.
 
 ## 15. Final status — **what is verified, what is not**
 

@@ -2,8 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Verify a release archive before you run it.
 #
-#   ./verify-release.sh obsidian-core-1.0.0.tar.gz
-#   ./verify-release.sh obsidian-node-operator-1.0.0.zip --with-tests
+#   ./verify-release.sh obsidian-core-1.1.0.tar.gz
+#   ./verify-release.sh obsidian-node-operator-1.1.0.zip --with-tests
 #
 # Checks, in order:
 #   1. the archive is listed in SHA256SUMS and its digest matches;
@@ -28,17 +28,31 @@ fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BASE="$(basename "$ARCHIVE")"
+# SHA256SUMS normally sits beside the archive (that is how releases/ is laid
+# out), but this script is also shipped inside the node operator package where
+# it sits beside itself. Look in both places, archive first: the sums file that
+# accompanies the download is the one that describes it.
+ARCHIVE_DIR="$(cd "$(dirname "$ARCHIVE")" && pwd)"
+SUMS=""
+for candidate in "$ARCHIVE_DIR/SHA256SUMS" "$HERE/SHA256SUMS"; do
+  [ -f "$candidate" ] && { SUMS="$candidate"; break; }
+done
 
-if [ -f "$HERE/SHA256SUMS" ]; then
-  echo "→ checking $BASE against SHA256SUMS"
-  ( cd "$HERE" && grep " $BASE\$" SHA256SUMS > /tmp/obsidian-expected.sums )
-  if [ ! -s /tmp/obsidian-expected.sums ]; then
-    echo "  $BASE is not listed in SHA256SUMS — refusing" >&2
+if [ -n "$SUMS" ]; then
+  echo "→ checking $BASE against $SUMS"
+  SUMS_DIR="$(dirname "$SUMS")"
+  EXPECTED="$(mktemp)"
+  grep " $BASE\$" "$SUMS" > "$EXPECTED" || true
+  if [ ! -s "$EXPECTED" ]; then
+    echo "  $BASE is not listed in $SUMS — refusing" >&2
+    rm -f "$EXPECTED"
     exit 1
   fi
-  ( cd "$HERE" && sha256sum -c /tmp/obsidian-expected.sums )
+  ( cd "$SUMS_DIR" && sha256sum -c "$EXPECTED" )
+  rm -f "$EXPECTED"
 else
-  echo "→ no SHA256SUMS next to this script: computing the digest so you can compare it by hand"
+  echo "→ no SHA256SUMS found beside the archive or this script:"
+  echo "  computing the digest so you can compare it by hand"
   sha256sum "$ARCHIVE"
 fi
 

@@ -36,6 +36,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | [api.md](api.md) | Every RPC route, with the fields it returns |
 | [transaction-format.md](transaction-format.md) | Canonical encoding, signing, gas, and how to submit without the interface |
 | [release-verification.md](release-verification.md) | How to verify a release archive before running it |
+| [mainnet-launch.md](mainnet-launch.md) | The launch runbook: bootstrap set, genesis verification, the allocation event, monitoring, rollback, and the launch checklist |
 
 ## Reports
 

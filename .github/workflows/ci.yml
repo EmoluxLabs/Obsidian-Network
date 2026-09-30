@@ -1,0 +1,182 @@
+name: CI
+
+# Every claim this project makes about itself is checked here. A green run means
+# the core builds and its 233 tests pass, the interface builds and its 123 tests
+# pass, the edge worker and the three-node end-to-end cluster pass, the protocol
+# invariants that must never drift are still intact, and the release archives
+# can actually be produced from this commit.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  core:
+    name: obsidian-core (build, typecheck, 233 tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: obsidian-core/package-lock.json
+      - run: npm ci
+        working-directory: obsidian-core
+      - run: npm run typecheck
+        working-directory: obsidian-core
+      - run: npm run build
+        working-directory: obsidian-core
+      - run: npm test
+        working-directory: obsidian-core
+
+  interface:
+    name: obsidian-interface (build, 123 tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      # The interface build compiles the core first and syncs the browser-safe
+      # subset, so core dependencies have to be present.
+      - run: npm ci
+        working-directory: obsidian-core
+      - run: npm ci
+        working-directory: obsidian-interface
+      - run: npm run typecheck
+        working-directory: obsidian-interface
+      - run: npm run build
+        working-directory: obsidian-interface
+      - run: npm test
+        working-directory: obsidian-interface
+
+  edge:
+    name: cloudflare worker (7 tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: node --test cloudflare/test/worker.test.mjs
+
+  cluster:
+    name: three-node cluster end to end (13 tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: obsidian-core/package-lock.json
+      - run: npm ci
+        working-directory: obsidian-core
+      - run: npm run build
+        working-directory: obsidian-core
+      # This suite binds fixed ports 39630-39635; it must not run concurrently
+      # with another copy of itself on the same runner.
+      - run: node --test tests/e2e/cluster.test.mjs
+
+  invariants:
+    name: protocol invariants and genesis determinism
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: obsidian-core/package-lock.json
+      - run: npm ci
+        working-directory: obsidian-core
+      - run: npm run build
+        working-directory: obsidian-core
+
+      - name: Economic invariants must not drift
+        working-directory: obsidian-core
+        run: node ../scripts/check-invariants.mjs
+
+      - name: Mainnet genesis is deterministic
+        working-directory: obsidian-core
+        run: |
+          set -euo pipefail
+          a=$(node dist/index.js genesis init --network mainnet)
+          b=$(node dist/index.js genesis init --network mainnet)
+          [ "$a" = "$b" ] || { echo "mainnet genesis is not deterministic"; exit 1; }
+          echo "$a"
+
+      - name: A mainnet node starts, and reports an intact supply invariant
+        working-directory: obsidian-core
+        env:
+          OBSIDIAN_KEYSTORE_PASSPHRASE: ci-only-not-a-real-passphrase
+        run: |
+          set -euo pipefail
+          node dist/index.js start --network mainnet --data-dir "$RUNNER_TEMP/mainnet" \
+            --rpc-port 18630 --p2p-port 18631 --offline --no-mine &
+          pid=$!
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:18630/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:18630/supply | tee /dev/stderr | grep -q '"invariantOk":true'
+          curl -sf http://127.0.0.1:18630/supply | grep -q '"maxSupplyObs":"21000000.000000000000000000"'
+          # Nothing that was removed may come back.
+          curl -sf http://127.0.0.1:18630/audit/compliance > compliance.json
+          node -e '
+            const a = require("./compliance.json");
+            const forbidden = ["wac","legacyGenesisAllocation","signupAllocation","miningKyc",
+              "miningWithdrawalRequiresWac","nativeExchange","explorerExposesBalances",
+              "browserClockControlsMining","serverStoresPrivateKeys","adminMintPath",
+              "proofOfWorkConsensus","blockHeaderNonce","selfReportedNodeMetrics",
+              "adminRewardOverride","gasCountedAsPlatformRevenue","nodeIdentityIsIpAddress"];
+            const back = forbidden.filter((k) => a[k]?.present !== false);
+            if (back.length) { console.error("removed features reappeared:", back); process.exit(1); }
+            console.log("all", forbidden.length, "removed features confirmed absent");
+          '
+          kill $pid
+
+  releases:
+    name: release archives build from this commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+        working-directory: obsidian-core
+      - run: npm ci
+        working-directory: obsidian-interface
+      # --allow-dirty: the archives committed in the tree are rebuilt here, and
+      # rebuilt archives differ byte for byte (timestamps), which is expected.
+      # What is being proved is that packaging succeeds and the sums verify.
+      - run: ./scripts/package-releases.sh --allow-dirty
+      - run: cd releases && sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: obsidian-release-archives
+          path: |
+            releases/*.zip
+            releases/*.tar.gz
+            releases/SHA256SUMS
+            releases/MANIFEST.json
+          retention-days: 14
