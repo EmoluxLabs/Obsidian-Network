@@ -31,7 +31,7 @@ transaction executors.
   data directory written by another network is refused at startup.
 
 **Verification:** `cd obsidian-core && npm ci && npm run build && npm test` →
-**233 tests in 9 files, all passing** (consensus 42, applications 27, node
+**233 tests in 10 files, all passing** (consensus 42, applications 27, node
 runners 27, protocol security 19, RPC hardening 21, crypto/amounts 26, mining
 schedule 17, Proof of Time 23, node reward economics 24, peer retry and ban
 policy 7).
