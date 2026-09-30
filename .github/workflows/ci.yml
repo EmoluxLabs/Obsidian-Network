@@ -243,7 +243,13 @@ jobs:
       # --allow-dirty: the archives committed in the tree are rebuilt here, and
       # rebuilt archives differ byte for byte (timestamps), which is expected.
       # What is being proved is that packaging succeeds and the sums verify.
-      - run: ./scripts/package-releases.sh --allow-dirty
+      #
+      # --skip-e2e: the three-node cluster suite is already gated by its own
+      # job above. Running it a second time inside packaging doubles the
+      # runtime of this job for no additional coverage, and a timing-sensitive
+      # suite that starts six real nodes is the wrong thing to make the
+      # packaging step depend on.
+      - run: ./scripts/package-releases.sh --allow-dirty --skip-e2e
       - run: cd releases && sha256sum -c SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
