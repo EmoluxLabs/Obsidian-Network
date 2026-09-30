@@ -395,19 +395,151 @@ Empty output = identical.
 
 ### B6. Create the release tag
 
+A tag is just a permanent label on one commit. **Tagging does not change any
+files**, so the archives you build after tagging are byte-for-byte the archives
+you would have built before tagging. The point of tagging first is that the
+archives can then name an immutable commit instead of "whatever was checked out
+that afternoon".
+
+**Do this today, without merging to `main` first.** `main` is still at
+`459a6c1 Initial commit`; tagging it would label an empty repository. Tag the
+branch you actually work on.
+
 ```bash
-git checkout main
-git tag -a v1.1.0 -m "Obsidian Network 1.1.0 — protocol 1.1.0, PoT, node runner rewards"
+cd ~/Obsidian-Network
+git checkout arena/01a0e1df-obsidian-network
+git pull origin arena/01a0e1df-obsidian-network
+git status              # must print: nothing to commit, working tree clean
+```
+
+The clean tree matters: `scripts/package-releases.sh` **refuses to run on a
+dirty tree** (unless you pass `--allow-dirty`), precisely so an archive always
+corresponds to a real commit.
+
+Confirm the version the tag is claiming. The script reads it from
+`obsidian-core/package.json` and aborts if the interface disagrees:
+
+```bash
+node -p "require('./obsidian-core/package.json').version"     # -> 1.1.0
+```
+
+Create and push the tag:
+
+```bash
+git tag -a v1.1.0 -m "Obsidian Network 1.1.0 - protocol 1.1.0, PoT, node runner rewards"
 git push origin v1.1.0
 ```
 
-Then **rebuild the archives from the tag**, so the archives and the tag agree:
+`-a` makes an *annotated* tag, which records who made it and when. Verify it
+landed on the commit you meant:
 
 ```bash
-git checkout v1.1.0
-./scripts/package-releases.sh
-cd releases && sha256sum -c SHA256SUMS
+git show --stat v1.1.0 | head -5
+git rev-parse v1.1.0^{commit}
+git rev-parse arena/01a0e1df-obsidian-network
 ```
+
+The last two commands must print the **same** commit id.
+
+### B6b. Rebuild the archives from the tag
+
+Because the tag points at the commit you are already standing on, you do **not**
+need to check the tag out — and you should not, because `git checkout v1.1.0`
+puts you in "detached HEAD", a state that confuses beginners and makes any
+accidental commit hard to find. Just build where you are:
+
+```bash
+cd ~/Obsidian-Network
+./scripts/package-releases.sh
+```
+
+**What this does, in order** (it is a release gate, not just a zip command):
+
+1. Checks the core and interface versions match.
+2. Refuses to continue if the working tree is dirty.
+3. Records the commit id and a UTC build timestamp.
+4. Builds both packages.
+5. **Runs the test suites** - core, interface, edge worker, and the three-node
+   cluster end-to-end test - and counts them.
+6. Produces the archives with `git archive`, so what you download is exactly
+   what was committed.
+7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-1.1.0.md`.
+
+Expect it to take several minutes; the cluster test alone starts three real
+nodes. It is the slow step on purpose.
+
+**Useful flags:**
+
+| Flag | Effect | When |
+|---|---|---|
+| `--skip-build` | Reuse the existing `dist/` | You just built, nothing changed |
+| `--skip-e2e` | Skip the three-node cluster test | Never for a real release - the notes get stamped with a warning telling you to run it |
+| `--allow-dirty` | Package an uncommitted tree | Experiments only. The archives then match no commit |
+
+### B6c. Verify what you built
+
+```bash
+cd releases
+sha256sum -c SHA256SUMS
+```
+
+Expect **11 lines, all ending `OK`**.
+
+Confirm the manifest names the tagged commit:
+
+```bash
+grep -i commit MANIFEST.json
+```
+
+It must show the same id as `git rev-parse v1.1.0^{commit}`.
+
+Then verify an archive the way a stranger would, including running its tests:
+
+```bash
+../scripts/verify-release.sh obsidian-core-1.1.0.tar.gz --with-tests
+```
+
+This exits non-zero on a digest mismatch or an unlisted archive, so it is safe
+to use as a gate in a script.
+
+Finally, read the generated notes:
+
+```bash
+head -20 RELEASE-NOTES-1.1.0.md
+```
+
+The test counts in there are **counted live during packaging**, not typed by
+hand - so repackaging is also what corrects them if they ever drift.
+
+### B6d. Commit the rebuilt archives
+
+The archives changed, so the repository is now dirty again:
+
+```bash
+cd ~/Obsidian-Network
+git status
+git add releases
+git commit -m "Rebuild 1.1.0 release archives from tag v1.1.0"
+git push origin arena/01a0e1df-obsidian-network
+```
+
+> Note the ordering quirk: the tag labels the commit *before* the rebuilt
+> archives are committed. That is normal and harmless - the archives are built
+> from the tagged source tree, and `MANIFEST.json` records exactly which commit
+> that was. An archive cannot contain itself.
+
+### B6e. If you tagged the wrong commit
+
+Tags are meant to be permanent, but nothing is published yet, so:
+
+```bash
+git tag -d v1.1.0                  # delete locally
+git push origin :refs/tags/v1.1.0  # delete on GitHub
+```
+
+Then tag again. **Once other people have pulled a tag, never move it** - move a
+tag and two people will have different code under the same name, which is the
+exact failure the tag exists to prevent. Cut `v1.1.1` instead.
 
 ### B7. How to avoid deploying an old commit
 
