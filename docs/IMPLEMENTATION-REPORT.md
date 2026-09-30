@@ -279,17 +279,37 @@ interface is genuinely reading through the node (`/status`, `/pot`, `/supply`
 proxied), that **the chain height actually advances inside the container**, and
 that stopping the interface does not stop consensus.
 
-Reviewing those recipes to write that job found two defects that inspection had
-missed and that would have broken `docker compose up` for anyone who tried it:
-the interface service built from the wrong context (`../../../obsidian-interface`
-instead of the repository root, which its Dockerfile requires because it
-compiles the core first), and both compose files still tagged images `1.0.0`.
-Both are fixed. This is precisely the §119 point — a file named `Dockerfile` was
-not proof of anything, and the only thing that settled it was execution.
+Running that job found **five** defects that inspection had missed, every one of
+which would have broken a real deployment:
 
-**Status:** container recipes are verified by CI on every push. A green
-`docker` job on a commit is the evidence; if that job has never run on your
-fork, treat them as unverified there.
+1. **The interface service built from the wrong context** —
+   `../../../obsidian-interface` instead of the repository root, which its
+   Dockerfile requires because it compiles the core first.
+2. **Both compose files still tagged images `1.0.0`.**
+3. **The node container published the wrong port.** Each network has its own
+   default RPC port (devnet is 38630, mainnet 8630). `verify.sh` started a
+   devnet container but published 8630, so the node listened on 38630 and the
+   health endpoint could never answer. The ports are now pinned explicitly in
+   both the verify script and compose.
+4. **The interface image flattened all of its sites into one directory.**
+   `COPY dirA dirB dest/` copies the *contents* of each source directory into
+   the destination — it does not preserve directory names. `/app/sites` would
+   have been a pile of merged files with no `landing/`, `mine/` or `wallet/`
+   under it. Each site now has its own `COPY` line.
+5. **The interface image omitted the `/node/` site entirely** — the same
+   oversight already fixed once in the packaging script, in a third place.
+
+This is precisely the §119 point. A file named `Dockerfile` was proof of
+nothing: the recipes looked correct to careful reading and were broken in five
+ways. Only execution settled it.
+
+**Status: verified.** CI run 36757636372 on commit `188510c` is green across all
+seven jobs, the `docker` job among them — both images built, started, answered
+their own health endpoints, served all twelve sites, proxied `/status`, `/pot`
+and `/supply` from the node, advanced the chain height inside the container, and
+kept producing blocks after the interface was stopped. A green `docker` job is
+the evidence; if it has never run on your fork, treat the recipes as unverified
+there.
 
 ## 13. Documentation — **done**
 

@@ -79,9 +79,14 @@ under 1.0.0 rules and will not. Launch from 1.1.0.
   build instead of hardcoding a version string.
 * `scripts/verify-release.sh` now looks for `SHA256SUMS` beside the archive
   before beside itself, so verifying a downloaded release works the obvious way.
-* `docker compose` now builds the interface image from the repository root, as
-  its Dockerfile requires; the previous context (`../../../obsidian-interface`)
-  would have failed the build. Image tags corrected from `1.0.0` to `1.1.0`.
+* **Container recipes: five fixes, all found by executing them in CI.** The
+  interface image now builds from the repository root as its Dockerfile
+  requires (the previous context would have failed the build); image tags
+  corrected from `1.0.0` to `1.1.0`; the node container's RPC and p2p ports are
+  pinned so a non-mainnet network does not silently listen on a different port
+  than the one published; the interface image copies each site to its own
+  directory instead of flattening all twelve into one; and the `/node/` site is
+  no longer omitted from the image.
 * The source release archive no longer contains `releases/` (it was recursively
   embedding every other archive: 46 MB → 742 KB).
 
