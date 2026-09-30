@@ -94,7 +94,26 @@ export class BodyTooLargeError extends Error {
     this.name = 'BodyTooLargeError';
   }
 }
-const SITES = ['landing', 'mine', 'wallet', 'explorer', 'social', 'capsule', 'ons', 'circle', 'developer', 'app', 'audit'];
+/**
+ * Site directories this server will serve. It is an allowlist, not a directory
+ * listing: an unknown first path segment is a 404 rather than an attempt to
+ * read whatever happens to be on disk. Must stay in step with the `SITES` list
+ * in scripts/build-sites.mjs — `tests/server.test.ts` asserts that it does.
+ */
+const SITES = [
+  'landing',
+  'mine',
+  'wallet',
+  'explorer',
+  'social',
+  'capsule',
+  'ons',
+  'circle',
+  'node',
+  'developer',
+  'app',
+  'audit',
+];
 
 export class InterfaceServer {
   private server?: ReturnType<typeof createServer>;

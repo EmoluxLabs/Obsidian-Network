@@ -1,6 +1,6 @@
 # Obsidian Network — implementation report
 
-**Version 1.0.0 · protocol 1.0.0 · fourteen deliverables, fifteen answers.**
+**Version 1.1.0 · protocol 1.1.0 · fourteen deliverables, seventeen answers.**
 
 This report follows the fifteen required points in order. It states what exists,
 what was verified, and — where it applies — what is **not** production ready. No
@@ -23,18 +23,20 @@ transaction executors.
 * Blocks commit to a transactions root, an events root and a **state root** that
   every node recomputes. Two nodes that compute different state from the same
   block are detecting a bug or a lie, not disagreeing about policy.
-* Fork choice is most-accumulated-work → length → lowest header hash; reorgs
-  deeper than 256 blocks are refused rather than silently accepted.
+* Consensus is **Proof of Time**: fork choice is most-accumulated-**PoT Weight**
+  → most time (height) → lowest header hash, and reorgs deeper than 256 blocks
+  are refused rather than silently accepted. See point 16.
 * Four isolated networks (mainnet 7777, testnet 7778, staging 7779, devnet 7780)
   with distinct genesis documents, ids, hashes, ports and address prefixes; a
   data directory written by another network is refused at startup.
 
 **Verification:** `cd obsidian-core && npm ci && npm run build && npm test` →
-**156 tests in 7 files, all passing** (consensus 42, applications 27, protocol
-security 19, RPC hardening 18, crypto/amounts 26, mining schedule 17, peer retry
-and ban policy 7).
+**233 tests in 9 files, all passing** (consensus 42, applications 27, node
+runners 27, protocol security 19, RPC hardening 21, crypto/amounts 26, mining
+schedule 17, Proof of Time 23, node reward economics 24, peer retry and ban
+policy 7).
 
-On top of that, `node --test tests/e2e/cluster.test.mjs` (11 tests) starts three
+On top of that, `node --test tests/e2e/cluster.test.mjs` (13 tests) starts three
 real nodes chained by seed peers and drives them end to end — a mining claim, a
 payment with gas, a replay, an oracle submission, an ONS registration and an
 explorer read — asserting that all three nodes independently agree on height,
@@ -197,7 +199,7 @@ never return balances and never echo key material.
   validation of its own prerequisites, systemd unit, nginx config, Dockerfile and
   compose file, all under `obsidian-interface/deployment/`.
 
-**Verification:** `obsidian-interface/tests/` — **112 tests** in three layers.
+**Verification:** `obsidian-interface/tests/` — **122 tests** in three layers.
 
 1. **HTTP server (21 + 12 + 11 + 12 + 8 tests)**: invite-only registration,
    invite reuse, the five-invite cap, session lifecycle, origin policy, header
@@ -290,18 +292,109 @@ The same assets are served by the interface at `/assets/`. If a different offici
 logo exists elsewhere, replace `assets/logo.svg` and re-run
 `python3 assets/render-logo.py` — nothing else references the geometry.
 
+## 16. Proof of Time — **done, tested**
+
+The consensus identity is **Proof of Time (PoT)**, and the protocol says so in
+its own parameters (`/params` → `proofOfTime.consensus` = `PROOF_OF_TIME`) rather
+than only in prose.
+
+What changed, and what did not:
+
+* Block production was **already** time-gated before this work — scheduled
+  proposers, median time past, strict monotonicity, a future-drift bound and no
+  hash puzzle anywhere. What was wrong was the vocabulary and the published
+  metrics, which still described the chain as proof-of-work.
+* `cumulativeWork` → `cumulativePotWeight`, `blockWork()` → `potWeight()`, and
+  the fork-choice constant is now
+  `POT_WEIGHT_THEN_TIME_THEN_LOWEST_HEADER_HASH`. PoT Weight is `1 + txCount`:
+  it measures the verified state a block carries, and a faster machine cannot
+  increase it.
+* New `src/consensus/time.ts` holds median time past, the timestamp rules,
+  **PoT Difficulty** and **Time-Rate** in one place.
+* **PoT Difficulty is published as a measurement, not an extra gate** — `/pot`
+  returns `difficulty.role: MEASUREMENT` with a note saying what acceptance
+  actually depends on. The alternative (rejecting blocks that arrive faster than
+  the target) was implemented, measured against the suite, and **rejected**: it
+  broke legitimate faster-than-target chains without making an attack harder,
+  because an attacker's constraint is the validator schedule, not spacing.
+* **Time-Rate** replaces hash rate: verified blocks and transactions per minute
+  of protocol time, with the derivation returned in a `method` string. Two
+  chains with identical timing produce identical Time-Rate regardless of the
+  hardware behind them, which is asserted in the suite.
+* Nonce-like values were audited individually. Two exist — the account sequence
+  number and a capsule's content salt — and neither is searched or iterated.
+  Block headers contain **no nonce field**, because there is nothing to grind
+  for. The inventory is in `docs/proof-of-time.md` §8.
+* The device clock still decides nothing: a validating node's own clock can
+  only **reject** a future-dated block and can never **admit** a backdated one.
+  That asymmetry is tested directly (a node with a clock a decade fast and one a
+  decade slow both reject the same backdated block).
+
+**Verification:** `tests/unit/proof-of-time.test.ts` (20 tests: difficulty
+direction and bounds, median manipulation resistance, backdating, future-dating,
+non-advancing time, clock asymmetry, Time-Rate honesty) plus the cluster suite,
+where all three nodes must report `PROOF_OF_TIME`, publish difficulty inside its
+bounds labelled `MEASUREMENT`, never report a hashrate, and agree on accumulated
+PoT Weight at the same height. Full documentation: `docs/proof-of-time.md`.
+
+## 17. Node runner rewards — **done, tested**
+
+Qualifying platform revenue is split **40% to a Node Runner Reward Pool, 60% to
+the treasury wallet**, inside the state transition, by every node.
+
+* `splitPlatformRevenue()` is exact integer arithmetic: the node share is
+  floored, the treasury takes the remainder, and the two always sum back to the
+  amount. Tested from one seal to the whole 21,000,000 OBS supply.
+* Routed sources: ONS registration and renewal, business pages, protocol land
+  sales, explicit revenue payments. **Gas is not platform revenue** — it still
+  funds the Mining Pool — and user transfers, mining rewards, capsule
+  commitments, bonds, tips and marketplace sales are excluded with reasons the
+  node publishes at `/revenue`.
+* Revenue received before the genesis rule designates a treasury wallet is
+  **recorded as unclaimed and held by the pool**, then paid when the designation
+  exists. It is never silently absorbed.
+* New `NODE_REGISTRY` transaction type (11): register, change wallet,
+  deregister, heartbeat, attest, report fault. Node identity is a secp256k1 key
+  — never an IP address. Registration needs **two** signatures (the node key
+  consents, the reward wallet signs and pays), plus a 100 OBS bond returned in
+  full on exit. **No private key is ever requested, transmitted or stored.**
+* **Nothing is self-reported.** There is no uptime field, no efficiency field
+  and no hash-rate field. Uptime comes from heartbeats that *other* registered
+  nodes attested; a node that heartbeats perfectly with no corroboration scores
+  **zero** uptime. Participation comes from blocks the chain shows it produced.
+  A fault penalises only when independent reporters corroborate it. A one-node
+  network is capped honestly at the bootstrap allowance and says why.
+* Settlement is a **block routine**, not an endpoint: periods pay out with no
+  operator, service or cron online, cannot settle twice (`lastSettledPeriod` is
+  consensus state), cap any single node at 5% of a period, and carry remainders
+  forward rather than burning them.
+* The registry, the evidence and the pool are committed to the **state root**,
+  and every new parameter is in `PARAMS_HASH` — so a node built with a different
+  split is refused at the handshake instead of silently forking. Two nodes
+  replaying the same blocks reach the identical state root, which is what proves
+  the reward state is consensus rather than bookkeeping.
+* No administrator can override a payout: there is no route, no flag and no
+  parameter that accepts one.
+
+**Verification:** `tests/unit/node-rewards.test.ts` (24) and
+`tests/integration/node-runners.test.ts` (27 against a real chain: forged
+proofs, foreign wallets, duplicate wallets, missing bond, expired proofs,
+replayed heartbeats, self-attestation, unauthorised wallet changes, bond return,
+double settlement, state-root convergence), plus the cluster suite's split
+check. Operator UI at `/node/`; documentation in `docs/node-runner-rewards.md`.
+
 ## 15. Final status — **what is verified, what is not**
 
-**Verified by automated tests in this workspace (286 tests, all passing):**
+**Verified by automated tests in this workspace (375 tests, all passing):**
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `obsidian-core` unit | 50 | canonical encoding, hashing, addresses, amounts, mining schedule, peer retry policy |
-| `obsidian-core` integration | 69 | consensus, blocks, reorg rules, all nine transaction types, indexer |
-| `obsidian-core` security | 37 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route |
-| `obsidian-interface` | 112 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests |
+| `obsidian-core` unit | 97 | canonical encoding, hashing, addresses, amounts, mining schedule, peer retry policy, **Proof of Time (23)**, **node reward economics (24)** |
+| `obsidian-core` integration | 96 | consensus, blocks, reorg rules, all ten transaction types, indexer, **node runner registration, evidence and settlement (27)** |
+| `obsidian-core` security | 40 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route, **PoT/revenue/registry routes and the extended compliance audit (3)** |
+| `obsidian-interface` | 122 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, **node runner page and PoT surfacing (9)** |
 | `cloudflare` | 7 | cache/proxy semantics, honest failures, no CSP weakening |
-| `tests/e2e/cluster.test.mjs` | 11 | three real nodes: genesis claim, payment + gas, replay, oracle, ONS, supply invariant, explorer masking, protocol-time eligibility |
+| `tests/e2e/cluster.test.mjs` | 13 | three real nodes: genesis claim, payment + gas, replay, oracle, ONS, supply invariant, explorer masking, protocol-time eligibility, **PoT state agreement, 40/60 split** |
 
 **Verified by running the system:** the cluster suite above *is* that run — three
 Obsidian Core nodes started from the built output, chained by seed peers, and
@@ -367,10 +460,21 @@ and the live-node suite fails when the *data* drifts.
    division; searching by city, district, street, landmark or `lat,lon` is not
    implemented, and the search box says what it does match instead of pretending
    otherwise.
-6. **Economic parameters** — the mining schedule, gas rate, land GLV formula and
-   oracle bounds are implemented exactly as specified and tested for correctness;
-   whether they are the *right* numbers for production is a design decision
-   outside what tests can answer.
+6. **Economic parameters** — the mining schedule, gas rate, land GLV formula,
+   oracle bounds and the node-reward scoring weights are implemented exactly as
+   specified and tested for correctness; whether they are the *right* numbers
+   for production is a design decision outside what tests can answer.
+7. **Node rewards over real calendar time** — settlement is exercised at period
+   boundaries by invoking the same block routine `runBlockRoutines` calls, with
+   an apply context in the next period. It is **not** exercised by waiting 24
+   hours of wall-clock time, because a block cannot legitimately be dated into
+   the future and weakening that rule to speed up a test would have removed the
+   protection the test exists to prove. Multi-day behaviour of a live reward
+   period is therefore unobserved here.
+8. **A large, adversarial node population** — Sybil resistance is argued from
+   the bond, the one-wallet-one-node index, the per-node cap and the attestation
+   requirement, and each is tested individually. The emergent behaviour of, say,
+   a thousand nodes with a colluding minority has not been simulated.
 
 Everything else in this report is backed by a command whose output was observed,
 and every claim about absent mechanisms can be re-checked against a running node

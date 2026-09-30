@@ -103,7 +103,7 @@ export interface PotDifficultyState {
  * block (the validator schedule does) and it does not make anyone compute more:
  * it says how much time must pass between blocks.
  *
- *   observed  = (tip.timestamp - oldest.timestamp) / (blocks - 1)   seconds
+ *   observed  = MEDIAN of the per-block gaps in the window          seconds
  *   rawBps    = 10_000 * target / observed         (>10_000 when blocks are fast)
  *   clamped   = min(maxDifficultyBps, max(minDifficultyBps, rawBps))
  *   spacingMs = max(minBlockSpacingMs, floor(target * 1000 * clamped / 10_000))
@@ -113,6 +113,19 @@ export interface PotDifficultyState {
  * is running slower the requirement relaxes towards the floor so a recovering
  * network is never locked out by its own history. PoT Difficulty exists to stop
  * a validator from racing time, never to punish a slow network.
+ *
+ * Two corrections, both found by running a packaged release rather than by
+ * reading the code:
+ *
+ *   1. The gap between genesis and the first real block is EXCLUDED. The
+ *      genesis timestamp is a constant written into the genesis document, not
+ *      an observation of the network's rhythm; whatever time passed between
+ *      that instant and launch says nothing about block spacing. Including it
+ *      made a node producing a block every 5 seconds report 7,822,856,666 ms
+ *      of "observed spacing".
+ *   2. The MEDIAN of the remaining gaps is used, not the mean over the span,
+ *      so one stalled block after an outage cannot redefine the measurement
+ *      while a genuine change in rhythm still moves it immediately.
  *
  * `ancestors` is ordered nearest-parent-first, as chain storage returns it.
  */
@@ -132,12 +145,42 @@ export function potDifficulty(ancestors: TimestampedBlock[], atHeight = 0): PotD
       atTimestamp: ancestors[0]?.timestamp ?? 0,
     };
   }
-  const recent = ancestors.slice(0, window).map((block) => Math.trunc(block.timestamp));
+  const slice = ancestors.slice(0, window);
+  const recent = slice.map((block) => Math.trunc(block.timestamp));
+  const heights = slice.map((block) => block.height);
   const tip = recent[0];
-  const oldest = recent[recent.length - 1];
-  const spanSeconds = tip - oldest;
-  const gaps = recent.length - 1;
-  if (spanSeconds <= 0) {
+  // Per-block gaps, newest first; timestamps strictly increase by consensus.
+  // The gap whose OLDER end is the genesis block is skipped: the genesis
+  // timestamp is a constant in the genesis document, not an observation of the
+  // network's rhythm, and including it reports however long passed between the
+  // genesis instant and launch as the chain's block spacing.
+  const gapList: number[] = [];
+  for (let index = 0; index < recent.length - 1; index += 1) {
+    if (heights[index + 1] === 0) continue;
+    gapList.push(recent[index] - recent[index + 1]);
+  }
+  const sorted = [...gapList].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const medianGapSeconds =
+    sorted.length === 0
+      ? 0
+      : sorted.length % 2 === 1
+        ? sorted[middle]
+        : Math.floor((sorted[middle - 1] + sorted[middle]) / 2);
+  // Only the genesis gap existed: the chain has one real block, so there is
+  // nothing to measure. Say so rather than publishing the genesis gap.
+  if (gapList.length === 0) {
+    return {
+      requiredSpacingMs: pot.minBlockSpacingMs,
+      difficultyBps: 10_000,
+      windowBlocks: window,
+      observedSpacingMs: 0,
+      warmingUp: true,
+      atHeight,
+      atTimestamp: tip,
+    };
+  }
+  if (medianGapSeconds <= 0) {
     // Timestamps are non-decreasing by consensus; a flat window means the chain
     // is running at the floor, which is the correct answer, not a division by 0.
     return {
@@ -153,7 +196,7 @@ export function potDifficulty(ancestors: TimestampedBlock[], atHeight = 0): PotD
       atTimestamp: tip,
     };
   }
-  const observedSpacingMs = Math.floor((spanSeconds * 1000) / gaps);
+  const observedSpacingMs = medianGapSeconds * 1000;
   const rawBps = Math.floor((target * 10_000 * 1000) / Math.max(1, observedSpacingMs));
   const difficultyBps = Math.min(pot.maxDifficultyBps, Math.max(pot.minDifficultyBps, rawBps));
   const requiredSpacingMs = Math.max(

@@ -221,6 +221,7 @@ echo "→ manifest and checksums"
 node - "$VERSION" "$COMMIT" "$BUILT_AT" <<'NODE'
 import { readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PROTOCOL_VERSION } from './obsidian-core/dist/version.js';
 const [version, commit, builtAt] = process.argv.slice(2);
 const dir = 'releases';
 const files = readdirSync(dir).filter((name) => /\.(zip|tar\.gz)$/.test(name)).sort();
@@ -230,7 +231,9 @@ const manifest = {
   version,
   commit,
   builtAt,
-  protocolVersion: '1.0.0',
+  // Read from the build being packaged, never a literal: a manifest that
+  // disagrees with the binary it describes is worse than no manifest.
+  protocolVersion: PROTOCOL_VERSION,
   networks: {
     mainnet: { chainId: 7777, addressPrefix: 'obs', rpcPort: 8630, p2pPort: 8631 },
     testnet: { chainId: 7778, addressPrefix: 'tobs', rpcPort: 18630, p2pPort: 18631 },

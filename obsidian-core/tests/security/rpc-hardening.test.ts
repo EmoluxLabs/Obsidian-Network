@@ -385,9 +385,57 @@ describe('private material never crosses the wire', () => {
       'miningWithdrawalRequiresWac',
       'nativeExchange',
       'explorerExposesBalances',
+      // Proof of Time and node runner guarantees, asserted the same way: the
+      // running parameters must say these mechanisms are not there.
+      'proofOfWorkConsensus',
+      'blockHeaderNonce',
+      'selfReportedNodeMetrics',
+      'adminRewardOverride',
+      'gasCountedAsPlatformRevenue',
+      'nodeIdentityIsIpAddress',
     ]) {
       expect(response.body[key], `${key} must exist in the audit`).toBeDefined();
       expect(response.body[key].present, `${key} must be reported absent`).toBe(false);
     }
+
+    // And one positive claim: the split is enforced, with the numbers stated.
+    expect(response.body.revenueSplitEnforced.present).toBe(true);
+    expect(response.body.revenueSplitEnforced.evidence).toContain('40% node runners / 60% treasury');
+  });
+
+  it('publishes the Proof of Time state without a hash rate anywhere in it', async () => {
+    const response = await get('/pot');
+    expect(response.status).toBe(200);
+    expect(response.body.consensus).toBe('PROOF_OF_TIME');
+    expect(response.body.difficulty.role).toBe('MEASUREMENT');
+    expect(response.body.timeAuthority.authoritative).toBe('PROTOCOL_TIME_FROM_CHAIN');
+    expect(response.body.timeAuthority.neverAuthoritative).toContain('BROWSER_CLOCK');
+    expect(response.raw.toLowerCase()).not.toContain('hashrate');
+    expect(response.raw.toLowerCase()).not.toContain('hash rate');
+  });
+
+  it('publishes revenue accounting without exposing a single wallet balance', async () => {
+    const response = await get('/revenue');
+    expect(response.status).toBe(200);
+    expect(response.body.split.nodePoolBps).toBe(4_000);
+    expect(response.body.split.treasuryBps).toBe(6_000);
+    expect(response.body.split.sumsBack).toBe(true);
+    expect(response.body.gas.destination).toBe('MINING_POOL');
+    // The explorer privacy rule still holds on the new route.
+    for (const field of fieldNames(response.body)) {
+      expect(['balance', 'balanceObs', 'balanceSeals'], `/revenue exposes "${field}"`).not.toContain(field);
+    }
+  });
+
+  it('serves the node registry honestly on a chain with no registered nodes', async () => {
+    const response = await get('/nodes/registry');
+    expect(response.status).toBe(200);
+    expect(response.body.registeredNodes).toBe(0);
+    expect(response.body.nodes).toEqual([]);
+    expect(response.body.note).toContain('recomputed from chain state');
+
+    const unknown = await get('/nodes/status/' + 'ab'.repeat(20));
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.code).toBe('ERR_NODE_NOT_REGISTERED');
   });
 });

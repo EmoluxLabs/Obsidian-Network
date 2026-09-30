@@ -56,13 +56,13 @@ that point.
 ```bash
 tar -xzf obsidian-network-source-1.0.0.tar.gz
 cd obsidian-network-1.0.0/obsidian-core
-npm ci && npm run build && npm test        # 156 tests
+npm ci && npm run build && npm test        # 233 tests
 cd ../obsidian-interface
-npm ci && npm run build && npm test        # 112 tests
+npm ci && npm run build && npm test        # 122 tests
 cd ../cloudflare
 node --test test/worker.test.mjs           # 7 tests
 cd ..
-node --test tests/e2e/cluster.test.mjs     # 11 tests: three real nodes on one chain
+node --test tests/e2e/cluster.test.mjs     # 13 tests: three real nodes on one chain
 ```
 
 The last command is the one that answers "is it a blockchain": it starts three

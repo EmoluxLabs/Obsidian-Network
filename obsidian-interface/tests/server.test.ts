@@ -11,6 +11,7 @@
 import { createServer, type Server } from 'node:http';
 import { connect } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -466,3 +467,19 @@ describe('origin policy', () => {
 });
 
 void beforeAll;
+
+describe('site directories', () => {
+  it('serves exactly the sites the build generates — no more, no fewer', async () => {
+    // Three lists have to agree or a product silently 404s: the generator, the
+    // server's allowlist and the navigation. This test is what caught /node/
+    // returning 404 while its directory existed on disk.
+    const generator = await readFile(new URL('../scripts/build-sites.mjs', import.meta.url), 'utf8');
+    const generated = [...generator.matchAll(/^\s*id: '([a-z]+)',$/gm)].map((match) => match[1]);
+    const source = await readFile(new URL('../server/index.ts', import.meta.url), 'utf8');
+    const block = /const SITES = \[([\s\S]*?)\];/.exec(source)?.[1] ?? '';
+    const served = [...block.matchAll(/'([a-z]+)'/g)].map((match) => match[1]);
+
+    expect(generated.length).toBeGreaterThan(0);
+    expect([...served].sort()).toEqual([...generated].sort());
+  });
+});

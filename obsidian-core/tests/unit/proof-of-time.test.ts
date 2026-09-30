@@ -106,6 +106,36 @@ describe('PoT difficulty', () => {
     expect(potDifficulty([{ timestamp: 10 }]).observedSpacingMs).toBe(0);
   });
 
+  it('ignores the genesis gap instead of reporting it as the block spacing', () => {
+    // A packaged release reported 7,822,856,666 ms of "observed spacing" while
+    // producing a block every 5 seconds, because the window still contained the
+    // months-long gap between the genesis instant and launch. This is that case.
+    const launched = chainOf(20, 5, 1_000_000).map((block, index) => ({ ...block, height: 20 - index }));
+    const withGenesisGap = [...launched, { timestamp: 1_000_000 - 90 * 24 * 3600, height: 0, txCount: 0 }];
+    const state = potDifficulty(withGenesisGap);
+    expect(state.observedSpacingMs).toBe(5_000);
+    expect(state.difficultyBps).toBe(10_000);
+  });
+
+  it('reports nothing measurable when only the genesis gap exists', () => {
+    // Height 1: one real block, one gap, and that gap is the genesis gap. The
+    // honest answer is "warming up", not a spacing of three months.
+    const justLaunched = [
+      { timestamp: 1_000_000, height: 1, txCount: 0 },
+      { timestamp: 1_000_000 - 90 * 24 * 3600, height: 0, txCount: 0 },
+    ];
+    const state = potDifficulty(justLaunched);
+    expect(state.observedSpacingMs).toBe(0);
+    expect(state.warmingUp).toBe(true);
+    expect(state.difficultyBps).toBe(10_000);
+  });
+
+  it('ignores a single stalled block after an outage', () => {
+    const healthy = chainOf(30, 5, 1_000_000).map((block, index) => ({ ...block, height: 30 - index }));
+    const withStall = healthy.map((block, index) => (index >= 16 ? { ...block, timestamp: block.timestamp - 3_600 } : block));
+    expect(potDifficulty(withStall).observedSpacingMs).toBe(5_000);
+  });
+
   it('is deterministic: the same history always produces the same difficulty', () => {
     const history = chainOf(40, 3);
     expect(potDifficulty(history)).toEqual(potDifficulty([...history]));

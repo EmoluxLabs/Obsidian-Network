@@ -17,9 +17,32 @@ curl -s http://127.0.0.1:8630/audit/compliance | jq
   "miningKyc":                      { "present": false },
   "miningWithdrawalRequiresWac":    { "present": false },
   "nativeExchange":                 { "present": false },
-  "explorerExposesBalances":        { "present": false }
+  "explorerExposesBalances":        { "present": false },
+
+  "proofOfWorkConsensus":           { "present": false },
+  "blockHeaderNonce":               { "present": false },
+  "selfReportedNodeMetrics":        { "present": false },
+  "adminRewardOverride":            { "present": false },
+  "gasCountedAsPlatformRevenue":    { "present": false },
+  "nodeIdentityIsIpAddress":        { "present": false },
+  "revenueSplitEnforced":           { "present": true, "evidence": "40% node runners / 60% treasury, applied in the state transition" }
 }
 ```
+
+The second group answers the newer questions the same way, from the same
+parameters:
+
+| Key | What `present: false` proves |
+| --- | --- |
+| `proofOfWorkConsensus` | the running consensus identity is `PROOF_OF_TIME` and the fork-choice rule is `POT_WEIGHT_THEN_TIME_THEN_LOWEST_HEADER_HASH` |
+| `blockHeaderNonce` | there is no nonce in the block header, so there is nothing to grind |
+| `selfReportedNodeMetrics` | the node registry has no uptime, efficiency or hash-rate field; uptime needs signatures from *other* nodes |
+| `adminRewardOverride` | no route, flag or parameter accepts an operator-supplied payout — settlement is a block routine |
+| `gasCountedAsPlatformRevenue` | gas goes to the Mining Pool and is never routed through the 40/60 split |
+| `nodeIdentityIsIpAddress` | a node identity is a secp256k1 key hash; the endpoint is an unverified hint |
+
+`revenueSplitEnforced` is the one deliberately positive row: it reports that the
+split exists, with the numbers the running binary uses.
 
 `present: false` is computed from the protocol parameters the state machine reads
 (`legacyGenesisAllocationRemoved` is literally `0n`, `wacEnabled` is literally

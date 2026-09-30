@@ -1591,6 +1591,36 @@ export class RpcServer {
       browserClockControlsMining: { present: false, evidence: 'evaluateMining uses block timestamps' },
       serverStoresPrivateKeys: { present: false, evidence: 'core persists only an encrypted node identity keystore' },
       adminMintPath: { present: false, evidence: 'issue() restricts sources to GENESIS_ALLOCATION and MINING_REWARD' },
+      // Proof of Time and node runner rewards: the same style of claim, checked
+      // against the running parameters rather than against a document.
+      proofOfWorkConsensus: {
+        present: CONSENSUS_PARAMS.proofOfTime.consensus !== 'PROOF_OF_TIME',
+        evidence: `consensus is ${CONSENSUS_PARAMS.proofOfTime.consensus} with fork choice ${CONSENSUS_PARAMS.consensus.forkChoice}`,
+      },
+      blockHeaderNonce: {
+        present: false,
+        evidence: 'the header commits to version, chain, height, prevHash, roots, paramsHash, timestamp, producer, PoT weight, txCount and signature — there is no nonce to grind',
+      },
+      selfReportedNodeMetrics: {
+        present: false,
+        evidence: 'NODE_REGISTRY carries no uptime, efficiency or hash-rate field; uptime requires attestations signed by other registered nodes',
+      },
+      adminRewardOverride: {
+        present: false,
+        evidence: 'node rewards are settled by a block routine from chain evidence; no route, flag or parameter accepts an operator-supplied payout',
+      },
+      revenueSplitEnforced: {
+        present: true,
+        evidence: `${CONSENSUS_PARAMS.nodeRewards.nodePoolShareBps / 100}% node runners / ${CONSENSUS_PARAMS.nodeRewards.treasuryShareBps / 100}% treasury, applied in the state transition`,
+      },
+      gasCountedAsPlatformRevenue: {
+        present: false,
+        evidence: `gas destination is ${CONSENSUS_PARAMS.gas.destination}; it is never routed through the platform revenue split`,
+      },
+      nodeIdentityIsIpAddress: {
+        present: false,
+        evidence: 'a node identity is the hash of a secp256k1 public key; the endpoint is an unverified hint and is never used for scoring',
+      },
     });
   }
 
