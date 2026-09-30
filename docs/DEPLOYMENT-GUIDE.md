@@ -1457,8 +1457,10 @@ node dist/index.js wallet new     # CLI, offline
 
 or the Wallet frontend, which generates in the browser.
 
-You receive an **address** (safe to share), a **private key** (never share) and
-a **recovery phrase** (never share).
+You receive an **address** and **public key** (safe to share), a
+**derivation path**, and a **24-word recovery phrase** (never share). The CLI
+prints the phrase rather than a raw private key because the phrase is the
+master secret the signing key is derived from — see §G6 for the exact output.
 
 ### G3. What must never touch the server
 
@@ -1493,6 +1495,156 @@ the funds, and nothing in this system can undo that. `SECURITY.md` puts reports
 that reduce to "I gave away my key" out of scope for exactly this reason.
 
 ---
+
+### G6. Create a mainnet wallet on Termux, step by step
+
+You can do this **today**, with no nodes running anywhere. A wallet is a key
+pair, and generating a key pair is pure local mathematics — it does not touch
+the network, and the chain does not need to know your address exists. An
+address only becomes visible on-chain the first time it receives OBS.
+
+Type each block into Termux and press Enter.
+
+**1. Install the tools** (skip anything already installed):
+
+```bash
+pkg update && pkg upgrade -y
+pkg install -y nodejs git
+node --version        # must be v20.10.0 or higher
+```
+
+**2. Get the code:**
+
+```bash
+cd ~
+git clone https://github.com/EmoluxLabs/Obsidian-Network.git
+cd Obsidian-Network
+git checkout arena/01a0e1df-obsidian-network
+```
+
+**3. Build the core** (a few minutes on a phone):
+
+```bash
+termux-wake-lock
+npm --prefix obsidian-core ci
+npm --prefix obsidian-core run build
+```
+
+`termux-wake-lock` stops Android killing the build when the screen sleeps.
+
+**4. Go offline.** Optional, and the paranoid-but-correct choice. Turn on
+aeroplane mode. Key generation needs no network, so doing it offline removes
+any doubt.
+
+**5. Create the wallet:**
+
+```bash
+cd ~/Obsidian-Network/obsidian-core
+node dist/index.js wallet new --network mainnet
+```
+
+**What you get** (example — never use this one, it is published in this guide):
+
+```json
+{
+  "address": "obs1aywmjf2h7a83k2tzgxxjeca8az5uhkaac6nnhf",
+  "publicKey": "0360f245b442d571d1568a2ab1a8712f069db4e6afc5553ce4d2bc3a2c8a824a39",
+  "derivationPath": "m/44'/7777'/0'/0/0",
+  "recoveryPhrase": "cable burger draft tiny talk shop like select nasty spring ticket stadium debate library custom valid manage surround buffalo suffer verb region abstract gasp",
+  "warning": "This output is printed once and is NOT stored. ..."
+}
+```
+
+| Field | Meaning | Share it? |
+|---|---|---|
+| `address` | Your mainnet address. `obs1` = mainnet | **Yes**, freely |
+| `publicKey` | Derived from the key; proves signatures | Yes, harmless |
+| `derivationPath` | `7777` is the mainnet chain id | Yes |
+| `recoveryPhrase` | **24 words = the wallet itself** | **NEVER** |
+
+The command prints a recovery phrase rather than a raw private key because the
+phrase *is* the master secret — the signing key is derived from it along the
+derivation path. Anyone who reads those 24 words owns the wallet, permanently
+and irreversibly.
+
+**6. Write the 24 words on paper.** Now, before closing Termux.
+
+The output is printed **once** and stored nowhere. Close the terminal without
+copying it and the wallet is gone — there is no recovery, no support desk, and
+no administrator who can help. That is what "non-custodial" costs.
+
+Do **not**: screenshot it (screenshots sync to Google Photos), paste it into
+Notes/WhatsApp/email, save it in a file on the phone, or type it into any
+website. Do: write it on paper, twice, check the spelling word by word, and
+store the copies in two different physical places.
+
+**7. Verify you copied it correctly** by generating a second throwaway wallet
+and comparing the *format* — 24 lowercase words, spaces only. Then clear the
+scrollback so the phrase is not sitting in Termux's buffer:
+
+```bash
+clear && printf '\033[3J'
+```
+
+**8. Turn networking back on.** Done. The wallet exists, needs no node, and
+will be waiting whenever mainnet launches.
+
+### G7. See the wallet interface with no nodes running
+
+The wallet frontend also works offline, because signing is client-side. What
+fails is only *chain reads* — which is exactly the right behaviour, and worth
+seeing once.
+
+```bash
+cd ~/Obsidian-Network
+npm --prefix obsidian-interface ci
+npm --prefix obsidian-interface run build
+
+cd obsidian-interface
+OBSIDIAN_NODE_URLS=http://127.0.0.1:8630 \
+OBSIDIAN_INTERFACE_HOST=127.0.0.1 \
+OBSIDIAN_INTERFACE_PORT=8788 \
+OBSIDIAN_INTERFACE_DATA_DIR=$HOME/obs/iface \
+node dist/server/main.js
+```
+
+Open **`http://localhost:8788/wallet/`** in your phone's browser. Keep Termux
+running in the background; stop the server later with **Ctrl+C**.
+
+Expect the page to **load normally (HTTP 200)** while balance and history show
+an error. Check what the error actually is:
+
+```bash
+curl -s 'http://localhost:8788/api/rpc?path=/status'
+```
+
+```json
+{"error":"no healthy Obsidian node: http://127.0.0.1:8630: fetch failed",
+ "code":"ERR_NO_HEALTHY_NODE"}
+```
+
+**This is the correct result, not a bug.** It demonstrates the trust hierarchy
+in §J: the interface refuses to invent chain data when it cannot reach a node.
+It does not serve a cached balance, guess, or fall back to a database. No node,
+no answer.
+
+To see the wallet interface with live data, start a devnet node first (§C3),
+point `OBSIDIAN_NODE_URLS` at `http://127.0.0.1:38630`, and use a `dobs1`
+devnet address — a mainnet `obs1` address will not resolve on devnet, by
+design.
+
+### G8. Wallet safety rules
+
+- The address is public. The 24 words are the wallet. There is nothing in
+  between.
+- No one legitimate will ever ask for your recovery phrase — not this project,
+  not a node operator, not "support". Anyone who asks is stealing from you.
+- Never type the phrase into a website. The official wallet never asks you to.
+- Generate mainnet wallets offline where you can.
+- A wallet holding real value should not live on a phone you also use for
+  everything else.
+- **The example wallet printed above is compromised by publication.** It exists
+  to show the output shape. Never send anything to it.
 
 ## H. Mining registration
 
