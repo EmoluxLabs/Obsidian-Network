@@ -17,6 +17,7 @@ against this code. Where the repository does not support something, it says
 
 - [Words you need to know](#words-you-need-to-know)
 - [Git concepts: branch, tag, archive, deployment](#git-concepts)
+- [Branching model: why there is no `testnet` branch](#branching-model)
 - [A. How to prepare the repository](#a-how-to-prepare-the-repository)
 - [B. How to move the branch to main](#b-how-to-move-the-branch-to-main)
 - [C. Testnet from zero](#c-testnet-from-zero)
@@ -89,6 +90,117 @@ wrong one is how people ship old code.
 working copy. Launch from a signed release archive."
 
 ---
+
+<a name="branching-model"></a>
+
+## Branching model: why there is no `testnet` branch
+
+A reasonable-sounding idea is to create one branch per network — `devnet`,
+`testnet`, `staging`, `mainnet` — and deploy each branch to its matching
+network. **Do not do this.** It is the single most common way a small team ends
+up unable to answer "what code is actually running on mainnet?"
+
+### Networks are chosen at runtime, not by branch
+
+Every branch of this repository already contains **all four networks**:
+
+```
+obsidian-core/config/
+├── devnet.json
+├── testnet.json
+├── staging.json
+└── mainnet.json
+```
+
+You pick one when you start the node:
+
+```bash
+node dist/index.js start --network devnet
+node dist/index.js start --network testnet
+node dist/index.js start --network mainnet
+node dist/index.js start --config config/mainnet.json   # equivalent, explicit
+```
+
+Each network is fully isolated by its own chain id, genesis, ports and address
+prefix, so nodes on different networks physically cannot join each other:
+
+| Network | Chain id | RPC | P2P | Address prefix | Block time |
+|---|---|---|---|---|---|
+| mainnet | 7777 | 8630 | 8631 | `obs1` | production |
+| testnet | 7778 | 18630 | 18631 | `tobs1` | practice |
+| staging | 7779 | 28630 | 28631 | `sobs1` | pre-production |
+| devnet | 7780 | 38630 | 38631 | `dobs1` | 5 seconds |
+
+The separation is enforced by **consensus**, not by which files you checked
+out. A testnet node handed mainnet's genesis rejects it at the handshake.
+
+### Why per-network branches actively cause harm
+
+1. **They start identical and cannot stay identical.** Four copies of one tree
+   drift the moment you commit to one of them. Now "testnet" and "mainnet" mean
+   different code, and a fix applied to one silently misses the others.
+2. **They hide the real question.** The thing you need to know before any
+   deployment is *which commit is running*. A branch name cannot tell you that,
+   because branches move. A tag and a commit id can.
+3. **They invite merge accidents.** Merging `testnet` into `mainnet` to "promote
+   a release" drags along every experiment that landed on testnet meanwhile.
+4. **They contradict the launch rule.** `docs/mainnet-launch.md` §1.1: launch
+   from a verified release archive, never a working copy — so a `mainnet`
+   branch would not be what mainnet runs anyway.
+
+### What to use instead
+
+| You want | Use | Why |
+|---|---|---|
+| Run a different network | `--network <name>` | Already built in, isolated by consensus |
+| A frozen, named version | **A tag** (`v1.1.0`) | Immutable; cannot drift |
+| Something to deploy | **A release archive** from `releases/` | Checksummed, matches a commit |
+| Ongoing work | This work branch | One place where change happens |
+| A long-lived fix line | `release/1.1.x`, only if needed | Optional; see §B |
+
+The practical rule: **branches for work, tags for versions, flags for
+networks.** Promotion from testnet to mainnet is not a merge — it is running
+the same verified archive with a different `--network`.
+
+### Per-network settings that genuinely differ
+
+Things that vary per deployment belong in configuration and environment, not in
+Git history:
+
+- `obsidian-core/config/<network>.json` — `publicHost`, `seedNodes`,
+  `miningRewardAddress`, RPC binding
+- `.env` (gitignored) — `OBSIDIAN_NODE_URLS`, `OBSIDIAN_KEYSTORE_PASSPHRASE_FILE`,
+  `OBSIDIAN_GENESIS_INVITE_HASH`, `OBSIDIAN_GOOGLE_CLIENT_ID`
+
+Two nodes on different networks should differ **only** in those, never in code.
+
+### If you create the branches anyway
+
+They are harmless as long as you treat them as **snapshots, not deployment
+targets** — and they do fix one real problem, since `main` is still at
+`459a6c1 Initial commit`. Paste this into a terminal (Termux on Android, Git
+Bash on Windows — not PowerShell, the loop is Bash syntax):
+
+```bash
+cd ~/Obsidian-Network
+git checkout arena/01a0e1df-obsidian-network
+git pull origin arena/01a0e1df-obsidian-network
+
+for b in main develop staging testnet devnet release/1.1.0; do
+  git branch -f "$b" arena/01a0e1df-obsidian-network
+  git push -u origin "$b"
+done
+
+git checkout arena/01a0e1df-obsidian-network   # back to the work branch
+git branch -a
+```
+
+`git branch -f` moves the branch to your current commit, so re-running the loop
+re-syncs them all. If `main` is protected on GitHub, that one push needs
+`--force-with-lease` or a settings change.
+
+Even then: **deploy from tags and archives, and select the network with
+`--network`.**
 
 ## A. How to prepare the repository
 
