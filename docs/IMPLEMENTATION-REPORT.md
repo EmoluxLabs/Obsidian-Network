@@ -199,7 +199,7 @@ never return balances and never echo key material.
   validation of its own prerequisites, systemd unit, nginx config, Dockerfile and
   compose file, all under `obsidian-interface/deployment/`.
 
-**Verification:** `obsidian-interface/tests/` — **123 tests** in three layers.
+**Verification:** `obsidian-interface/tests/` — **151 tests** in three layers.
 
 1. **HTTP server (21 + 12 + 11 + 12 + 8 tests)**: invite-only registration,
    invite reuse, the five-invite cap, session lifecycle, origin policy, header
@@ -450,7 +450,7 @@ operational, and it is now closed.
   non-zero on drift; that was confirmed by mutating a parameter in the build and
   watching it fail, then restoring it.
 * **CI** (`.github/workflows/ci.yml`) runs on every push: core build, typecheck
-  and 233 tests; interface build and 123 tests; the 7 edge worker tests; the 13
+  and 233 tests; interface build and 151 tests; the 7 edge worker tests; the 13
   three-node cluster tests; the 50 invariants; **mainnet genesis determinism**
   (the same genesis id twice); a **real mainnet node boot** asserting
   `invariantOk: true`, the 21,000,000 cap and all 16 removed features still
@@ -472,14 +472,14 @@ across repeated runs; a mainnet node started from the packaged
 
 ## 15. Final status — **what is verified, what is not**
 
-**Verified by automated tests in this workspace (376 tests, all passing):**
+**Verified by automated tests in this workspace (404 tests, all passing):**
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
 | `obsidian-core` unit | 97 | canonical encoding, hashing, addresses, amounts, mining schedule, peer retry policy, **Proof of Time (23)**, **node reward economics (24)** |
 | `obsidian-core` integration | 96 | consensus, blocks, reorg rules, all ten transaction types, indexer, **node runner registration, evidence and settlement (27)** |
 | `obsidian-core` security | 40 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route, **PoT/revenue/registry routes and the extended compliance audit (3)** |
-| `obsidian-interface` | 123 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, **node runner page and PoT surfacing (9)** |
+| `obsidian-interface` | 151 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, **node runner page and PoT surfacing (9)** |
 | `cloudflare` | 7 | cache/proxy semantics, honest failures, no CSP weakening |
 | `tests/e2e/cluster.test.mjs` | 13 | three real nodes: genesis claim, payment + gas, replay, oracle, ONS, supply invariant, explorer masking, protocol-time eligibility, **PoT state agreement, 40/60 split** |
 

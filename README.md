@@ -29,7 +29,7 @@ decide a claim.
 
 ```
 obsidian-core/          the node: consensus, p2p, rpc, indexer, state machine, 233 tests
-obsidian-interface/     the reader: HTTP server, browser wallet, 12 sites, 123 tests
+obsidian-interface/     the reader: HTTP server, browser wallet, 12 sites, 151 tests
 cloudflare/             the edge: a worker that caches and proxies, 7 tests
 docs/                   protocol, mining, wallet, security model, operators, API, launch, report
 releases/               versioned archives, SHA256SUMS, MANIFEST.json
@@ -93,7 +93,7 @@ directory written by another network is refused rather than mixed.
 
 ```bash
 cd obsidian-core         && npm ci && npm run build && npm test  # 233 tests
-cd ../obsidian-interface && npm ci && npm run build && npm test  # 123 tests (includes a live-node UI suite)
+cd ../obsidian-interface && npm ci && npm run build && npm test  # 151 tests (includes a live-node UI suite)
 cd ..
 node --test cloudflare/test/worker.test.mjs                      # 7 tests
 node --test tests/e2e/cluster.test.mjs                           # 13 tests, three real nodes
@@ -103,7 +103,7 @@ cd releases && sha256sum -c SHA256SUMS
 ../scripts/verify-release.sh obsidian-core-1.1.0.tar.gz --with-tests
 ```
 
-376 tests, and the invariant check fails loudly if any economic constant has
+404 tests, and the invariant check fails loudly if any economic constant has
 drifted. All of it runs in CI on every push.
 
 Then verify the *chain* you are trusting, not just the code:

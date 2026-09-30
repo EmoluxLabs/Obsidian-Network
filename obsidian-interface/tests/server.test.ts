@@ -17,11 +17,14 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { InterfaceServer, type InterfaceConfig } from '../server/index.js';
 import { AccountStore } from '../server/store.js';
+import { newGenesisInvitation } from '../server/genesis-invite.js';
 import { type GoogleProfile, type TokenVerifier } from '../server/auth.js';
 
 interface Harness {
   origin: string;
   config: InterfaceConfig;
+  /** The plaintext Genesis Invitation this harness was configured with. */
+  genesisCode: string;
   fakeNode: Server;
   nodeUrl: string;
   signIn: (email: string, options?: { inviteCode?: string; token?: string }) => Promise<Response>;
@@ -54,6 +57,9 @@ function stubVerifier(): TokenVerifier {
 }
 
 async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[] } = {}): Promise<Harness> {
+  // Every harness gets its own Genesis Invitation: the first account on a
+  // deployment must present one, so the tests need the plaintext.
+  const genesis = newGenesisInvitation();
   const publicDir = join(scratch(), 'public');
   const coreDir = join(scratch(), 'core');
   const siteRoot = scratch();
@@ -133,6 +139,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
     googleClientId: 'test-client-id',
     allowedOrigins: [],
     maxInvitesPerAccount: 5,
+    genesisInviteHash: genesis.hash,
     trustProxy: false,
     logLevel: 'error',
   };
@@ -147,6 +154,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
     config,
     fakeNode,
     nodeUrl,
+    genesisCode: genesis.code,
     signIn: (email: string, signInOptions: { inviteCode?: string; token?: string } = {}) =>
       fetch(`${origin}/api/auth/google`, {
         method: 'POST',
@@ -245,13 +253,27 @@ describe('site serving', () => {
 });
 
 describe('registration is invite-only', () => {
-  it('lets the first account bootstrap and then requires an invite', async () => {
+  it('requires the Genesis Invitation for the first account, then member invites', async () => {
     const h = await harness();
 
     const config = await (await fetch(`${h.origin}/api/auth/config`)).json();
     expect(config).toMatchObject({ inviteOnly: true, accountsExist: false, maxInvitesPerAccount: 5 });
+    // The config route advertises that a genesis invitation exists and is
+    // unspent, but never any part of it.
+    expect(config.genesisInvite).toEqual({ configured: true, redeemed: false });
+    expect(JSON.stringify(config)).not.toContain(h.genesisCode);
 
-    const first = await h.signIn('founder');
+    // The very first account cannot simply walk in without the invitation.
+    const walkIn = await h.signIn('opportunist');
+    expect(walkIn.status).toBe(403);
+    expect(((await walkIn.json()) as { code: string }).code).toBe('ERR_GENESIS_INVITE_REQUIRED');
+
+    // Nor with a wrong one.
+    const wrong = await h.signIn('opportunist', { inviteCode: 'OBS-GENESIS-AAAA-AAAA-AAAA-AAAA' });
+    expect(wrong.status).toBe(403);
+    expect(((await wrong.json()) as { code: string }).code).toBe('ERR_GENESIS_INVITE_INVALID_OR_USED');
+
+    const first = await h.signIn('founder', { inviteCode: h.genesisCode });
     expect(first.status).toBe(200);
     const firstBody = (await first.json()) as { account: { accountId: string }; bootstrapped: boolean };
     expect(firstBody.bootstrapped).toBe(true);
@@ -271,9 +293,82 @@ describe('registration is invite-only', () => {
     void config;
   });
 
+  it('spends the Genesis Invitation exactly once, over real HTTP', async () => {
+    const h = await harness();
+
+    const first = await h.signIn('founder', { inviteCode: h.genesisCode });
+    expect(first.status).toBe(200);
+
+    // A second person with the same code, on a fresh account, is refused —
+    // and is told nothing that distinguishes "used" from "wrong".
+    const replay = await h.signIn('latecomer', { inviteCode: h.genesisCode });
+    expect(replay.status).toBe(403);
+    const body = (await replay.json()) as { code: string; error: string };
+    expect(body.code).toBe('ERR_GENESIS_INVITE_INVALID_OR_USED');
+    expect(body.error).toMatch(/invalid or has already been used/);
+
+    // The config route now reports it spent.
+    const config = await (await fetch(`${h.origin}/api/auth/config`)).json();
+    expect(config.genesisInvite).toEqual({ configured: true, redeemed: true });
+  });
+
+  it('cannot be redeemed twice by simultaneous requests', async () => {
+    const h = await harness();
+
+    // Eight registrations racing for one invitation, all in flight together.
+    const attempts = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => h.signIn(`racer-${i}`, { inviteCode: h.genesisCode })),
+    );
+    const accepted = attempts.filter((r) => r.status === 200);
+    expect(accepted).toHaveLength(1);
+    for (const rejected of attempts.filter((r) => r.status !== 200)) {
+      expect(rejected.status).toBe(403);
+    }
+  });
+
+  it('leaves no half-registered account behind when the invitation is wrong', async () => {
+    const h = await harness();
+    const failed = await h.signIn('ghost', { inviteCode: 'OBS-GENESIS-BBBB-BBBB-BBBB-BBBB' });
+    expect(failed.status).toBe(403);
+
+    // The rejected attempt must not have consumed the bootstrap slot: the real
+    // founder can still register with the real invitation.
+    const founder = await h.signIn('founder', { inviteCode: h.genesisCode });
+    expect(founder.status).toBe(200);
+    expect(((await founder.json()) as { bootstrapped: boolean }).bootstrapped).toBe(true);
+  });
+
+  it('does not accept the Genesis Invitation as a member invite later on', async () => {
+    const h = await harness();
+    await h.signIn('founder', { inviteCode: h.genesisCode });
+
+    // Once spent, offering it again is an ordinary invalid invite: it must not
+    // fall through into the member-invite path and admit anybody.
+    const later = await h.signIn('stranger', { inviteCode: h.genesisCode });
+    expect(later.status).toBe(403);
+    expect(((await later.json()) as { code: string }).code).toBe('ERR_GENESIS_INVITE_INVALID_OR_USED');
+  });
+
+  it('refuses the first registration when no Genesis Invitation is configured', async () => {
+    const h = await startHarness();
+    // Rebuild the server without a genesis hash: a deployment that never set
+    // one must be closed, not open.
+    await h.close();
+    const bare = await startHarness();
+    bare.config.genesisInviteHash = undefined;
+    await bare.close();
+
+    const store = new AccountStore({ dataDir: mkdtempSync(join(tmpdir(), 'obsidian-bare-')) });
+    expect(store.genesisInviteStatus().configured).toBe(false);
+    expect(store.redeemGenesisInvite('OBS-GENESIS-CCCC-CCCC-CCCC-CCCC', 'nobody')).toEqual({
+      ok: false,
+      reason: 'NOT_CONFIGURED',
+    });
+  });
+
   it('accepts an invite exactly once and counts it against the issuer', async () => {
     const h = await harness();
-    const first = await h.signIn('founder');
+    const first = await h.signIn('founder', { inviteCode: h.genesisCode });
     const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
 
     const created = await fetch(`${h.origin}/api/auth/invites`, { method: 'POST', headers: { cookie } });
@@ -294,7 +389,7 @@ describe('registration is invite-only', () => {
 
   it('enforces the five-invite cap on the server, not in the page', async () => {
     const h = await harness();
-    const first = await h.signIn('founder');
+    const first = await h.signIn('founder', { inviteCode: h.genesisCode });
     const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
 
     for (let i = 0; i < 5; i += 1) {
@@ -308,7 +403,7 @@ describe('registration is invite-only', () => {
 
   it('never trusts a client-supplied isGoogleUser flag', async () => {
     const h = await harness();
-    await h.signIn('founder');
+    await h.signIn('founder', { inviteCode: h.genesisCode });
     const response = await fetch(`${h.origin}/api/auth/google`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -325,7 +420,7 @@ describe('sessions', () => {
     const anonymous = await fetch(`${h.origin}/api/auth/me`);
     expect(anonymous.status).toBe(401);
 
-    const signedIn = await h.signIn('founder');
+    const signedIn = await h.signIn('founder', { inviteCode: h.genesisCode });
     const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0]!;
     const me = await fetch(`${h.origin}/api/auth/me`, { headers: { cookie } });
     expect(me.status).toBe(200);
@@ -339,7 +434,7 @@ describe('sessions', () => {
 
   it('links an advisory wallet address but never stores key material', async () => {
     const h = await harness();
-    const signedIn = await h.signIn('founder');
+    const signedIn = await h.signIn('founder', { inviteCode: h.genesisCode });
     const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0]!;
 
     const linked = await fetch(`${h.origin}/api/wallet/link`, {

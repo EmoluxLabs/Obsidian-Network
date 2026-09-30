@@ -29,6 +29,7 @@ const FLAGS_WITH_VALUES = new Set([
   '--google-client-id',
   '--allow-origin',
   '--max-invites',
+  '--genesis-invite-hash',
   '--log-level',
 ]);
 
@@ -82,6 +83,10 @@ Options:
   --google-client-id <id>     Google OAuth client id for sign-in
   --allow-origin <origin>     extra origin allowed to call the API (repeatable)
   --max-invites <n>           invites per account (protocol default 5)
+  --genesis-invite-hash <h>   scrypt hash of the single Genesis Invitation that
+                              bootstraps the first account. Never the plaintext
+                              code. Generate with:
+                                node scripts/new-genesis-invite.mjs
   --trust-proxy               honour X-Forwarded-For/X-Forwarded-Proto
   --log-level <level>         debug | info | warn | error
   -h, --help                  show this help
@@ -152,6 +157,8 @@ export function loadInterfaceConfig(argv: string[] = process.argv.slice(2), env 
     googleClientId: (flags.googleClientId ?? env.OBSIDIAN_GOOGLE_CLIENT_ID) as string | undefined,
     allowedOrigins,
     maxInvitesPerAccount: maxInvites,
+    // The HASH only. The plaintext Genesis Invitation never enters the process.
+    genesisInviteHash: (flags.genesisInviteHash ?? env.OBSIDIAN_GENESIS_INVITE_HASH) as string | undefined,
     trustProxy: flags.trustProxy === 'true' || env.OBSIDIAN_INTERFACE_TRUST_PROXY === 'true',
     logLevel: logLevel as InterfaceConfig['logLevel'],
   };
@@ -206,6 +213,8 @@ export function describeInterfaceConfig(loaded: LoadedInterfaceConfig): Record<s
     googleSignIn: Boolean(config.googleClientId),
     allowedOrigins: config.allowedOrigins,
     maxInvitesPerAccount: config.maxInvitesPerAccount,
+    // Presence only: never log the hash, and certainly never the code.
+    genesisInvite: config.genesisInviteHash ? 'configured' : 'not configured',
     trustProxy: config.trustProxy,
     logLevel: config.logLevel,
   };

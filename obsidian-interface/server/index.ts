@@ -22,6 +22,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { AccountStore } from './store.js';
 import { GoogleTokenVerifier, newInviteCode, newSecret, type TokenVerifier } from './auth.js';
 import { NodePool } from './nodes.js';
+import { looksLikeGenesisCode } from './genesis-invite.js';
 
 export interface InterfaceConfig {
   host: string;
@@ -39,6 +40,11 @@ export interface InterfaceConfig {
   allowedOrigins: string[];
   /** Max invites one account may issue (protocol default: 5). */
   maxInvitesPerAccount: number;
+  /**
+   * scrypt hash of the single Genesis Invitation that bootstraps the first
+   * account. The plaintext code is never stored, logged or served.
+   */
+  genesisInviteHash?: string;
   /** Set only when the operator terminates TLS elsewhere. */
   trustProxy: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
@@ -54,6 +60,7 @@ export const DEFAULT_INTERFACE_CONFIG: InterfaceConfig = {
   nodeUrls: ['http://127.0.0.1:8630'],
   allowedOrigins: [],
   maxInvitesPerAccount: 5,
+  genesisInviteHash: undefined,
   trustProxy: false,
   logLevel: 'info',
 };
@@ -142,6 +149,13 @@ export class InterfaceServer {
       config: this.config,
       log,
     };
+
+    // Install the Genesis Invitation hash, if the operator configured one.
+    // Only the hash ever reaches the store; a redeemed invitation is never
+    // replaced, so restarting with the same hash cannot revive a spent code.
+    if (this.config.genesisInviteHash) {
+      this.dependencies.store.configureGenesisInvite(this.config.genesisInviteHash);
+    }
   }
 
   get pool(): NodePool {
@@ -343,6 +357,13 @@ export class InterfaceServer {
         googleClientId: this.config.googleClientId ?? '',
         maxInvitesPerAccount: this.config.maxInvitesPerAccount,
         accountsExist: this.dependencies.store.accountCount > 0,
+        // Whether a Genesis Invitation is configured and whether it has been
+        // spent. Never the hash, and never any part of the code — a frontend
+        // only needs to know which field to show on the sign-in form.
+        genesisInvite: (() => {
+          const status = this.dependencies.store.genesisInviteStatus();
+          return { configured: status.configured, redeemed: status.redeemed };
+        })(),
       });
       return;
     }
@@ -446,9 +467,62 @@ export class InterfaceServer {
       const store = this.dependencies.store;
       const inviteCode = body.inviteCode?.trim();
       const isFirstAccount = store.accountCount === 0;
-      if (!isFirstAccount) {
+
+      if (isFirstAccount) {
+        // The first account on a deployment is bootstrapped by the Genesis
+        // Invitation — a single-use credential the operator holds offline.
+        // Previously this branch created an account with no credential at all,
+        // which meant whoever reached a fresh deployment first became its
+        // first member. That is now closed.
+        if (!inviteCode) {
+          this.json(response, 403, {
+            error: 'the first account on this deployment requires the Genesis Invitation',
+            code: 'ERR_GENESIS_INVITE_REQUIRED',
+          });
+          return;
+        }
+        if (!store.genesisInviteStatus().configured) {
+          this.json(response, 503, {
+            error: 'this deployment has no Genesis Invitation configured; registration is closed',
+            code: 'ERR_GENESIS_INVITE_NOT_CONFIGURED',
+          });
+          return;
+        }
+
+        // Create the account first so the redemption can record who spent it,
+        // then redeem. If redemption fails the account is removed again, so a
+        // failed attempt cannot leave a half-registered member behind.
+        const candidate = store.createAccount(profile);
+        const redemption = store.redeemGenesisInvite(inviteCode, candidate.accountId);
+        if (!redemption.ok) {
+          store.deleteAccount(candidate.accountId);
+          // One response for every failure mode. A caller must not be able to
+          // distinguish "wrong code" from "already used" and so learn whether
+          // they guessed correctly but arrived late.
+          this.json(response, 403, {
+            error: 'that Genesis Invitation is invalid or has already been used',
+            code: 'ERR_GENESIS_INVITE_INVALID_OR_USED',
+          });
+          return;
+        }
+        account = candidate;
+      } else {
         if (!inviteCode) {
           this.json(response, 403, { error: 'this deployment is invite-only', code: 'ERR_INVITE_REQUIRED' });
+          return;
+        }
+        // The Genesis Invitation bootstraps the first account only. Once the
+        // deployment has bootstrapped, presenting a genesis-shaped code is
+        // answered plainly — it is spent or it was never valid — rather than
+        // being reported as an unknown member invite, which would be
+        // confusing for the one operator who may legitimately still be
+        // holding it. The code's *shape* is public knowledge, so saying this
+        // leaks nothing.
+        if (looksLikeGenesisCode(inviteCode)) {
+          this.json(response, 403, {
+            error: 'that Genesis Invitation is invalid or has already been used',
+            code: 'ERR_GENESIS_INVITE_INVALID_OR_USED',
+          });
           return;
         }
         const invite = store.findByCode(inviteCode);
@@ -462,10 +536,6 @@ export class InterfaceServer {
         }
         account = store.createAccount(profile);
         store.markInviteAccepted(invite.code, account.accountId);
-      } else {
-        // The first account bootstraps the deployment. Every later account must
-        // present an invite issued by an existing member.
-        account = store.createAccount(profile);
       }
     }
 

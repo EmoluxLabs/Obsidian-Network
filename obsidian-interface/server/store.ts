@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
+import { verifyGenesisInvitation, type GenesisInviteRecord } from './genesis-invite.js';
 
 export interface Account {
   accountId: string;
@@ -44,7 +45,14 @@ interface StoreFile {
   accounts: Account[];
   invites: Invite[];
   sessions: Session[];
+  /** The single Genesis Invitation, stored as a hash. Never plaintext. */
+  genesisInvite?: GenesisInviteRecord | null;
 }
+
+/** Outcome of attempting to redeem the Genesis Invitation. */
+export type GenesisRedemption =
+  | { ok: true }
+  | { ok: false; reason: 'NOT_CONFIGURED' | 'ALREADY_USED' | 'INVALID' };
 
 export interface StoreOptions {
   dataDir: string;
@@ -57,6 +65,7 @@ export class AccountStore {
   private accounts = new Map<string, Account>();
   private invites = new Map<string, Invite>();
   private sessions = new Map<string, Session>();
+  private genesisInvite: GenesisInviteRecord | null = null;
   private readonly sessionTtl: number;
 
   constructor(private readonly options: StoreOptions) {
@@ -72,6 +81,7 @@ export class AccountStore {
       for (const account of parsed.accounts ?? []) this.accounts.set(account.accountId, account);
       for (const invite of parsed.invites ?? []) this.invites.set(normalise(invite.code), invite);
       for (const session of parsed.sessions ?? []) this.sessions.set(session.token, session);
+      this.genesisInvite = parsed.genesisInvite ?? null;
     } catch {
       // A corrupt access list must not brick the interface: start empty and
       // keep the damaged file for the operator to inspect.
@@ -86,6 +96,7 @@ export class AccountStore {
       accounts: [...this.accounts.values()],
       invites: [...this.invites.values()],
       sessions: [...this.sessions.values()].filter((session) => session.expiresAt > Date.now()),
+      genesisInvite: this.genesisInvite,
     };
     const temp = `${this.path}.tmp`;
     writeFileSync(temp, JSON.stringify(file, null, 2), { mode: 0o600 });
@@ -131,6 +142,19 @@ export class AccountStore {
     this.accounts.set(account.accountId, account);
     this.persist();
     return account;
+  }
+
+  /**
+   * Remove an account. Used to roll back a registration whose credential check
+   * failed after the account row was created; there is no user-facing route to
+   * this, and it deliberately takes no invite or session with it.
+   */
+  deleteAccount(accountId: string): void {
+    if (!this.accounts.delete(accountId)) return;
+    for (const [token, session] of this.sessions) {
+      if (session.accountId === accountId) this.sessions.delete(token);
+    }
+    this.persist();
   }
 
   touch(accountId: string): void {
@@ -192,6 +216,68 @@ export class AccountStore {
     if (!account) return;
     account.invitesIssued += 1;
     this.persist();
+  }
+
+  // ── The Genesis Invitation ────────────────────────────────────────────────
+  //
+  // Separate from the ordinary invite system above in every respect: a
+  // different store field, a different code format, a different verification
+  // path, and a hash instead of a plaintext code. Redeeming one has no effect
+  // on the other.
+
+  /**
+   * Install the Genesis Invitation hash. Called once at startup from the
+   * configured hash. If an invitation is already recorded, this is a no-op
+   * unless the hash actually differs — and a *redeemed* invitation is never
+   * replaced, because that would resurrect a spent single-use credential.
+   */
+  configureGenesisInvite(hash: string): void {
+    if (!hash) return;
+    if (this.genesisInvite?.redeemedBy) return;
+    if (this.genesisInvite?.hash === hash) return;
+    this.genesisInvite = { hash, createdAt: Date.now() };
+    this.persist();
+  }
+
+  /** Status for operators. Deliberately exposes no part of the secret. */
+  genesisInviteStatus(): { configured: boolean; redeemed: boolean; redeemedAt?: number; failedAttempts: number } {
+    return {
+      configured: this.genesisInvite !== null,
+      redeemed: Boolean(this.genesisInvite?.redeemedBy),
+      redeemedAt: this.genesisInvite?.redeemedAt,
+      failedAttempts: this.genesisInvite?.failedAttempts ?? 0,
+    };
+  }
+
+  /**
+   * Redeem the Genesis Invitation, atomically.
+   *
+   * ATOMICITY: everything between reading `redeemedBy` and writing it happens
+   * in this one synchronous function. There is no `await` inside it, so the
+   * Node event loop cannot interleave a second request between the check and
+   * the write. Two simultaneous registrations therefore serialise, and the
+   * second one observes `redeemedBy` already set and is rejected. The scrypt
+   * verification is deliberately the *synchronous* variant for this reason —
+   * an async hash would open exactly the race this must not have.
+   */
+  redeemGenesisInvite(candidate: string, accountId: string): GenesisRedemption {
+    const record = this.genesisInvite;
+    if (!record) return { ok: false, reason: 'NOT_CONFIGURED' };
+    // Check the spent flag BEFORE doing any work, so a replay of a valid code
+    // is refused on the same path as a wrong code.
+    if (record.redeemedBy) return { ok: false, reason: 'ALREADY_USED' };
+
+    if (!verifyGenesisInvitation(candidate, record.hash)) {
+      record.failedAttempts = (record.failedAttempts ?? 0) + 1;
+      this.persist();
+      return { ok: false, reason: 'INVALID' };
+    }
+
+    // One-way transition. Written to disk before the caller can act on it.
+    record.redeemedBy = accountId;
+    record.redeemedAt = Date.now();
+    this.persist();
+    return { ok: true };
   }
 
   // ── Sessions ──────────────────────────────────────────────────────────────
