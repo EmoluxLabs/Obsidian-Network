@@ -54,8 +54,23 @@ COPY --from=builder --chown=root:root /build/obsidian-interface/dist ./dist
 COPY --from=builder --chown=root:root /build/obsidian-interface/public ./public
 COPY --from=builder --chown=root:root /build/obsidian-interface/web/core ./web/core
 COPY --chown=root:root obsidian-interface/package.json ./package.json
-COPY --from=builder --chown=root:root /build/landing /build/mine /build/wallet /build/explorer /build/social \
-     /build/capsule /build/ons /build/circle /build/developer /build/app /build/audit /app/sites/
+# One COPY per site, deliberately. `COPY dirA dirB dest/` copies the *contents*
+# of each source directory into dest, flattening them together — it does not
+# preserve the directory names, so /app/sites would end up a pile of merged
+# files with no landing/, mine/ or wallet/ under it. Each site also needs its
+# own line so that adding a product here cannot be silently forgotten.
+COPY --from=builder --chown=root:root /build/landing   /app/sites/landing
+COPY --from=builder --chown=root:root /build/mine      /app/sites/mine
+COPY --from=builder --chown=root:root /build/wallet    /app/sites/wallet
+COPY --from=builder --chown=root:root /build/explorer  /app/sites/explorer
+COPY --from=builder --chown=root:root /build/social    /app/sites/social
+COPY --from=builder --chown=root:root /build/capsule   /app/sites/capsule
+COPY --from=builder --chown=root:root /build/ons       /app/sites/ons
+COPY --from=builder --chown=root:root /build/circle    /app/sites/circle
+COPY --from=builder --chown=root:root /build/developer /app/sites/developer
+COPY --from=builder --chown=root:root /build/node      /app/sites/node
+COPY --from=builder --chown=root:root /build/app       /app/sites/app
+COPY --from=builder --chown=root:root /build/audit     /app/sites/audit
 
 USER obsidian
 VOLUME ["/data"]
