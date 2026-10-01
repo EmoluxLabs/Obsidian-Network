@@ -220,10 +220,10 @@ this is.
 
 ```bash
 cd ~/obsidian/src
-npm --prefix obsidian-core ci && npm --prefix obsidian-core test        # 233
+npm --prefix obsidian-core ci && npm --prefix obsidian-core test        # 240
 npm --prefix obsidian-interface ci
 npm --prefix obsidian-interface run build
-npm --prefix obsidian-interface test                                    # 160
+npm --prefix obsidian-interface test                                    # 168
 node scripts/check-invariants.mjs                                       # 55
 node --test cloudflare/test/worker.test.mjs                             # 7
 node --test tests/e2e/cluster.test.mjs    # 13 — starts 3 real nodes, ~1 minute
@@ -231,6 +231,61 @@ node --test tests/e2e/cluster.test.mjs    # 13 — starts 3 real nodes, ~1 minut
 
 Build the interface **before** testing it, or you will get spurious
 `../../core/*.js` failures.
+
+## 10b. Prove the 1.2.2 wallet fix (the `obs1`-on-devnet bug)
+
+Before 1.2.2 the browser wallet derived a **mainnet** `obs1…` address no matter
+which network the interface was on, and the node then refused everything it
+signed with `not a valid address for this network`. Four checks, with the node
+and the interface both running:
+
+**1 — the node tells the interface which network it is.**
+
+```bash
+curl -s "localhost:8788/api/rpc?path=/network" | head -c 200; echo
+```
+
+Must contain `"addressHrp":"dobs"` and `"chainId":7780`. The wallet page reads
+exactly this before it derives anything.
+
+**2 — a mainnet address is still rejected by the node (it always was).**
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:38630/wallet/balance \
+  -H 'content-type: application/json' \
+  -d '{"address":"obs16ahf37l5ums7ln2q9kv5rc7rrufswn5d755ete"}'
+```
+
+`400`. That is correct and is not the bug — the bug was the interface handing
+you that address in the first place.
+
+**3 — a devnet address is accepted.** Make one offline, then ask for its
+balance:
+
+```bash
+cd ~/obsidian/run/node/obsidian-core
+ADDR=$(node dist/index.js wallet new --network devnet | grep -o 'dobs1[0-9a-z]*' | head -1)
+echo "$ADDR"
+curl -s -X POST localhost:38630/wallet/balance -H 'content-type: application/json' \
+  -d "{\"address\":\"$ADDR\"}"; echo
+```
+
+The address must start `dobs1` and the balance call must answer `200` with
+`"balanceObs":"0"`.
+
+**4 — the browser wallet, which is where the bug lived.** Open
+`http://127.0.0.1:8788/wallet/`:
+
+* With no vault, create one. The address shown must start **`dobs1`**, and the
+  page must name the network as `devnet`.
+* Stop the node (Ctrl-C), reload the page: it must **refuse to offer wallet
+  creation at all** and say it cannot tell which network you are on. Deriving
+  blind is what caused the bug.
+* If you already hold an old `obs1…` vault from 1.2.1, unlock it: the page now
+  says *"This wallet is a mainnet wallet, but this interface is on devnet"* and
+  offers to re-derive. Accept it — the 24 words and the private key do not
+  change, only the address does. Then `/mine/` will let you claim; before
+  1.2.2 it let you sign a claim the node could only throw away.
 
 ## 11. Stop and reset
 
