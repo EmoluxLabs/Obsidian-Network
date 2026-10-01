@@ -303,6 +303,27 @@ Invitation: redemption is recorded per deployment, in that folder.
 
 ---
 
+### Upgrading an interface you have already opened in a browser
+
+From 1.2.4 the markup points at content-hashed bundles
+(`/js/wallet.js?v=<hash>`), so a new build gets a new URL and your browser
+cannot serve you the old one. Check it after any upgrade:
+
+```bash
+curl -s localhost:8788/wallet/ | grep -o 'src="[^"]*"'
+```
+
+That must print `src="/js/wallet.js?v=…"` with a 16-character hash, and the
+hash must change whenever the bundle does.
+
+If you first opened the interface on **1.2.3 or earlier**, that browser is
+still holding an un-hashed, cacheable copy of the old bundle and will keep
+running it. Clear it once: in Chrome on Android, ⋮ → History → Clear browsing
+data → *Cached images and files*; or just open the page in a new Incognito
+tab. A fixed page that a cache keeps you from loading looks exactly like a page
+that was never fixed — this is what made the wallet appear to still produce
+`obs1…` addresses after the fix had been installed.
+
 ### Known footguns
 
 * **Do not use your mainnet Genesis Invitation here.** Redemption is permanent
