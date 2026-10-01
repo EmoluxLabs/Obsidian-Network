@@ -2591,6 +2591,7 @@ explicit: launch from a verified release archive.
 | Document | What it covers |
 |---|---|
 | `docs/mainnet-launch.md` | The authoritative mainnet runbook |
+| `docs/ORACLE-VPS-DEPLOYMENT.md` | Free Oracle Cloud server, domain and HTTPS, step by step |
 | `docs/node-operator.md` | Running a node day to day |
 | `docs/node-runner-rewards.md` | The 40/60 split and registration |
 | `docs/proof-of-time.md` | The consensus rules |
