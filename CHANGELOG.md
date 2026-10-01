@@ -11,6 +11,50 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.2] — 2026-10-01
+
+Interface only. No consensus change: the params hash, the genesis hash and
+`PROTOCOL_VERSION` (1.2.0) are unchanged, and a 1.2.0 node peers with a 1.2.2
+node. Node operators do not have to upgrade; anyone running the web interface
+should.
+
+### Fixed
+
+* **The browser wallet derived mainnet addresses on every network.** The wallet
+  library defaulted its address prefix to `obs`, so a wallet created while the
+  interface was pointed at devnet was handed an `obs1…` address. The node then
+  correctly refused every claim and payment signed by it with
+  `not a valid address for this network`, which read as a broken wallet. The
+  prefix is now a required argument: `Wallet.create` and `Wallet.fromPhrase`
+  take the connected network's `addressHrp`, the vault records it, and legacy
+  vaults are back-filled from the address they already hold.
+* **The wallet and mining pages now refuse to guess.** Both resolve the network
+  from `GET /network` during boot. If no network can be learnt, the wallet page
+  does not offer to create a wallet at all rather than deriving blind. If a
+  stored vault belongs to another network, both pages show which network the
+  wallet is for and which one the interface is on, and offer to re-derive the
+  same keys under the right prefix (`switchNetwork()`); the mining page blocks
+  claiming with that explanation instead of letting the node reject a signed
+  claim.
+
+### Security
+
+Not exploitable, and now proven by test rather than by inspection.
+`verifyTxSignature` binds `ctx.addressHrp` into the signed message, so a
+foreign-prefix sender fails `ERR_BAD_SIGNATURE` before any balance is touched.
+Seven new tests assert it directly: one key pair yields four distinct
+addresses across `obs`/`tobs`/`sobs`/`dobs`, `isValidAddress` rejects every
+foreign prefix, a real signature valid under `obs` is invalid under `dobs`, and
+on a live devnet harness a mainnet-addressed mining claim, a `tobs1` sender and
+a mainnet recipient are each rejected. No supply path was ever affected.
+
+### Tests
+
+Core 240 (was 233); interface 168 (was 164), including two cases in
+`live-ui.test.ts`, the only suite that runs against a non-mainnet node.
+
+---
+
 ## [1.2.1] — 2026-10-01
 
 Interface only. No consensus change: the params hash and the genesis hash are

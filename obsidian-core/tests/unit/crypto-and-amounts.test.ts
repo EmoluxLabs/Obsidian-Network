@@ -100,6 +100,61 @@ describe('keys and addresses', () => {
   });
 });
 
+describe('addresses are bound to one network', () => {
+  /**
+   * The same key pair produces a different address string per network, and a
+   * node must refuse an address that is not its own. This is what stops a
+   * wallet made on one network from being used — or mined into — on another.
+   */
+  const NETWORK_HRPS = [
+    ['mainnet', 'obs'],
+    ['testnet', 'tobs'],
+    ['staging', 'sobs'],
+    ['devnet', 'dobs'],
+  ] as const;
+
+  it('gives one key pair a different address on every network', () => {
+    const pair = generateKeyPair();
+    const addresses = NETWORK_HRPS.map(([, hrp]) => addressFromPublicKey(pair.publicKey, hrp));
+    expect(new Set(addresses).size).toBe(NETWORK_HRPS.length);
+    for (const [index, [name, hrp]] of NETWORK_HRPS.entries()) {
+      expect(addresses[index]!.startsWith(`${hrp}1`), `${name} address`).toBe(true);
+    }
+  });
+
+  it('refuses an address belonging to another network', () => {
+    const pair = generateKeyPair();
+    for (const [, hrp] of NETWORK_HRPS) {
+      const address = addressFromPublicKey(pair.publicKey, hrp);
+      expect(isValidAddress(address, hrp)).toBe(true);
+      for (const [, other] of NETWORK_HRPS) {
+        if (other === hrp) continue;
+        expect(isValidAddress(address, other), `${address} must not be valid under ${other}`).toBe(false);
+      }
+    }
+  });
+
+  it('will not accept a signature from the same key under a foreign address', () => {
+    // The exploit worth ruling out: take a mainnet-looking address, sign with
+    // the key that genuinely controls it, and submit it to devnet. The
+    // signature is real; the address is not this network's, so it is refused.
+    const pair = generateKeyPair();
+    const mainnet = addressFromPublicKey(pair.publicKey, 'obs');
+    const digest = sha256(utf8('claim'));
+    const signature = toHex(signDigest(digest, pair.privateKey));
+    expect(verifyAddressSignature(mainnet, digest, signature, pair.publicKey, 'obs')).toBe(true);
+    expect(verifyAddressSignature(mainnet, digest, signature, pair.publicKey, 'dobs')).toBe(false);
+  });
+
+  it('re-derives back to the original address, so switching network loses nothing', () => {
+    const pair = generateKeyPair();
+    const devnet = addressFromPublicKey(pair.publicKey, 'dobs');
+    const backToMainnet = addressFromPublicKey(pair.publicKey, 'obs');
+    expect(devnet).not.toBe(backToMainnet);
+    expect(backToMainnet).toBe(pair.address);
+  });
+});
+
 describe('recovery phrases', () => {
   it('generates 24-word BIP-39 phrases that validate', () => {
     const phrase = generateRecoveryPhrase();

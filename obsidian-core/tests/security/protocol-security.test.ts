@@ -226,6 +226,58 @@ describe('transaction forgery and replay', () => {
   });
 });
 
+describe('cross-network addresses (spec §11)', () => {
+  /**
+   * A wallet built for one network must be useless on another, even though the
+   * key pair behind it is perfectly valid. If this did not hold, a wallet
+   * generated against mainnet rules could be mined into on devnet or testnet
+   * and the two ledgers would share an identity.
+   */
+  it('refuses a mining claim signed under a foreign-network address', async () => {
+    const { h } = await fundedHarness();
+    const phrase = generateRecoveryPhrase();
+    const derived = deriveWallet(phrase, 0, 0);
+    // The same keys, wearing a mainnet address, on a devnet harness.
+    const foreign = {
+      phrase,
+      privateKey: derived.privateKey,
+      publicKey: derived.publicKey,
+      address: addressFromPublicKey(derived.publicKey, 'obs'),
+    };
+    expect(foreign.address.startsWith('obs1')).toBe(true);
+
+    const claim = h.sign(foreign, TxType.MINING_CLAIM, miningBody(h, foreign), { gas: 0n });
+    const outcome = h.tryBlock([claim]);
+    expect(outcome.accepted).toBe(false);
+    expect(outcome.code).toBe(ErrCode.BAD_SIGNATURE);
+  });
+
+  it('refuses a payment sent from a foreign-network address', async () => {
+    const { h } = await fundedHarness();
+    const phrase = generateRecoveryPhrase();
+    const derived = deriveWallet(phrase, 0, 0);
+    const foreign = {
+      phrase,
+      privateKey: derived.privateKey,
+      publicKey: derived.publicKey,
+      address: addressFromPublicKey(derived.publicKey, 'tobs'),
+    };
+    const recipient = makeWallet();
+    const payment = signedPayment(h, foreign, recipient.address, parseObs('1'));
+    const outcome = h.tryBlock([payment]);
+    expect(outcome.accepted).toBe(false);
+    expect(outcome.code).toBe(ErrCode.BAD_SIGNATURE);
+  });
+
+  it('refuses a payment addressed TO another network, so nothing is sent into a void', async () => {
+    const { h, wallet } = await fundedHarness();
+    const elsewhere = addressFromPublicKey(generateKeyPair().publicKey, 'obs');
+    const payment = signedPayment(h, wallet, elsewhere, parseObs('1'));
+    const outcome = h.tryBlock([payment]);
+    expect(outcome.accepted).toBe(false);
+  });
+});
+
 describe('mining race and replay protection (spec §21, §23)', () => {
   it('rejects a replayed claim id', async () => {
     const { h, wallet } = await fundedHarness();

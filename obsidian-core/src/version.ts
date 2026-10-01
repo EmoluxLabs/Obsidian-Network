@@ -9,7 +9,7 @@
 import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
-export const CORE_VERSION = '1.2.1';
+export const CORE_VERSION = '1.2.2';
 
 /** Consensus protocol version implemented by this build. */
 export const PROTOCOL_VERSION = '1.2.0';

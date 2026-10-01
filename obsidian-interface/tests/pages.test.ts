@@ -403,7 +403,14 @@ describe('every page renders', () => {
 
 describe('wallet page — keys stay in the browser', () => {
   it('generates a wallet locally and never transmits key material', async () => {
-    respond = (url) => (url.includes('/api/rpc') ? { status: 200, body: { balanceSeals: '0', balanceObs: '0', nonce: 0, names: [] } } : { status: 404, body: {} });
+    // The page asks which network it is on before deriving anything, so the
+    // fixture has to answer /network as a real node would.
+    respond = (url) =>
+      decodeURIComponent(url).includes('/network')
+        ? { status: 200, body: NETWORK_FIXTURE }
+        : url.includes('/api/rpc')
+          ? { status: 200, body: { balanceSeals: '0', balanceObs: '0', nonce: 0, names: [] } }
+          : { status: 404, body: {} };
     await import('../web/src/pages/wallet.js');
     await settle();
 
@@ -437,7 +444,7 @@ describe('wallet page — keys stay in the browser', () => {
   });
 
   it('refuses a passphrase it cannot honour the promise of', async () => {
-    respond = () => ({ status: 404, body: {} });
+    respond = (url) => (decodeURIComponent(url).includes('/network') ? { status: 200, body: NETWORK_FIXTURE } : { status: 404, body: {} });
     await import('../web/src/pages/wallet.js');
     await settle();
 
@@ -454,14 +461,47 @@ describe('wallet page — keys stay in the browser', () => {
 
   it('offers to unlock an existing vault instead of overwriting it', async () => {
     // A wallet created in a previous session: the page must not silently replace it.
-    window.localStorage.setItem('obsidian.vault.v1', JSON.stringify({ version: 1, address: 'dobs1existing…address', salt: 'aa', iterations: 210_000, iv: 'bb', ciphertext: 'cc' }));
-    respond = () => ({ status: 404, body: {} });
+    window.localStorage.setItem('obsidian.vault.v1', JSON.stringify({ version: 1, address: 'dobs1existing…address', addressHrp: 'dobs', salt: 'aa', iterations: 210_000, iv: 'bb', ciphertext: 'cc' }));
+    respond = (url) => (decodeURIComponent(url).includes('/network') ? { status: 200, body: NETWORK_FIXTURE } : { status: 404, body: {} });
     await import('../web/src/pages/wallet.js');
     await settle();
 
     expect(document.querySelector('#unlock'), 'an existing vault must ask for its passphrase').toBeTruthy();
     expect(document.querySelector('#create')).toBeNull();
     expect(document.body.textContent).toContain('Delete vault from this browser');
+  });
+});
+
+describe('wallet addresses follow the connected network', () => {
+  it('derives the connected network\'s prefix, not mainnet', async () => {
+    respond = (url) => (decodeURIComponent(url).includes('/network') ? { status: 200, body: NETWORK_FIXTURE } : { status: 404, body: {} });
+    await import('../web/src/pages/wallet.js');
+    await settle();
+
+    document.querySelector<HTMLInputElement>('#passphrase')!.value = 'correct horse battery staple';
+    document.querySelector<HTMLInputElement>('#passphrase-confirm')!.value = 'correct horse battery staple';
+    document.querySelector<HTMLButtonElement>('#create')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const vault = JSON.parse(window.localStorage.getItem('obsidian.vault.v1') ?? '{}') as {
+      address: string;
+      addressHrp?: string;
+    };
+    // NETWORK_FIXTURE is devnet.
+    expect(vault.addressHrp).toBe('dobs');
+    expect(vault.address.startsWith('dobs1'), `got ${vault.address}`).toBe(true);
+    expect(document.body.textContent).toContain('devnet');
+  });
+
+  it('refuses to create a wallet at all when it cannot learn the network', async () => {
+    // Deriving blind is how a mainnet-prefixed address ended up on devnet.
+    respond = () => ({ status: 503, body: { error: 'no healthy node' } });
+    await import('../web/src/pages/wallet.js');
+    await settle();
+
+    expect(document.querySelector('#create'), 'no create form without a known network').toBeNull();
+    expect(document.body.textContent).toContain('which network');
+    expect(window.localStorage.getItem('obsidian.vault.v1')).toBeNull();
   });
 });
 

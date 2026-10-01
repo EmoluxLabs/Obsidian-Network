@@ -1,7 +1,7 @@
 # Devnet on Termux — start a node and test the whole platform
 
 Every command below was run end to end before this page was written, against
-the **1.2.1 release archives**, not a working tree. Paste them into **Termux on
+the **1.2.2 release archives**, not a working tree. Paste them into **Termux on
 Android** (on a laptop: Git Bash on Windows, or any shell on Linux/macOS —
 **not** PowerShell).
 
@@ -33,7 +33,7 @@ not a release.
 
 ```bash
 mkdir -p ~/obsidian && cd ~/obsidian
-git clone --depth 1 --branch v1.2.1 \
+git clone --depth 1 --branch v1.2.2 \
   https://github.com/EmoluxLabs/Obsidian-Network.git src
 cd ~/obsidian/src/releases
 sha256sum -c SHA256SUMS
@@ -47,18 +47,18 @@ passes its own tests:
 
 ```bash
 cd ~/obsidian/src
-./scripts/verify-release.sh releases/obsidian-node-operator-1.2.1.tar.gz
+./scripts/verify-release.sh releases/obsidian-node-operator-1.2.2.tar.gz
 ```
 
-It should end with `OK: obsidian-node-operator-1.2.1.tar.gz verified.`
+It should end with `OK: obsidian-node-operator-1.2.2.tar.gz verified.`
 
 ## 3. Unpack and install (internet — the last step that needs it)
 
 ```bash
 mkdir -p ~/obsidian/run/node ~/obsidian/run/iface
 cd ~/obsidian/src/releases
-tar xzf obsidian-node-operator-1.2.1.tar.gz      -C ~/obsidian/run/node
-tar xzf obsidian-interface-selfhost-1.2.1.tar.gz -C ~/obsidian/run/iface
+tar xzf obsidian-node-operator-1.2.2.tar.gz      -C ~/obsidian/run/node
+tar xzf obsidian-interface-selfhost-1.2.2.tar.gz -C ~/obsidian/run/iface
 
 cd ~/obsidian/run/node/obsidian-core      && npm ci --omit=dev
 cd ~/obsidian/run/iface/obsidian-interface && npm ci --omit=dev
@@ -81,7 +81,7 @@ node dist/index.js start \
 
 Leave this session running. Within about five seconds you should see
 `produced block` lines, one every five seconds. The startup line must say
-`"chainId":7780` and `"version":"1.2.1"`.
+`"chainId":7780` and `"version":"1.2.2"`.
 
 Open a **second Termux session** (swipe from the left edge → **New session**)
 for everything below.

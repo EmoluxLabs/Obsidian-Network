@@ -300,4 +300,71 @@ describe('browser pages against a live node', () => {
     const vault = window.localStorage.getItem('obsidian.vault.v1') ?? '';
     expect(vault).not.toContain('passphrase');
   });
+
+  it('creates an address for the network it is connected to, not for mainnet', async () => {
+    // The node behind this test is devnet, so the address must be dobs1….
+    // The page used to always derive the mainnet prefix, producing a wallet
+    // every devnet node answers "not a valid address for this network" for.
+    await import('../web/src/pages/wallet.js');
+    await settle();
+
+    document.querySelector<HTMLInputElement>('#passphrase')!.value = 'a-long-enough-passphrase';
+    document.querySelector<HTMLInputElement>('#passphrase-confirm')!.value = 'a-long-enough-passphrase';
+    document.querySelector<HTMLButtonElement>('#create')!.click();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1200));
+
+    const vault = JSON.parse(window.localStorage.getItem('obsidian.vault.v1') ?? '{}') as {
+      address: string;
+      addressHrp?: string;
+    };
+    expect(vault.address.startsWith('dobs1'), `got ${vault.address}`).toBe(true);
+    expect(vault.address.startsWith('obs1')).toBe(false);
+    expect(vault.addressHrp).toBe('dobs');
+
+    // And the node agrees it is addressable, rather than refusing it.
+    const balance = await nodeFetch(`${NODE_URL}/wallet/balance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ address: vault.address }),
+    });
+    expect(balance.status).toBe(200);
+
+    // The same query with the address the old code would have produced is
+    // refused by the node — which is exactly what the user saw.
+    const mainnetShaped = await nodeFetch(`${NODE_URL}/wallet/balance`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ address: 'obs16ahf37l5ums7ln2q9kv5rc7rrufswn5d755ete' }),
+    });
+    expect(mainnetShaped.status).toBe(400);
+  });
+
+  it('warns instead of silently failing when the vault belongs to another network', async () => {
+    await import('../web/src/pages/wallet.js');
+    await settle();
+    document.querySelector<HTMLInputElement>('#passphrase')!.value = 'a-long-enough-passphrase';
+    document.querySelector<HTMLInputElement>('#passphrase-confirm')!.value = 'a-long-enough-passphrase';
+    document.querySelector<HTMLButtonElement>('#create')!.click();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1200));
+
+    // Rewrite the stored address to a mainnet one, exactly as a vault created
+    // by the old code would look, and reopen the page.
+    const stored = JSON.parse(window.localStorage.getItem('obsidian.vault.v1')!) as { address: string };
+    stored.address = 'obs16ahf37l5ums7ln2q9kv5rc7rrufswn5d755ete';
+    window.localStorage.setItem('obsidian.vault.v1', JSON.stringify(stored));
+
+    document.body.innerHTML = '<div id="app"></div>';
+    vi.resetModules();
+    await import('../web/src/pages/wallet.js');
+    await settle();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 600));
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('This wallet is a mainnet wallet, but this interface is on devnet');
+    expect(text).toContain('not a valid address for this network');  // names the error the user hit
+    expect(text).toContain('re-derive');                             // and offers the way out
+    expect(text).toContain('Wallet networkmainnet');
+    expect(text).toContain('This interfacedevnet (chain 7780)');
+    expect(text).not.toContain('undefined');
+  });
 }, 120_000);

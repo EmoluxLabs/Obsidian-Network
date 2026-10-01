@@ -5,16 +5,39 @@
  * user's passphrase (PBKDF2-SHA256 → AES-256-GCM) and the private key is only
  * held in memory while the tab is unlocked. Nothing here ever posts key
  * material — the interface server would reject it, and the protocol never needs it.
+ *
+ * Addresses are network-specific. This page asks the connected node which
+ * network it serves and derives for THAT network, rather than assuming
+ * mainnet; a vault created elsewhere is detected and can be re-derived in
+ * place, because the keys are identical and only the prefix differs.
  */
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
-import { Wallet, exportBundle } from '../lib/wallet.js';
+import { Wallet, exportBundle, hrpOfAddress, previewAddress } from '../lib/wallet.js';
 import { operations, formatObs } from '../lib/operations.js';
 import { el, obs, kv, spinner, toast, copyButton, download, badge, short, when } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const panel = el('section', { class: 'card', id: 'wallet-panel' }, spinner('opening vault…'));
+
+/**
+ * Which network the connected node serves. Resolved once, before anything is
+ * derived: creating a wallet against the wrong prefix produces an address that
+ * network will refuse, which is worse than refusing to create one.
+ */
+let network: { name: string; chainId: number; addressHrp: string } | undefined;
+
+const NETWORK_LABEL: Record<string, string> = {
+  obs: 'mainnet',
+  tobs: 'testnet',
+  sobs: 'staging',
+  dobs: 'devnet',
+};
+
+function networkName(hrp: string): string {
+  return NETWORK_LABEL[hrp] ?? hrp;
+}
 
 layout({
   current: 'wallet',
@@ -35,12 +58,33 @@ layout({
 void boot();
 
 async function boot(): Promise<void> {
+  try {
+    network = (await client.network()).network;
+  } catch (error) {
+    panel.replaceChildren(
+      el('h2', {}, 'Wallet'),
+      el('p', { class: 'error' }, `Cannot reach a node, so this page does not know which network it is on: ${(error as Error).message}`),
+      el('p', { class: 'fineprint' }, 'A wallet is not created blind. An address derived for the wrong network is refused by every node on it, and that is not a mistake worth making silently.'),
+    );
+    return;
+  }
   if (!Wallet.exists()) {
     drawCreate();
     return;
   }
   const address = Wallet.storedAddress();
   if (address) drawUnlock(address);
+}
+
+/** Banner shown when the vault in this browser belongs to another network. */
+function networkMismatchNotice(vaultHrp: string): HTMLElement {
+  return el(
+    'div',
+    { class: 'notice danger' },
+    el('strong', {}, `This wallet is a ${networkName(vaultHrp)} wallet, but this interface is on ${networkName(network!.addressHrp)}. `),
+    `Its address starts "${vaultHrp}1", and ${networkName(network!.addressHrp)} nodes only accept addresses starting "${network!.addressHrp}1" — they will answer "not a valid address for this network". ` +
+      'Your keys are fine: the same 24 words produce the same key pair on every Obsidian network, and only the address prefix differs. Unlock below and re-derive in place.',
+  );
 }
 
 // ── Creation ────────────────────────────────────────────────────────────────
@@ -56,7 +100,7 @@ function drawCreate(): void {
     if (passphrase.value !== confirm.value) return toast('The two passphrases do not match.', 'error');
     create.disabled = true;
     try {
-      const created = await Wallet.create(passphrase.value);
+      const created = await Wallet.create(network!.addressHrp, passphrase.value);
       reveal(created, passphrase.value);
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -101,9 +145,15 @@ function reveal(wallet: Wallet, passphrase: string): void {
     el('div', { class: 'row' }, copyButton(() => wallet.revealPrivateKey(0), 'Copy private key'), downloadButton()),
     kv([
       ['Address', el('span', { class: 'mono' }, wallet.address)],
+      ['Network', `${networkName(wallet.addressHrp)} — addresses start "${wallet.addressHrp}1"`],
       ['Derivation path', el('span', { class: 'mono' }, "m/44'/7777'/0'/0/0")],
       ['Created', when(Math.floor(Date.now() / 1000))],
     ]),
+    el(
+      'p',
+      { class: 'fineprint' },
+      'The 24 words are not tied to a network. On another Obsidian network the same words give the same keys with a different address prefix, so keep the words, not the address string.',
+    ),
     el(
       'p',
       { class: 'fineprint' },
@@ -129,7 +179,7 @@ function drawRestore(): void {
     if (passphrase.value.length < 8) return toast('Use at least 8 characters for the passphrase.', 'error');
     go.disabled = true;
     try {
-      const restored = await Wallet.fromPhrase(phrase.value.trim(), passphrase.value);
+      const restored = await Wallet.fromPhrase(phrase.value.trim(), network!.addressHrp, passphrase.value);
       toast('Wallet restored.', 'success');
       reveal(restored, passphrase.value);
     } catch (error) {
@@ -172,17 +222,83 @@ function drawUnlock(address: string): void {
     drawCreate();
   });
 
+  const vaultHrp = hrpOfAddress(address);
+  const mismatch = vaultHrp !== network!.addressHrp;
+
   panel.replaceChildren(
     el('h2', {}, 'Unlock'),
-    kv([['Address in this browser', el('span', { class: 'mono' }, address)]]),
+    ...(mismatch ? [networkMismatchNotice(vaultHrp)] : []),
+    kv([
+      ['Address in this browser', el('span', { class: 'mono' }, address)],
+      ['Wallet network', networkName(vaultHrp)],
+      ['This interface', `${networkName(network!.addressHrp)} (chain ${network!.chainId})`],
+    ]),
     el('div', { class: 'field' }, passphrase),
     el('div', { class: 'row' }, go, anchor('/mine/', 'Mine instead', 'ghost')),
-    el('p', { class: 'fineprint' }, 'Decryption happens in this tab with the WebCrypto API. Three wrong attempts cost you nothing — there is no server to lock you out.'),
+    el('p', { class: 'fineprint' }, mismatch
+      ? 'Unlock to re-derive this wallet for the network you are on. Nothing is regenerated and no funds move: the keys are unchanged and only the address prefix differs.'
+      : 'Decryption happens in this tab with the WebCrypto API. Three wrong attempts cost you nothing — there is no server to lock you out.'),
     el('div', { class: 'row' }, wipe),
   );
 }
 
+/**
+ * Offer to re-derive a vault from another network, in place.
+ *
+ * This is the recovery path for wallets created before 1.2.2, when the page
+ * always derived mainnet-prefixed addresses whatever network it was talking
+ * to. It is a relabelling, not a new wallet.
+ */
+async function drawNetworkFix(wallet: Wallet, passphrase: string): Promise<void> {
+  const current = wallet.address;
+  const future = wallet.accounts.map((account) => account.address);
+  const apply = el('button', { class: 'primary', type: 'button' }, `Re-derive for ${networkName(network!.addressHrp)}`);
+  const skip = el('button', { class: 'ghost', type: 'button' }, 'Leave it alone');
+
+  apply.addEventListener('click', async () => {
+    apply.setAttribute('disabled', 'true');
+    try {
+      await wallet.switchNetwork(network!.addressHrp, passphrase);
+      toast(`Wallet re-derived for ${networkName(network!.addressHrp)}.`, 'success');
+      await drawDashboard(wallet, passphrase);
+    } catch (error) {
+      toast((error as Error).message, 'error');
+      apply.removeAttribute('disabled');
+    }
+  });
+  skip.addEventListener('click', () => void drawDashboard(wallet, passphrase));
+
+  panel.replaceChildren(
+    el('h2', {}, 'This wallet belongs to another network'),
+    networkMismatchNotice(wallet.addressHrp),
+    kv([
+      ['Address now', el('span', { class: 'mono' }, current)],
+      ['Address after', el('span', { class: 'mono' }, addressPreview(wallet))],
+      ['Recovery phrase', 'unchanged — same 24 words, same keys'],
+      ['Balance', 'unaffected; this address has never existed on this network, so there is nothing to move'],
+    ]),
+    el('div', { class: 'row' }, apply, skip),
+    el('p', { class: 'fineprint' },
+      'If you actually wanted a mainnet wallet, do not re-derive: point this interface at a mainnet node instead. ' +
+      'Re-deriving is reversible — the same words give the mainnet address back.'),
+  );
+  void future;
+}
+
+/** What the first address becomes once re-derived, computed without saving. */
+function addressPreview(wallet: Wallet): string {
+  const publicKey = wallet.accounts[0]!.publicKey;
+  // Derived through the vault so this page never re-implements address rules.
+  return previewAddress(publicKey, network!.addressHrp);
+}
+
 async function drawDashboard(wallet: Wallet, passphrase: string): Promise<void> {
+  // A vault from another network cannot talk to this one: every read would
+  // come back "not a valid address for this network". Offer the fix first.
+  if (!wallet.matchesNetwork(network!.addressHrp)) {
+    await drawNetworkFix(wallet, passphrase);
+    return;
+  }
   const balanceBox = el('div', { class: 'balance-box' }, spinner('reading balance from the chain…'));
   const historyBox = el('div', { id: 'history' }, spinner());
 
@@ -246,7 +362,7 @@ function drawReceive(wallet: Wallet): HTMLElement {
 }
 
 function drawSend(wallet: Wallet): HTMLElement {
-  const to = el('input', { id: 'send-to', placeholder: 'Recipient address (obs1…) or .obs name' });
+  const to = el('input', { id: 'send-to', placeholder: `Recipient address (${network?.addressHrp ?? 'obs'}1…) or .obs name` });
   const amount = el('input', { id: 'send-amount', placeholder: 'Amount in OBS' });
   const memo = el('input', { id: 'send-memo', placeholder: 'Memo (optional)' });
   const quote = el('p', { class: 'fineprint' }, 'Gas: 0.02% of the amount, capped at 0.01 OBS.');

@@ -9,7 +9,7 @@
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient, type MiningStatus } from '../lib/client.js';
-import { Wallet } from '../lib/wallet.js';
+import { Wallet, hrpOfAddress } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
 import { el, obs, duration, spinner, toast, kv, badge, table, short, when, rewardLine, rewardPerClaim } from '../lib/ui.js';
 
@@ -45,7 +45,15 @@ let wallet: Wallet | undefined;
 
 void boot();
 
+/** Prefix the connected network expects. Mining to another one cannot work. */
+let networkHrp: string | undefined;
+
 async function boot(): Promise<void> {
+  try {
+    networkHrp = (await client.network()).network.addressHrp;
+  } catch {
+    networkHrp = undefined;
+  }
   drawWalletPanel();
   await refresh();
   window.setInterval(() => void tickTicker(), 1000);
@@ -53,11 +61,25 @@ async function boot(): Promise<void> {
 
 function drawWalletPanel(): void {
   const address = Wallet.storedAddress();
+  const wrongNetwork = address !== undefined && networkHrp !== undefined && hrpOfAddress(address) !== networkHrp;
   walletPanel.replaceChildren(
     el('h2', {}, 'Signing wallet'),
+    ...(wrongNetwork
+      ? [
+          el(
+            'div',
+            { class: 'notice danger' },
+            el('strong', {}, 'This wallet belongs to another network. '),
+            `Its address starts "${hrpOfAddress(address!)}1" and this network expects "${networkHrp}1", so a claim signed with it is refused by every node here — nothing would be mined and nothing would be credited. ` +
+              'Open the wallet page and re-derive it: same 24 words, same keys, correct prefix.',
+          ),
+          el('a', { class: 'primary as-link', href: '/wallet/' }, 'Fix this wallet'),
+        ]
+      : []),
     address
       ? kv([
           ['Wallet in this browser', el('span', { class: 'mono' }, address)],
+          ['Network', wrongNetwork ? `mismatch — wallet "${hrpOfAddress(address)}1", network "${networkHrp}1"` : `matches this network ("${networkHrp ?? '…'}1")`],
           ['Keys', 'encrypted in this browser with your passphrase — never sent to the interface'],
         ])
       : el(
@@ -81,6 +103,17 @@ async function refresh(): Promise<void> {
   void loadSchedule();
   void loadHistory();
   const address = Wallet.storedAddress();
+  if (address && networkHrp && hrpOfAddress(address) !== networkHrp) {
+    // Fail here, legibly, rather than letting the node refuse the claim with
+    // "not a valid address for this network" after the user has signed it.
+    claimPanel.replaceChildren(
+      el('h2', {}, 'Claim'),
+      el('p', { class: 'error' }, `The wallet in this browser is a "${hrpOfAddress(address)}1" address and this network only accepts "${networkHrp}1" addresses.`),
+      el('p', {}, 'Re-derive the wallet for this network first. Your recovery phrase and keys do not change — only the address prefix does.'),
+      el('a', { class: 'primary as-link', href: '/wallet/' }, 'Open the wallet'),
+    );
+    return;
+  }
   if (!address) {
     claimPanel.replaceChildren(
       el('h2', {}, 'Claim'),
