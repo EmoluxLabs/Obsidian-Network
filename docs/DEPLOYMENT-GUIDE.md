@@ -1134,10 +1134,46 @@ A minimal check from your phone:
 watch -n 10 'curl -s https://rpc1.example.org/status'
 ```
 
-**NOT DOCUMENTED IN THE CURRENT REPOSITORY:** there is no Prometheus `/metrics`
-endpoint, no Grafana dashboard and no alerting configuration. Monitoring today
-means polling the RPC routes above yourself. *What is needed:* a decision on a
-monitoring stack, or accept manual polling for a testnet.
+#### Prometheus
+
+Since 1.2.6 every node serves `GET /metrics` in Prometheus text exposition
+format (`text/plain; version=0.0.4`):
+
+```bash
+curl -s http://127.0.0.1:38630/metrics
+```
+
+Every sample is labelled `network` and `chain_id`, so one Prometheus can scrape
+mainnet, testnet and devnet nodes without conflating them:
+
+```
+obsidian_chain_height{network="devnet",chain_id="7780"} 412
+obsidian_peers{network="devnet",chain_id="7780"} 2
+obsidian_supply_invariant_ok{network="devnet",chain_id="7780"} 1
+```
+
+Exposed: `obsidian_chain_height`, `obsidian_peers`,
+`obsidian_mempool_transactions`, `obsidian_supply_obs`,
+`obsidian_max_supply_obs`, `obsidian_pool_balance_obs`,
+`obsidian_active_miners`, `obsidian_accounts_total`,
+`obsidian_transactions_total`, `obsidian_mining_claims_total`,
+`obsidian_names_total`, `obsidian_validators`,
+`obsidian_genesis_allocation_claimed`, `obsidian_supply_invariant_ok`,
+`obsidian_syncing`, `obsidian_uptime_seconds`.
+
+Three alerts worth having on day one: `obsidian_chain_height` not increasing
+over five minutes, `obsidian_peers == 0`, and `obsidian_supply_invariant_ok == 0`
+(which should be impossible and means stop the node and investigate).
+
+The route carries no address, no balance and no identity — it is tested for
+that — but it is still part of the RPC surface, so keep it behind the same
+firewall as the rest of the RPC port and scrape it from inside your network.
+Supply figures are floats because Prometheus has no integer type; the exact
+18-decimal seal amounts remain on `/supply`.
+
+**STILL NOT IN THE REPOSITORY:** no Grafana dashboard JSON and no alerting
+rules are shipped. *What is needed:* dashboards built on the metric names
+above.
 
 ### D12. Clock discipline
 
@@ -2546,8 +2582,9 @@ An honest comparison, with the evidence.
 **Genuine gaps, stated plainly:**
 1. **No release signing.** Checksums prove integrity, not authorship. For a
    public mainnet handling real value, this should be closed first.
-2. **No monitoring stack.** No `/metrics`, no dashboards, no alerting. You would
-   be polling RPC by hand — workable for a testnet, thin for mainnet.
+2. **Partial monitoring.** `/metrics` exists from 1.2.6 and is Prometheus
+   scrapeable (see §D11), but no Grafana dashboards and no alerting rules are
+   shipped — you still have to write those yourself.
 3. **Nothing has ever run for more than minutes.** `docs/IMPLEMENTATION-REPORT.md`
    says so: no multi-day soak test, so memory growth over weeks is unknown, and
    **node reward settlement has never been observed over real 24-hour periods** —

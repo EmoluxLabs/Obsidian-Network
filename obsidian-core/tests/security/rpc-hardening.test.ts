@@ -440,3 +440,51 @@ describe('private material never crosses the wire', () => {
     expect(unknown.body.code).toBe('ERR_NODE_NOT_REGISTERED');
   });
 });
+
+/**
+ * `/metrics` is the route most likely to be exposed to a whole monitoring
+ * network, so what it must NOT contain matters as much as what it does.
+ */
+describe('GET /metrics', () => {
+  it('serves Prometheus text with the numbers an operator alerts on', async () => {
+    {
+      const response = await fetch(`${base}/metrics`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/plain; version=0.0.4');
+      const body = await response.text();
+
+      for (const name of [
+        'obsidian_chain_height',
+        'obsidian_peers',
+        'obsidian_mempool_transactions',
+        'obsidian_supply_obs',
+        'obsidian_max_supply_obs',
+        'obsidian_pool_balance_obs',
+        'obsidian_active_miners',
+        'obsidian_supply_invariant_ok',
+        'obsidian_uptime_seconds',
+      ]) {
+        expect(body, `missing ${name}`).toContain(`# TYPE ${name} `);
+        expect(new RegExp(`^${name}\\{[^}]*\\} -?[0-9.]+$`, 'm').test(body), `${name} has no numeric sample`).toBe(true);
+      }
+
+      // Every sample carries the network it came from, so one Prometheus can
+      // scrape a mainnet and a devnet node without conflating them.
+      expect(body).toContain('network="devnet"');
+      expect(body).toContain('chain_id="7780"');
+      expect(body).toContain('obsidian_supply_invariant_ok{network="devnet",chain_id="7780"} 1');
+    }
+  });
+
+  it('leaks no address, balance or key material', async () => {
+    {
+      const body = await (await fetch(`${base}/metrics`)).text();
+      // No bech32 address of any network, and nothing that looks like a key.
+      expect(/\b(obs|tobs|sobs|dobs)1[02-9ac-hj-np-z]{10,}/.test(body)).toBe(false);
+      expect(/[0-9a-f]{64}/.test(body)).toBe(false);
+      expect(body.toLowerCase()).not.toContain('passphrase');
+      expect(body.toLowerCase()).not.toContain('recipient');
+      expect(body.toLowerCase()).not.toContain('privatekey');
+    }
+  });
+});

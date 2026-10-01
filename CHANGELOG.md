@@ -11,6 +11,48 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.6] — 2026-10-01
+
+Node and docs. No consensus change: the params hash and the genesis hash are
+unchanged and `PROTOCOL_VERSION` stays 1.2.0, so a 1.2.0 node peers with this
+one.
+
+### Added
+
+* **`GET /metrics` — Prometheus text exposition.** Closes the monitoring gap
+  `docs/DEPLOYMENT-GUIDE.md` has carried since 1.0.0, where the only way to
+  watch a node was to poll `/status` and parse it yourself. Sixteen series,
+  every one labelled `network` and `chain_id` so a single Prometheus can
+  scrape several networks without conflating them: chain height, peers,
+  mempool depth, supply and max supply in OBS, mining-pool balance, active
+  miners, accounts, transactions, mining claims, names, validators, whether
+  the genesis allocation is claimed, whether the supply invariant holds,
+  whether the node believes it is syncing, and process uptime.
+
+  The route exposes no address, no balance and no identity, and a test asserts
+  that: it matches the output against bech32 addresses of all four networks
+  and against anything key-shaped. Nothing in consensus reads it. Supply is
+  published in OBS as a float because Prometheus has no integer type; the
+  exact 18-decimal seal amounts stay on `/supply`.
+* `docs/DEPLOYMENT-GUIDE.md` §D11 documents the metric names and three alerts
+  worth having on day one, and the "genuine gaps" list is corrected: metrics
+  exist, dashboards and alerting rules still do not.
+
+### Fixed
+
+* The three-node cluster suite checks its ports before starting. An
+  interrupted run left nodes on 39630-39635, and the next run then reported
+  four unrelated consensus failures five minutes later instead of the real
+  cause. It now aborts in under a second naming the port and how to clear it.
+
+### Tests
+
+Core 244 (was 242): two new `/metrics` tests in the RPC hardening suite —
+one for the exposition format and the sample values, one for what must never
+appear in it.
+
+---
+
 ## [1.2.5] — 2026-10-01
 
 No runtime change from 1.2.4: the node, the server and every page bundle are

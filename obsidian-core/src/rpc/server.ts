@@ -189,6 +189,16 @@ export class RpcServer {
     response.end(payload);
   }
 
+  /** Prometheus text exposition format (version 0.0.4). */
+  private metricsText(response: ServerResponse, body: string): void {
+    response.writeHead(200, {
+      'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-store',
+    });
+    response.end(body);
+  }
+
   private async readBody(request: IncomingMessage): Promise<string> {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -208,6 +218,7 @@ export class RpcServer {
 
     if (path === '/' || path === '/health') return this.health(response);
     if (path === '/status') return this.status(response);
+    if (path === '/metrics') return this.metrics(response);
     if (path === '/params') return this.params(response);
     if (path === '/version') return this.json(response, 200, versionInfo());
     if (path === '/genesis') return this.genesis(response);
@@ -326,6 +337,54 @@ export class RpcServer {
       indexer: this.options.indexer.summary(),
       p2p: this.options.p2p?.status(),
     });
+  }
+
+  /**
+   * GET /metrics — Prometheus text exposition.
+   *
+   * Operators had no way to alert on a node falling behind, losing peers or
+   * stalling its mempool without scraping and parsing `/status` themselves.
+   * This exposes the same numbers the node already publishes, in the format
+   * every monitoring stack reads.
+   *
+   * It deliberately exposes no address, no balance and no identity: a metrics
+   * port is the one most likely to be left open to a whole network, so it
+   * carries only aggregates that `/status` and `/supply` already make public.
+   * Supply figures are emitted in OBS as floating point, which is the only
+   * type Prometheus has; the authoritative integer seal amounts stay on
+   * `/supply`, and nothing in consensus ever reads this route.
+   */
+  private metrics(response: ServerResponse): void {
+    const status = this.options.chain.status({ peers: this.options.p2p?.peerCount ?? 0 });
+    const state = this.options.chain.world;
+    const net = this.options.net;
+    const labels = `network="${net.name}",chain_id="${net.chainId}"`;
+    const lines: string[] = [];
+    const metric = (name: string, type: 'gauge' | 'counter', help: string, value: number | bigint): void => {
+      lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} ${type}`, `${name}{${labels}} ${value}`);
+    };
+    // Seals are 18-decimal integers; Prometheus only has float64, so publish
+    // OBS and keep the exact integers on /supply.
+    const obs = (seals: bigint): number => Number(formatObs(seals));
+
+    metric('obsidian_chain_height', 'gauge', 'Height of the node\'s current head block.', status.height);
+    metric('obsidian_peers', 'gauge', 'Connected p2p peers.', this.options.p2p?.peerCount ?? 0);
+    metric('obsidian_mempool_transactions', 'gauge', 'Transactions waiting in the mempool.', this.options.chain.mempool.size);
+    metric('obsidian_supply_obs', 'gauge', 'Total OBS in existence.', obs(BigInt(status.supply)));
+    metric('obsidian_max_supply_obs', 'gauge', 'Protocol maximum supply in OBS.', obs(MAX_SUPPLY_SEALS));
+    metric('obsidian_pool_balance_obs', 'gauge', 'OBS held by the Mining Pool.', obs(state.s.pool.balance));
+    metric('obsidian_active_miners', 'gauge', 'Miners active in the current cycle.', state.s.metrics.activeMiners);
+    metric('obsidian_accounts_total', 'gauge', 'Accounts known to the chain state.', state.s.metrics.totalAccounts);
+    metric('obsidian_transactions_total', 'counter', 'Transactions applied since genesis.', state.s.metrics.totalTransactions);
+    metric('obsidian_mining_claims_total', 'counter', 'Mining claims applied since genesis.', state.s.metrics.totalMiningClaims);
+    metric('obsidian_names_total', 'gauge', 'Registered .obs names.', state.s.metrics.totalNamesRegistered);
+    metric('obsidian_validators', 'gauge', 'Registered validators.', state.s.validators.size);
+    metric('obsidian_genesis_allocation_claimed', 'gauge', 'One if the genesis allocation has been claimed.', state.s.genesis.allocationClaimed ? 1 : 0);
+    metric('obsidian_supply_invariant_ok', 'gauge', 'One while total supply is within the protocol maximum.', BigInt(status.supply) <= MAX_SUPPLY_SEALS ? 1 : 0);
+    metric('obsidian_syncing', 'gauge', 'One while the node believes it is behind its peers.', status.syncing ? 1 : 0);
+    metric('obsidian_uptime_seconds', 'gauge', 'Seconds since this process started.', Math.floor(process.uptime()));
+
+    this.metricsText(response, `${lines.join('\n')}\n`);
   }
 
   private params(response: ServerResponse): void {
