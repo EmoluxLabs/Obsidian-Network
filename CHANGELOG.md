@@ -11,6 +11,55 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.8] — 2026-10-01
+
+Interface and docs. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+### Fixed
+
+* **Three pages still priced things in dollars after the protocol stopped.**
+  1.2.0 repriced every protocol fee into OBS and the node began sending
+  `ons.registrationFeeObs`, `ons.renewalFeeObs` and
+  `social.businessPagePriceObs`. The browser kept reading the removed
+  `…Usd` fields, so:
+  - **ONS registration was dead.** The page computed the fee from
+    `params.ons.registrationFeeUsd` (undefined on every real node) at an
+    oracle median, and when the feed was unusable — the normal state of a
+    chain that prices nothing in dollars — it displayed "registration is
+    closed right now". A user could never register a name.
+  - **Business page purchase was dead**, for the same reason, and would have
+    signed a wrong amount if a feed had existed.
+  - **The landing page advertised the wrong model**, showing a "Protocol
+    price" tile and stating that "features priced in dollars (names, business
+    pages, land) refuse to execute while the protocol price is stale".
+  All three now read the OBS fee from `/params`. The landing page shows the
+  actual registration fee and states plainly that no protocol fee consults a
+  price source. ONS stays open on a chain with no feed and refuses to guess
+  only when it cannot reach a node at all.
+* Removed unused `usdMicroToSeals` / `sealsToUsdMicro` imports left in the
+  land and social executors by the repricing.
+
+### Why the tests missed it
+
+`pages.test.ts` fixtures were updated to the new *behaviour* but kept the old
+*field names*, so the suite asserted against a `/params` shape no node sends.
+Fixed, and three new guards added:
+
+* **Live contract test** — asserts the real node's `/params` carries the `…Obs`
+  fields, that the `…Usd` fields are gone, and that the values are the agreed
+  ones (names 0.05, business page 0.005, bond 50, land band 0.01–5).
+* **Live ONS test** — on a chain whose oracle is unusable, the page must still
+  show `0.05 OBS` and keep the register button enabled.
+* **Static proxy contract** — every RPC path `client.ts` can call must appear
+  on the interface proxy allowlist, compared by reading both files. This is
+  the check that would have caught the `/wallet/balance` outage in 1.2.6.
+
+### Tests
+
+Interface 177 (was 173). Core 244 unchanged.
+
+---
+
 ## [1.2.7] — 2026-10-01
 
 Interface only. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.

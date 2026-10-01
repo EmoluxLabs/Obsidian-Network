@@ -10,7 +10,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
-import { el, obsFromSeals, usd, usdMicroFromDollars, oraclePriceMicro, oraclePriceText, spinner, toast, kv, badge, table, short } from '../lib/ui.js';
+import { el, spinner, toast, kv, badge, table, short } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const lookup = el('input', { id: 'ons-lookup', placeholder: 'name.obs', autocomplete: 'off' });
@@ -34,7 +34,7 @@ layout({
       { class: 'notice' },
       el('strong', {}, 'What a name is. '),
       'A name points at one wallet address. Transfers move the record to another wallet — protocol-validated, atomic, and impossible for this website to fake. ' +
-        'Registration is priced in OBS from the protocol price of the dollar fee, so the fee follows the market instead of a spreadsheet.',
+        'Registration is priced in OBS by consensus, so the fee is the same on every node and does not depend on any exchange rate or price feed.',
     ),
     el('section', { class: 'search-bar' }, lookup, go),
     lookupPanel,
@@ -77,30 +77,26 @@ async function doLookup(name: string): Promise<void> {
 }
 
 async function drawRegister(): Promise<void> {
-  // The fee is a dollar price in the protocol table (`ons.registrationFeeUsd`)
-  // converted at the node's oracle median. Both numbers come from this node;
-  // neither is a constant in the page, and the node validates the result.
-  let priceObs = '0';
-  let feeUsdMicro = 0n;
-  let oracleUsable = false;
-  let medianText = '—';
-  let sourceCount = 0;
+  // The fee is a flat OBS amount in the protocol table, read from this node's
+  // /params. No dollar price, no oracle, no conversion: registration works on
+  // a chain that has never seen a price feed, which is the whole point of
+  // denominating protocol fees in the protocol's own unit.
+  let priceObs: string | undefined;
+  let renewalObs: string | undefined;
+  let termYears = 1;
+  let loadError = '';
   try {
-    const [oracle, params] = await Promise.all([client.oracle(), client.params()]);
-    const micro = oraclePriceMicro(oracle);
-    oracleUsable = micro !== undefined;
-    medianText = oraclePriceText(oracle);
-    sourceCount = oracle.sourceCount;
-    if (micro !== undefined) {
-      feeUsdMicro = usdMicroFromDollars(params.ons.registrationFeeUsd);
-      priceObs = obsFromSeals((feeUsdMicro * 10n ** 18n) / micro);
-    }
-  } catch {
-    /* handled below */
+    const params = await client.params();
+    priceObs = params.ons.registrationFeeObs;
+    renewalObs = params.ons.renewalFeeObs;
+    termYears = Math.max(1, Math.round(params.ons.termSeconds / (365 * 24 * 60 * 60)));
+  } catch (error) {
+    loadError = (error as Error).message;
   }
 
   const name = el('input', { id: 'ons-name', placeholder: 'yourname', autocomplete: 'off' });
   const create = el('button', { class: 'primary', type: 'button', id: 'ons-register' }, 'Register');
+  if (priceObs === undefined) create.disabled = true;
   create.addEventListener('click', async () => {
     const value = name.value.trim().toLowerCase().replace(/\.obs$/, '');
     if (!/^[a-z0-9-]{3,32}$/.test(value)) return toast('Names are 3–32 characters: lowercase letters, digits and hyphens.', 'error');
@@ -108,6 +104,7 @@ async function drawRegister(): Promise<void> {
     if (!passphrase) return;
     try {
       const wallet = await Wallet.unlock(passphrase);
+      if (priceObs === undefined) return toast('This page could not read the registration fee from a node, so it will not guess one.', 'error');
       const result = await operations.registerName(client, wallet, { name: `${value}.obs`, feeObs: priceObs });
       toast(`Registration signed and submitted: ${result.txId.slice(0, 16)}…`, 'success');
       await doLookup(`${value}.obs`);
@@ -118,13 +115,14 @@ async function drawRegister(): Promise<void> {
 
   registerPanel.replaceChildren(
     el('h2', {}, 'Register a name'),
-    oracleUsable
+    priceObs !== undefined
       ? kv([
-          ['Protocol price', `${medianText} / OBS (median of ${sourceCount} independent oracle submissions)`],
-          ['Registration fee', `${priceObs} OBS (${usd(feeUsdMicro.toString())}, paid in OBS at that price)`],
-          ['Term', 'one year from the block that includes the registration, renewable by the owner'],
+          ['Registration fee', `${priceObs} OBS`],
+          ['Renewal fee', `${renewalObs} OBS per term`],
+          ['Term', `${termYears === 1 ? 'one year' : `${termYears} years`} from the block that includes the registration, renewable by the owner`],
+          ['Price source', 'the protocol itself — this fee is a consensus parameter, not a conversion from any currency'],
         ])
-      : el('p', { class: 'error' }, 'The protocol price feed is stale or has fewer than two independent sources, so registration is closed right now. The node would reject the transaction rather than charge a guessed amount.'),
+      : el('p', { class: 'error' }, `This page could not reach a node to read the registration fee${loadError ? `: ${loadError}` : ''}. Registration stays closed rather than guessing an amount the node would reject.`),
     el('div', { class: 'field' }, el('label', { for: 'ons-name' }, 'Name'), name),
     el('div', { class: 'row' }, create),
     el('p', { class: 'fineprint' }, 'After registration you can transfer the name to any wallet address, or point it at a different address you own, by signing one transaction.'),

@@ -23,7 +23,6 @@ import {
   assertGas,
   requirePrice,
   splitBps,
-  usdMicroToSeals,
 } from '../helpers.js';
 import { treasuryWallet } from '../../genesis/rules.js';
 import { fromHex, toHex, sha256, utf8, domainHash } from '../../crypto/hash.js';

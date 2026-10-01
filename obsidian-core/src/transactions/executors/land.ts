@@ -35,8 +35,6 @@ import {
   assertAmount,
   assertGas,
   requirePrice,
-  sealsToUsdMicro,
-  usdMicroToSeals,
 } from '../helpers.js';
 import { treasuryWallet } from '../../genesis/rules.js';
 import { divisionSeed, normaliseDivisionId, DIVISION_LEVEL_CODES } from '../../land/registry.js';

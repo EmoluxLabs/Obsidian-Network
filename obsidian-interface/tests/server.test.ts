@@ -759,6 +759,53 @@ describe('node proxy', () => {
     }
   });
 
+  /**
+   * Static contract: every RPC path the browser client can call must be on the
+   * proxy allowlist. `/wallet/balance` was missing for several releases and the
+   * only symptom was a product that could not show a balance, so this reads the
+   * two files and compares them rather than trusting anyone to remember.
+   */
+  it('allowlists every route the browser client can call', () => {
+    const client = readFileSync(resolve(here, '../web/src/lib/client.ts'), 'utf8');
+    const server = readFileSync(resolve(here, '../server/index.ts'), 'utf8');
+    const allowlist = server.slice(server.indexOf('const allowed ='), server.indexOf('if (!allowed)'));
+    expect(allowlist.length, 'could not locate the proxy allowlist').toBeGreaterThan(100);
+
+    const called = [
+      ...new Set(
+        [
+          // Single-quoted paths, and backtick templates read to their closing
+          // backtick so an inline `${x ? '?a' : ''}` cannot truncate the match.
+          ...[...client.matchAll(/request(?:Safe)?(?:<[^>]*>)?\(\s*'([^']+)'/g)].map((m) => m[1]),
+          ...[...client.matchAll(/request(?:Safe)?(?:<[^>]*>)?\(\s*`([^`]+)`/g)].map((m) => m[1]),
+        ]
+          // A nested template (`/names${x ? `?a=${b}` : ''}`) cannot be parsed
+          // with a regex, so reduce any interpolation to a parameter marker and
+          // keep only the static prefix — which is all the allowlist matches on.
+          .map((path) => path.replace(/\$\{[^}]*\}/g, ':param'))
+          .map((path) => (path.includes('${') ? path.slice(0, path.indexOf('${')) : path))
+          .map((path) => path.split('?')[0])
+          .map((path) => (path.endsWith(':param') && !path.endsWith('/:param') ? path.slice(0, path.lastIndexOf(':param')) : path))
+          .map((path) => (path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path))
+          .filter((path) => path.startsWith('/')),
+      ),
+    ].sort();
+
+    expect(called.length, 'no client paths were parsed — the regex has rotted').toBeGreaterThan(20);
+
+    const covered = (path: string): boolean => {
+      if (allowlist.includes(`'${path}'`)) return true;
+      const first = path.split('/').filter(Boolean)[0];
+      if (allowlist.includes(`startsWith('/${first}/`)) return true;
+      // Pattern-matched routes, e.g. /wallet/:param/next-nonce.
+      if (path.includes(':param') && allowlist.includes(`\\/${first}\\/`)) return true;
+      return false;
+    };
+
+    const missing = called.filter((path) => !covered(path));
+    expect(missing, `these client routes are not on the proxy allowlist: ${missing.join(', ')}`).toEqual([]);
+  });
+
   it('still refuses a disallowed route that carries a query', async () => {
     const h = await harness();
     await h.poolCheck();

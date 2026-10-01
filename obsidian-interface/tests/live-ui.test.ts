@@ -173,8 +173,12 @@ describe('browser pages against a live node', () => {
     expect(stats).toContain('21,000,000');                     // hard cap, from /status
     expect(stats).toContain('0.001');                          // daily reward, from /mining/schedule
     expect(stats).toContain('0.00016666');                     // per-claim reward, exact seals
-    // A fresh devnet has no oracle submissions: the page must say so, not invent a price.
-    expect(stats).toContain('no price yet');
+    // The landing page no longer shows any price feed: protocol fees are
+    // denominated in OBS, so it shows the actual fee instead of a quote.
+    expect(stats).toContain('0.05');
+    expect(stats).not.toContain('no price yet');
+    expect(stats).not.toMatch(/\$\d/);
+    expect(document.body.textContent ?? '').not.toContain('priced in dollars');
     expect(stats).not.toContain('undefined');
     expect(stats).not.toContain('— OBS');
   });
@@ -299,6 +303,58 @@ describe('browser pages against a live node', () => {
     expect(Object.keys(window.localStorage)).toEqual(['obsidian.vault.v1']);
     const vault = window.localStorage.getItem('obsidian.vault.v1') ?? '';
     expect(vault).not.toContain('passphrase');
+  });
+
+  /**
+   * Contract test. The pages read `/params` by field name, and those names
+   * changed when protocol fees were repriced from USD into OBS. The fixtures
+   * in `pages.test.ts` were updated to the new product behaviour but kept the
+   * OLD field names, so the suite stayed green while the real ONS page read
+   * `params.ons.registrationFeeUsd` — undefined on every real node — and
+   * closed registration behind an oracle that no longer prices anything.
+   *
+   * This asserts the field names against a live node, which no fixture can
+   * fake.
+   */
+  it('reads the fee fields the node actually sends, in OBS, with no USD anywhere', async () => {
+    const params = (await (await nodeFetch(`${NODE_URL}/params`)).json()) as Record<string, Record<string, unknown>>;
+
+    expect(typeof params.ons.registrationFeeObs).toBe('string');
+    expect(typeof params.ons.renewalFeeObs).toBe('string');
+    expect(typeof params.social.businessPagePriceObs).toBe('string');
+    expect(typeof params.circle.minGlvObs).toBe('string');
+    expect(typeof params.circle.maxGlvObs).toBe('string');
+    expect(typeof params.consensus.minValidatorBondObs).toBe('string');
+
+    // The old USD-denominated fee fields must be gone, not merely unused.
+    expect(params.ons.registrationFeeUsd).toBeUndefined();
+    expect(params.social.businessPagePriceUsd).toBeUndefined();
+
+    // The repriced values the protocol now charges.
+    expect(params.ons.registrationFeeObs).toBe('0.050000000000000000');
+    expect(params.social.businessPagePriceObs).toBe('0.005000000000000000');
+    expect(params.consensus.minValidatorBondObs).toBe('50.000000000000000000');
+    expect(params.circle.minGlvObs).toBe('0.010000000000000000');
+    expect(params.circle.maxGlvObs).toBe('5.000000000000000000');
+  });
+
+  it('prices name registration from the protocol, on a chain with no price feed', async () => {
+    // This node has never received an oracle submission, which is the normal
+    // state of a fresh chain. Registration must still be open and priced.
+    const oracle = (await (await nodeFetch(`${NODE_URL}/oracle`)).json()) as { usable: boolean };
+    expect(oracle.usable, 'the point of this test is a chain with no usable feed').toBe(false);
+
+    await import('../web/src/pages/ons.js');
+    await settle();
+    const text = document.body.textContent ?? '';
+
+    expect(text).toContain('0.05');
+    expect(text).toContain('OBS');
+    expect(text).not.toContain('registration is closed');
+    expect(text).not.toMatch(/\$\d/);
+    expect(text).not.toContain('undefined');
+    expect(text).not.toContain('NaN');
+    expect(document.querySelector<HTMLButtonElement>('#ons-register')?.disabled).toBe(false);
   });
 
   it('creates an address for the network it is connected to, not for mainnet', async () => {

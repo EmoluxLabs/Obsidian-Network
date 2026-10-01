@@ -98,10 +98,20 @@ const PARAMS_FIXTURE = {
   gas: { basisPoints: 2, maxGasObs: '0.010000000000000000', destination: 'MINING_POOL' },
   block: { targetSeconds: 5, maxBytes: 2_097_152, maxTransactions: 2000, confirmationDepthSoft: 12, confirmationDepthHard: 64 },
   consensus: { forkChoice: 'MOST_ACCUMULATED_WORK_THEN_LENGTH_THEN_LOWEST_HEADER_HASH', minValidatorBondObs: '1000.000000000000000000', unbondingBlocks: 20_160, maxReorgDepth: 256 },
-  ons: { registrationFeeUsd: '5.000000', termSeconds: 31_536_000, graceSeconds: 2_592_000, minLength: 3, maxLength: 63 },
+  ons: {
+    // Field names must match the node exactly: fees are OBS-denominated and
+    // the node sends `registrationFeeObs`/`renewalFeeObs`. A fixture that
+    // keeps an older name turns this suite into a test of the fixture.
+    registrationFeeObs: '0.050000000000000000',
+    renewalFeeObs: '0.050000000000000000',
+    termSeconds: 31_536_000,
+    graceSeconds: 2_592_000,
+    minLength: 3,
+    maxLength: 63,
+  },
   capsules: { minCommitmentObs: '0.000100000000000000', timeTravelMultiplier: '1000', previewSeconds: 30, maxContentBytes: 262_144 },
   circle: { parcelSquareMetres: 1, appreciationStepBps: 25, depreciationStepBps: 25, minGlvUsd: '100.00', maxGlvUsd: '30000.00' },
-  social: { creatorShareBps: 7000, networkShareBps: 3000, businessPagePriceUsd: '50.00', monetisationMinFollowers: 10_000, monetisationMinMonthlyViews: 100_000 },
+  social: { creatorShareBps: 7000, networkShareBps: 3000, businessPagePriceObs: '0.005000000000000000', monetisationMinFollowers: 10_000, monetisationMinMonthlyViews: 100_000 },
   oracle: { maxAgeSeconds: 21_600, minSources: 2, maxDeviationBps: 500 },
   registry: { maxInvitesPerAccount: 5, newAccountBalanceObs: '0.000000000000000000', wacEnabled: false, miningKycRequired: false, nativeExchangeEnabled: false },
   paramsHashBytes: 32,
@@ -324,10 +334,14 @@ describe('landing page', () => {
     expect(stats).toContain('100,166');            // supply, from /status
     expect(stats).toContain('0.001');             // reward per day, from /mining/schedule
     expect(stats).toContain('0.00016666');        // reward per claim, exact seals
-    expect(stats).toContain('$50.1');             // protocol price, from /oracle (priceUsd)
-    expect(stats).toContain('2 independent sources');
+    // No price feed anywhere on the landing page: protocol fees are OBS and
+    // the page shows the fee itself, from /params.
+    expect(stats).toContain('0.05');              // name registration fee, from /params
+    expect(stats).not.toMatch(/\$\d/);
+    expect(stats).not.toContain('independent sources');
     expect(stats).not.toContain('reading the chain');
     expect(stats).not.toContain('no price yet');
+    expect(document.body.textContent ?? '').not.toContain('priced in dollars');
   });
 
   it('says so when no node answers, rather than showing invented numbers', async () => {
@@ -523,21 +537,25 @@ describe('pages read the field names the node really sends', () => {
     expect(stats).toContain('0 OBS');   // the mining pool balance, from /supply.poolBalanceObs
   });
 
-  it('ONS computes the registration fee from the protocol price and the protocol table', async () => {
+  it('ONS shows the protocol fee in OBS, with no dollar price and no oracle', async () => {
     respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
     await import('../web/src/pages/ons.js');
     await settle();
 
     const panel = document.querySelector('#register')!.textContent ?? '';
-    expect(panel).toContain('$50.1');                       // oracle median, from /oracle
-    expect(panel).toContain('2 independent oracle submissions');
-    expect(panel).toContain('$5');                          // registrationFeeUsd, from /params
-    // $5.00 at $50.10/OBS, exact integer maths: 0.099800399201596806 OBS
-    expect(panel).toContain('0.099800399201596806 OBS');
+    expect(panel).toContain('0.050000000000000000 OBS');
+    expect(panel).toContain('consensus parameter');
+    expect(panel).not.toMatch(/\$\d/);
+    expect(panel).not.toContain('oracle');
     expect(panel).not.toContain('undefined');
+    expect(panel).not.toContain('NaN');
+    expect(document.querySelector<HTMLButtonElement>('#ons-register')!.disabled).toBe(false);
   });
 
-  it('ONS closes registration honestly when the feed is unusable', async () => {
+  it('ONS stays open when the price feed is unusable, because it does not use one', async () => {
+    // Registration used to be gated on an oracle median. Repricing in OBS
+    // removed that dependency, and this asserts the gate is really gone: a
+    // dead feed must not close a feature it no longer prices.
     respond = (url) => {
       if (!url.includes('/api/rpc')) return { status: 404, body: {} };
       if (decodeURIComponent(url).includes('/oracle')) {
@@ -549,8 +567,19 @@ describe('pages read the field names the node really sends', () => {
     await settle();
 
     const panel = document.querySelector('#register')!.textContent ?? '';
-    expect(panel).toContain('closed right now');
-    expect(panel).not.toContain('0.0998');
+    expect(panel).toContain('0.050000000000000000 OBS');
+    expect(panel).not.toContain('closed');
+    expect(document.querySelector<HTMLButtonElement>('#ons-register')!.disabled).toBe(false);
+  });
+
+  it('ONS refuses to guess a fee when no node answers', async () => {
+    respond = () => ({ status: 503, body: { error: 'no healthy node' } });
+    await import('../web/src/pages/ons.js');
+    await settle();
+
+    const panel = document.querySelector('#register')!.textContent ?? '';
+    expect(panel).toContain('could not reach a node');
+    expect(document.querySelector<HTMLButtonElement>('#ons-register')!.disabled).toBe(true);
   });
 
   it('Circle lists countries with their GLV in OBS and drills into divisions', async () => {

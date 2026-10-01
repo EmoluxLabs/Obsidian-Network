@@ -9,7 +9,7 @@
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
-import { el, obs, badge, spinner, rewardLine, rewardPerClaim, oraclePriceText } from '../lib/ui.js';
+import { el, obs, badge, spinner, rewardLine, rewardPerClaim } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 
@@ -129,10 +129,10 @@ layout({
 
 void (async () => {
   try {
-    const [status, schedule, oracle] = await Promise.all([
+    const [status, schedule, params] = await Promise.all([
       client.status(),
       client.miningSchedule().catch(() => undefined),
-      client.oracle().catch(() => undefined),
+      client.params().catch(() => undefined),
     ]);
     stats.replaceChildren(
       stat('Blocks', status.height.toLocaleString()),
@@ -140,11 +140,10 @@ void (async () => {
       stat('Peers', String(status.peers)),
       stat('Reward / day', schedule ? rewardLine(schedule) : '—', schedule ? `${rewardPerClaim(schedule)} per claim` : ''),
       stat('Active miners', String(schedule?.activeMiners ?? 0)),
-      stat(
-        'Protocol price',
-        oraclePriceText(oracle),
-        oracle?.usable ? `${oracle.sourceCount} independent sources` : 'USD features stay closed until the feed is usable',
-      ),
+      // Every protocol fee is denominated in OBS, so there is nothing on this
+      // page that depends on a price feed. What a market pays for OBS is a
+      // market's business, not the chain's.
+      stat('Name registration', `${params?.ons.registrationFeeObs ?? '—'} OBS`, 'a consensus parameter, not a conversion'),
     );
 
     chains.replaceChildren(
@@ -177,8 +176,10 @@ void (async () => {
       el(
         'p',
         { class: 'fineprint' },
-        badge('FAIL CLOSED', 'warn'),
-        ' Features priced in dollars (names, business pages, land) refuse to execute while the protocol price is stale or has fewer than two independent sources. A broken oracle stops those features — it never invents a price.',
+        badge('NO PRICE ORACLE', 'ok'),
+        ' Every protocol fee — names, business pages, land, validator bonds — is denominated in OBS and fixed by consensus. ' +
+          'Nothing on this chain consults an external price source, so no feed can fail, stall or be manipulated into changing what anything costs. ' +
+          'What OBS trades for elsewhere is a matter for those markets.',
       ),
     );
   } catch (error) {

@@ -15,7 +15,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations, randomHex } from '../lib/operations.js';
-import { el, obs, obsFromSeals, usd, usdMicroFromDollars, oraclePriceMicro, spinner, toast, kv, short, when } from '../lib/ui.js';
+import { el, obs, obsFromSeals, spinner, toast, kv, short, when } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const feed = el('section', { class: 'card', id: 'feed' }, spinner('reading the feed from the chain…'));
@@ -196,23 +196,23 @@ async function followAccount(targetAccountId: string): Promise<void> {
   }
 }
 
-/** Business pages: $50-equivalent in OBS, paid to the treasury, split 70/30 on page revenue. */
+/** Business pages: a flat OBS price, paid to the treasury, split 70/30 on page revenue. */
 export async function businessPage(accountId: string): Promise<void> {
-  // The dollar price and the OBS conversion both come from the node: the fee is
-  // `businessPagePriceUsd` at the protocol's current median, never a constant.
-  const [oracle, params] = await Promise.all([client.oracle(), client.params()]);
-  const micro = oraclePriceMicro(oracle);
-  if (!micro) {
-    toast('The protocol price feed is stale or too thin, so the page price cannot be computed. The node would refuse the transaction anyway.', 'error');
+  // The price is a consensus parameter in OBS, read from this node's /params.
+  // It used to be a dollar amount converted at an oracle median, which meant a
+  // chain with no price feed could not sell a business page at all.
+  let priceObs: string;
+  try {
+    priceObs = (await client.params()).social.businessPagePriceObs;
+  } catch (error) {
+    toast(`Could not read the business page price from a node: ${(error as Error).message}`, 'error');
     return;
   }
-  const priceUsdMicro = usdMicroFromDollars(params.social.businessPagePriceUsd);
-  const priceObs = priceUsdMicro * 10n ** 18n / micro;
-  const passphrase = window.prompt(`A business page costs ${usd(priceUsdMicro.toString())} in OBS today (${obs(priceObs)} OBS), paid to the treasury. Unlock to continue.`);
+  const passphrase = window.prompt(`A business page costs ${priceObs} OBS, paid to the treasury. Unlock to continue.`);
   if (!passphrase) return;
   try {
     const wallet = await Wallet.unlock(passphrase);
-    await operations.buyBusinessPage(client, wallet, { accountId, priceObs: obsFromSeals(priceObs) });
+    await operations.buyBusinessPage(client, wallet, { accountId, priceObs });
     toast('Business page purchase signed and submitted. Creator split: 70% to you, 30% to the treasury.', 'success');
   } catch (error) {
     toast((error as Error).message, 'error');

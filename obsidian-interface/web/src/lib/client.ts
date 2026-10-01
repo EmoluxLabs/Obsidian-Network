@@ -146,7 +146,16 @@ export interface ChainParams {
     confirmationDepthHard: number;
   };
   consensus: { forkChoice: string; minValidatorBondObs: string; unbondingBlocks: number; maxReorgDepth: number };
-  ons: { registrationFeeUsd: string; termSeconds: number; graceSeconds: number; minLength: number; maxLength: number };
+  ons: {
+    // OBS-denominated since 1.2.0. The node sends `registrationFeeObs` and
+    // `renewalFeeObs`; there is no dollar price and no oracle in this path.
+    registrationFeeObs: string;
+    renewalFeeObs: string;
+    termSeconds: number;
+    graceSeconds: number;
+    minLength: number;
+    maxLength: number;
+  };
   capsules: {
     minCommitmentObs: string;
     timeTravelMultiplier: string;
@@ -163,7 +172,7 @@ export interface ChainParams {
   social: {
     creatorShareBps: number;
     networkShareBps: number;
-    businessPagePriceUsd: string;
+    businessPagePriceObs: string;
     monetisationMinFollowers: number;
     monetisationMinMonthlyViews: number;
   };
