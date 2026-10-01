@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after, before } from 'node:test';
+import { connect } from 'node:net';
 // Read the protocol version from the build under test rather than hard-coding
 // it: a version bump is a protocol change, and these tests must follow the
 // software, not a literal that silently goes stale.
@@ -309,9 +310,46 @@ async function ensureOraclePrice() {
   return state.oraclePromise;
 }
 
+/**
+ * Refuse to start on top of someone else's cluster.
+ *
+ * A previous run that was interrupted leaves nodes holding 39630-39635. The
+ * new nodes then fail to bind, every wait runs its full timeout, and the suite
+ * reports four unrelated consensus failures five minutes later — which is
+ * exactly what happened in a release gate here. A bound port is an environment
+ * problem and must say so immediately.
+ */
+function portInUse(port) {
+  return new Promise((resolvePromise) => {
+    const socket = connect({ host: '127.0.0.1', port });
+    const done = (answer) => {
+      socket.destroy();
+      resolvePromise(answer);
+    };
+    socket.setTimeout(1000);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+  });
+}
+
+async function assertPortsFree() {
+  const ports = NODES.flatMap((node) => [node.rpc, node.p2p]);
+  const taken = [];
+  for (const port of ports) if (await portInUse(port)) taken.push(port);
+  assert.equal(
+    taken.length,
+    0,
+    `ports already in use: ${taken.join(', ')}. A previous cluster run is probably still alive — ` +
+      `stop it first (pkill -f "obsidian-core/dist/index.js" or lsof -ti:${taken[0] ?? 39630} | xargs kill), ` +
+      'then run this suite again.',
+  );
+}
+
 before(async () => {
   if (skip) return;
   assert.ok(existsSync(ENTRY), `build the core first: ${ENTRY} is missing (npm --prefix obsidian-core run build)`);
+  await assertPortsFree();
   core = await loadCore();
   const started = NODES.map((node) => startNode(node));
   const [a, b, c] = started;
