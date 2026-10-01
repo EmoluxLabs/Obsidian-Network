@@ -12,11 +12,20 @@ export interface AccountView {
   displayName?: string;
   invitesIssued: number;
   walletAddress?: string;
+  mfaEnabled: boolean;
+  /** Mining opens only once password, recovery codes and MFA are all done. */
+  miningEnabled: boolean;
+  recoveryCodesRemaining: number;
 }
 
 export interface AuthConfig {
   inviteOnly: boolean;
-  googleClientId: string;
+  /** Always 'GMAIL_PASSWORD_MFA'. Google OAuth was removed. */
+  authMethod: string;
+  emailDomains: string[];
+  passwordMinLength: number;
+  mfaRequiredForMining: boolean;
+  recoveryCodeCount: number;
   maxInvitesPerAccount: number;
   accountsExist: boolean;
   /**
@@ -56,12 +65,42 @@ export const session = {
       return undefined;
     }
   },
-  signIn(idToken: string, inviteCode?: string): Promise<{ account: AccountView; bootstrapped: boolean }> {
-    // Note there is no `isGoogleUser` flag: the server verifies the token.
-    return api<{ account: AccountView; bootstrapped: boolean }>('/api/auth/google', {
-      method: 'POST',
-      body: JSON.stringify({ idToken, inviteCode }),
-    });
+  /**
+   * Register. The response is the ONLY time the recovery codes exist — they
+   * are not stored in recoverable form and can never be shown again.
+   */
+  register(input: {
+    email: string;
+    password: string;
+    inviteCode: string;
+    displayName?: string;
+  }): Promise<{
+    account: AccountView;
+    bootstrapped: boolean;
+    recoveryCodes: string[];
+    recoveryCodesWarning: string;
+    nextStep: string;
+  }> {
+    return api('/api/auth/register', { method: 'POST', body: JSON.stringify(input) });
+  },
+  signIn(input: { email: string; password: string; totp?: string }): Promise<{
+    account: AccountView;
+    bootstrapped: boolean;
+  }> {
+    return api('/api/auth/login', { method: 'POST', body: JSON.stringify(input) });
+  },
+  startMfa(): Promise<{ secret: string; uri: string; digits: number; periodSeconds: number; note: string }> {
+    return api('/api/auth/mfa/setup', { method: 'POST', body: '{}' });
+  },
+  confirmMfa(totp: string): Promise<{ account: AccountView; miningEnabled: boolean; note: string }> {
+    return api('/api/auth/mfa/confirm', { method: 'POST', body: JSON.stringify({ totp }) });
+  },
+  recover(input: { email: string; recoveryCode: string; newPassword: string }): Promise<{
+    account: AccountView;
+    recovered: boolean;
+    recoveryCodesRemaining: number;
+  }> {
+    return api('/api/auth/recover', { method: 'POST', body: JSON.stringify(input) });
   },
   signOut(): Promise<{ signedOut: boolean }> {
     return api<{ signedOut: boolean }>('/api/auth/logout', { method: 'POST', body: '{}' });
@@ -76,31 +115,3 @@ export const session = {
     return api('/api/wallet/link', { method: 'POST', body: JSON.stringify({ address }) });
   },
 };
-
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize(options: { client_id: string; callback: (response: { credential: string }) => void }): void;
-          renderButton(element: HTMLElement, options: Record<string, unknown>): void;
-          prompt(): void;
-        };
-      };
-    };
-  }
-}
-
-/** Load Google Identity Services on demand (never at page load). */
-export function loadGoogleIdentity(): Promise<void> {
-  if (window.google?.accounts?.id) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('could not load Google sign-in (offline or blocked)'));
-    document.head.append(script);
-  });
-}

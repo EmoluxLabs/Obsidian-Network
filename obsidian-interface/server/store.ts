@@ -15,7 +15,13 @@ import { verifyGenesisInvitation, type GenesisInviteRecord } from './genesis-inv
 export interface Account {
   accountId: string;
   subject: string;
+  /** What the user typed, lowercased. Display only. */
   email: string;
+  /**
+   * Gmail uniqueness key: dots and +tags stripped. This — not `email` — is what
+   * enforces one mining account per human. Computed server-side, always.
+   */
+  canonicalEmail: string;
   displayName?: string;
   createdAt: number;
   lastSeenAt: number;
@@ -23,6 +29,27 @@ export interface Account {
   /** Wallet address the account says it owns. Advisory only; never trusted. */
   walletAddress?: string;
   suspended?: boolean;
+
+  /** scrypt hash of the password. The password itself is never stored. */
+  passwordHash?: string;
+  /** Hashes of the unused recovery codes. Plaintext exists only once, at issue. */
+  recoveryCodeHashes?: string[];
+  recoveryCodesIssuedAt?: number;
+  recoveryCodesRemaining?: number;
+
+  /** TOTP secret, set when MFA is being enrolled, confirmed once verified. */
+  totpSecret?: string;
+  mfaEnabled?: boolean;
+  /** Last accepted TOTP step, so one code cannot be replayed inside its window. */
+  totpLastStep?: number;
+
+  /**
+   * Mining is open only once enrolment is finished: password set, recovery
+   * codes acknowledged and MFA confirmed.
+   */
+  miningEnabled?: boolean;
+  failedLogins?: number;
+  lockedUntil?: number;
 }
 
 export interface Invite {
@@ -129,19 +156,81 @@ export class AccountStore {
     return [...this.accounts.values()].sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  createAccount(profile: { subject: string; email: string; displayName?: string }): Account {
+  /**
+   * Look an account up by its canonical Gmail key.
+   *
+   * Callers must pass an already-canonicalised address: canonicalisation is a
+   * server concern (see identity.ts) and this index is the single place
+   * uniqueness is decided.
+   */
+  findByCanonicalEmail(canonicalEmail: string): Account | undefined {
+    for (const account of this.accounts.values()) {
+      if (account.canonicalEmail === canonicalEmail) return account;
+    }
+    return undefined;
+  }
+
+  createAccount(profile: {
+    subject: string;
+    email: string;
+    canonicalEmail: string;
+    displayName?: string;
+    passwordHash?: string;
+    recoveryCodeHashes?: string[];
+  }): Account {
+    // Last line of defence against a duplicate mining identity. The HTTP layer
+    // checks too, but this one is what makes a race impossible: the check and
+    // the insert happen with no await between them.
+    const clash = this.findByCanonicalEmail(profile.canonicalEmail);
+    if (clash) {
+      const error = new Error('an account already exists for that Gmail address');
+      (error as Error & { code?: string }).code = 'ERR_EMAIL_IN_USE';
+      throw error;
+    }
     const account: Account = {
       accountId: randomAccountId(),
       subject: profile.subject,
       email: profile.email,
+      canonicalEmail: profile.canonicalEmail,
       displayName: profile.displayName,
       createdAt: Date.now(),
       lastSeenAt: Date.now(),
       invitesIssued: 0,
+      passwordHash: profile.passwordHash,
+      recoveryCodeHashes: profile.recoveryCodeHashes ?? [],
+      recoveryCodesIssuedAt: profile.recoveryCodeHashes ? Date.now() : undefined,
+      recoveryCodesRemaining: profile.recoveryCodeHashes?.length ?? 0,
+      mfaEnabled: false,
+      miningEnabled: false,
     };
     this.accounts.set(account.accountId, account);
     this.persist();
     return account;
+  }
+
+  /** Persist mutations made to an account object held by a caller. */
+  saveAccount(account: Account): void {
+    this.accounts.set(account.accountId, account);
+    this.persist();
+  }
+
+  /**
+   * Spend a recovery code.
+   *
+   * Synchronous by design: the match and the removal happen with no await
+   * between them, so two simultaneous attempts cannot both consume the same
+   * code. Returns false for an unknown or already-spent code without saying
+   * which.
+   */
+  consumeRecoveryCode(accountId: string, verify: (hash: string) => boolean): boolean {
+    const account = this.accounts.get(accountId);
+    if (!account || !account.recoveryCodeHashes || account.recoveryCodeHashes.length === 0) return false;
+    const index = account.recoveryCodeHashes.findIndex((hash) => verify(hash));
+    if (index < 0) return false;
+    account.recoveryCodeHashes.splice(index, 1);
+    account.recoveryCodesRemaining = account.recoveryCodeHashes.length;
+    this.persist();
+    return true;
   }
 
   /**

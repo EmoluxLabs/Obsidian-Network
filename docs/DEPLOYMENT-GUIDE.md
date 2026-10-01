@@ -340,7 +340,7 @@ curl -s localhost:38630/status
 `curl` fetches a web address and prints the result. Expect to see:
 
 - `"protocolVersion":"1.1.0"`
-- `"paramsHash":"beeba5c7097efee4eeb13265e2a3294c"`
+- `"paramsHash":"dbbf8511bfe5bee493f80f3dd23a047a"`
 
 Stop the node with **Ctrl+C** in the first terminal.
 
@@ -357,8 +357,8 @@ node dist/index.js genesis init --network mainnet
 This prints a JSON document. Deterministically, every time, it contains:
 
 ```json
-"genesisId": "20a787220fa49a2d8a41276b370705a16add75ba",
-"genesisHash": "60abd3c2a3637955e7a4fc866d84be6818dd0cd9b00ccc7010969c5843289638"
+"genesisId": "4c2c37aa2ea29512cee4833151697237c1372ff3",
+"genesisHash": "42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31"
 ```
 
 To see just those two lines:
@@ -712,7 +712,7 @@ not for mainnet.
 **Expected output** (the important lines):
 
 ```
-chain ready  network=devnet chainId=7780 height=0 genesisId=30ebaab3771c75cd3f66828bd7329a08fc92639b
+chain ready  network=devnet chainId=7780 height=0 genesisId=11244cc501c1d4d44a57750b8e53a98c0888e4f0
 p2p listening  host=0.0.0.0 port=38631
 rpc listening  host=0.0.0.0 port=38630
 obsidian core ready  maxSupplyObs=21000000000000000000000000
@@ -807,7 +807,7 @@ for p in 38630 38640 38650; do
 done
 ```
 
-All three must print `beeba5c7097efee4eeb13265e2a3294c`.
+All three must print `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ### C9. Create a wallet
 
@@ -855,9 +855,9 @@ This is interface-level, so start the interface (§C14) first, then:
 
 ```bash
 # 1. The first account requires the Genesis Invitation
-curl -s -X POST http://localhost:8788/api/auth/google \
+curl -s -X POST http://localhost:8788/api/auth/register \
   -H 'content-type: application/json' \
-  -d '{"idToken":"<a real Google ID token>"}'
+  -d '{"email":"yourname@gmail.com","password":"a-long-enough-pass-9"}'
 # -> 403 ERR_GENESIS_INVITE_REQUIRED
 
 # 2. With the correct invitation -> 200, account created
@@ -873,8 +873,8 @@ curl -s http://localhost:8788/api/auth/config
 It reports `"genesisInvite":{"configured":true,"redeemed":false}` and never the
 code or its hash.
 
-> Real Google sign-in needs `OBSIDIAN_GOOGLE_CLIENT_ID` and a real token. The
-> automated tests cover the whole flow with a stubbed verifier:
+> Sign-in is entirely first-party, so there is nothing external to configure
+> and the whole flow is exercised by the automated tests:
 > `npm --prefix obsidian-interface test` → `tests/genesis-invite.test.ts` (23
 > tests) and the genesis tests in `tests/server.test.ts`, including 8
 > simultaneous registrations racing for one invitation with exactly one winner.
@@ -1174,10 +1174,10 @@ of this. What follows is the same sequence with more explanation for a beginner.
 |---|---|
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
-| Genesis id | `20a787220fa49a2d8a41276b370705a16add75ba` |
-| Genesis hash | `60abd3c2a3637955e7a4fc866d84be6818dd0cd9b00ccc7010969c5843289638` |
+| Genesis id | `4c2c37aa2ea29512cee4833151697237c1372ff3` |
+| Genesis hash | `42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31` |
 | Protocol version | `1.1.0` |
-| PARAMS_HASH | `beeba5c7097efee4eeb13265e2a3294c` |
+| PARAMS_HASH | `dbbf8511bfe5bee493f80f3dd23a047a` |
 | RPC / P2P port | 8630 / 8631 |
 | Address prefix | `obs1` |
 | Max supply | 21,000,000 OBS |
@@ -1223,7 +1223,7 @@ different jurisdictions. Provision each per §D3–D8 with `--network mainnet`.
 node dist/index.js start --config config/mainnet.json
 ```
 
-Expect `height=0` and `genesisId=20a787220fa49a2d8a41276b370705a16add75ba`.
+Expect `height=0` and `genesisId=4c2c37aa2ea29512cee4833151697237c1372ff3`.
 
 Confirm the state is genuinely empty:
 
@@ -1652,20 +1652,44 @@ design.
 
 | Layer | What it controls | Who enforces |
 |---|---|---|
-| **Application** | Who may use *this interface deployment*: Google sign-in, invite codes, the Genesis Invitation, sessions | The interface server |
+| **Application** | Who may use *this interface deployment*: Gmail + password sign-in, MFA, invite codes, the Genesis Invitation, sessions | The interface server |
 | **Consensus** | Who may mine, how much, how often, and the supply cap | Every node, independently |
 
 The application layer cannot create OBS, change a claim, or make anyone
 eligible. Deleting the interface's account file costs access, not money.
 
-### H2. Google login
+### H2. Sign-in
 
-Implemented. The browser gets a Google ID token; the **server** verifies it
-against Google's public keys. A body field claiming `isGoogleUser: true` is
-**deliberately never read** — the code comments say so.
+First-party, in four steps: a **Gmail address**, a **password**, an **invite
+code**, then **TOTP multi-factor**. Google OAuth was removed in v1.2.0 — no
+third party decides who may hold an Obsidian mining account, and the interface
+cannot be locked out by someone else's token service.
 
-Requires `OBSIDIAN_GOOGLE_CLIENT_ID`. If empty, account creation is disabled
-entirely, and the wallet, miner and explorer keep working without accounts.
+- The address is **canonicalised server-side** (`server/identity.ts`): dots and
+  `+tags` are stripped and `googlemail.com` folds into `gmail.com`, so
+  `john.smith+mining@googlemail.com` and `johnsmith@gmail.com` are **one**
+  mining account. The page is never asked whether an address is unique; the
+  store rejects a clash with no `await` between the check and the insert, so a
+  race cannot produce two accounts for one inbox.
+- Passwords are at least 12 characters with letters and digits, stored only as
+  salted scrypt hashes (N=32768). **There is no password reset and no email
+  verification** — an email channel would make the mail provider an authority
+  over mining accounts, and no email is ever sent.
+- **Ten single-use recovery codes** (`OBS-RECOVERY-XXXX-XXXX-XXXX`) are issued
+  at registration and shown exactly once, with the page refusing to move on
+  until the user confirms they have written them down. Only scrypt hashes are
+  kept, so no operator can recover them. They are the only route back into an
+  account, and a used code is removed the moment it matches.
+- **MFA is required before mining opens** on an account: RFC 6238 TOTP, SHA-1,
+  6 digits, 30-second steps, ±1 step of tolerance, with the consumed step
+  recorded so a code cannot be replayed against the login route.
+- No client-supplied flag is trusted. A request asserting `mfaEnabled`,
+  `miningEnabled` or an `accountId` is treated as noise; `tests/server.test.ts`
+  asserts it.
+
+Account creation remains disabled on a deployment that has no Genesis
+Invitation configured, and the wallet, miner and explorer keep working with no
+account at all.
 
 ### H3. Invitations
 
@@ -2437,9 +2461,9 @@ curl -s https://rpc1.example.org/status
 
 **Protocol**
 - [ ] `/status` reports `protocolVersion: 1.1.0`
-- [ ] PARAMS_HASH `beeba5c7097efee4eeb13265e2a3294c` on **every** node
+- [ ] PARAMS_HASH `dbbf8511bfe5bee493f80f3dd23a047a` on **every** node
 - [ ] `genesis init` deterministic across two machines
-- [ ] Mainnet genesis id `20a787220fa49a2d8a41276b370705a16add75ba`
+- [ ] Mainnet genesis id `4c2c37aa2ea29512cee4833151697237c1372ff3`
 - [ ] Height 0 supply is 0; `invariantOk: true`
 
 **Release**
@@ -2529,8 +2553,9 @@ An honest comparison, with the evidence.
    says so: no multi-day soak test, so memory growth over weeks is unknown, and
    **node reward settlement has never been observed over real 24-hour periods** —
    it is tested by invoking the block routine at a period boundary.
-4. **Google OAuth has never been exercised against Google.** Token verification
-   is tested against injected keys and a JWKS document.
+4. **Sign-in has never run at scale with real users.** The Gmail/password/MFA
+   flow is covered end-to-end over real HTTP, including canonical-address
+   dedupe, TOTP replay and recovery-code reuse, but it has not met a crowd.
 5. **`main` is empty** and **no tags exist**. There is no released, tagged,
    immutable point to launch from yet.
 6. **One operator.** Mainnet needs three independent operators; you currently
@@ -2558,7 +2583,7 @@ restore rehearsal.* A backup you have never restored is a hope, not a backup.
 **3. Public testnet, and leave it running for weeks (§D).**
 This is the step that closes gaps 3 and 4. Let reward periods actually settle
 over real days. Register a node, post heartbeats, collect attestations, watch a
-payout. Exercise Google sign-in with a real client id. Watch memory over a
+payout. Put the sign-in and recovery flow in front of real users. Watch memory over a
 fortnight.
 
 **4. Close the release-signing gap (§A12) and decide on monitoring (§D11)**

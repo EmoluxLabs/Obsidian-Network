@@ -19,10 +19,24 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, statSync, createReadStream } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
-import { AccountStore } from './store.js';
-import { GoogleTokenVerifier, newInviteCode, newSecret, type TokenVerifier } from './auth.js';
+import { AccountStore, type Account } from './store.js';
+import { newInviteCode, newSecret } from './auth.js';
 import { NodePool } from './nodes.js';
 import { looksLikeGenesisCode } from './genesis-invite.js';
+import {
+  canonicalGmail,
+  checkPasswordPolicy,
+  hashSecret,
+  verifySecret,
+  newRecoveryCodeSet,
+  normaliseRecoveryCode,
+  newTotpSecret,
+  verifyTotp,
+  totpUri,
+  TOTP_DIGITS,
+  TOTP_STEP_SECONDS,
+  RECOVERY_CODE_COUNT,
+} from './identity.js';
 
 export interface InterfaceConfig {
   host: string;
@@ -35,7 +49,6 @@ export interface InterfaceConfig {
   coreDir: string;
   dataDir: string;
   nodeUrls: string[];
-  googleClientId?: string;
   /** Origins allowed to call the API with credentials. */
   allowedOrigins: string[];
   /** Max invites one account may issue (protocol default: 5). */
@@ -68,7 +81,6 @@ export const DEFAULT_INTERFACE_CONFIG: InterfaceConfig = {
 export interface InterfaceDependencies {
   store: AccountStore;
   pool: NodePool;
-  verifier: TokenVerifier;
   config: InterfaceConfig;
   log: (level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Record<string, unknown>) => void;
 }
@@ -143,9 +155,6 @@ export class InterfaceServer {
           nodes: this.config.nodeUrls,
           log: (level, message, fields) => log(level, message, fields),
         }),
-      verifier:
-        dependencies.verifier ??
-        new GoogleTokenVerifier({ clientId: this.config.googleClientId ?? '' }),
       config: this.config,
       log,
     };
@@ -218,13 +227,9 @@ export class InterfaceServer {
         return;
       }
 
-      // The account page is the only surface that needs a third party: Google
-      // Identity Services renders its button in an iframe and issues its ID
-      // token from accounts.google.com. Every other page keeps the strictest
-      // policy, and the token is still verified server-side against Google's
-      // JWKS — the browser is never trusted to assert who the user is.
-      const authSurface = url.pathname === '/app' || url.pathname.startsWith('/app/');
-      this.securityHeaders(response, { googleIdentity: authSurface });
+      // Since Google sign-in was removed, no page needs a third-party origin:
+      // every surface, the account page included, gets the strictest policy.
+      this.securityHeaders(response);
 
       // Every branch is awaited: returning a promise from inside a try/catch
       // would let its rejection escape the error handling below.
@@ -244,20 +249,19 @@ export class InterfaceServer {
     }
   }
 
-  private securityHeaders(response: ServerResponse, options: { googleIdentity?: boolean } = {}): void {
+  private securityHeaders(response: ServerResponse): void {
     // The pages are static and the API is same-origin, so a strict policy costs
     // nothing and blocks injected script from doing anything useful.
-    const google = options.googleIdentity ? ' https://accounts.google.com' : '';
     response.setHeader(
       'Content-Security-Policy',
       [
         "default-src 'self'",
-        `script-src 'self'${google}`,
+        "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob:",
         "font-src 'self' data:",
-        `connect-src 'self'${google}`,
-        google ? "frame-src 'self' https://accounts.google.com" : "frame-src 'none'",
+        "connect-src 'self'",
+        "frame-src 'none'",
         "worker-src 'self'",
         "object-src 'none'",
         "frame-ancestors 'none'",
@@ -354,7 +358,13 @@ export class InterfaceServer {
     if (path === '/api/auth/config') {
       this.json(response, 200, {
         inviteOnly: true,
-        googleClientId: this.config.googleClientId ?? '',
+        // Accounts are Gmail + password + invite + MFA. Google OAuth was
+        // removed: no third party decides who may hold a mining account.
+        authMethod: 'GMAIL_PASSWORD_MFA',
+        emailDomains: ['gmail.com', 'googlemail.com'],
+        passwordMinLength: 12,
+        mfaRequiredForMining: true,
+        recoveryCodeCount: RECOVERY_CODE_COUNT,
         maxInvitesPerAccount: this.config.maxInvitesPerAccount,
         accountsExist: this.dependencies.store.accountCount > 0,
         // Whether a Genesis Invitation is configured and whether it has been
@@ -375,8 +385,28 @@ export class InterfaceServer {
       return;
     }
 
-    if (path === '/api/auth/google' && request.method === 'POST') {
-      await this.loginWithGoogle(request, response);
+    if (path === '/api/auth/register' && request.method === 'POST') {
+      await this.register(request, response);
+      return;
+    }
+
+    if (path === '/api/auth/login' && request.method === 'POST') {
+      await this.login(request, response);
+      return;
+    }
+
+    if (path === '/api/auth/mfa/setup' && request.method === 'POST') {
+      this.mfaSetup(request, response);
+      return;
+    }
+
+    if (path === '/api/auth/mfa/confirm' && request.method === 'POST') {
+      await this.mfaConfirm(request, response);
+      return;
+    }
+
+    if (path === '/api/auth/recover' && request.method === 'POST') {
+      await this.recover(request, response);
       return;
     }
 
@@ -445,105 +475,11 @@ export class InterfaceServer {
     this.json(response, 404, { error: 'unknown interface route', code: 'ERR_NOT_FOUND' });
   }
 
-  private async loginWithGoogle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const body = await this.readJson<{ idToken?: string; inviteCode?: string; isGoogleUser?: boolean }>(request);
-    if (!body?.idToken || typeof body.idToken !== 'string') {
-      this.json(response, 400, { error: 'a Google ID token is required', code: 'ERR_MALFORMED' });
-      return;
-    }
-    // Note: `isGoogleUser` is deliberately never read. Only the verified token
-    // decides who the caller is.
-
-    let profile;
-    try {
-      profile = await this.dependencies.verifier.verify(body.idToken);
-    } catch (error) {
-      this.json(response, 401, { error: `Google sign-in rejected: ${(error as Error).message}`, code: 'ERR_UNAUTHORIZED' });
-      return;
-    }
-
-    let account = this.dependencies.store.findAccountBySubject(profile.subject);
-    if (!account) {
-      const store = this.dependencies.store;
-      const inviteCode = body.inviteCode?.trim();
-      const isFirstAccount = store.accountCount === 0;
-
-      if (isFirstAccount) {
-        // The first account on a deployment is bootstrapped by the Genesis
-        // Invitation — a single-use credential the operator holds offline.
-        // Previously this branch created an account with no credential at all,
-        // which meant whoever reached a fresh deployment first became its
-        // first member. That is now closed.
-        if (!inviteCode) {
-          this.json(response, 403, {
-            error: 'the first account on this deployment requires the Genesis Invitation',
-            code: 'ERR_GENESIS_INVITE_REQUIRED',
-          });
-          return;
-        }
-        if (!store.genesisInviteStatus().configured) {
-          this.json(response, 503, {
-            error: 'this deployment has no Genesis Invitation configured; registration is closed',
-            code: 'ERR_GENESIS_INVITE_NOT_CONFIGURED',
-          });
-          return;
-        }
-
-        // Create the account first so the redemption can record who spent it,
-        // then redeem. If redemption fails the account is removed again, so a
-        // failed attempt cannot leave a half-registered member behind.
-        const candidate = store.createAccount(profile);
-        const redemption = store.redeemGenesisInvite(inviteCode, candidate.accountId);
-        if (!redemption.ok) {
-          store.deleteAccount(candidate.accountId);
-          // One response for every failure mode. A caller must not be able to
-          // distinguish "wrong code" from "already used" and so learn whether
-          // they guessed correctly but arrived late.
-          this.json(response, 403, {
-            error: 'that Genesis Invitation is invalid or has already been used',
-            code: 'ERR_GENESIS_INVITE_INVALID_OR_USED',
-          });
-          return;
-        }
-        account = candidate;
-      } else {
-        if (!inviteCode) {
-          this.json(response, 403, { error: 'this deployment is invite-only', code: 'ERR_INVITE_REQUIRED' });
-          return;
-        }
-        // The Genesis Invitation bootstraps the first account only. Once the
-        // deployment has bootstrapped, presenting a genesis-shaped code is
-        // answered plainly — it is spent or it was never valid — rather than
-        // being reported as an unknown member invite, which would be
-        // confusing for the one operator who may legitimately still be
-        // holding it. The code's *shape* is public knowledge, so saying this
-        // leaks nothing.
-        if (looksLikeGenesisCode(inviteCode)) {
-          this.json(response, 403, {
-            error: 'that Genesis Invitation is invalid or has already been used',
-            code: 'ERR_GENESIS_INVITE_INVALID_OR_USED',
-          });
-          return;
-        }
-        const invite = store.findByCode(inviteCode);
-        if (!invite) {
-          this.json(response, 403, { error: 'that invite code is not valid', code: 'ERR_INVITE_INVALID' });
-          return;
-        }
-        if (invite.acceptedBy) {
-          this.json(response, 403, { error: 'that invite code has already been used', code: 'ERR_INVITE_USED' });
-          return;
-        }
-        account = store.createAccount(profile);
-        store.markInviteAccepted(invite.code, account.accountId);
-      }
-    }
-
-    if (account.suspended) {
-      this.json(response, 403, { error: 'this account is suspended', code: 'ERR_ACCOUNT_SUSPENDED' });
-      return;
-    }
-
+  /**
+   * Admit an account: issue the session cookie and answer with the account.
+   * Shared by registration, password login and recovery.
+   */
+  private admit(response: ServerResponse, account: Account, extra: Record<string, unknown> = {}): void {
     const token = newSecret(32);
     this.dependencies.store.createSession(account.accountId, token);
     this.dependencies.store.touch(account.accountId);
@@ -552,7 +488,310 @@ export class InterfaceServer {
       'Set-Cookie',
       `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${14 * 24 * 3600}${secure}`,
     );
-    this.json(response, 200, { account: publicAccount(account), bootstrapped: this.dependencies.store.accountCount === 1 });
+    this.json(response, 200, {
+      account: publicAccount(account),
+      bootstrapped: this.dependencies.store.accountCount === 1,
+      ...extra,
+    });
+  }
+
+  /**
+   * Register: Gmail + password + an invite.
+   *
+   * Identity is a canonical Gmail address, computed here. The frontend never
+   * decides whether an address is unique — it cannot be trusted to, and the
+   * store's canonical index is the actual gate.
+   *
+   * There is no email verification and no password reset, by design. Recovery
+   * is by recovery code, which is why the codes are issued here, exactly once,
+   * in the only response that will ever contain them.
+   */
+  private async register(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const body = await this.readJson<{ email?: string; password?: string; inviteCode?: string; displayName?: string }>(
+      request,
+    );
+    const store = this.dependencies.store;
+
+    const identity = canonicalGmail(body?.email ?? '');
+    if (!identity) {
+      this.json(response, 400, {
+        error: 'a valid Gmail address is required',
+        code: 'ERR_EMAIL_INVALID',
+      });
+      return;
+    }
+    const policy = checkPasswordPolicy(body?.password ?? '');
+    if (!policy.ok) {
+      this.json(response, 400, { error: `password rejected: ${policy.reason}`, code: 'ERR_PASSWORD_WEAK' });
+      return;
+    }
+    if (store.findByCanonicalEmail(identity.canonical)) {
+      // Gmail ignores dots and +tags, so this also catches the
+      // john.smith+1@ / johnsmith@ trick for farming mining accounts.
+      this.json(response, 409, {
+        error: 'an account already exists for that Gmail address',
+        code: 'ERR_EMAIL_IN_USE',
+      });
+      return;
+    }
+
+    const inviteCode = body?.inviteCode?.trim();
+    const isFirstAccount = store.accountCount === 0;
+    if (!inviteCode) {
+      this.json(
+        response,
+        403,
+        isFirstAccount
+          ? {
+              error: 'the first account on this deployment requires the Genesis Invitation',
+              code: 'ERR_GENESIS_INVITE_REQUIRED',
+            }
+          : { error: 'this deployment is invite-only', code: 'ERR_INVITE_REQUIRED' },
+      );
+      return;
+    }
+    if (isFirstAccount && !store.genesisInviteStatus().configured) {
+      this.json(response, 503, {
+        error: 'this deployment has no Genesis Invitation configured; registration is closed',
+        code: 'ERR_GENESIS_INVITE_NOT_CONFIGURED',
+      });
+      return;
+    }
+    if (!isFirstAccount && looksLikeGenesisCode(inviteCode)) {
+      this.json(response, 403, {
+        error: 'that Genesis Invitation is invalid or has already been used',
+        code: 'ERR_GENESIS_INVITE_INVALID_OR_USED',
+      });
+      return;
+    }
+
+    const passwordHash = hashSecret(body!.password!);
+    const recovery = newRecoveryCodeSet();
+
+    let account: Account;
+    try {
+      account = store.createAccount({
+        subject: `gmail:${identity.canonical}`,
+        email: identity.display,
+        canonicalEmail: identity.canonical,
+        displayName: typeof body?.displayName === 'string' ? body.displayName.slice(0, 64) : undefined,
+        passwordHash,
+        recoveryCodeHashes: recovery.hashes,
+      });
+    } catch (error) {
+      // The store repeats the uniqueness check with no await before the
+      // insert, so a race between two simultaneous registrations lands here.
+      if ((error as Error & { code?: string }).code === 'ERR_EMAIL_IN_USE') {
+        this.json(response, 409, {
+          error: 'an account already exists for that Gmail address',
+          code: 'ERR_EMAIL_IN_USE',
+        });
+        return;
+      }
+      throw error;
+    }
+
+    if (isFirstAccount) {
+      const redemption = store.redeemGenesisInvite(inviteCode, account.accountId);
+      if (!redemption.ok) {
+        store.deleteAccount(account.accountId);
+        this.json(response, 403, {
+          error: 'that Genesis Invitation is invalid or has already been used',
+          code: 'ERR_GENESIS_INVITE_INVALID_OR_USED',
+        });
+        return;
+      }
+    } else {
+      const invite = store.findByCode(inviteCode);
+      if (!invite || invite.acceptedBy) {
+        store.deleteAccount(account.accountId);
+        this.json(
+          response,
+          403,
+          invite
+            ? { error: 'that invite code has already been used', code: 'ERR_INVITE_USED' }
+            : { error: 'that invite code is not valid', code: 'ERR_INVITE_INVALID' },
+        );
+        return;
+      }
+      store.markInviteAccepted(invite.code, account.accountId);
+    }
+
+    // The only time these codes exist in plaintext. They are not stored, not
+    // logged and cannot be re-displayed.
+    this.admit(response, account, {
+      recoveryCodes: recovery.codes,
+      recoveryCodesWarning:
+        'Write these down offline now. They are shown once, they are the only way to recover this mining account, and no one can reissue them.',
+      nextStep: 'SET_UP_MFA',
+    });
+  }
+
+  /** Sign in with Gmail + password, then MFA if it is enabled. */
+  private async login(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const body = await this.readJson<{ email?: string; password?: string; totp?: string }>(request);
+    const store = this.dependencies.store;
+    const identity = canonicalGmail(body?.email ?? '');
+
+    // One answer for "no such account" and "wrong password", so the endpoint
+    // cannot be used to discover which Gmail addresses are registered.
+    const refuse = (): void => {
+      this.json(response, 401, { error: 'those credentials are not valid', code: 'ERR_CREDENTIALS_INVALID' });
+    };
+    if (!identity) {
+      refuse();
+      return;
+    }
+    const account = store.findByCanonicalEmail(identity.canonical);
+    if (!account || !account.passwordHash) {
+      refuse();
+      return;
+    }
+    const now = Date.now();
+    if (account.lockedUntil && account.lockedUntil > now) {
+      this.json(response, 429, {
+        error: 'too many failed attempts; try again later',
+        code: 'ERR_TOO_MANY_ATTEMPTS',
+        retryAfterSeconds: Math.ceil((account.lockedUntil - now) / 1000),
+      });
+      return;
+    }
+    if (!verifySecret(body?.password ?? '', account.passwordHash)) {
+      account.failedLogins = (account.failedLogins ?? 0) + 1;
+      if (account.failedLogins >= 10) {
+        account.lockedUntil = now + 15 * 60 * 1000;
+        account.failedLogins = 0;
+      }
+      store.saveAccount(account);
+      refuse();
+      return;
+    }
+    if (account.suspended) {
+      this.json(response, 403, { error: 'this account is suspended', code: 'ERR_ACCOUNT_SUSPENDED' });
+      return;
+    }
+
+    if (account.mfaEnabled) {
+      const result = verifyTotp(account.totpSecret ?? '', body?.totp ?? '', { lastUsedStep: account.totpLastStep });
+      if (!result.ok) {
+        this.json(response, 401, {
+          error: body?.totp ? `MFA rejected: ${result.reason}` : 'an MFA code is required',
+          code: body?.totp ? 'ERR_MFA_INVALID' : 'ERR_MFA_REQUIRED',
+        });
+        return;
+      }
+      account.totpLastStep = result.step;
+    }
+
+    account.failedLogins = 0;
+    account.lockedUntil = undefined;
+    store.saveAccount(account);
+    this.admit(response, account);
+  }
+
+  /** Begin MFA enrolment: issue a TOTP secret for an authenticator app. */
+  private mfaSetup(request: IncomingMessage, response: ServerResponse): void {
+    const account = this.requireSession(request, response);
+    if (!account) return;
+    if (account.mfaEnabled) {
+      this.json(response, 409, { error: 'MFA is already enabled on this account', code: 'ERR_MFA_ALREADY_ENABLED' });
+      return;
+    }
+    const secret = newTotpSecret();
+    account.totpSecret = secret;
+    this.dependencies.store.saveAccount(account);
+    this.json(response, 200, {
+      secret,
+      uri: totpUri(secret, account.email),
+      digits: TOTP_DIGITS,
+      periodSeconds: TOTP_STEP_SECONDS,
+      note: 'Add this to an authenticator app, then confirm a code to finish enrolment.',
+    });
+  }
+
+  /**
+   * Confirm MFA. This is the step that opens mining: an account is only fully
+   * enrolled once it has a password, recovery codes and a confirmed second
+   * factor.
+   */
+  private async mfaConfirm(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const account = this.requireSession(request, response);
+    if (!account) return;
+    const body = await this.readJson<{ totp?: string }>(request);
+    if (!account.totpSecret) {
+      this.json(response, 409, { error: 'start MFA enrolment first', code: 'ERR_MFA_NOT_STARTED' });
+      return;
+    }
+    const result = verifyTotp(account.totpSecret, body?.totp ?? '', { lastUsedStep: account.totpLastStep });
+    if (!result.ok) {
+      this.json(response, 400, { error: `MFA rejected: ${result.reason}`, code: 'ERR_MFA_INVALID' });
+      return;
+    }
+    account.mfaEnabled = true;
+    account.totpLastStep = result.step;
+    account.miningEnabled = true;
+    this.dependencies.store.saveAccount(account);
+    this.json(response, 200, {
+      account: publicAccount(account),
+      miningEnabled: true,
+      note: 'This account is now fully enrolled. Mining claims are still signed by your wallet, never by this account.',
+    });
+  }
+
+  /**
+   * Recover an account with a recovery code: sets a new password, consumes the
+   * code and clears MFA so the user can re-enrol a new device.
+   */
+  private async recover(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const body = await this.readJson<{ email?: string; recoveryCode?: string; newPassword?: string }>(request);
+    const store = this.dependencies.store;
+    const identity = canonicalGmail(body?.email ?? '');
+    const refuse = (): void => {
+      this.json(response, 403, {
+        error: 'that recovery code is not valid for this account',
+        code: 'ERR_RECOVERY_INVALID',
+      });
+    };
+    if (!identity) {
+      refuse();
+      return;
+    }
+    const account = store.findByCanonicalEmail(identity.canonical);
+    if (!account) {
+      refuse();
+      return;
+    }
+    const policy = checkPasswordPolicy(body?.newPassword ?? '');
+    if (!policy.ok) {
+      this.json(response, 400, { error: `password rejected: ${policy.reason}`, code: 'ERR_PASSWORD_WEAK' });
+      return;
+    }
+    const supplied = normaliseRecoveryCode(body?.recoveryCode ?? '');
+    if (!supplied) {
+      refuse();
+      return;
+    }
+    // Synchronous consume: the match and the removal happen together, so the
+    // same code cannot be spent twice by two simultaneous requests.
+    const consumed = store.consumeRecoveryCode(account.accountId, (hash) => verifySecret(supplied, hash));
+    if (!consumed) {
+      refuse();
+      return;
+    }
+
+    account.passwordHash = hashSecret(body!.newPassword!);
+    account.mfaEnabled = false;
+    account.totpSecret = undefined;
+    account.totpLastStep = undefined;
+    account.miningEnabled = false;
+    account.failedLogins = 0;
+    account.lockedUntil = undefined;
+    store.saveAccount(account);
+    this.admit(response, account, {
+      recovered: true,
+      recoveryCodesRemaining: account.recoveryCodesRemaining ?? 0,
+      nextStep: 'SET_UP_MFA',
+    });
   }
 
   /**
@@ -735,6 +974,11 @@ function publicAccount(account: NonNullable<ReturnType<AccountStore['getAccount'
     createdAt: account.createdAt,
     invitesIssued: account.invitesIssued,
     walletAddress: account.walletAddress,
+    mfaEnabled: account.mfaEnabled === true,
+    miningEnabled: account.miningEnabled === true,
+    recoveryCodesRemaining: account.recoveryCodesRemaining ?? 0,
+    // Never leaked: passwordHash, totpSecret, recoveryCodeHashes,
+    // canonicalEmail (the uniqueness key is a server concern).
   };
 }
 

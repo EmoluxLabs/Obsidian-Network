@@ -44,8 +44,11 @@ is not.
 
 **Do I need an account to mine, or to have a wallet?**
 No. Wallets and mining need a wallet, not an account. Accounts exist only to gate
-invites on the interface (5 per account, enforced by the server), and are optional
-when the operator leaves the Google client id empty.
+invites on the interface (5 per account, enforced by the server). Where an
+operator does run accounts, signing up is a Gmail address, a password, an invite
+code and then TOTP multi-factor — no third-party login, no email verification,
+and no password reset. The recovery codes shown once at registration are the
+only way back into an account, which is why the page insists you write them down.
 
 **Is the explorer hiding something?**
 It hides wallet balances and masks addresses on purpose, so the chain cannot be

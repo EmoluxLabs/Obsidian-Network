@@ -38,7 +38,7 @@ OBSIDIAN_GOOGLE_CLIENT_ID=
 OBSIDIAN_INTERFACE_TRUST_PROXY=false
 ```
 
-Everything is also a flag (`--nodes`, `--port`, `--data-dir`, `--google-client-id`,
+Everything is also a flag (`--nodes`, `--port`, `--data-dir`,
 `--allow-origin`, `--max-invites`, `--trust-proxy`, `--log-level`). The interface
 **refuses to start** if the built assets, the site shells or the node list are
 missing: a half-configured reader that silently reads the wrong chain is worse
@@ -81,17 +81,25 @@ keep working without an account, because they need a *wallet*, not an account.
 
 When enabled:
 
-* the ID token is verified server-side against Google's JWKS (RS256, issuer,
-  audience, expiry, `email_verified`, ±60 s clock skew);
+* registration takes a Gmail address, a password of at least 12 characters, and
+  an invite code; the address is canonicalised **server-side** (dots and `+tags`
+  removed, `googlemail.com` folded into `gmail.com`) so one inbox gets one
+  mining account, whatever the page claims;
+* passwords are stored only as salted scrypt hashes (N=32768), and there is no
+  password reset and no email verification — ten single-use recovery codes are
+  issued once at registration and shown once;
+* multi-factor is TOTP (RFC 6238, 6 digits, 30 s, ±1 step), verified in this
+  process with the consumed step recorded so a code cannot be replayed; mining
+  stays closed on an account until MFA is confirmed;
 * the first account bootstraps the deployment; every later account needs an
   unused invite code;
 * each account may issue at most **5** invites, enforced by the server;
 * sessions are HttpOnly, SameSite=Lax cookies (14 days), and the store contains no
   key material — asserted by the test suite.
 
-The account page is the only surface whose Content-Security-Policy allows
-`accounts.google.com`; every other page keeps `script-src 'self'` with no inline
-scripts at all.
+Sign-in is entirely first-party, so **every** page — the account page included —
+serves `script-src 'self'`, `connect-src 'self'` and `frame-src 'none'`, with no
+third-party origin anywhere in the policy and no inline scripts at all.
 
 ## 5. Behind Cloudflare
 

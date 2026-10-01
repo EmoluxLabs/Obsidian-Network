@@ -313,7 +313,7 @@ If that fails, you missed §2a or §2b.
 protect the network, and for a blockchain it works against you:
 
 - **Secrets are not in the repository.** `.env` is gitignored; the server holds
-  the keystore passphrase, the Google client id and the Genesis Invitation
+  the keystore passphrase and the Genesis Invitation
   *hash*. Nothing in Git unlocks anything. If a secret ever does land in a
   commit, making the repo private does not fix it — rotate the secret.
 - **Users cannot verify what they run.** The project's whole argument is

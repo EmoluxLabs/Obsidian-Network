@@ -462,12 +462,12 @@ operational, and it is now closed.
   Both failure modes were tested by tampering with a copy of a real archive.
 
 **Verification observed:** mainnet genesis id
-`20a787220fa49a2d8a41276b370705a16add75ba`, hash
-`60abd3c2a3637955e7a4fc866d84be6818dd0cd9b00ccc7010969c5843289638`, identical
+`4c2c37aa2ea29512cee4833151697237c1372ff3`, hash
+`42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31`, identical
 across repeated runs; a mainnet node started from the packaged
 `obsidian-node-operator-1.1.0.tar.gz` reporting height 0, total supply
 `0.000000000000000000`, `invariantOk: true` and params hash
-`beeba5c7097efee4eeb13265e2a3294c`; `node scripts/check-invariants.mjs` →
+`dbbf8511bfe5bee493f80f3dd23a047a`; `node scripts/check-invariants.mjs` →
 *protocol 1.1.0: all 50 invariants hold*.
 
 ## 15. Final status — **what is verified, what is not**

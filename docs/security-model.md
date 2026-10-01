@@ -27,7 +27,6 @@ The arrow never points backwards. Concretely:
 | Obsidian Core node | validating and serving chain data | — (it is the reference implementation; run your own to check it) |
 | Interface server | proxying to healthy nodes, holding invite state | keys, funds, prices, balances, consensus |
 | Browser | generating and holding keys, signing | anything it asserts about the chain — nodes verify signatures |
-| Google (optional) | proving an email belongs to a person at sign-in time | identity inside the protocol, wallet derivation, authorisation |
 | Cloudflare / any CDN | caching and forwarding bytes | being an authority; a cached answer is labelled as cached and expires in seconds |
 | Oracle sources | publishing price observations | deciding the price alone — the median of ≥2 fresh sources is used, within bounds |
 
@@ -72,7 +71,10 @@ The arrow never points backwards. Concretely:
 
 | Threat | Mitigation in this codebase | Regression test |
 | --- | --- | --- |
-| Forged sign-in (`isGoogleUser: true`) | the flag is never read; the ID token is verified against Google's JWKS server-side | `obsidian-interface/tests/server.test.ts` |
+| Forged sign-in (a client asserting `miningEnabled`, `mfaEnabled`, an account id) | no client-supplied flag is ever read; the server derives everything from the password hash, the invite and the TOTP step it verified | `obsidian-interface/tests/server.test.ts` |
+| Many mining accounts from one inbox | uniqueness is checked against a canonical Gmail address (dots and `+tags` removed) computed server-side, and enforced in the store with no await between check and insert | `obsidian-interface/tests/identity.test.ts`, `tests/server.test.ts` |
+| Replayed TOTP code | the consumed step is recorded; the same code is refused afterwards | `obsidian-interface/tests/identity.test.ts` |
+| Reused recovery code | codes are stored only as scrypt hashes and removed the moment one matches | `obsidian-interface/tests/server.test.ts` |
 | Invite farming | 5 invites per account enforced in the store, not the page | `tests/server.test.ts` |
 | Replayed mining claim | unique `claimId` + per-wallet sequence + nonce + one claim per wallet per block | `obsidian-core/tests/security/protocol-security.test.ts` |
 | Mined transaction re-mined | spent transaction id and advanced sequence | same |

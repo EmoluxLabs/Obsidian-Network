@@ -9,6 +9,7 @@
  */
 
 import { createServer, type Server } from 'node:http';
+import { createHmac } from 'node:crypto';
 import { connect } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -18,7 +19,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { InterfaceServer, type InterfaceConfig } from '../server/index.js';
 import { AccountStore } from '../server/store.js';
 import { newGenesisInvitation } from '../server/genesis-invite.js';
-import { type GoogleProfile, type TokenVerifier } from '../server/auth.js';
 
 interface Harness {
   origin: string;
@@ -27,7 +27,13 @@ interface Harness {
   genesisCode: string;
   fakeNode: Server;
   nodeUrl: string;
-  signIn: (email: string, options?: { inviteCode?: string; token?: string }) => Promise<Response>;
+  /**
+   * Register an account. Names are turned into real Gmail addresses because
+   * the server only accepts Gmail — see server/identity.ts.
+   */
+  signIn: (name: string, options?: { inviteCode?: string; password?: string; email?: string }) => Promise<Response>;
+  /** The Gmail address `signIn(name)` would use. */
+  mailbox: (name: string) => string;
   /** Force a health sweep so the proxy has an opinion about the stub node. */
   poolCheck: () => Promise<void>;
   close: () => Promise<void>;
@@ -41,19 +47,33 @@ function scratch(): string {
   return dir;
 }
 
-/** A verifier stand-in: the real one is covered in auth.test.ts. */
-function stubVerifier(): TokenVerifier {
-  return {
-    async verify(idToken: string): Promise<GoogleProfile> {
-      if (idToken.startsWith('bad:')) throw new Error('signature verification failed');
-      return {
-        subject: `subject-${idToken}`,
-        email: `${idToken.replace(/[^a-z0-9]/gi, '') || 'user'}@example.com`,
-        emailVerified: true,
-        name: idToken,
-      };
-    },
-  };
+/** Test accounts need a valid Gmail address and a policy-compliant password. */
+function mailbox(name: string): string {
+  return `${name.toLowerCase().replace(/[^a-z0-9-]/g, '')}-tester@gmail.com`;
+}
+const TEST_PASSWORD = 'correct-horse-7-battery';
+
+/**
+ * An independent RFC 6238 implementation, deliberately not imported from the
+ * server: a test that reuses the code under test proves only self-consistency.
+ */
+function totpNow(secret: string, offsetSteps = 0): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const char of secret.replace(/=+$/, '').toUpperCase()) {
+    const index = alphabet.indexOf(char);
+    if (index < 0) throw new Error(`not base32: ${char}`);
+    bits += index.toString(2).padStart(5, '0');
+  }
+  const bytes = Buffer.from((bits.match(/.{8}/g) ?? []).map((byte) => parseInt(byte, 2)));
+  const counter = Math.floor(Date.now() / 1000 / 30) + offsetSteps;
+  const message = Buffer.alloc(8);
+  message.writeUInt32BE(Math.floor(counter / 2 ** 32), 0);
+  message.writeUInt32BE(counter >>> 0, 4);
+  const digest = createHmac('sha1', bytes).update(message).digest();
+  const offset = digest[digest.length - 1]! & 0x0f;
+  const truncated = digest.readUInt32BE(offset) & 0x7fffffff;
+  return String(truncated % 1_000_000).padStart(6, '0');
 }
 
 async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[] } = {}): Promise<Harness> {
@@ -145,7 +165,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
   };
 
   const store = new AccountStore({ dataDir: config.dataDir });
-  const server = new InterfaceServer({ config, store, verifier: stubVerifier() });
+  const server = new InterfaceServer({ config, store });
   const port = await server.listen();
   const origin = `http://127.0.0.1:${port}`;
 
@@ -155,11 +175,17 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
     fakeNode,
     nodeUrl,
     genesisCode: genesis.code,
-    signIn: (email: string, signInOptions: { inviteCode?: string; token?: string } = {}) =>
-      fetch(`${origin}/api/auth/google`, {
+    mailbox,
+    signIn: (name: string, signInOptions: { inviteCode?: string; password?: string; email?: string } = {}) =>
+      fetch(`${origin}/api/auth/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ idToken: signInOptions.token ?? email, inviteCode: signInOptions.inviteCode }),
+        body: JSON.stringify({
+          email: signInOptions.email ?? mailbox(name),
+          password: signInOptions.password ?? TEST_PASSWORD,
+          inviteCode: signInOptions.inviteCode,
+          displayName: name,
+        }),
       }),
     poolCheck: async () => {
       await server.pool.checkNow();
@@ -217,9 +243,14 @@ describe('site serving', () => {
     expect(landing.headers.get('x-content-type-options')).toBe('nosniff');
     expect(landing.headers.get('x-frame-options')).toBe('DENY');
 
+    // The account page used to be the one exception, because Google Identity
+    // Services needed an iframe. Sign-in is first-party now, so there is no
+    // third-party origin anywhere in the policy.
     const app = await fetch(`${h.origin}/app/`);
     const appCsp = app.headers.get('content-security-policy') ?? '';
-    expect(appCsp).toContain('accounts.google.com');
+    expect(appCsp).toBe(csp);
+    expect(appCsp).toContain("frame-src 'none'");
+    expect(appCsp).not.toContain('google');
     expect(appCsp).not.toContain("script-src 'unsafe-inline'");
   });
 
@@ -401,16 +432,117 @@ describe('registration is invite-only', () => {
     expect(((await sixth.json()) as { code: string }).code).toBe('ERR_INVITE_LIMIT');
   });
 
-  it('never trusts a client-supplied isGoogleUser flag', async () => {
+  it('never trusts client-supplied account flags', async () => {
     const h = await harness();
     await h.signIn('founder', { inviteCode: h.genesisCode });
-    const response = await fetch(`${h.origin}/api/auth/google`, {
+    // A client that simply asserts it is already admitted, already MFA'd and
+    // already allowed to mine still has to present an invite.
+    const forged = await fetch(`${h.origin}/api/auth/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ idToken: 'bad:forged', inviteCode: undefined, isGoogleUser: true, email: 'admin@example.com' }),
+      body: JSON.stringify({
+        email: 'intruder-tester@gmail.com',
+        password: TEST_PASSWORD,
+        isGoogleUser: true,
+        mfaEnabled: true,
+        miningEnabled: true,
+        accountId: 'whatever',
+      }),
     });
-    expect(response.status).toBe(401);
-    expect((await response.json()) as { code: string }).toMatchObject({ code: 'ERR_UNAUTHORIZED' });
+    expect(forged.status).toBe(403);
+    expect((await forged.json()) as { code: string }).toMatchObject({ code: 'ERR_INVITE_REQUIRED' });
+  });
+
+  it('treats dots and +tags in a Gmail address as the same mining account', async () => {
+    const h = await harness();
+    const first = await h.signIn('founder', { inviteCode: h.genesisCode, email: 'john.smith@gmail.com' });
+    expect(first.status).toBe(200);
+
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const invite = ((await (
+      await fetch(`${h.origin}/api/auth/invites`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{}' })
+    ).json()) as { invite: { code: string } }).invite.code;
+
+    // Same inbox, dressed up three ways. The server, not the page, decides.
+    const duplicate = await h.signIn('dup', { inviteCode: invite, email: 'johnsmith+mining@googlemail.com' });
+    expect(duplicate.status).toBe(409);
+    expect(((await duplicate.json()) as { code: string }).code).toBe('ERR_EMAIL_IN_USE');
+
+    // A failed duplicate must not have spent the invite.
+    const genuine = await h.signIn('other', { inviteCode: invite, email: 'someone.else@gmail.com' });
+    expect(genuine.status).toBe(200);
+  });
+
+  it('rejects non-Gmail addresses and weak passwords, and will not reset a password', async () => {
+    const h = await harness();
+    const notGmail = await h.signIn('founder', { inviteCode: h.genesisCode, email: 'founder@example.com' });
+    expect(notGmail.status).toBe(400);
+    expect(((await notGmail.json()) as { code: string }).code).toBe('ERR_EMAIL_INVALID');
+
+    const weak = await h.signIn('founder', { inviteCode: h.genesisCode, password: 'short1' });
+    expect(weak.status).toBe(400);
+    expect(((await weak.json()) as { code: string }).code).toBe('ERR_PASSWORD_WEAK');
+
+    // There is no reset endpoint at all — recovery codes are the only route.
+    const reset = await fetch(`${h.origin}/api/auth/reset`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    expect(reset.status).toBe(404);
+  });
+
+  it('issues single-use recovery codes and opens mining only after MFA', async () => {
+    const h = await harness();
+    const created = await h.signIn('founder', { inviteCode: h.genesisCode });
+    expect(created.status).toBe(200);
+    const body = (await created.json()) as {
+      account: { mfaEnabled: boolean; miningEnabled: boolean; recoveryCodesRemaining: number };
+      recoveryCodes: string[];
+    };
+    expect(body.recoveryCodes).toHaveLength(10);
+    expect(new Set(body.recoveryCodes).size).toBe(10);
+    for (const code of body.recoveryCodes) expect(code).toMatch(/^OBS-RECOVERY-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    // Mining stays shut until MFA is confirmed.
+    expect(body.account.mfaEnabled).toBe(false);
+    expect(body.account.miningEnabled).toBe(false);
+
+    const cookie = (created.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const setup = (await (
+      await fetch(`${h.origin}/api/auth/mfa/setup`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{}' })
+    ).json()) as { secret: string };
+
+    const code = totpNow(setup.secret);
+    const confirmed = await fetch(`${h.origin}/api/auth/mfa/confirm`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ totp: code }),
+    });
+    expect(confirmed.status).toBe(200);
+    expect((await confirmed.json()) as { miningEnabled: boolean }).toMatchObject({ miningEnabled: true });
+
+    // The same TOTP code cannot be replayed on the login route.
+    const replay = await fetch(`${h.origin}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: h.mailbox('founder'), password: TEST_PASSWORD, totp: code }),
+    });
+    expect(replay.status).toBe(401);
+    expect(((await replay.json()) as { code: string }).code).toBe('ERR_MFA_INVALID');
+
+    // A recovery code sets a new password, once.
+    const recoveryCode = body.recoveryCodes[0]!;
+    const recovered = await fetch(`${h.origin}/api/auth/recover`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: h.mailbox('founder'), recoveryCode, newPassword: 'a-brand-new-passphrase-9' }),
+    });
+    expect(recovered.status).toBe(200);
+    expect((await recovered.json()) as { recoveryCodesRemaining: number }).toMatchObject({ recoveryCodesRemaining: 9 });
+
+    const reuse = await fetch(`${h.origin}/api/auth/recover`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: h.mailbox('founder'), recoveryCode, newPassword: 'another-passphrase-11' }),
+    });
+    // A spent code is simply not a credential any more.
+    expect(reuse.status).toBe(403);
   });
 });
 
@@ -424,7 +556,7 @@ describe('sessions', () => {
     const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0]!;
     const me = await fetch(`${h.origin}/api/auth/me`, { headers: { cookie } });
     expect(me.status).toBe(200);
-    expect(((await me.json()) as { account: { email: string } }).account.email).toBe('founder@example.com');
+    expect(((await me.json()) as { account: { email: string } }).account.email).toBe(h.mailbox('founder'));
 
     const out = await fetch(`${h.origin}/api/auth/logout`, { method: 'POST', headers: { cookie } });
     expect(out.headers.get('set-cookie')).toContain('Max-Age=0');

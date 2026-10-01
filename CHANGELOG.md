@@ -7,7 +7,80 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.1.0 that is `beeba5c7097efee4eeb13265e2a3294c`.
+a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
+
+---
+
+## [1.2.0] — 2026-10-01
+
+**Consensus-breaking.** The params hash becomes
+`dbbf8511bfe5bee493f80f3dd23a047a` and the mainnet genesis hash becomes
+`42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31`. A node on
+1.1.0 will not peer with a node on 1.2.0, and `MIN_CORE_VERSION` is raised to
+1.2.0 to make that refusal explicit rather than mysterious.
+
+### Changed — every price the protocol charges is now in OBS
+
+No consensus path consults an external price source any more. An oracle outage
+can slow down reporting; it can no longer leave the chain unable to price
+anything, and it can never influence what a block costs.
+
+* **Validator bond: 1,000 OBS → 50 OBS.** Becoming a validator was priced out
+  of reach of the people the network is for. Bond mechanics are unchanged: it
+  is locked collateral, returned 20,160 blocks (~28 h) after unbonding.
+* **ONS names: 0.05 OBS** to register and to renew.
+* **Business pages: 0.005 OBS** to create.
+* **Obsidian Circle land: starting price between 0.01 and 5 OBS** (previously a
+  USD band resolved through the oracle). Appreciation, depreciation and
+  buybacks are untouched, and a buyer is still never retroactively repriced.
+  `/land/quote` now always answers, where before it returned 503 whenever the
+  price feed was stale or under-sourced.
+
+### Changed — sign-in is first-party
+
+Google OAuth is **removed**. No third party decides who may hold an Obsidian
+mining account, and the interface cannot be locked out by someone else's token
+service. Registration is a Gmail address, a password, an invite code, and then
+TOTP multi-factor before mining opens on the account.
+
+* **Canonical Gmail identity, computed server-side.** Dots and `+tags` are
+  stripped and `googlemail.com` folds into `gmail.com`, so one inbox gets
+  exactly one mining account. The page is never asked whether an address is
+  unique; the store rejects a clash with no `await` between the check and the
+  insert, so simultaneous registrations cannot both win.
+* **Passwords**: minimum 12 characters with letters and digits, stored only as
+  salted scrypt hashes (N=32768). **No email verification and no password
+  reset** — an email channel would make the mail provider an authority over
+  mining accounts. No email is ever sent.
+* **Ten single-use recovery codes** (`OBS-RECOVERY-XXXX-XXXX-XXXX`) are issued
+  at registration and displayed exactly once, with copy and download, and the
+  page will not move on until the user confirms they have written them down.
+  Only hashes are stored, so no operator can recover them; a code is removed
+  the moment it matches.
+* **MFA is TOTP** (RFC 6238, SHA-1, 6 digits, 30 s, ±1 step) verified in this
+  process, with the consumed step recorded so a code cannot be replayed.
+  `miningEnabled` goes true only after a code is confirmed.
+* **Stricter CSP everywhere.** The account page was the one surface that had to
+  allow `accounts.google.com`; now every page serves `script-src 'self'`,
+  `connect-src 'self'` and `frame-src 'none'`, with no third-party origin in
+  the policy at all.
+* `OBSIDIAN_GOOGLE_CLIENT_ID` and `--google-client-id` are gone. Nothing
+  replaces them — there is no external credential to configure.
+
+### Added
+
+* `obsidian-interface/server/identity.ts` — canonical Gmail, password policy,
+  scrypt hashing, recovery codes and TOTP, with no external dependencies.
+* `POST /api/auth/{register,login,mfa/setup,mfa/confirm,recover}`, replacing
+  `POST /api/auth/google`.
+* `obsidian-interface/tests/identity.test.ts`, and new server tests covering
+  canonical-address dedupe over real HTTP, TOTP replay refusal, recovery-code
+  single use, and the refusal to trust any client-supplied account flag.
+
+### Verified
+
+Core 233 tests, interface 160 tests, 55 protocol invariants, edge-case suite 7,
+3-node cluster end-to-end 13. `npm audit --omit=dev`: 0 vulnerabilities.
 
 ---
 
@@ -112,7 +185,7 @@ under 1.0.0 rules and will not. Launch from 1.1.0.
 end-to-end cluster 13. Plus 50 protocol invariants, and a mainnet node booted
 from the packaged release archive reporting height 0, supply 0,
 `invariantOk: true` and genesis id
-`20a787220fa49a2d8a41276b370705a16add75ba`.
+`4c2c37aa2ea29512cee4833151697237c1372ff3`.
 
 ### Not production ready
 

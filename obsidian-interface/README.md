@@ -46,7 +46,7 @@ node dist/server/main.js --port 8788
 ```
 
 All flags are listed by `--help`: `--host --port --nodes --data-dir --site-root
---public-dir --core-dir --google-client-id --allow-origin --max-invites
+--public-dir --core-dir --allow-origin --max-invites
 --trust-proxy --log-level`. Every one of them has an `OBSIDIAN_*` environment
 equivalent (`deployment/interface.env.example`).
 
@@ -66,7 +66,7 @@ it in your environment.
 
 | Property | How |
 | --- | --- |
-| Invite-only, server-enforced | Google ID tokens are verified against Google's JWKS **server-side**; `isGoogleUser: true` from a client is ignored; 5 invites per account, enforced in the store |
+| Invite-only, server-enforced | Gmail + password + invite + TOTP, all verified **server-side**; the canonical Gmail address (dots and `+tags` stripped) is the uniqueness key, so one inbox gets one mining account; no client-supplied flag is ever trusted; 5 invites per account, enforced in the store |
 | Keys never leave the browser | wallet creation, keystore (PBKDF2 210k + AES-GCM) and signing happen in `web/src/lib/wallet.ts`; the server only ever sees signed transaction bytes |
 | No balance surveillance | balances are only served by an explicit `POST /api/rpc` to `/wallet/balance`; explorer routes mask addresses |
 | Cache safety | `/api/auth/*`, wallet and node-refresh routes are never cached; the Cloudflare worker in `../cloudflare` enforces the same rule at the edge |

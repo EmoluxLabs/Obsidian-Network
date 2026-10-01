@@ -38,7 +38,12 @@ function storeWith(hash: string): AccountStore {
   return store;
 }
 
-const profile = (subject: string) => ({ subject, email: `${subject}@example.com` });
+const profile = (subject: string) => {
+  // canonicalEmail is the store's uniqueness key, so every fixture needs a
+  // distinct one — exactly as the real registration path supplies.
+  const local = `${subject.replace(/[^a-z0-9-]/g, '')}-tester`;
+  return { subject, email: `${local}@gmail.com`, canonicalEmail: `${local}@gmail.com` };
+};
 
 describe('genesis invitation: generation', () => {
   it('has the documented shape', () => {

@@ -26,7 +26,6 @@ const FLAGS_WITH_VALUES = new Set([
   '--site-root',
   '--public-dir',
   '--core-dir',
-  '--google-client-id',
   '--allow-origin',
   '--max-invites',
   '--genesis-invite-hash',
@@ -80,7 +79,6 @@ Options:
   --site-root <dir>           repo root that holds the site directories
   --public-dir <dir>          built web assets (css/js/assets)
   --core-dir <dir>            compiled browser-safe core modules
-  --google-client-id <id>     Google OAuth client id for sign-in
   --allow-origin <origin>     extra origin allowed to call the API (repeatable)
   --max-invites <n>           invites per account (protocol default 5)
   --genesis-invite-hash <h>   scrypt hash of the single Genesis Invitation that
@@ -95,7 +93,7 @@ Environment:
   OBSIDIAN_INTERFACE_HOST, OBSIDIAN_INTERFACE_PORT, OBSIDIAN_NODE_URLS,
   OBSIDIAN_INTERFACE_DATA_DIR, OBSIDIAN_INTERFACE_SITE_ROOT,
   OBSIDIAN_INTERFACE_PUBLIC_DIR, OBSIDIAN_INTERFACE_CORE_DIR,
-  OBSIDIAN_GOOGLE_CLIENT_ID, OBSIDIAN_INTERFACE_ALLOWED_ORIGINS,
+  OBSIDIAN_INTERFACE_ALLOWED_ORIGINS,
   OBSIDIAN_INTERFACE_MAX_INVITES, OBSIDIAN_INTERFACE_TRUST_PROXY,
   OBSIDIAN_INTERFACE_LOG_LEVEL
 `;
@@ -154,7 +152,6 @@ export function loadInterfaceConfig(argv: string[] = process.argv.slice(2), env 
     coreDir: resolve(String(flags.coreDir ?? env.OBSIDIAN_INTERFACE_CORE_DIR ?? resolve(cwd, 'web', 'core'))),
     dataDir: resolve(String(flags.dataDir ?? env.OBSIDIAN_INTERFACE_DATA_DIR ?? resolve(cwd, '.data'))),
     nodeUrls: nodeUrls.map((url) => url.replace(/\/+$/, '')),
-    googleClientId: (flags.googleClientId ?? env.OBSIDIAN_GOOGLE_CLIENT_ID) as string | undefined,
     allowedOrigins,
     maxInvitesPerAccount: maxInvites,
     // The HASH only. The plaintext Genesis Invitation never enters the process.
@@ -210,7 +207,7 @@ export function describeInterfaceConfig(loaded: LoadedInterfaceConfig): Record<s
     siteRoot: config.siteRoot,
     publicDir: config.publicDir,
     coreDir: config.coreDir,
-    googleSignIn: Boolean(config.googleClientId),
+    authMethod: 'gmail+password+invite+mfa',
     allowedOrigins: config.allowedOrigins,
     maxInvitesPerAccount: config.maxInvitesPerAccount,
     // Presence only: never log the hash, and certainly never the code.

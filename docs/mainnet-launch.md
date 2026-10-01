@@ -12,8 +12,8 @@ before it has users than after.
 |---|---|
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
-| Genesis id | `20a787220fa49a2d8a41276b370705a16add75ba` |
-| Genesis hash | `60abd3c2a3637955e7a4fc866d84be6818dd0cd9b00ccc7010969c5843289638` |
+| Genesis id | `4c2c37aa2ea29512cee4833151697237c1372ff3` |
+| Genesis hash | `42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31` |
 | Protocol version | `1.1.0` |
 | Params hash | published at `/params`; must be identical on every node |
 | Default RPC port | 8630 |
@@ -163,7 +163,7 @@ Expect, in the log:
 
 ```
 chain ready   network=mainnet chainId=7777 height=0
-              genesisId=20a787220fa49a2d8a41276b370705a16add75ba
+              genesisId=4c2c37aa2ea29512cee4833151697237c1372ff3
 obsidian core ready   maxSupplyObs=21000000000000000000000000
 ```
 

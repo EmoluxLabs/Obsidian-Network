@@ -391,3 +391,66 @@ tr:hover td { background: rgba(245, 181, 68, 0.03); }
 @media (max-width: 640px) {
   .score-row { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* ---- account access: tabs, recovery codes, MFA ------------------------- */
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin: 18px 0 16px;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(5, 7, 12, 0.6);
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+.tabs .tab {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.tabs .tab:hover { color: var(--text); }
+.tabs .tab.active {
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--gold) 0%, var(--gold-deep) 100%);
+  font-weight: 600;
+}
+form.stack { display: flex; flex-direction: column; gap: 14px; }
+.notice.danger {
+  border-color: rgba(255, 107, 107, 0.45);
+  background: linear-gradient(180deg, rgba(255, 107, 107, 0.09), rgba(255, 107, 107, 0.02));
+}
+.codegrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+}
+.recovery-code {
+  display: block;
+  padding: 11px 13px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(10, 14, 22, 0.85);
+  color: var(--gold);
+  letter-spacing: 0.04em;
+  text-align: center;
+  user-select: all;
+}
+.checkline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.checkline input { width: 17px; height: 17px; accent-color: var(--gold); }
+.breakable { overflow-wrap: anywhere; word-break: break-all; }

@@ -38,7 +38,7 @@ The worker in `src/worker.js` implements exactly this table, and
 | Rule | Setting | Reasoning |
 | --- | --- | --- |
 | Rate limit `POST /api/rpc?path=/tx/submit` | 30 requests / minute / IP, burst 10 | Transaction spam is cheap to send and costs nodes real CPU |
-| Rate limit `/api/auth/google` | 10 requests / minute / IP | Sign-in is a heavy cryptographic verification per call |
+| Rate limit `/api/auth/login`, `/api/auth/register`, `/api/auth/recover` | 10 requests / minute / IP | Each call runs scrypt by design; this also blunts password and recovery-code guessing |
 | Block | requests with body > 512 KB to `/api/*` | The interface already rejects > 256 KiB; do not spend bandwidth on it |
 | Managed ruleset | Cloudflare OWASP | Free protection against commodity probes; it is outside the trust boundary |
 | Bot fight mode | on, for `/api/auth/*` only | Account creation is the only action worth automating against; mining and reading are not gated on Cloudflare at all |

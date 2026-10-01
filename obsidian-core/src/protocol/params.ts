@@ -18,14 +18,25 @@ export const CONSENSUS_PARAMS = {
   /**
    * Protocol version that owns these parameters.
    *
-   * 1.1.0 introduces two consensus-visible changes:
+   * 1.1.0 introduced two consensus-visible changes:
    *   - the consensus identity is named and documented as Proof of Time (PoT):
    *     the fork-choice weight is PoT Weight, the timing rule is PoT Difficulty
    *     and the participation metric is Time-Rate (see `proofOfTime` below);
    *   - qualifying platform revenue is split 40% Node Runner Reward Pool /
    *     60% treasury at the state-transition layer (see `nodeRewards` below).
+   *
+   * 1.2.0 changes what things cost, and nothing else about how blocks are
+   * made. Every price the protocol charges is now denominated in OBS, with no
+   * external price source on any consensus path:
+   *   - validator bond 1,000 OBS -> 50 OBS, so running a validator is a
+   *     commitment an ordinary participant can actually make;
+   *   - ONS names 0.05 OBS, business pages 0.005 OBS;
+   *   - Obsidian Circle land starts between 0.01 and 5 OBS. Appreciation,
+   *     depreciation and buybacks are unchanged, and a buyer is still never
+   *     retroactively repriced.
+   * An oracle outage can no longer make the chain unable to price anything.
    */
-  protocolVersion: '1.1.0',
+  protocolVersion: '1.2.0',
 
   // ── Proof of Time (PoT) ───────────────────────────────────────────────────
   /**
