@@ -1,8 +1,8 @@
 {
   "product": "Obsidian Network",
-  "version": "1.2.0",
-  "commit": "b5a6e80c85c9b02732d1a8746c2b3964085ad15d",
-  "builtAt": "2026-10-01T16:55:52Z",
+  "version": "1.2.1",
+  "commit": "6c3a73512dc4d1dc7d2d4eb52e2e4ae780d8cc2c",
+  "builtAt": "2026-10-01T17:20:50Z",
   "protocolVersion": "1.2.0",
   "networks": {
     "mainnet": {
@@ -34,48 +34,48 @@
   "genesisAllocationObs": "100000",
   "assets": [
     {
-      "name": "obsidian-cloudflare-1.2.0.tar.gz",
-      "bytes": 114009
+      "name": "obsidian-cloudflare-1.2.1.tar.gz",
+      "bytes": 117061
     },
     {
-      "name": "obsidian-cloudflare-1.2.0.zip",
-      "bytes": 134686
+      "name": "obsidian-cloudflare-1.2.1.zip",
+      "bytes": 138771
     },
     {
-      "name": "obsidian-core-1.2.0.tar.gz",
-      "bytes": 522517
+      "name": "obsidian-core-1.2.1.tar.gz",
+      "bytes": 522790
     },
     {
-      "name": "obsidian-core-1.2.0.zip",
-      "bytes": 679736
+      "name": "obsidian-core-1.2.1.zip",
+      "bytes": 679747
     },
     {
-      "name": "obsidian-interface-1.2.0.tar.gz",
-      "bytes": 1947045
+      "name": "obsidian-interface-1.2.1.tar.gz",
+      "bytes": 1950285
     },
     {
-      "name": "obsidian-interface-1.2.0.zip",
-      "bytes": 2099884
+      "name": "obsidian-interface-1.2.1.zip",
+      "bytes": 2105755
     },
     {
-      "name": "obsidian-interface-selfhost-1.2.0.tar.gz",
-      "bytes": 1859338
+      "name": "obsidian-interface-selfhost-1.2.1.tar.gz",
+      "bytes": 1862518
     },
     {
-      "name": "obsidian-interface-selfhost-1.2.0.zip",
-      "bytes": 1986734
+      "name": "obsidian-interface-selfhost-1.2.1.zip",
+      "bytes": 1992082
     },
     {
-      "name": "obsidian-network-source-1.2.0.tar.gz",
-      "bytes": 826421
+      "name": "obsidian-network-source-1.2.1.tar.gz",
+      "bytes": 830964
     },
     {
-      "name": "obsidian-node-operator-1.2.0.tar.gz",
-      "bytes": 437195
+      "name": "obsidian-node-operator-1.2.1.tar.gz",
+      "bytes": 440606
     },
     {
-      "name": "obsidian-node-operator-1.2.0.zip",
-      "bytes": 571600
+      "name": "obsidian-node-operator-1.2.1.zip",
+      "bytes": 575693
     }
   ],
   "verification": "sha256sum -c SHA256SUMS, then compare the digests with the published release notes"
