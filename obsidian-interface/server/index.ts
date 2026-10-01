@@ -210,14 +210,21 @@ export class InterfaceServer {
       // Same-origin by default. Cross-origin API access must be explicitly
       // allowlisted, and it is always credential-oriented (cookies), never
       // token-in-URL.
+      //
+      // Browsers send `Origin` on same-origin POSTs too, not only on
+      // cross-origin ones. So the page's own requests have to be recognised as
+      // same-origin before the allowlist is consulted, or an interface with the
+      // default empty allowlist rejects its own sign-in form with
+      // "origin not allowed" — which is exactly what it used to do.
       const origin = request.headers.origin;
-      if (origin && this.config.allowedOrigins.includes(origin)) {
+      const sameOrigin = origin !== undefined && origin === this.selfOrigin(request);
+      if (origin && !sameOrigin && this.config.allowedOrigins.includes(origin)) {
         response.setHeader('Access-Control-Allow-Origin', origin);
         response.setHeader('Access-Control-Allow-Credentials', 'true');
         response.setHeader('Vary', 'Origin');
         response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
         response.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-      } else if (origin && url.pathname.startsWith('/api/')) {
+      } else if (origin && !sameOrigin && url.pathname.startsWith('/api/')) {
         this.json(response, 403, { error: 'origin not allowed', code: 'ERR_FORBIDDEN' });
         return;
       }
@@ -247,6 +254,26 @@ export class InterfaceServer {
       });
       if (!response.headersSent) this.json(response, 500, { error: 'internal error', code: 'ERR_INTERNAL' });
     }
+  }
+
+  /**
+   * The origin this request was addressed to, as the browser would write it.
+   *
+   * `Host` is attacker-controlled in general, but here it is only ever compared
+   * against `Origin` from the same request: a forged pair proves nothing and
+   * grants nothing, because a browser will not let a page set either header.
+   * Behind a proxy that terminates TLS, the scheme has to come from
+   * `x-forwarded-proto`, and only when the operator has said to trust it.
+   */
+  private selfOrigin(request: IncomingMessage): string | undefined {
+    const host = request.headers.host;
+    if (!host) return undefined;
+    const forwarded = this.config.trustProxy
+      ? String(request.headers['x-forwarded-proto'] ?? '').split(',')[0]?.trim()
+      : '';
+    const encrypted = (request.socket as { encrypted?: boolean }).encrypted === true;
+    const scheme = forwarded || (encrypted || this.config.trustProxy ? 'https' : 'http');
+    return `${scheme}://${host}`;
   }
 
   private securityHeaders(response: ServerResponse): void {

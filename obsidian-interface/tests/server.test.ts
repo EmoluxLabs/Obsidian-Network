@@ -214,6 +214,78 @@ afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
+describe('browser origin handling', () => {
+  /**
+   * A browser sends `Origin` on its own same-origin POSTs. The interface used
+   * to compare that header against an allowlist that is empty by default and
+   * reject anything not in it, so every real sign-in from the account page
+   * failed with "origin not allowed" while curl — which sends no Origin —
+   * worked perfectly. These tests drive the API the way a browser does.
+   */
+  it('accepts the page\'s own same-origin POST, with an empty allowlist', async () => {
+    const h = await harness();
+    const response = await fetch(`${h.origin}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: h.origin },
+      body: JSON.stringify({
+        email: 'emoluxlabs@gmail.com',
+        password: 'a-long-enough-pass-9',
+        inviteCode: h.genesisCode,
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(h.config.allowedOrigins).toEqual([]);
+  });
+
+  it('accepts every account route from the page, not just registration', async () => {
+    const h = await harness();
+    const created = await fetch(`${h.origin}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: h.origin },
+      body: JSON.stringify({ email: 'efagbemi91@gmail.com', password: 'a-long-enough-pass-9', inviteCode: h.genesisCode }),
+    });
+    expect(created.status).toBe(200);
+    const cookie = (created.headers.get('set-cookie') ?? '').split(';')[0]!;
+
+    for (const [path, body] of [
+      ['/api/auth/mfa/setup', '{}'],
+      ['/api/auth/invites', '{}'],
+      ['/api/wallet/link', JSON.stringify({ address: 'dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' })],
+      ['/api/auth/logout', '{}'],
+    ] as const) {
+      const response = await fetch(`${h.origin}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: h.origin, cookie },
+        body,
+      });
+      expect(response.status, `${path} answered ${response.status}`).not.toBe(403);
+    }
+  });
+
+  it('still refuses a genuinely foreign origin', async () => {
+    const h = await harness();
+    const response = await fetch(`${h.origin}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ email: 'attacker-tester@gmail.com', password: 'a-long-enough-pass-9', inviteCode: h.genesisCode }),
+    });
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_FORBIDDEN');
+    // and it must not have burned the Genesis Invitation on the way out
+    const config = (await (await fetch(`${h.origin}/api/auth/config`)).json()) as {
+      genesisInvite: { redeemed: boolean };
+    };
+    expect(config.genesisInvite.redeemed).toBe(false);
+  });
+
+  it('does not send CORS headers to a same-origin caller', async () => {
+    const h = await harness();
+    const response = await fetch(`${h.origin}/api/auth/config`, { headers: { origin: h.origin } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+  });
+});
+
 describe('site serving', () => {
   it('serves each product from its own directory and never caches the shell', async () => {
     const h = await harness();

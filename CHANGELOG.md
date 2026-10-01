@@ -11,6 +11,31 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.1] — 2026-10-01
+
+Interface only. No consensus change: the params hash and the genesis hash are
+unchanged, and a 1.2.0 node peers with a 1.2.1 node.
+
+### Fixed
+
+* **Sign-in was impossible from a browser.** Browsers send an `Origin` header
+  on same-origin POSTs, not only on cross-origin ones. The interface compared
+  that header against an allowlist that is empty by default and rejected
+  anything missing from it, so the account page's own requests came back
+  `403 origin not allowed` — registration, login, MFA, invites and wallet
+  linking all failed, on every deployment that had not manually allowlisted
+  its own URL. The server now recognises its own origin (scheme from
+  `x-forwarded-proto` only when `trustProxy` is set) before consulting the
+  allowlist. A genuinely foreign origin is still refused, and a same-origin
+  caller still gets no CORS headers.
+
+  Found by a user, not by the suite: every existing test drove the API with
+  bare `fetch` and curl, which send no `Origin` at all. Four tests now drive
+  the account routes the way a browser does, and they fail against the old
+  code.
+
+---
+
 ## [1.2.0] — 2026-10-01
 
 **Consensus-breaking.** The params hash becomes
