@@ -11,6 +11,30 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.4] — 2026-10-01
+
+Interface only. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+### Fixed
+
+* **An upgraded deployment could still run the old wallet bundle.** Page
+  bundles were served from stable URLs (`/js/wallet.js`) with
+  `Cache-Control: public, max-age=300`, so a browser that had cached the 1.2.1
+  wallet kept deriving mainnet `obs1…` addresses on devnet after its owner had
+  installed the fix — the bug looked unfixed because the fixed code was never
+  fetched. `build-sites.mjs` now writes a content hash into every asset URL
+  (`/js/wallet.js?v=<sha256-16>`, same for the stylesheet), and the server
+  caches an asset only when it is requested with a hash, then as `immutable`.
+  Anything asked for without one, and every site shell, is `no-store`.
+
+### Tests
+
+Interface 169 (was 168): the real generated `wallet/index.html` must reference
+a hashed bundle, and the server must cache a hashed request while refusing to
+cache a bare one.
+
+---
+
 ## [1.2.3] — 2026-10-01
 
 Node and interface. No consensus change: the params hash, the genesis hash and

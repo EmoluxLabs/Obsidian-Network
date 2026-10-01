@@ -318,7 +318,10 @@ export class InterfaceServer {
       return this.serveFile(response, join(this.config.siteRoot, first), rest || 'index.html');
     }
     if (requestPath.startsWith('/js/') || requestPath.startsWith('/assets/') || requestPath.startsWith('/css/')) {
-      return this.serveFile(response, this.config.publicDir, requestPath);
+      // `?v=<content hash>` is written into the markup by build-sites.mjs. A
+      // request that carries one is asking for an exact build and can be
+      // cached forever; one that does not must be revalidated every time.
+      return this.serveFile(response, this.config.publicDir, requestPath, url.searchParams.has('v'));
     }
     // No catch-all document on purpose: every product has its own directory and
     // its own index.html, so an unknown path is a real 404 rather than a page
@@ -327,7 +330,7 @@ export class InterfaceServer {
     void request;
   }
 
-  private serveFile(response: ServerResponse, root: string, relative: string): void {
+  private serveFile(response: ServerResponse, root: string, relative: string, immutable = false): void {
     const safeRelative = normalize(relative).replace(/^([.]{2}[/\\])+/, '');
     const full = join(root, safeRelative);
     if (!full.startsWith(root.endsWith(sep) ? root : `${root}${sep}`) && full !== root) {
@@ -339,12 +342,14 @@ export class InterfaceServer {
       return;
     }
     const type = contentType(full);
-    // Files served from the built bundle are immutable; site HTML is revalidated
-    // so a redeploy cannot leave a stale page pinned in a browser cache.
-    const fromBundle = full.startsWith(this.config.publicDir) || full.startsWith(this.config.coreDir);
+    // Only a content-addressed request (`?v=<hash>`) may be cached, and then
+    // forever, because its URL changes whenever its bytes do. Everything else —
+    // site HTML, and any bundle asked for without a hash — is revalidated, so
+    // an upgraded deployment can never leave a stale page or a stale bundle
+    // pinned in a browser.
     response.writeHead(200, {
       'Content-Type': type,
-      'Cache-Control': fromBundle ? 'public, max-age=300' : 'no-store',
+      'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-store',
     });
     createReadStream(full).pipe(response);
   }

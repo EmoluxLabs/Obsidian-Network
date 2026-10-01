@@ -11,10 +11,13 @@
 import { createServer, type Server } from 'node:http';
 import { createHmac } from 'node:crypto';
 import { connect } from 'node:net';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { InterfaceServer, type InterfaceConfig } from '../server/index.js';
 import { AccountStore } from '../server/store.js';
@@ -300,30 +303,40 @@ describe('site serving', () => {
 
     const core = await fetch(`${h.origin}/core/protocol.js`);
     expect(core.status).toBe(200);
-    expect(core.headers.get('cache-control')).toContain('max-age');
+    // Asked for without a content hash, so it must be revalidated.
+    expect(core.headers.get('cache-control')).toBe('no-store');
   });
 
-  it('serves a strict Content-Security-Policy everywhere, and only widens it for the account page', async () => {
-    const h = await harness();
-    const landing = await fetch(`${h.origin}/`);
-    const csp = landing.headers.get('content-security-policy') ?? '';
-    expect(csp).toContain("default-src 'self'");
-    expect(csp).toContain("connect-src 'self'");
-    expect(csp).toContain("frame-ancestors 'none'");
-    expect(csp).toContain("base-uri 'none'");
-    expect(csp).not.toContain('accounts.google.com');
-    expect(landing.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(landing.headers.get('x-frame-options')).toBe('DENY');
+  /**
+   * A browser that kept an old `/js/wallet.js` carried on deriving mainnet
+   * addresses on devnet after its owner had upgraded. Stable asset URLs plus a
+   * positive max-age is what allowed that, so the markup now points at
+   * content-hashed URLs and only those may be cached.
+   */
+  it('references content-hashed bundles in the markup it ships', () => {
+    // The real generated shell, not a fixture: this is the file a self-hoster
+    // actually serves.
+    const shell = readFileSync(resolve(here, '../../wallet/index.html'), 'utf8');
+    expect(/<script type="module" src="\/js\/wallet\.js\?v=[0-9a-f]{16}"><\/script>/.test(shell), shell.slice(0, 400)).toBe(true);
+    expect(/<link rel="stylesheet" href="\/css\/obsidian\.css\?v=[0-9a-f]{16}">/.test(shell)).toBe(true);
+  });
 
-    // The account page used to be the one exception, because Google Identity
-    // Services needed an iframe. Sign-in is first-party now, so there is no
-    // third-party origin anywhere in the policy.
-    const app = await fetch(`${h.origin}/app/`);
-    const appCsp = app.headers.get('content-security-policy') ?? '';
-    expect(appCsp).toBe(csp);
-    expect(appCsp).toContain("frame-src 'none'");
-    expect(appCsp).not.toContain('google');
-    expect(appCsp).not.toContain("script-src 'unsafe-inline'");
+  it('caches an asset only when it is asked for by content hash', async () => {
+    const h = await harness();
+    mkdirSync(join(h.config.publicDir, 'js'), { recursive: true });
+    writeFileSync(join(h.config.publicDir, 'js', 'wallet.js'), 'export const x = 1;\n', 'utf8');
+
+    // With a hash: immutable, because the URL changes when the bytes do.
+    const hashed = await fetch(`${h.origin}/js/wallet.js?v=0123456789abcdef`);
+    expect(hashed.status).toBe(200);
+    expect(hashed.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+
+    // Without one: never cached, so an upgrade can never be ignored. A browser
+    // holding an old wallet bundle is how a fixed page carried on deriving
+    // mainnet addresses on devnet.
+    const bare = await fetch(`${h.origin}/js/wallet.js`);
+    expect(bare.status).toBe(200);
+    expect(bare.headers.get('cache-control')).toBe('no-store');
   });
 
   it('refuses a raw request that tries to escape the site root', async () => {

@@ -11,7 +11,8 @@
  * Policy of `script-src 'self'`, and that promise is only worth something if the
  * generated markup never needs to be relaxed.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,6 +22,22 @@ const root = resolve(here, '..');
 // individually (each one is a complete, self-contained host directory), while
 // the interface serves them from `siteRoot`.
 const siteRoot = resolve(root, '..');
+
+/**
+ * Cache busting. The bundles are served from stable paths (`/js/wallet.js`),
+ * so without this a browser that cached an old build keeps running it after an
+ * upgrade — which is exactly how a fixed wallet page kept deriving the wrong
+ * address for a user who had already upgraded. Every asset URL therefore
+ * carries a content hash: the bytes change, the URL changes, and the browser
+ * cannot serve a stale copy. Assets requested with a `?v=` are immutable; the
+ * HTML that references them is never cached.
+ */
+function assetUrl(relative) {
+  const full = join(root, 'public', relative);
+  if (!existsSync(full)) return `/${relative}`;
+  const digest = createHash('sha256').update(readFileSync(full)).digest('hex').slice(0, 16);
+  return `/${relative}?v=${digest}`;
+}
 
 const SITES = [
   {
@@ -132,7 +149,7 @@ function html(site) {
 <meta property="og:description" content="${site.description}">
 <meta property="og:type" content="website">
 ${ICONS}
-<link rel="stylesheet" href="/css/obsidian.css">
+<link rel="stylesheet" href="${assetUrl('css/obsidian.css')}">
 </head>
 <body>
 <div id="app">
@@ -143,7 +160,7 @@ ${ICONS}
     </p>
   </noscript>
 </div>
-<script type="module" src="/js/${site.bundle}.js"></script>
+<script type="module" src="${assetUrl(`js/${site.bundle}.js`)}"></script>
 </body>
 </html>
 `;
