@@ -11,6 +11,36 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.7] — 2026-10-01
+
+Interface only. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+### Fixed
+
+* **The wallet could not show a balance and mining could not claim.** The
+  interface's read proxy refuses any route not on an explicit allowlist — the
+  right design, but three routes the wallet and mining pages depend on were
+  never added to it. Every balance lookup, fee quote and nonce fetch came back
+  `400 route "/wallet/balance" is not exposed by the interface proxy`, so a
+  correctly installed interface showed no balance and refused to claim.
+  `/wallet/balance`, `/wallet/quote` and `/wallet/<address>/next-nonce` are now
+  allowlisted. The `/wallet/` namespace itself is **not** opened: the nonce
+  route is matched by a bounded pattern, and anything else under `/wallet/` is
+  still refused.
+
+### Tests
+
+Interface 173 (was 171). Two new cases under "node proxy": the three wallet
+routes must proxy (POST bodies included), and `/wallet/keys`, `/wallet/export`,
+`/wallet/` and a traversal attempt must still be rejected.
+
+`live-ui.test.ts` now carries a warning at the top of its fetch harness: it
+answers `/api/rpc` itself, so it never exercises the allowlist, and any new
+route a page calls needs a `server.test.ts` case too. That blind spot is how
+this shipped.
+
+---
+
 ## [1.2.6] — 2026-10-01
 
 Node and docs. No consensus change: the params hash and the genesis hash are

@@ -867,6 +867,16 @@ export class InterfaceServer {
       target === '/land/parcels' ||
       target === '/capsules' ||
       target === '/social/feed' ||
+      // The wallet API. These are the node's own balance routes: the caller
+      // must already know the address it is asking about, and the node serves
+      // them publicly on its RPC port. Leaving them out of this list is what
+      // made the wallet page unable to show a balance and the mining page
+      // unable to claim — both failed with "route is not exposed by the
+      // interface proxy", which reads as a broken product rather than a
+      // missing line in an allowlist.
+      target === '/wallet/balance' ||
+      target === '/wallet/quote' ||
+      /^\/wallet\/[A-Za-z0-9]{8,120}\/next-nonce$/.test(target) ||
       target === '/mining/schedule' ||
       target === '/mining/status' ||
       target === '/mining/claims' ||

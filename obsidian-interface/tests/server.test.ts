@@ -135,6 +135,20 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
       response.end('{"secret":"should never be proxied"}');
       return;
     }
+    if (request.url === '/wallet/balance' || request.url === '/wallet/quote') {
+      let body = '';
+      request.on('data', (chunk) => (body += chunk));
+      request.on('end', () => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ receivedUrl: request.url, receivedBody: body, balanceObs: '0' }));
+      });
+      return;
+    }
+    if (request.url?.startsWith('/wallet/') && request.url.endsWith('/next-nonce')) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ receivedUrl: request.url, nextNonce: 0 }));
+      return;
+    }
     if (request.url === '/tx/submit') {
       let body = '';
       request.on('data', (chunk) => (body += chunk));
@@ -697,6 +711,51 @@ describe('node proxy', () => {
       const response = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent(path)}`);
       expect(response.status).toBe(200);
       expect((await response.json()) as { receivedUrl?: string }).toMatchObject({ receivedUrl: path });
+    }
+  });
+
+  /**
+   * The wallet and mining pages are useless without these three. They were
+   * missing from the allowlist, so a correctly installed interface answered
+   * `route "/wallet/balance" is not exposed by the interface proxy` and no
+   * balance could be shown and no claim could be made.
+   */
+  it('proxies the wallet routes the wallet and mining pages depend on', async () => {
+    const h = await harness();
+    await h.poolCheck();
+
+    const balance = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent('/wallet/balance')}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ address: 'dobs1w9jdkqpg5ls3sgds4nfgqwu7t9zwxqcfngsm38' }),
+    });
+    expect(balance.status, await balance.text()).toBe(200);
+
+    const quote = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent('/wallet/quote')}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ address: 'dobs1w9jdkqpg5ls3sgds4nfgqwu7t9zwxqcfngsm38' }),
+    });
+    expect(quote.status).toBe(200);
+
+    const nonce = await fetch(
+      `${h.origin}/api/rpc?path=${encodeURIComponent('/wallet/dobs1w9jdkqpg5ls3sgds4nfgqwu7t9zwxqcfngsm38/next-nonce')}`,
+    );
+    expect(nonce.status).toBe(200);
+    expect((await nonce.json()) as { receivedUrl?: string }).toMatchObject({
+      receivedUrl: '/wallet/dobs1w9jdkqpg5ls3sgds4nfgqwu7t9zwxqcfngsm38/next-nonce',
+    });
+  });
+
+  it('does not open the whole /wallet/ namespace', async () => {
+    // The fix is three routes, not a prefix: `/wallet/` must not become a
+    // door to anything the node may add there later.
+    const h = await harness();
+    await h.poolCheck();
+    for (const path of ['/wallet/keys', '/wallet/export', '/wallet/', '/wallet/abc/next-nonce/../../admin']) {
+      const response = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent(path)}`);
+      expect(response.status, `${path} should be refused`).toBe(400);
+      expect(((await response.json()) as { code: string }).code).toBe('ERR_REJECTED');
     }
   });
 
