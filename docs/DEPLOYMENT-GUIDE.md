@@ -170,7 +170,7 @@ Git history:
 - `obsidian-core/config/<network>.json` — `publicHost`, `seedNodes`,
   `miningRewardAddress`, RPC binding
 - `.env` (gitignored) — `OBSIDIAN_NODE_URLS`, `OBSIDIAN_KEYSTORE_PASSPHRASE_FILE`,
-  `OBSIDIAN_GENESIS_INVITE_HASH`, `OBSIDIAN_GOOGLE_CLIENT_ID`
+  `OBSIDIAN_GENESIS_INVITE_HASH`
 
 Two nodes on different networks should differ **only** in those, never in code.
 
@@ -1421,7 +1421,6 @@ The frontends themselves need no environment variables. The **interface** does:
 | `OBSIDIAN_INTERFACE_HOST` | Bind address (`0.0.0.0` to accept outside traffic) |
 | `OBSIDIAN_INTERFACE_PORT` | Port, default 8788 |
 | `OBSIDIAN_INTERFACE_DATA_DIR` | Where the account list is stored |
-| `OBSIDIAN_GOOGLE_CLIENT_ID` | Enables sign-in; empty disables account creation |
 | `OBSIDIAN_GENESIS_INVITE_HASH` | Hash of the single-use Genesis Invitation |
 | `OBSIDIAN_INTERFACE_ALLOWED_ORIGINS` | CORS allowlist; empty = same-origin only |
 | `OBSIDIAN_INTERFACE_TRUST_PROXY` | `true` only behind a TLS proxy you control |

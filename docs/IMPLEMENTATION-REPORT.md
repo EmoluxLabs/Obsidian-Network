@@ -99,10 +99,16 @@ material while still storing the advisory address the user chose to publish.
 
 * **Invite-only.** The first account bootstraps a deployment; every later account
   needs an unused invite.
-* Google ID tokens are verified **server-side** against Google's JWKS (RS256,
-  issuer, audience, expiry, `email_verified`, ±60 s clock skew). The client's
-  `isGoogleUser` claim is never read — a forged token is rejected with
-  `ERR_UNAUTHORIZED` even when the body announces it as a Google user.
+* Sign-in is **first-party**: a Gmail address, a password (≥12 characters,
+  salted scrypt N=32768), an invite code, then TOTP multi-factor before mining
+  opens on the account. Google OAuth was removed in 1.2.0.
+* The Gmail address is canonicalised **server-side** (dots and `+tags` stripped,
+  `googlemail.com` folded into `gmail.com`), so one inbox gets one mining
+  account; the store rejects a clash with no `await` between check and insert.
+* **No email verification and no password reset.** Ten single-use recovery codes
+  are issued once at registration and stored only as hashes.
+* No client-supplied flag is ever read — a body announcing `mfaEnabled`,
+  `miningEnabled` or an `accountId` changes nothing.
 * At most **5 invites per account**, enforced by the store and the HTTP layer.
 * Sessions are opaque, HttpOnly, SameSite=Lax cookies with a 14-day TTL,
   destroyable at logout.
@@ -192,9 +198,10 @@ never return balances and never echo key material.
 * When nothing is healthy the interface answers `503 ERR_NO_HEALTHY_NODE` rather
   than inventing data.
 * Strict security headers: CSP with `script-src 'self'`, `frame-ancestors 'none'`,
-  `base-uri 'none'`, `form-action 'none'`, `nosniff`, `DENY`, `no-referrer`. The
-  account page — the only surface that needs a third party — is the only place
-  where `accounts.google.com` is allowed, and no page anywhere uses inline script.
+  `base-uri 'none'`, `form-action 'none'`, `nosniff`, `DENY`, `no-referrer`.
+  Since sign-in became first-party there is no third-party origin anywhere in
+  the policy — every page serves `connect-src 'self'` and `frame-src 'none'` —
+  and no page anywhere uses inline script.
 * **Self-hostable**: flags/environment configuration, `refuses-to-start`
   validation of its own prerequisites, systemd unit, nginx config, Dockerfile and
   compose file, all under `obsidian-interface/deployment/`.
@@ -535,9 +542,9 @@ and the live-node suite fails when the *data* drifts.
    job on every push (point 12), including a full two-container stack whose
    chain height is observed to advance. The distinction matters: the evidence
    is a CI run, not a command run here.
-2. **Google OAuth against the live endpoint** — token verification is tested
-   against injected RSA keys and a JWKS document; the network path to Google was
-   not exercised here.
+2. **Sign-in at scale** — the Gmail/password/MFA flow is covered end-to-end over
+   real HTTP, including canonical-address dedupe, TOTP replay and recovery-code
+   reuse, but it has not yet met a crowd of real users.
 3. **Long-run stability** — no multi-day soak test was performed, so memory
    growth over weeks of operation is unknown.
 4. **A real browser engine** — the page modules are driven in jsdom against a

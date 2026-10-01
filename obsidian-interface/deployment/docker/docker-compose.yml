@@ -19,7 +19,6 @@ services:
     restart: unless-stopped
     environment:
       OBSIDIAN_NODE_URLS: ${OBSIDIAN_NODE_URLS:-http://host.docker.internal:8630}
-      OBSIDIAN_GOOGLE_CLIENT_ID: ${OBSIDIAN_GOOGLE_CLIENT_ID:-}
       OBSIDIAN_INTERFACE_TRUST_PROXY: ${OBSIDIAN_INTERFACE_TRUST_PROXY:-true}
       OBSIDIAN_INTERFACE_LOG_LEVEL: ${OBSIDIAN_INTERFACE_LOG_LEVEL:-info}
     ports:

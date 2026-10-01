@@ -224,7 +224,7 @@ Initial implementation of the Obsidian Network.
 * **Non-custodial wallets** generated from cryptographically secure randomness,
   never derived from identity, with client-side signing and keys that never
   reach a server.
-* **Invite-only registration** with server-side Google token validation and a
+* **Invite-only registration** with server-side token validation (Google-based at the time; replaced by first-party accounts in 1.2.0) and a
   server-enforced limit of five invites per account.
 * **Applications as chain state**: the explorer (which never exposes wallet
   balances), OBS Social, ONS `.obs` names, the Time Capsule Wall, and Obsidian

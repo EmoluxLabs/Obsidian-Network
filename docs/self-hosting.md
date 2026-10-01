@@ -34,7 +34,6 @@ OBSIDIAN_NODE_URLS=http://127.0.0.1:8630,http://node2.example:8630
 OBSIDIAN_INTERFACE_HOST=127.0.0.1
 OBSIDIAN_INTERFACE_PORT=8788
 OBSIDIAN_INTERFACE_DATA_DIR=/var/lib/obsidian-interface
-OBSIDIAN_GOOGLE_CLIENT_ID=
 OBSIDIAN_INTERFACE_TRUST_PROXY=false
 ```
 
@@ -75,7 +74,7 @@ deployability.
 
 ## 4. Accounts (optional)
 
-Sign-in is invite-only and disabled entirely when `OBSIDIAN_GOOGLE_CLIENT_ID` is
+Sign-in is invite-only and disabled entirely when no Genesis Invitation hash is
 empty — the wallet, miner, explorer, ONS, capsules, circle and social pages all
 keep working without an account, because they need a *wallet*, not an account.
 
