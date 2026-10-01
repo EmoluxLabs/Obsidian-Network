@@ -114,8 +114,10 @@ check('a validator bond is 50 OBS', '50000000000000000000', String(P.consensus.m
 check('no USD-denominated service prices remain', 'true',
   String(P.ons.registrationFeeUsd === undefined && P.social.businessPagePriceUsd === undefined));
 check('an account may issue at most 5 invites', 5, P.registry.maxInvitesPerAccount);
-check('land starts no lower than $100', '100000000', String(P.circle.minGlvUsd));
-check('land starts no higher than $30,000', '30000000000', String(P.circle.maxGlvUsd));
+check('land starts no lower than 0.01 OBS', '10000000000000000', String(P.circle.minGlv));
+check('land starts no higher than 5 OBS', '5000000000000000000', String(P.circle.maxGlv));
+check('no USD-denominated land bounds remain', 'true',
+  String(P.circle.minGlvUsd === undefined && P.circle.maxGlvUsd === undefined));
 check('a protocol land sale issues one parcel', 1, P.circle.maxParcelsPerProtocolTx);
 check('a parcel is at most one square metre', 1, P.circle.parcelSquareMetres);
 

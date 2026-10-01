@@ -157,8 +157,8 @@ export interface ChainParams {
     parcelSquareMetres: number;
     appreciationStepBps: number;
     depreciationStepBps: number;
-    minGlvUsd: string;
-    maxGlvUsd: string;
+    minGlvObs: string;
+    maxGlvObs: string;
   };
   social: {
     creatorShareBps: number;
@@ -437,7 +437,7 @@ export interface CountrySummary {
   continent: string;
   divisionCount: number;
   /** Whole dollars, e.g. `"20403"` — not micro-USD. */
-  glvUsd: string;
+  glvObs: string;
 }
 
 export interface DivisionSummary {
@@ -445,8 +445,8 @@ export interface DivisionSummary {
   name: string;
   level: number;
   weight: number;
-  baseGlvUsd: string;
-  glvUsd: string;
+  baseGlvObs: string;
+  glvObs: string;
   protocolPurchases: number;
   protocolBuybacks: number;
   lastUpdatedAtHeight: number | null;
@@ -458,9 +458,9 @@ export interface LandSearchResult {
   name: string;
   continent: string;
   /** Micro-USD when the registry has an exact value. */
-  glvUsdMicro?: string;
-  /** Whole dollars, same source of truth as `glvUsdMicro`. */
-  glvUsd?: string;
+  glvSeals?: string;
+  /** Decimal OBS, same source of truth as `glvSeals`. */
+  glvObs?: string;
 }
 
 export interface LandSearchResponse {
@@ -475,8 +475,8 @@ export interface LandParcelSummary {
   squareMetres: number;
   status: string;
   owner: string;
-  glvUsd: string;
-  ilvUsd: string | null;
+  glvObs: string;
+  ilvObs: string | null;
   mspObs: string | null;
   acquiredAtHeight: number;
   issuedAtHeight: number;
@@ -489,11 +489,11 @@ export interface LandParcelRecord {
   squareMetres: number;
   status: string;
   owner: string;
-  glvUsd: string;
-  ilvUsd: string | null;
-  glvUsdMicroAtPurchase?: string;
+  glvObs: string;
+  ilvObs: string | null;
+  glvSealsAtPurchase?: string;
   officialValueUsdMicro?: string;
-  divisionGlvUsd: string | null;
+  divisionGlvObs: string | null;
   mspObs: string | null;
   issuedAtHeight?: number;
   acquiredAtHeight?: number;
@@ -505,8 +505,7 @@ export interface LandParcelRecord {
 export interface LandQuote {
   divisionId: string;
   /** Node-formatted dollars, e.g. `"$20,403"`. */
-  glvUsd: string;
-  obsPriceUsd: string;
+  glvObs: string;
   /** Exact OBS decimal string, or null when the oracle is not usable. */
   priceObs: string | null;
   gasObs: string | null;

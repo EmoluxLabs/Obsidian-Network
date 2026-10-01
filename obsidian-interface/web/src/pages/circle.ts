@@ -19,7 +19,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
-import { el, obs, usd, usdDollars, usdText, spinner, toast, kv, table, short } from '../lib/ui.js';
+import { el, obs, spinner, toast, kv, table, short } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const navigation = el('section', { class: 'card' }, spinner('loading the atlas…'));
@@ -77,7 +77,7 @@ async function boot(): Promise<void> {
               open.append(
                 el('strong', {}, country.name),
                 el('span', { class: 'mono' }, country.code),
-                el('span', { class: 'muted' }, `${country.divisionCount} division${country.divisionCount === 1 ? '' : 's'} · GLV ${usdDollars(country.glvUsd)}`),
+                el('span', { class: 'muted' }, `${country.divisionCount} division${country.divisionCount === 1 ? '' : 's'} · GLV ${obs(country.glvObs)} OBS`),
               );
               open.addEventListener('click', () => void loadDivisions(country.code, country.name));
               return open;
@@ -112,7 +112,7 @@ async function loadDivisions(countryCode: string, countryName: string): Promise<
               price.addEventListener('click', () => void showDivision(countryCode, division.divisionId, division.name));
               return [
                 el('span', {}, `${division.name} `, el('span', { class: 'mono muted' }, division.divisionId)),
-                usdText(division.glvUsd),
+                `${obs(division.glvObs)} OBS`,
                 String(division.protocolPurchases),
                 String(division.protocolBuybacks),
                 price,
@@ -132,14 +132,14 @@ async function showDivision(countryCode: string, divisionId: string, divisionNam
     detailPanel.replaceChildren(
       el('h2', {}, `${divisionName} · ${divisionId}`),
       kv([
-        ['GLV now', `${usdText(quote.glvUsd)} / m²`],
+        ['GLV now', `${obs(quote.glvObs)} OBS / m²`],
         ['Protocol price for 1 m²', quote.priceObs ? `${obs(quote.priceObs)} OBS` : '—'],
         ['Gas for that purchase', quote.gasObs ? `${obs(quote.gasObs)} OBS` : '—'],
-        ['Protocol price feed', `${usdText(quote.obsPriceUsd)} / OBS from ${quote.sourceCount} source${quote.sourceCount === 1 ? '' : 's'}`],
-        ['Buy-back value (ILV)', quote.oracleUsable ? 'current GLV at buy-back time on chain' : 'USD pricing closed'],
+        ['Priced in', 'OBS — no external price source participates'],
+        ['Buy-back value (ILV)', 'current GLV at buy-back time on chain'],
       ]),
-      el('p', { class: quote.oracleUsable ? 'fineprint' : 'error' }, quote.note),
-      el('div', { class: 'row' }, buyButton(countryCode, divisionId, quote.oracleUsable)),
+      el('p', { class: 'fineprint' }, quote.note),
+      el('div', { class: 'row' }, buyButton(countryCode, divisionId)),
       el('p', { class: 'fineprint' }, 'One plot of at most 1 m² per transaction, and the GLV moves between purchases — the next buyer pays the updated price, never a stale one.'),
     );
     void loadParcels(divisionId);
@@ -148,13 +148,12 @@ async function showDivision(countryCode: string, divisionId: string, divisionNam
   }
 }
 
-function buyButton(countryCode: string, divisionId: string, oracleUsable: boolean): HTMLElement {
+function buyButton(countryCode: string, divisionId: string): HTMLElement {
   const button = el(
     'button',
-    { class: 'primary', type: 'button', disabled: oracleUsable ? undefined : 'disabled' },
-    oracleUsable ? 'Buy 1 m² from the protocol market' : 'Pricing closed — protocol price feed unusable',
+    { class: 'primary', type: 'button' },
+    'Buy 1 m² from the protocol market',
   );
-  if (!oracleUsable) return button;
   button.addEventListener('click', async () => {
     const passphrase = window.prompt('Unlock your wallet passphrase to buy this plot');
     if (!passphrase) return;
@@ -184,8 +183,8 @@ async function loadParcels(divisionId: string): Promise<void> {
               el('span', { class: 'mono' }, short(parcel.parcelId, 12)),
               el('span', { class: 'mono' }, short(parcel.owner, 10)),
               `${parcel.squareMetres} m²`,
-              usdText(parcel.glvUsd),
-              parcel.ilvUsd ? usdText(parcel.ilvUsd) : el('span', { class: 'muted' }, '—'),
+              `${obs(parcel.glvObs)} OBS`,
+              parcel.ilvObs ? `${obs(parcel.ilvObs)} OBS` : el('span', { class: 'muted' }, '—'),
               parcel.mspObs ? `${obs(parcel.mspObs)} OBS` : el('span', { class: 'muted' }, 'not listed'),
               String(parcel.issuedAtHeight ?? '—'),
             ]),
@@ -211,7 +210,7 @@ async function searchLand(term: string): Promise<void> {
             results.map((hit) => {
               const price = el('button', { class: 'link-button', type: 'button' }, 'quote 1 m²');
               price.addEventListener('click', () => void showDivision(hit.countryCode, hit.divisionId, hit.name));
-              const glv = hit.glvUsdMicro ? usd(hit.glvUsdMicro) : usdDollars(hit.glvUsd ?? '0');
+              const glv = `${obs(hit.glvObs ?? '0')} OBS`;
               return [
                 el('span', {}, hit.name),
                 el('span', { class: 'mono' }, hit.divisionId),

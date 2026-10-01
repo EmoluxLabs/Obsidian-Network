@@ -391,8 +391,8 @@ export class RpcServer {
         parcelSquareMetres: CONSENSUS_PARAMS.circle.parcelSquareMetres,
         appreciationStepBps: CONSENSUS_PARAMS.circle.appreciationStepBps,
         depreciationStepBps: CONSENSUS_PARAMS.circle.depreciationStepBps,
-        minGlvUsd: formatObs(CONSENSUS_PARAMS.circle.minGlvUsd * 10n ** 12n, 2),
-        maxGlvUsd: formatObs(CONSENSUS_PARAMS.circle.maxGlvUsd * 10n ** 12n, 2),
+        minGlvObs: formatObs(CONSENSUS_PARAMS.circle.minGlv),
+        maxGlvObs: formatObs(CONSENSUS_PARAMS.circle.maxGlv),
       },
       social: {
         creatorShareBps: CONSENSUS_PARAMS.social.creatorShareBps,
@@ -1019,14 +1019,14 @@ export class RpcServer {
     }
     const divisions = listDivisions(country).map((division) => {
       const record = this.options.chain.world.s.divisions.get(division.divisionId);
-      const current = record?.glvUsdMicro ?? division.glvUsdMicro;
+      const current = record?.glvSeals ?? division.glvSeals;
       return {
         divisionId: division.divisionId,
         name: division.name,
         level: division.level,
         weight: division.weight,
-        baseGlvUsd: formatUsd(division.glvUsdMicro),
-        glvUsd: formatUsd(current),
+        baseGlvObs: formatObs(division.glvSeals),
+        glvObs: formatObs(current),
         protocolPurchases: record?.protocolPurchases ?? 0,
         protocolBuybacks: record?.protocolBuybacks ?? 0,
         lastUpdatedAtHeight: record?.lastUpdatedAtHeight ?? null,
@@ -1054,8 +1054,8 @@ export class RpcServer {
       country: seed.countryCode,
       countryName: seed.countryName,
       continent: seed.continent,
-      baseGlvUsd: formatUsd(seed.glvUsdMicro),
-      currentGlvUsd: formatUsd(record?.glvUsdMicro ?? seed.glvUsdMicro),
+      baseGlvObs: formatObs(seed.glvSeals),
+      currentGlvObs: formatObs(record?.glvSeals ?? seed.glvSeals),
       protocolPurchases: record?.protocolPurchases ?? 0,
       protocolBuybacks: record?.protocolBuybacks ?? 0,
       lastUpdatedAtHeight: record?.lastUpdatedAtHeight ?? null,
@@ -1077,8 +1077,8 @@ export class RpcServer {
         squareMetres: parcel.squareMetres,
         status: parcel.status,
         owner: maskAddress(parcel.owner),
-        glvUsd: formatUsd(parcel.glvUsdMicro),
-        ilvUsd: parcel.ilvUsdMicro ? formatUsd(parcel.ilvUsdMicro) : null,
+        glvObs: formatObs(parcel.glvSeals),
+        ilvObs: parcel.ilvSeals ? formatObs(parcel.ilvSeals) : null,
         mspObs: parcel.mspObs ? formatObs(parcel.mspObs) : null,
         acquiredAtHeight: parcel.acquiredAtHeight,
         issuedAtHeight: parcel.issuedAtHeight,
@@ -1099,10 +1099,10 @@ export class RpcServer {
     const division = this.options.chain.world.s.divisions.get(parcel.divisionId);
     this.json(response, 200, {
       ...parcel,
-      glvUsd: formatUsd(parcel.glvUsdMicro),
-      ilvUsd: parcel.ilvUsdMicro ? formatUsd(parcel.ilvUsdMicro) : null,
+      glvObs: formatObs(parcel.glvSeals),
+      ilvObs: parcel.ilvSeals ? formatObs(parcel.ilvSeals) : null,
       mspObs: parcel.mspObs ? formatObs(parcel.mspObs) : null,
-      divisionGlvUsd: division ? formatUsd(division.glvUsdMicro) : null,
+      divisionGlvObs: division ? formatObs(division.glvSeals) : null,
     });
   }
 
@@ -1110,22 +1110,18 @@ export class RpcServer {
     const state = this.options.chain.world;
     const seed = divisionSeed(divisionId);
     const record = state.s.divisions.get(seed.divisionId);
-    const glv = record?.glvUsdMicro ?? seed.glvUsdMicro;
-    const priceUsdMicro = state.s.oracle.medianPriceUsdMicro;
-    const usable = !state.s.oracle.stale && priceUsdMicro > 0n && state.s.oracle.sourceCount >= CONSENSUS_PARAMS.oracle.minSources;
-    const priceObs = usable ? usdMicroToSeals(glv, priceUsdMicro) : null;
-    this.json(response, usable ? 200 : 503, {
+    const glv = record?.glvSeals ?? seed.glvSeals;
+    // Land is denominated in OBS, so a quote is always available: the price is
+    // the GLV itself. This endpoint used to answer 503 whenever the price feed
+    // was stale or under-sourced, which made the whole Circle economy depend on
+    // an external oracle. It no longer does.
+    const priceObs = glv;
+    this.json(response, 200, {
       divisionId: seed.divisionId,
-      glvUsd: formatUsd(glv),
-      obsPriceUsd: formatUsd(priceUsdMicro),
-      priceObs: priceObs ? formatObs(priceObs) : null,
-      gasObs: priceObs ? formatObs(expectedGas(priceObs)) : null,
-      oracleUsable: usable,
-      oracleStale: state.s.oracle.stale,
-      sourceCount: state.s.oracle.sourceCount,
-      note: usable
-        ? 'Quote is derived from on-chain protocol state.'
-        : 'USD pricing is unavailable because the protocol price feed is stale or lacks sources.',
+      glvObs: formatObs(glv),
+      priceObs: formatObs(priceObs),
+      gasObs: formatObs(expectedGas(priceObs)),
+      note: 'Quote is derived from on-chain protocol state and denominated in OBS. No external price source participates.',
     });
   }
 

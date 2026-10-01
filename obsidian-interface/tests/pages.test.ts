@@ -133,8 +133,8 @@ const NETWORK_FIXTURE = {
 
 const COUNTRIES_FIXTURE = {
   countries: [
-    { code: 'NG', name: 'Nigeria', continent: 'Africa', divisionCount: 37, glvUsd: '20403' },
-    { code: 'GB', name: 'United Kingdom', continent: 'Europe', divisionCount: 4, glvUsd: '20347' },
+    { code: 'NG', name: 'Nigeria', continent: 'Africa', divisionCount: 37, glvObs: '2403550000000000000' },
+    { code: 'GB', name: 'United Kingdom', continent: 'Europe', divisionCount: 4, glvObs: '2347000000000000000' },
   ],
 };
 
@@ -143,8 +143,8 @@ const DIVISIONS_FIXTURE = {
   count: 2,
   note: 'Divisions come from the protocol geography table; GLVs are current chain state.',
   divisions: [
-    { divisionId: 'NG-LA', name: 'Lagos', level: 1, weight: 145, baseGlvUsd: '$204.03', glvUsd: '$204.03', protocolPurchases: 0, protocolBuybacks: 0, lastUpdatedAtHeight: null },
-    { divisionId: 'NG-KN', name: 'Kano', level: 1, weight: 100, baseGlvUsd: '$140.71', glvUsd: '$140.71', protocolPurchases: 0, protocolBuybacks: 0, lastUpdatedAtHeight: null },
+    { divisionId: 'NG-LA', name: 'Lagos', level: 1, weight: 145, baseGlvObs: '2.040300000000000000', glvObs: '2.040300000000000000', protocolPurchases: 0, protocolBuybacks: 0, lastUpdatedAtHeight: null },
+    { divisionId: 'NG-KN', name: 'Kano', level: 1, weight: 100, baseGlvObs: '1.407100000000000000', glvObs: '1.407100000000000000', protocolPurchases: 0, protocolBuybacks: 0, lastUpdatedAtHeight: null },
   ],
 };
 
@@ -228,7 +228,7 @@ function chainFixture(url: string): { status: number; body: unknown } {
   if (path.includes('/network')) return { status: 200, body: NETWORK_FIXTURE };
   if (path.includes('/land/divisions')) return { status: 200, body: DIVISIONS_FIXTURE };
   if (path.includes('/land/countries')) return { status: 200, body: COUNTRIES_FIXTURE };
-  if (path.includes('/land/search')) return { status: 200, body: { query: 'lagos', results: [{ divisionId: 'NG-LA', countryCode: 'NG', name: 'Lagos, Nigeria', continent: 'Africa', glvUsdMicro: '20403550000', glvUsd: '20403' }] } };
+  if (path.includes('/land/search')) return { status: 200, body: { query: 'lagos', results: [{ divisionId: 'NG-LA', countryCode: 'NG', name: 'Lagos, Nigeria', continent: 'Africa', glvObs: '2.040355000000000000' }] } };
   if (path.includes('/land/parcels')) return { status: 200, body: { parcels: [], total: 0, supplyCapNote: 'One square metre per protocol transaction.' } };
   if (path.includes('/capsules')) return { status: 200, body: { capsules: [], stats: { total: 0, locked: 0, unlocked: 0, totalLockedObs: '0.000000000000000000', totalReturnedToPoolObs: '0.000000000000000000', totalTimeTravelRevenueObs: '0.000000000000000000', nearestUnlock: null, largestCommitmentObs: '0.000000000000000000', mostTimeTravelled: null, upcomingUnlocks: [] } } };
   if (path.includes('/social/feed')) return { status: 200, body: { posts: [], onChain: true, note: 'from chain state' } };
@@ -513,7 +513,7 @@ describe('pages read the field names the node really sends', () => {
     expect(panel).not.toContain('0.0998');
   });
 
-  it('Circle lists countries with their GLV in dollars and drills into divisions', async () => {
+  it('Circle lists countries with their GLV in OBS and drills into divisions', async () => {
     respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
     await import('../web/src/pages/circle.js');
     await settle();
@@ -521,8 +521,9 @@ describe('pages read the field names the node really sends', () => {
     const atlas = document.querySelector('section.card')!.textContent ?? '';
     expect(atlas).toContain('Nigeria');
     expect(atlas).toContain('37 divisions');
-    expect(atlas).toContain('$20,403');   // whole dollars, not $0.02
-    expect(document.body.textContent).not.toContain('$0.02');
+    // GLV is denominated in OBS now; no dollar sign should survive anywhere.
+    expect(atlas).toContain('OBS');
+    expect(atlas).not.toContain('$');
 
     document.querySelector<HTMLButtonElement>('#country-NG')!.click();
     await settle();
@@ -530,7 +531,8 @@ describe('pages read the field names the node really sends', () => {
     const detail = document.querySelector('#parcel-detail')!.textContent ?? '';
     expect(detail).toContain('Lagos');
     expect(detail).toContain('NG-LA');
-    expect(detail).toContain('$204.03');
+    expect(detail).toContain('2.0403');
+    expect(detail).not.toContain('$');
     expect(detail).not.toContain('undefined');
   });
 

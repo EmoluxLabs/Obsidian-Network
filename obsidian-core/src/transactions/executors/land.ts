@@ -108,7 +108,7 @@ function ensureDivision(ctx: ExecutorContext, divisionId: string, countryCode: s
   ctx.state.s.divisions.set(id, {
     divisionId: id,
     countryCode,
-    glvUsdMicro: seed.glvUsdMicro,
+    glvSeals: seed.glvSeals,
     protocolPurchases: 0,
     protocolBuybacks: 0,
     lastUpdatedAtHeight: ctx.apply.height,
@@ -122,7 +122,7 @@ export function parcelOfficialValue(
   divisionPurchases: number,
 ): bigint {
   const entry = parcel.glvEntryCount ?? 0;
-  return entry < divisionPurchases ? divisionGlv : parcel.glvUsdMicro;
+  return entry < divisionPurchases ? divisionGlv : parcel.glvSeals;
 }
 
 function validateDescriptor(body: LandBody, net: { name: string }): void {
@@ -175,17 +175,16 @@ export function executeLand(
       }
       ensureDivision(ctx, divisionId, body.countryCode);
       const record = state.s.divisions.get(divisionId)!;
-      const price = requirePrice(state, protocolTime);
-      const glvAtPurchase = record.glvUsdMicro;
-      const priceObs = usdMicroToSeals(glvAtPurchase, price.priceUsdMicro);
+      const glvAtPurchase = record.glvSeals;
+      // GLV is denominated in OBS: the parcel price is the GLV itself.
+      const priceObs = glvAtPurchase;
       // The client must quote the official price it was shown. A stale or
       // tampered quote is rejected instead of silently charging another amount.
       if (body.price !== priceObs) {
         reject(ErrCode.PRICE_MISMATCH, 'the quoted price does not match the official GLV price', {
           expected: priceObs.toString(),
           received: (body.price ?? 0n).toString(),
-          glvUsdMicro: glvAtPurchase.toString(),
-          priceUsdMicro: price.priceUsdMicro.toString(),
+          glvSeals: glvAtPurchase.toString(),
         });
       }
       const gas = assertGas(tx.gas, priceObs);
@@ -210,7 +209,7 @@ export function executeLand(
         lonMicro: body.lonMicro,
         squareMetres: CONSENSUS_PARAMS.circle.parcelSquareMetres,
         owner: tx.sender,
-        glvUsdMicro: glvAtPurchase,
+        glvSeals: glvAtPurchase,
         status: 'OWNED',
         acquiredAtHeight: apply.height,
         issuedAtHeight: apply.height,
@@ -227,9 +226,9 @@ export function executeLand(
       // Appreciation: existing eligible owners benefit from this purchase. The
       // buyer's own parcel starts at its purchase value and only begins tracking
       // the division GLV after a LATER purchase (spec §52).
-      const step = applyBasisPoints(record.glvUsdMicro, CONSENSUS_PARAMS.circle.appreciationStepBps);
-      const raised = record.glvUsdMicro + (step > 0n ? step : 1n);
-      record.glvUsdMicro = raised > CONSENSUS_PARAMS.circle.maxGlvUsd ? CONSENSUS_PARAMS.circle.maxGlvUsd : raised;
+      const step = applyBasisPoints(record.glvSeals, CONSENSUS_PARAMS.circle.appreciationStepBps);
+      const raised = record.glvSeals + (step > 0n ? step : 1n);
+      record.glvSeals = raised > CONSENSUS_PARAMS.circle.maxGlv ? CONSENSUS_PARAMS.circle.maxGlv : raised;
       record.protocolPurchases += 1;
       record.lastUpdatedAtHeight = apply.height;
 
@@ -239,7 +238,7 @@ export function executeLand(
         divisionId,
         priceObs: priceObs.toString(),
         glvAtPurchase: glvAtPurchase.toString(),
-        glvAfter: record.glvUsdMicro.toString(),
+        glvAfter: record.glvSeals.toString(),
         purchaseIndex: record.protocolPurchases,
         treasury: treasury || null,
       }, apply);
@@ -249,7 +248,7 @@ export function executeLand(
           parcelId,
           priceObs: priceObs.toString(),
           glvAtPurchase: glvAtPurchase.toString(),
-          glvAfter: record.glvUsdMicro.toString(),
+          glvAfter: record.glvSeals.toString(),
           purchaseIndex: record.protocolPurchases,
         },
       };
@@ -260,9 +259,9 @@ export function executeLand(
       if (existing.owner !== tx.sender) reject(ErrCode.PARCEL_NOT_OWNED, 'only the owner may sell to the protocol');
       if (!treasury) reject(ErrCode.ORACLE_UNAVAILABLE, 'protocol buyback requires an on-chain treasury designation');
       if (!division) reject(ErrCode.PARCEL_NOT_FOUND, 'division record missing for that parcel');
-      const price = requirePrice(state, protocolTime);
-      const officialValue = parcelOfficialValue(existing, division.glvUsdMicro, division.protocolPurchases);
-      const payout = usdMicroToSeals(officialValue, price.priceUsdMicro);
+      const officialValue = parcelOfficialValue(existing, division.glvSeals, division.protocolPurchases);
+      // Buybacks pay the current official value, already in OBS.
+      const payout = officialValue;
       const treasuryAccount = state.getAccount(treasury);
       if (!treasuryAccount || treasuryAccount.balance < payout) {
         reject(ErrCode.INSUFFICIENT_FUNDS, 'the protocol land reserve cannot fund this buyback');
@@ -271,9 +270,9 @@ export function executeLand(
       state.debit(treasury, payout, apply, 'protocol land buyback payout');
       state.credit(tx.sender, payout, apply, 'protocol land buyback received');
 
-      const drop = applyBasisPoints(division.glvUsdMicro, CONSENSUS_PARAMS.circle.depreciationStepBps);
-      const lowered = division.glvUsdMicro - drop;
-      division.glvUsdMicro = lowered < CONSENSUS_PARAMS.circle.minGlvUsd ? CONSENSUS_PARAMS.circle.minGlvUsd : lowered;
+      const drop = applyBasisPoints(division.glvSeals, CONSENSUS_PARAMS.circle.depreciationStepBps);
+      const lowered = division.glvSeals - drop;
+      division.glvSeals = lowered < CONSENSUS_PARAMS.circle.minGlv ? CONSENSUS_PARAMS.circle.minGlv : lowered;
       division.protocolBuybacks += 1;
       division.lastUpdatedAtHeight = apply.height;
       state.s.parcels.delete(parcelId);
@@ -283,9 +282,9 @@ export function executeLand(
         seller: tx.sender,
         divisionId,
         payoutObs: payout.toString(),
-        glvAfter: division.glvUsdMicro.toString(),
+        glvAfter: division.glvSeals.toString(),
       }, apply);
-      return { gasBase: 0n, detail: { parcelId, payoutObs: payout.toString(), glvAfter: division.glvUsdMicro.toString() } };
+      return { gasBase: 0n, detail: { parcelId, payoutObs: payout.toString(), glvAfter: division.glvSeals.toString() } };
     }
 
     case LandOp.LIST: {
@@ -328,24 +327,24 @@ export function executeLand(
         state.poolInflow(gas, 'marketplace gas to mining pool');
         state.s.metrics.totalGasBurnedToPool += gas;
       }
-      const price = requirePrice(state, protocolTime);
       const record = existing;
       record.owner = tx.sender;
       record.status = 'OWNED';
       delete record.mspObs;
       record.transferCount += 1;
       record.acquiredAtHeight = apply.height;
-      record.ilvUsdMicro = sealsToUsdMicro(body.price, price.priceUsdMicro);
+      // ILV (individual land value) is simply what the parcel last traded for, in OBS.
+      record.ilvSeals = body.price;
       if (division) {
         record.glvEntryCount = division.protocolPurchases;
-        record.glvUsdMicro = parcelOfficialValue(record, division.glvUsdMicro, division.protocolPurchases);
+        record.glvSeals = parcelOfficialValue(record, division.glvSeals, division.protocolPurchases);
       }
       state.emit('LAND_TRADED', {
         parcelId,
         seller,
         buyer: tx.sender,
         priceObs: body.price.toString(),
-        ilvUsdMicro: record.ilvUsdMicro.toString(),
+        ilvObs: record.ilvSeals.toString(),
         glvChanged: false,
       }, apply);
       return { gasBase: body.price, detail: { parcelId, priceObs: body.price.toString(), glvChanged: false } };
@@ -357,11 +356,10 @@ export function executeLand(
       if (!body.to) reject(ErrCode.MALFORMED, 'a recipient address is required');
       assertAddress(body.to, net, 'recipient');
       state.touchAccount(body.to, apply);
-      const price = requirePrice(state, protocolTime);
       const officialValue = division
-        ? parcelOfficialValue(existing, division.glvUsdMicro, division.protocolPurchases)
-        : existing.glvUsdMicro;
-      const gasBase = usdMicroToSeals(officialValue, price.priceUsdMicro);
+        ? parcelOfficialValue(existing, division.glvSeals, division.protocolPurchases)
+        : existing.glvSeals;
+      const gasBase = officialValue;
       const gas = assertGas(tx.gas, gasBase);
       if (gas > 0n) {
         state.debit(tx.sender, gas, apply, 'land transfer gas');

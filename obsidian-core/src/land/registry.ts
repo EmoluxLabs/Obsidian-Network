@@ -83,10 +83,11 @@ export function findDivision(divisionId: string): { country: CountryEntry; divis
 }
 
 /**
- * Base GLV for a location, in micro-USD, from the published factor table.
- * Deterministic integer expression — no floating point in consensus.
+ * Base GLV for a location, in OBS seals, from the published factor table.
+ * Deterministic integer expression — no floating point in consensus, and no
+ * external price source of any kind.
  */
-export function baseGlvUsdMicro(country: CountryEntry, divisionWeight = 1): bigint {
+export function baseGlv(country: CountryEntry, divisionWeight = 1): bigint {
   // Factors are 0-100 indices; the weights below sum to 100.
   const populationFactor = BigInt(Math.min(100, Math.round(country.populationM * 1.2))); // 0-100, saturating at 83M+
   const economyFactor = BigInt(Math.max(0, Math.min(100, country.economy)));
@@ -102,20 +103,17 @@ export function baseGlvUsdMicro(country: CountryEntry, divisionWeight = 1): bigi
     tourismFactor * 10n +
     significanceFactor * 15n; // 0..10_000
 
-  // Map to USD: index 0 -> $150, index 10_000 -> $30,000, then apply the
-  // division weight (percent) and clamp to the protocol bounds.
-  const minUsd = 150_000_000n; // $150
-  const maxUsd = 30_000_000_000n; // $30,000
-  const range = maxUsd - minUsd;
+  // Map the index onto the protocol's OBS band: index 0 -> minGlv,
+  // index 10_000 -> maxGlv, then apply the division weight (percent) and clamp.
+  const minSeals = CONSENSUS_PARAMS.circle.minGlv;
+  const maxSeals = CONSENSUS_PARAMS.circle.maxGlv;
+  const range = maxSeals - minSeals;
   const scaled = (weighted * range) / 10_000n;
-  let value = minUsd + scaled;
+  let value = minSeals + scaled;
   if (divisionWeight !== 1) {
     value = (value * BigInt(Math.round(divisionWeight * 100))) / 100n;
   }
-  return minBig(
-    maxBig(value, CONSENSUS_PARAMS.circle.minGlvUsd),
-    CONSENSUS_PARAMS.circle.maxGlvUsd,
-  );
+  return minBig(maxBig(value, CONSENSUS_PARAMS.circle.minGlv), CONSENSUS_PARAMS.circle.maxGlv);
 }
 
 export interface DivisionSeed {
@@ -123,7 +121,7 @@ export interface DivisionSeed {
   countryCode: string;
   countryName: string;
   continent: string;
-  glvUsdMicro: bigint;
+  glvSeals: bigint;
   /** Deterministic identity for the division record. */
   fingerprint: string;
 }
@@ -140,7 +138,7 @@ export function divisionSeed(divisionId: string, countryCode?: string): Division
       countryCode: countryCode ?? id.slice(0, 2),
       countryName: 'Unknown',
       continent: 'Unknown',
-      glvUsdMicro: CONSENSUS_PARAMS.circle.minGlvUsd,
+      glvSeals: CONSENSUS_PARAMS.circle.minGlv,
       fingerprint: sha256Hex(utf8(`DIVISION|${id}|unknown`)).slice(0, 24),
     };
   }
@@ -149,7 +147,7 @@ export function divisionSeed(divisionId: string, countryCode?: string): Division
     countryCode: found.country.code,
     countryName: found.country.name,
     continent: found.country.continent,
-    glvUsdMicro: baseGlvUsdMicro(found.country, found.weight),
+    glvSeals: baseGlv(found.country, found.weight),
     fingerprint: sha256Hex(utf8(`DIVISION|${id}|${found.country.name}`)).slice(0, 24),
   };
 }
@@ -159,8 +157,8 @@ export interface SearchHit {
   countryCode: string;
   name: string;
   continent: string;
-  glvUsdMicro: bigint;
-  glvUsd: string;
+  glvSeals: bigint;
+  glvObs: string;
 }
 
 /** Simple, deterministic, case-insensitive search over the registry. */
@@ -170,14 +168,14 @@ export function searchDivisions(query: string, limit = 25): SearchHit[] {
   const hits: SearchHit[] = [];
   for (const country of geography.countries) {
     const add = (divisionId: string, name: string, weight = 1): void => {
-      const glv = baseGlvUsdMicro(country, weight);
+      const glv = baseGlv(country, weight);
       hits.push({
         divisionId,
         countryCode: country.code,
         name: `${name}, ${country.name}`,
         continent: country.continent,
-        glvUsdMicro: glv,
-        glvUsd: (glv / 1_000_000n).toString(),
+        glvSeals: glv,
+        glvObs: glv.toString(),
       });
     };
     if (
@@ -208,8 +206,8 @@ export function listDivisions(countryCode: string): Array<{
   divisionId: string;
   name: string;
   weight: number;
-  glvUsdMicro: bigint;
-  glvUsd: string;
+  glvSeals: bigint;
+  glvObs: string;
   level: number;
 }> {
   const code = countryCode.trim().toUpperCase();
@@ -217,27 +215,27 @@ export function listDivisions(countryCode: string): Array<{
   if (!country) return [];
   const divisions = country.divisions ?? [];
   if (divisions.length === 0) {
-    const glv = baseGlvUsdMicro(country);
+    const glv = baseGlv(country);
     return [
       {
         divisionId: country.code,
         name: country.name,
         weight: 1,
-        glvUsdMicro: glv,
-        glvUsd: (glv / 1_000_000n).toString(),
+        glvSeals: glv,
+        glvObs: glv.toString(),
         level: 1,
       },
     ];
   }
   return divisions.map((division) => {
     const weight = division.weight ?? 1;
-    const glv = baseGlvUsdMicro(country, weight);
+    const glv = baseGlv(country, weight);
     return {
       divisionId: normaliseDivisionId(division.id),
       name: division.name,
       weight,
-      glvUsdMicro: glv,
-      glvUsd: (glv / 1_000_000n).toString(),
+      glvSeals: glv,
+      glvObs: glv.toString(),
       level: 1,
     };
   });
@@ -248,13 +246,13 @@ export function listCountries(): Array<{
   name: string;
   continent: string;
   divisionCount: number;
-  glvUsd: string;
+  glvObs: string;
 }> {
   return geography.countries.map((country) => ({
     code: country.code,
     name: country.name,
     continent: country.continent,
     divisionCount: country.divisions?.length ?? 1,
-    glvUsd: (baseGlvUsdMicro(country) / 1_000_000n).toString(),
+    glvObs: baseGlv(country).toString(),
   }));
 }

@@ -383,9 +383,18 @@ export const CONSENSUS_PARAMS = {
     appreciationStepBps: 25,
     /** Step applied to GLV after each protocol buyback, in basis points (0.25%). */
     depreciationStepBps: 25,
-    /** GLV bounds in USD micro-units. */
-    minGlvUsd: 100_000_000n, // $100
-    maxGlvUsd: 30_000_000_000n, // $30,000
+    /**
+     * GLV bounds, denominated in OBS.
+     *
+     * Land used to be priced in USD and converted at the oracle price, which
+     * meant the entire Circle economy stopped whenever the feed was missing or
+     * stale. Values are now OBS: 0.01 OBS for the cheapest first-level
+     * division, 5 OBS for the most valuable. Appreciation, depreciation,
+     * buybacks and the "buyer never retroactively benefits" rule are unchanged
+     * — only the unit of account is.
+     */
+    minGlv: parseObs('0.01'),
+    maxGlv: parseObs('5'),
     /** A buyback is only permitted when the protocol land reserve can fund it. */
     requireReserveForBuyback: true,
   },

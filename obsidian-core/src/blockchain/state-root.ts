@@ -80,8 +80,8 @@ export const PARAMS_HASH: string = sha256Hex(
     w.u64(BigInt(p.circle.parcelSquareMetres));
     w.u32(p.circle.appreciationStepBps);
     w.u32(p.circle.depreciationStepBps);
-    w.u64(p.circle.minGlvUsd);
-    w.u64(p.circle.maxGlvUsd);
+    w.u128(p.circle.minGlv);
+    w.u128(p.circle.maxGlv);
     w.u32(p.social.monetisationMinFollowers);
     w.u32(p.social.monetisationMinMonthlyViews);
     w.u32(p.social.creatorShareBps);
@@ -195,7 +195,7 @@ function encodeName(w: Writer, n: OnsRecord): void {
 function encodeDivision(w: Writer, d: DivisionRecord): void {
   w.string(d.divisionId);
   w.string(d.countryCode);
-  w.u64(d.glvUsdMicro);
+  w.u128(d.glvSeals);
   w.u32(d.protocolPurchases);
   w.u32(d.protocolBuybacks);
   w.u32(d.lastUpdatedAtHeight);
@@ -212,8 +212,8 @@ function encodeParcel(w: Writer, p: ParcelRecord): void {
   w.i128(BigInt(p.lonMicro ?? 0));
   w.u64(BigInt(p.squareMetres));
   w.string(p.owner);
-  w.u64(p.glvUsdMicro);
-  w.u64(p.ilvUsdMicro ?? 0n);
+  w.u128(p.glvSeals);
+  w.u128(p.ilvSeals ?? 0n);
   w.u128(p.mspObs ?? 0n);
   w.string(p.status);
   w.u32(p.acquiredAtHeight);

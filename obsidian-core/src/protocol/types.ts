@@ -467,7 +467,7 @@ export interface ParcelRecord {
   squareMetres: number;
   owner: string;
   /** Official protocol location value at the time of last update, USD micro. */
-  glvUsdMicro: bigint;
+  glvSeals: bigint;
   /**
    * Division purchase counter when this parcel was issued or last acquired.
    * A parcel tracks later GLV movements only, so a buyer never retroactively
@@ -480,7 +480,7 @@ export interface ParcelRecord {
   level?: number;
   subId?: string;
   /** Individual location value established by a marketplace trade, USD micro. */
-  ilvUsdMicro?: bigint;
+  ilvSeals?: bigint;
   /** Owner's marketplace asking price in OBS (not USD). */
   mspObs?: bigint;
   status: 'OWNED' | 'LISTED';
@@ -496,7 +496,7 @@ export interface DivisionRecord {
   divisionId: string;
   countryCode: string;
   /** Official protocol location value for every parcel in this division. */
-  glvUsdMicro: bigint;
+  glvSeals: bigint;
   /** Count of protocol purchases used to derive appreciation. */
   protocolPurchases: number;
   protocolBuybacks: number;

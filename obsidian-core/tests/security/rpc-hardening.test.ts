@@ -322,7 +322,8 @@ describe('Circle registry reads', () => {
     expect(body.count).toBeGreaterThan(0);
     for (const division of body.divisions) {
       expect(String(division.divisionId).startsWith('NG-') || division.divisionId === 'NG').toBe(true);
-      expect(String(division.glvUsd).startsWith('$')).toBe(true);
+      // GLV is denominated in OBS now, not USD: a plain decimal, no currency sign.
+      expect(String(division.glvObs)).toMatch(/^\d+\.\d+$/);
       expect(typeof division.protocolPurchases).toBe('number');
     }
   });

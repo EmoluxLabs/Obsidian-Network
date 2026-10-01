@@ -398,8 +398,8 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     const division = divisionSeed('US-CA');
     expect(division).toBeDefined();
     // US-CA already sits at the protocol's $30,000 GLV ceiling.
-    expect(division!.glvUsdMicro).toBe(CONSENSUS_PARAMS.circle.maxGlvUsd);
-    const price = obsForUsdMicro(h, division!.glvUsdMicro);
+    expect(division!.glvSeals).toBe(CONSENSUS_PARAMS.circle.maxGlv);
+    const price = division!.glvSeals;
     const treasuryBefore = h.chain.world.s.metrics.totalTreasuryFromSplit;
     const nodePoolBefore = h.chain.world.s.nodeRewards.balance;
 
@@ -422,7 +422,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     const parcel = h.chain.world.s.parcels.get(parcelId);
     expect(parcel).toBeDefined();
     expect(parcel!.owner).toBe(bob.address);
-    expect(parcel!.glvUsdMicro).toBe(division!.glvUsdMicro);
+    expect(parcel!.glvSeals).toBe(division!.glvSeals);
     // The parcel has observed no later GLV update yet.
     expect(parcel!.glvEntryCount).toBe(0);
     // Protocol land issuance is qualifying platform revenue: 40% to the node
@@ -434,7 +434,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
 
     // Issuance reaches the protocol accounts, and GLV can never exceed the cap.
     const registry = h.chain.world.s.divisions.get('US-CA')!;
-    expect(registry.glvUsdMicro).toBe(CONSENSUS_PARAMS.circle.maxGlvUsd);
+    expect(registry.glvSeals).toBe(CONSENSUS_PARAMS.circle.maxGlv);
     expect(registry.protocolPurchases).toBe(1);
     expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
   });
@@ -445,9 +445,9 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     seedOracle(h, alice, bob);
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     const division = divisionSeed('BR')!;
-    expect(division.glvUsdMicro).toBeLessThan(CONSENSUS_PARAMS.circle.maxGlvUsd);
-    const price = obsForUsdMicro(h, division.glvUsdMicro);
-    const step = (division.glvUsdMicro * BigInt(CONSENSUS_PARAMS.circle.appreciationStepBps)) / 10_000n;
+    expect(division.glvSeals).toBeLessThan(CONSENSUS_PARAMS.circle.maxGlv);
+    const price = division.glvSeals;
+    const step = (division.glvSeals * BigInt(CONSENSUS_PARAMS.circle.appreciationStepBps)) / 10_000n;
 
     h.produce([
       h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'BR', countryCode: 'BR', price }), {
@@ -456,7 +456,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     ]);
     const registry = h.chain.world.s.divisions.get('BR')!;
     expect(step).toBeGreaterThan(0n);
-    expect(registry.glvUsdMicro).toBe(division.glvUsdMicro + step);
+    expect(registry.glvSeals).toBe(division.glvSeals + step);
     expect(registry.lastUpdatedAtHeight).toBeGreaterThan(0);
   });
 
@@ -468,7 +468,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     h.produce([signedPayment(h, alice, carol.address, parseObs('5000'))]);
     const division = divisionSeed('JP')!;
-    const firstPrice = obsForUsdMicro(h, division.glvUsdMicro);
+    const firstPrice = division.glvSeals;
 
     h.produce([
       h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'JP', countryCode: 'JP', price: firstPrice }), {
@@ -476,11 +476,11 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
       }),
     ]);
     const bobParcelId = computeParcelId({ divisionId: 'JP', level: 1, subId: '', plotIndex: 0n });
-    const bobValue = h.chain.world.s.parcels.get(bobParcelId)!.glvUsdMicro;
-    expect(bobValue).toBe(division.glvUsdMicro);
+    const bobValue = h.chain.world.s.parcels.get(bobParcelId)!.glvSeals;
+    expect(bobValue).toBe(division.glvSeals);
 
     // A second plot in the same division is issued at the appreciated GLV.
-    const secondPrice = obsForUsdMicro(h, h.chain.world.s.divisions.get('JP')!.glvUsdMicro);
+    const secondPrice = h.chain.world.s.divisions.get('JP')!.glvSeals;
     expect(secondPrice).toBeGreaterThan(firstPrice);
     h.produce([
       h.sign(carol, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'JP', countryCode: 'JP', plotIndex: 1n, price: secondPrice }), {
@@ -491,14 +491,14 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     const bobParcel = h.chain.world.s.parcels.get(bobParcelId)!;
     const divisionRecord = h.chain.world.s.divisions.get('JP')!;
     // The buyer's own purchase never inflates the value they just paid.
-    expect(bobParcel.glvUsdMicro).toBe(bobValue);
+    expect(bobParcel.glvSeals).toBe(bobValue);
     expect(bobParcel.glvEntryCount).toBe(0);
     // Later purchases DO lift the official value of older parcels — that is the
     // appreciation the spec grants to existing holders.
-    expect(parcelOfficialValue(bobParcel, divisionRecord.glvUsdMicro, divisionRecord.protocolPurchases)).toBe(
-      divisionRecord.glvUsdMicro,
+    expect(parcelOfficialValue(bobParcel, divisionRecord.glvSeals, divisionRecord.protocolPurchases)).toBe(
+      divisionRecord.glvSeals,
     );
-    expect(parcelOfficialValue(bobParcel, divisionRecord.glvUsdMicro, divisionRecord.protocolPurchases)).toBeGreaterThan(
+    expect(parcelOfficialValue(bobParcel, divisionRecord.glvSeals, divisionRecord.protocolPurchases)).toBeGreaterThan(
       bobValue,
     );
     expect(divisionRecord.protocolPurchases).toBe(2);
@@ -510,7 +510,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     seedOracle(h, alice, bob);
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     const division = divisionSeed('US-CA')!;
-    const wrong = obsForUsdMicro(h, division.glvUsdMicro) - parseObs('1');
+    const wrong = division.glvSeals - parseObs('1');
     const outcome = h.tryBlock(
       [
         h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'US-CA', countryCode: 'US', price: wrong }), {
@@ -528,14 +528,14 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     seedOracle(h, alice, bob);
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     const division = divisionSeed('FR')!;
-    const price = obsForUsdMicro(h, division.glvUsdMicro);
+    const price = division.glvSeals;
     h.produce([
       h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'FR', countryCode: 'FR', price }), {
         gas: expectedGas(price),
       }),
     ]);
 
-    const againPrice = obsForUsdMicro(h, h.chain.world.s.divisions.get('FR')!.glvUsdMicro);
+    const againPrice = h.chain.world.s.divisions.get('FR')!.glvSeals;
     const again = h.tryBlock([
       h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'FR', countryCode: 'FR', price: againPrice }), {
         gas: expectedGas(againPrice),
@@ -558,7 +558,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     h.produce([signedPayment(h, alice, bob.address, parseObs('5000'))]);
     h.produce([signedPayment(h, alice, carol.address, parseObs('5000'))]);
     const division = divisionSeed('DE')!;
-    const price = obsForUsdMicro(h, division.glvUsdMicro);
+    const price = division.glvSeals;
     h.produce([
       h.sign(bob, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, { divisionId: 'DE', countryCode: 'DE', price }), {
         gas: expectedGas(price),
@@ -566,7 +566,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     ]);
 
     const msp = price * 2n;
-    const glvBefore = h.chain.world.s.divisions.get('DE')!.glvUsdMicro;
+    const glvBefore = h.chain.world.s.divisions.get('DE')!.glvSeals;
     h.produce([
       h.sign(bob, TxType.LAND, landBody(LandOp.LIST, { divisionId: 'DE', countryCode: 'DE', price: msp }), { gas: 0n }),
     ]);
@@ -581,7 +581,7 @@ describe('Obsidian Circle — land (spec §45–§56)', () => {
     expect(h.chain.world.s.parcels.get(parcelId)!.owner).toBe(carol.address);
     expect(h.chain.world.getAccount(bob.address)!.balance).toBe(sellerBefore + msp);
     // The marketplace never moves the protocol GLV.
-    expect(h.chain.world.s.divisions.get('DE')!.glvUsdMicro).toBe(glvBefore);
+    expect(h.chain.world.s.divisions.get('DE')!.glvSeals).toBe(glvBefore);
   });
 });
 

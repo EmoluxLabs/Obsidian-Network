@@ -250,8 +250,10 @@ describe('browser pages against a live node', () => {
 
     const atlas = document.querySelector('section.card')?.textContent ?? '';
     expect(atlas).toContain('Nigeria');
-    expect(atlas).toContain('$');                               // GLVs are dollars, never $0.00 for a real country
-    expect(atlas).not.toContain('$0.02');
+    // Land is priced in OBS: a dollar sign anywhere would mean the oracle
+    // dependency came back.
+    expect(atlas).toContain('OBS');
+    expect(atlas).not.toContain('$');
     expect(atlas).not.toContain('No divisions configured');
 
     document.querySelector<HTMLButtonElement>('#country-NG')?.click();
@@ -259,7 +261,8 @@ describe('browser pages against a live node', () => {
 
     const detail = document.querySelector('#parcel-detail')?.textContent ?? '';
     expect(detail).toMatch(/NG-[A-Z]+|\(NG\)/);
-    expect(detail).toContain('$');
+    expect(detail).toContain('OBS');
+    expect(detail).not.toContain('$');
     expect(detail).not.toContain('undefined');
   });
 
