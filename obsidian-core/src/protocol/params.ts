@@ -264,8 +264,15 @@ export const CONSENSUS_PARAMS = {
   consensus: {
     /** Slots per producer rotation (proposer = validators[height % validatorCount]). */
     validatorSlotsPerRotation: 1,
-    /** A validator must be bonded with at least this much OBS. */
-    minValidatorBond: parseObs('1000'),
+    /**
+     * A validator must be bonded with at least this much OBS.
+     *
+     * 50 OBS, lowered from 1,000. The bond exists to make misbehaviour cost
+     * something, not to gate participation: at 1,000 OBS the only account that
+     * could ever afford one at launch was the genesis-allocation recipient,
+     * which would have made the validator set a function of who claimed first.
+     */
+    minValidatorBond: parseObs('50'),
     /** Unbonding delay in blocks before bond funds return. */
     unbondingBlocks: 20_160, // ~28 hours at 5s blocks
     /** Missed slots tolerated in a 100-block window before jailing. */
@@ -302,9 +309,16 @@ export const CONSENSUS_PARAMS = {
   ons: {
     minLength: 3,
     maxLength: 63,
-    /** Registration fee in USD micro-units, paid in OBS at oracle price. */
-    registrationFeeUsd: 5_000_000n, // $5.00
-    renewalFeeUsd: 5_000_000n, // $5.00
+    /**
+     * Registration and renewal fees, denominated in OBS itself.
+     *
+     * Previously $5.00 converted at the oracle price, which made name
+     * registration unavailable whenever the oracle was absent or stale. The
+     * protocol now prices its own services in its own currency: no external
+     * price source participates in consensus at all.
+     */
+    registrationFee: parseObs('0.05'),
+    renewalFee: parseObs('0.05'),
     /** Registration grants ownership for this many seconds (1 year). */
     termSeconds: 365 * 24 * 60 * 60,
     /** Grace period after expiry before the name returns to the pool. */
@@ -388,8 +402,13 @@ export const CONSENSUS_PARAMS = {
     /** Revenue split in basis points: 70% creator, 30% Obsidian Network. */
     creatorShareBps: 7_000,
     networkShareBps: 3_000,
-    /** Business page activation price in USD micro-units ($50). */
-    businessPagePriceUsd: 50_000_000n,
+    /**
+     * Business page activation price, denominated in OBS.
+     *
+     * Was $50.00 at the oracle price; now a fixed 0.005 OBS so page creation
+     * never depends on an external price feed.
+     */
+    businessPagePrice: parseObs('0.005'),
     /** Tip minimum (one seal). */
     minTip: 1n,
     /** Feed page size ceiling enforced by the node. */

@@ -105,7 +105,14 @@ check('one preview per capsule per account', 1, P.capsules.maxPreviewsPerAccount
 check('creators keep 70% of monetisation', 7000, P.social.creatorShareBps);
 check('the network takes 30% of monetisation', 3000, P.social.networkShareBps);
 check('creator and network shares total 100%', 10_000, P.social.creatorShareBps + P.social.networkShareBps);
-check('a business page costs $50', '50000000', String(P.social.businessPagePriceUsd));
+check('a business page costs 0.005 OBS', '5000000000000000', String(P.social.businessPagePrice));
+check('an ONS name costs 0.05 OBS', '50000000000000000', String(P.ons.registrationFee));
+check('an ONS renewal costs 0.05 OBS', '50000000000000000', String(P.ons.renewalFee));
+check('a validator bond is 50 OBS', '50000000000000000000', String(P.consensus.minValidatorBond));
+// Protocol services are denominated in OBS: no oracle price participates in
+// pricing any more, so none of these can be blocked by a missing feed.
+check('no USD-denominated service prices remain', 'true',
+  String(P.ons.registrationFeeUsd === undefined && P.social.businessPagePriceUsd === undefined));
 check('an account may issue at most 5 invites', 5, P.registry.maxInvitesPerAccount);
 check('land starts no lower than $100', '100000000', String(P.circle.minGlvUsd));
 check('land starts no higher than $30,000', '30000000000', String(P.circle.maxGlvUsd));

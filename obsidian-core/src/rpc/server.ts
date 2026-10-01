@@ -374,7 +374,8 @@ export class RpcServer {
         maxReorgDepth: CONSENSUS_PARAMS.consensus.maxReorgDepth,
       },
       ons: {
-        registrationFeeUsd: formatObs(CONSENSUS_PARAMS.ons.registrationFeeUsd * 10n ** 12n, 6),
+        registrationFeeObs: formatObs(CONSENSUS_PARAMS.ons.registrationFee),
+        renewalFeeObs: formatObs(CONSENSUS_PARAMS.ons.renewalFee),
         termSeconds: CONSENSUS_PARAMS.ons.termSeconds,
         graceSeconds: CONSENSUS_PARAMS.ons.graceSeconds,
         minLength: CONSENSUS_PARAMS.ons.minLength,
@@ -396,7 +397,7 @@ export class RpcServer {
       social: {
         creatorShareBps: CONSENSUS_PARAMS.social.creatorShareBps,
         networkShareBps: CONSENSUS_PARAMS.social.networkShareBps,
-        businessPagePriceUsd: formatObs(CONSENSUS_PARAMS.social.businessPagePriceUsd * 10n ** 12n, 2),
+        businessPagePriceObs: formatObs(CONSENSUS_PARAMS.social.businessPagePrice),
         monetisationMinFollowers: CONSENSUS_PARAMS.social.monetisationMinFollowers,
         monetisationMinMonthlyViews: CONSENSUS_PARAMS.social.monetisationMinMonthlyViews,
       },

@@ -3,7 +3,7 @@
  *
  * A `.obs` name maps to exactly one wallet address at a time and the mapping is
  * blockchain state, not a database row. Names are priced in USD and paid in OBS
- * at the protocol oracle price; the fee is protocol revenue and is remitted to
+ * at a fixed OBS price; the fee is protocol revenue and is remitted to
  * the designated treasury wallet on-chain (it cannot be minted, and the
  * treasury cannot change except by the protocol rule).
  *
@@ -20,7 +20,7 @@ import {
   type OnsRecord,
   type TxEnvelope,
 } from '../../protocol/types.js';
-import { assertAddress, assertAmount, assertGas, requirePrice, usdMicroToSeals } from '../helpers.js';
+import { assertAddress, assertAmount, assertGas } from '../helpers.js';
 import { treasuryWallet } from '../../genesis/rules.js';
 import { RevenueSource } from '../../economy/accounting.js';
 import type { ExecutorContext } from '../types.js';
@@ -71,9 +71,20 @@ export function validateNameFormat(name: string): void {
   }
 }
 
-export function requiredFeeSeals(state: ExecutorContext['state'], protocolTime: number, usdMicro: bigint): bigint {
-  const price = requirePrice(state, protocolTime);
-  return usdMicroToSeals(usdMicro, price.priceUsdMicro);
+/**
+ * The protocol fee for a name, in seals.
+ *
+ * Fees are denominated in OBS, so this is a constant lookup: no oracle, no
+ * staleness window, no way for an absent price feed to make registration
+ * impossible. The signature keeps `state`/`protocolTime` so callers and future
+ * term-dependent pricing need not change shape.
+ */
+export function requiredFeeSeals(
+  _state: ExecutorContext['state'],
+  _protocolTime: number,
+  feeSeals: bigint,
+): bigint {
+  return feeSeals;
 }
 
 /** Registration is never allowed to silently renew an existing name. */
@@ -91,7 +102,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       if (existing && existing.expiresAt > protocolTime) {
         reject(ErrCode.NAME_TAKEN, `"${name}.obs" is already registered until ${existing.expiresAt}`);
       }
-      const fee = requiredFeeSeals(state, protocolTime, CONSENSUS_PARAMS.ons.registrationFeeUsd);
+      const fee = requiredFeeSeals(state, protocolTime, CONSENSUS_PARAMS.ons.registrationFee);
       assertAmount(body.fee, { label: 'fee' });
       if (body.fee < fee) {
         reject(ErrCode.INSUFFICIENT_FUNDS, `offered fee ${body.fee} is below the protocol fee ${fee}`, {
@@ -164,7 +175,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       const record = state.s.names.get(name);
       if (!record) reject(ErrCode.NOT_FOUND, `"${name}.obs" is not registered`);
       if (record.owner !== tx.sender) reject(ErrCode.NAME_NOT_OWNED, 'only the owner may renew a name');
-      const fee = requiredFeeSeals(state, protocolTime, CONSENSUS_PARAMS.ons.renewalFeeUsd);
+      const fee = requiredFeeSeals(state, protocolTime, CONSENSUS_PARAMS.ons.renewalFee);
       assertAmount(body.fee, { label: 'fee' });
       if (body.fee < fee) {
         reject(ErrCode.INSUFFICIENT_FUNDS, `offered fee ${body.fee} is below the protocol renewal fee ${fee}`);

@@ -7,7 +7,7 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.1.0 that is `5ed3d6409bd4e723f83f00469e976062`.
+a node running it. For 1.1.0 that is `beeba5c7097efee4eeb13265e2a3294c`.
 
 ---
 

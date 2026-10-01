@@ -84,14 +84,20 @@ function seedOracle(h: Harness, submitter: TestWallet, second: TestWallet, price
 }
 
 describe('oracle (spec §30, §76)', () => {
-  it('fails closed: USD-priced features are rejected until a price exists', async () => {
+  it('ONS no longer needs an oracle at all: fees are denominated in OBS', async () => {
+    // Previously this asserted the opposite — name registration failed closed
+    // whenever no price existed. Protocol services are now priced in OBS, so a
+    // chain that has never seen an oracle observation can still sell names.
     const { h, alice } = await fundedHarness();
+    expect(h.chain.world.s.oracle.sourceCount).toBe(0);
+
+    const fee = CONSENSUS_PARAMS.ons.registrationFee;
     const outcome = h.tryBlock(
-      [h.sign(alice, TxType.ONS, onsBody(OnsOp.REGISTER, 'alice', { fee: parseObs('5') }), { gas: expectedGas(parseObs('5')) })],
+      [h.sign(alice, TxType.ONS, onsBody(OnsOp.REGISTER, 'alice', { fee }), { gas: expectedGas(fee) })],
       {},
     );
-    expect(outcome.accepted).toBe(false);
-    expect([ErrCode.ORACLE_UNAVAILABLE, ErrCode.ORACLE_INSUFFICIENT_SOURCES]).toContain(outcome.code);
+    expect(outcome.accepted).toBe(true);
+    expect(h.chain.world.s.names.get('alice')).toBeDefined();
   });
 
   it('rejects an observation outside the protocol bounds or too old', async () => {
@@ -140,7 +146,7 @@ describe('ONS (spec §57, §62)', () => {
     const bob = makeWallet();
     seedOracle(h, alice, bob);
 
-    const fee = obsForUsdMicro(h, CONSENSUS_PARAMS.ons.registrationFeeUsd);
+    const fee = CONSENSUS_PARAMS.ons.registrationFee;
     // Fund a separate registrant: the fee must leave the buyer and reach the
     // treasury wallet, which is alice (the genesis recipient).
     h.produce([signedPayment(h, alice, bob.address, parseObs('100'))]);
@@ -169,7 +175,7 @@ describe('ONS (spec §57, §62)', () => {
     const bob = makeWallet();
     seedOracle(h, alice, bob);
     h.produce([signedPayment(h, alice, bob.address, parseObs('100'))]);
-    const fee = obsForUsdMicro(h, CONSENSUS_PARAMS.ons.registrationFeeUsd);
+    const fee = CONSENSUS_PARAMS.ons.registrationFee;
     h.produce([h.sign(bob, TxType.ONS, onsBody(OnsOp.REGISTER, 'bob', { fee }), { gas: expectedGas(fee) })]);
 
     const duplicate = h.tryBlock([h.sign(bob, TxType.ONS, onsBody(OnsOp.REGISTER, 'bob', { fee }), { gas: expectedGas(fee) })], {
@@ -198,7 +204,7 @@ describe('ONS (spec §57, §62)', () => {
     const { h, alice } = await fundedHarness();
     const bob = makeWallet();
     seedOracle(h, alice, bob);
-    const fee = obsForUsdMicro(h, CONSENSUS_PARAMS.ons.registrationFeeUsd);
+    const fee = CONSENSUS_PARAMS.ons.registrationFee;
     h.produce([h.sign(alice, TxType.ONS, onsBody(OnsOp.REGISTER, 'alice', { fee }), { gas: expectedGas(fee) })]);
     h.produce([h.sign(alice, TxType.ONS, onsBody(OnsOp.TRANSFER, 'alice', { to: bob.address }), { gas: 0n })]);
     expect(h.chain.world.s.names.get('alice')!.owner).toBe(bob.address);
@@ -211,7 +217,7 @@ describe('ONS (spec §57, §62)', () => {
     const bob = makeWallet();
     const mallory = makeWallet();
     seedOracle(h, alice, bob);
-    const fee = obsForUsdMicro(h, CONSENSUS_PARAMS.ons.registrationFeeUsd);
+    const fee = CONSENSUS_PARAMS.ons.registrationFee;
     h.produce([h.sign(alice, TxType.ONS, onsBody(OnsOp.REGISTER, 'alice', { fee }), { gas: expectedGas(fee) })]);
     const stolen = h.tryBlock(
       [h.sign(mallory, TxType.ONS, onsBody(OnsOp.TRANSFER, 'alice', { to: mallory.address }), { gas: 0n })],
@@ -616,11 +622,11 @@ describe('OBS Social (spec §36, §38)', () => {
     expect(h.chain.world.s.pool.balance).toBe(poolBefore + expectedGas(tip));
   });
 
-  it('charges $50 in OBS for a business page and splits it 40/60 between node runners and the treasury', async () => {
+  it('charges the fixed OBS price for a business page and splits it 40/60 between node runners and the treasury', async () => {
     const { h, alice } = await fundedHarness();
     const bob = makeWallet();
     seedOracle(h, alice, bob);
-    const priceSeals = obsForUsdMicro(h, CONSENSUS_PARAMS.social.businessPagePriceUsd);
+    const priceSeals = CONSENSUS_PARAMS.social.businessPagePrice;
     const treasuryBefore = h.chain.world.s.metrics.totalTreasuryFromSplit;
     const nodePoolBefore = h.chain.world.s.nodeRewards.balance;
     h.produce([

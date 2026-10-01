@@ -340,7 +340,7 @@ curl -s localhost:38630/status
 `curl` fetches a web address and prints the result. Expect to see:
 
 - `"protocolVersion":"1.1.0"`
-- `"paramsHash":"5ed3d6409bd4e723f83f00469e976062"`
+- `"paramsHash":"beeba5c7097efee4eeb13265e2a3294c"`
 
 Stop the node with **Ctrl+C** in the first terminal.
 
@@ -358,7 +358,7 @@ This prints a JSON document. Deterministically, every time, it contains:
 
 ```json
 "genesisId": "20a787220fa49a2d8a41276b370705a16add75ba",
-"genesisHash": "43d0b6d29a99a84955ebd1797231c4d0b887c684c342d7ce4360a5668ade0ebc"
+"genesisHash": "60abd3c2a3637955e7a4fc866d84be6818dd0cd9b00ccc7010969c5843289638"
 ```
 
 To see just those two lines:
@@ -807,7 +807,7 @@ for p in 38630 38640 38650; do
 done
 ```
 
-All three must print `5ed3d6409bd4e723f83f00469e976062`.
+All three must print `beeba5c7097efee4eeb13265e2a3294c`.
 
 ### C9. Create a wallet
 
@@ -1175,9 +1175,9 @@ of this. What follows is the same sequence with more explanation for a beginner.
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
 | Genesis id | `20a787220fa49a2d8a41276b370705a16add75ba` |
-| Genesis hash | `43d0b6d29a99a84955ebd1797231c4d0b887c684c342d7ce4360a5668ade0ebc` |
+| Genesis hash | `60abd3c2a3637955e7a4fc866d84be6818dd0cd9b00ccc7010969c5843289638` |
 | Protocol version | `1.1.0` |
-| PARAMS_HASH | `5ed3d6409bd4e723f83f00469e976062` |
+| PARAMS_HASH | `beeba5c7097efee4eeb13265e2a3294c` |
 | RPC / P2P port | 8630 / 8631 |
 | Address prefix | `obs1` |
 | Max supply | 21,000,000 OBS |
@@ -2437,7 +2437,7 @@ curl -s https://rpc1.example.org/status
 
 **Protocol**
 - [ ] `/status` reports `protocolVersion: 1.1.0`
-- [ ] PARAMS_HASH `5ed3d6409bd4e723f83f00469e976062` on **every** node
+- [ ] PARAMS_HASH `beeba5c7097efee4eeb13265e2a3294c` on **every** node
 - [ ] `genesis init` deterministic across two machines
 - [ ] Mainnet genesis id `20a787220fa49a2d8a41276b370705a16add75ba`
 - [ ] Height 0 supply is 0; `invariantOk: true`

@@ -70,8 +70,8 @@ export const PARAMS_HASH: string = sha256Hex(
     w.u32(p.tx.maxTxBytes);
     w.u32(p.ons.minLength);
     w.u32(p.ons.maxLength);
-    w.u64(p.ons.registrationFeeUsd);
-    w.u64(p.ons.renewalFeeUsd);
+    w.u128(p.ons.registrationFee);
+    w.u128(p.ons.renewalFee);
     w.u64(BigInt(p.ons.termSeconds));
     w.u128(p.capsules.minCommitment);
     w.u128(p.capsules.timeTravelMultiplier);
@@ -86,7 +86,7 @@ export const PARAMS_HASH: string = sha256Hex(
     w.u32(p.social.monetisationMinMonthlyViews);
     w.u32(p.social.creatorShareBps);
     w.u32(p.social.networkShareBps);
-    w.u64(p.social.businessPagePriceUsd);
+    w.u128(p.social.businessPagePrice);
     w.u32(p.oracle.maxAgeSeconds);
     w.u32(p.oracle.minSources);
     w.u32(p.oracle.maxDeviationBps);

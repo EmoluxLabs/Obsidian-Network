@@ -463,11 +463,11 @@ operational, and it is now closed.
 
 **Verification observed:** mainnet genesis id
 `20a787220fa49a2d8a41276b370705a16add75ba`, hash
-`43d0b6d29a99a84955ebd1797231c4d0b887c684c342d7ce4360a5668ade0ebc`, identical
+`60abd3c2a3637955e7a4fc866d84be6818dd0cd9b00ccc7010969c5843289638`, identical
 across repeated runs; a mainnet node started from the packaged
 `obsidian-node-operator-1.1.0.tar.gz` reporting height 0, total supply
 `0.000000000000000000`, `invariantOk: true` and params hash
-`5ed3d6409bd4e723f83f00469e976062`; `node scripts/check-invariants.mjs` →
+`beeba5c7097efee4eeb13265e2a3294c`; `node scripts/check-invariants.mjs` →
 *protocol 1.1.0: all 50 invariants hold*.
 
 ## 15. Final status — **what is verified, what is not**

@@ -295,8 +295,9 @@ export function executeSocial(
       if (!treasury) {
         reject(ErrCode.ORACLE_UNAVAILABLE, 'treasury wallet is not yet designated on-chain (no valid miner yet)');
       }
-      const price = requirePrice(state, protocolTime);
-      const priceObs = usdMicroToSeals(CONSENSUS_PARAMS.social.businessPagePriceUsd, price.priceUsdMicro);
+      // Fixed OBS price: a business page costs the same whatever any external
+      // market thinks OBS is worth, and cannot be blocked by a missing oracle.
+      const priceObs = CONSENSUS_PARAMS.social.businessPagePrice;
       const gas = assertGas(tx.gas, priceObs);
       state.debit(tx.sender, priceObs + gas, apply, 'business page activation + gas');
       // Qualifying platform revenue: split 40/60 before anything reaches the
