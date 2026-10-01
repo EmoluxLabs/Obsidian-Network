@@ -503,32 +503,17 @@ test('a replayed transaction is refused and the balance does not move twice', { 
   assert.equal(after.balanceSeals, amount.toString(), 'the replay must not have moved more OBS');
 });
 
-test('the oracle gates dollar-priced features, then a name registers and resolves', { skip, timeout: 180_000 }, async () => {
+test('a name registers and resolves without any price source at all', { skip, timeout: 180_000 }, async () => {
   const miner = await ensureMiner();
 
-  // Before the oracle has a price, registration must fail closed.
-  if (!(await get(`${rpc(A)}/oracle`)).body.usable) {
-    const at = await protocolTime(A);
-    const refused = await submit(A, core.encodeSignedTx(core.signTransaction({
-      protocolVersion: PROTOCOL_VERSION,
-      chainId: CHAIN_ID,
-      sender: miner.address,
-      nonce: await nextChainNonce(miner.address),
-      type: core.TxType.ONS,
-      gas: core.expectedGas(core.parseObs('5')),
-      body: core.encodeOnsBody({ op: core.OnsOp.REGISTER, name: 'e2ecluster.obs', fee: core.parseObs('5') }),
-      validUntil: at + 600,
-      privateKeyHex: miner.privateKey,
-      publicKeyHex: miner.publicKey,
-    })));
-    assert.ok(refused.status >= 400, 'registration must fail closed when no price is available');
-    assert.match(JSON.stringify(refused.body), /ORACLE/);
-  }
+  // Since 1.2.0 every protocol price is denominated in OBS, so there is no
+  // oracle on this path: registration must work on a cluster where no price
+  // has ever been published. The old behaviour — failing closed whenever the
+  // feed was absent or stale — made an outage look like a broken protocol.
+  const oracle = await get(`${rpc(A)}/oracle`);
+  assert.equal(oracle.status, 200, 'the oracle endpoint still reports, it just no longer gates anything');
 
-  const medianPriceUsdMicro = await ensureOraclePrice();
-  // The protocol rounds the USD price up into seals, so the test pays what the
-  // protocol itself computes rather than re-deriving it with a different rounding.
-  const feeSeals = core.usdMicroToSeals(5_000_000n, medianPriceUsdMicro);
+  const feeSeals = core.parseObs('0.05');
   const name = `e2e${Date.now().toString(36).slice(-6)}.obs`;
 
   const at = await protocolTime(A);
@@ -545,6 +530,21 @@ test('the oracle gates dollar-priced features, then a name registers and resolve
     publicKeyHex: miner.publicKey,
   })));
   assert.equal(registered.status, 200, JSON.stringify(registered.body));
+
+  // Underpaying is still refused: the price is fixed, not absent.
+  const underpaid = await submit(A, core.encodeSignedTx(core.signTransaction({
+    protocolVersion: PROTOCOL_VERSION,
+    chainId: CHAIN_ID,
+    sender: miner.address,
+    nonce: await nextChainNonce(miner.address),
+    type: core.TxType.ONS,
+    gas: core.expectedGas(core.parseObs('0.01')),
+    body: core.encodeOnsBody({ op: core.OnsOp.REGISTER, name: `cheap${Date.now().toString(36).slice(-5)}.obs`, fee: core.parseObs('0.01') }),
+    validUntil: at + 600,
+    privateKeyHex: miner.privateKey,
+    publicKeyHex: miner.publicKey,
+  })));
+  assert.ok(underpaid.status >= 400, 'a registration paying less than 0.05 OBS must be refused');
 
   await waitFor(async () => {
     const records = await Promise.all(NODES.map((node) => get(`${rpc(node)}/names/${name}`)));
