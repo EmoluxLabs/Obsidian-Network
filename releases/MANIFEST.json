@@ -1,8 +1,8 @@
 {
   "product": "Obsidian Network",
   "version": "1.2.8",
-  "commit": "84a7eab584b72ff03b2c83f6910fd77342bdbc68",
-  "builtAt": "2026-10-01T21:20:48Z",
+  "commit": "a5c5ad7ec52510e26a5eb7799d512a78a9efd5e0",
+  "builtAt": "2026-10-01T21:23:41Z",
   "protocolVersion": "1.2.0",
   "networks": {
     "mainnet": {
@@ -35,7 +35,7 @@
   "assets": [
     {
       "name": "obsidian-cloudflare-1.2.8.tar.gz",
-      "bytes": 119055
+      "bytes": 118922
     },
     {
       "name": "obsidian-cloudflare-1.2.8.zip",
@@ -43,7 +43,7 @@
     },
     {
       "name": "obsidian-core-1.2.8.tar.gz",
-      "bytes": 526227
+      "bytes": 526229
     },
     {
       "name": "obsidian-core-1.2.8.zip",
@@ -51,7 +51,7 @@
     },
     {
       "name": "obsidian-interface-1.2.8.tar.gz",
-      "bytes": 1978020
+      "bytes": 1978081
     },
     {
       "name": "obsidian-interface-1.2.8.zip",
@@ -59,7 +59,7 @@
     },
     {
       "name": "obsidian-interface-selfhost-1.2.8.tar.gz",
-      "bytes": 1885357
+      "bytes": 1884154
     },
     {
       "name": "obsidian-interface-selfhost-1.2.8.zip",
@@ -67,11 +67,11 @@
     },
     {
       "name": "obsidian-network-source-1.2.8.tar.gz",
-      "bytes": 851601
+      "bytes": 851577
     },
     {
       "name": "obsidian-node-operator-1.2.8.tar.gz",
-      "bytes": 444599
+      "bytes": 444548
     },
     {
       "name": "obsidian-node-operator-1.2.8.zip",
