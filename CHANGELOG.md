@@ -11,6 +11,43 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.5] — 2026-10-01
+
+No runtime change from 1.2.4: the node, the server and every page bundle are
+byte-identical in behaviour, and `PROTOCOL_VERSION` stays 1.2.0. This release
+exists so the archives themselves carry the guard tests and the upgrade
+instructions, since the project's rule is that operators run from a verified
+archive rather than from a working tree.
+
+### Added
+
+* `obsidian-interface/tests/shipped-bundle.test.ts` — asserts against the file
+  a browser is actually served, not the source it was built from: the wallet
+  bundle must derive through `Wallet.create(network.addressHrp, …)`, must
+  contain no literal mainnet prefix as a derivation input, and the content hash
+  in `wallet/index.html` must equal the hash of the bundle on disk. The wallet
+  bug survived two releases by hiding in the gap between source and artefact.
+* `docs/DEVNET-TERMUX-RUNBOOK.md` — a section on upgrading an interface that is
+  already open in a browser, including the one-line check
+  (`curl -s localhost:8788/wallet/ | grep -o 'src="[^"]*"'`) and the cache
+  clear needed once when coming from 1.2.3 or earlier.
+
+### Verified
+
+The 1.2.4 archives were extracted and run end to end before this release: the
+node reported `"version":"1.2.4"` on devnet chainId 7780 and produced 55
+blocks; all twelve site shells returned 200 with distinct hashed bundle URLs;
+`sha256(public/js/wallet.js)[0:16]` equalled the `?v=` in the markup; a hashed
+request answered `Cache-Control: public, max-age=31536000, immutable` and a
+bare one `no-store`; a `dobs1…` address returned 200 from `/wallet/balance`
+while a mainnet-prefixed one returned 400.
+
+### Tests
+
+Core 242, interface 171, invariants 55, cluster e2e 13, Cloudflare worker 7.
+
+---
+
 ## [1.2.4] — 2026-10-01
 
 Interface only. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
