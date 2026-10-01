@@ -2,8 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Verify a release archive before you run it.
 #
-#   ./verify-release.sh obsidian-core-1.2.2.tar.gz
-#   ./verify-release.sh obsidian-node-operator-1.2.2.zip --with-tests
+#   ./verify-release.sh obsidian-core-1.2.3.tar.gz
+#   ./verify-release.sh obsidian-node-operator-1.2.3.zip --with-tests
 #
 # Checks, in order:
 #   1. the archive is listed in SHA256SUMS and its digest matches;

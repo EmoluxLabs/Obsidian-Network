@@ -10,6 +10,7 @@
  *   validate                verify a data directory's chain integrity
  *   audit                   print the decentralization + compliance self-audit
  *   wallet new              create a non-custodial wallet (prints once, locally)
+ *                           honours --network: the address prefix is per network
  *   version                 print version metadata
  *
  * Everything the node needs is in the configuration file or the environment;
@@ -30,6 +31,7 @@ import { blockHash } from './blockchain/block.js';
 import { Keystore, keystorePassphraseFromEnv } from './crypto/keystore.js';
 import { nodeIdFromPublicKey } from './crypto/keys.js';
 import { generateRecoveryPhrase, deriveWallet } from './crypto/mnemonic.js';
+import { getNetwork } from './protocol/networks.js';
 import { CONSENSUS_PARAMS } from './protocol/params.js';
 import { CORE_VERSION, PROTOCOL_VERSION, versionInfo, BUILD_ID } from './version.js';
 import { PARAMS_HASH } from './blockchain/state-root.js';
@@ -50,7 +52,7 @@ function usage(): void {
       '  genesis init        Print the genesis document, id and hash',
       '  validate            Verify the data directory chain integrity',
       '  audit               Print the decentralization and compliance audit',
-      '  wallet new          Create a non-custodial OBS wallet (local only)',
+      '  wallet new          Create a non-custodial OBS wallet (local only, honours --network)',
       '  version             Print version and protocol metadata',
       '',
       'Options:',
@@ -330,16 +332,24 @@ async function main(): Promise<void> {
       }
       // Local, offline wallet generation. Nothing is transmitted; the operator
       // is responsible for keeping the output secret.
+      // The address prefix belongs to the network, so --network decides it.
+      // Deriving with a default prefix is how a mainnet address ended up on
+      // devnet in 1.2.1; the CLI resolves the network explicitly instead.
+      const net = getNetwork(options.network ?? 'mainnet');
       const phrase = generateRecoveryPhrase();
-      const wallet = deriveWallet(phrase, 0, 0);
+      const wallet = deriveWallet(phrase, 0, 0, undefined, net.addressHrp);
       process.stdout.write(
         `${JSON.stringify(
           {
+            network: net.name,
+            chainId: net.chainId,
+            addressHrp: net.addressHrp,
             address: wallet.address,
             publicKey: wallet.publicKey,
             derivationPath: wallet.derivationPath,
             recoveryPhrase: phrase,
             warning:
+              `This wallet only works on ${net.name}: its address is bound to the "${net.addressHrp}" prefix. ` +
               'This output is printed once and is NOT stored. Write the recovery phrase down offline. ' +
               'Anyone with it controls the wallet. Never paste it into a website, chat or issue tracker.',
           },

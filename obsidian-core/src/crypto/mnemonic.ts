@@ -115,6 +115,7 @@ export function deriveWallet(
   account = 0,
   index = 0,
   prefix = DEFAULT_DERIVATION_PREFIX,
+  addressHrp?: string,
 ): DerivedWallet {
   const normalized = normalizePhrase(phrase);
   if (!validateMnemonic(normalized, wordlist)) throw new Error('invalid recovery phrase');
@@ -124,7 +125,7 @@ export function deriveWallet(
   for (const segment of parsePath(path)) {
     key = deriveChildPrivateKey(key, segment);
   }
-  const pair = keyPairFromPrivateKey(key);
+  const pair = keyPairFromPrivateKey(key, addressHrp);
   // Best-effort scrubbing of intermediate material.
   seed.fill(0);
   key.fill(0);
@@ -132,8 +133,13 @@ export function deriveWallet(
 }
 
 /** Derive many addresses from one phrase (account discovery in the UI). */
-export function deriveWalletRange(phrase: string, count: number, account = 0): DerivedWallet[] {
+export function deriveWalletRange(
+  phrase: string,
+  count: number,
+  account = 0,
+  addressHrp?: string,
+): DerivedWallet[] {
   const out: DerivedWallet[] = [];
-  for (let i = 0; i < count; i += 1) out.push(deriveWallet(phrase, account, i));
+  for (let i = 0; i < count; i += 1) out.push(deriveWallet(phrase, account, i, undefined, addressHrp));
   return out;
 }

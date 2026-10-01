@@ -11,6 +11,33 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.3] — 2026-10-01
+
+Node and interface. No consensus change: the params hash, the genesis hash and
+`PROTOCOL_VERSION` (1.2.0) are unchanged.
+
+### Fixed
+
+* **`wallet new` ignored `--network`.** The CLI derived every wallet with the
+  default `obs` prefix, so `wallet new --network devnet` printed a mainnet
+  `obs1…` address that the devnet node could only answer `ERR_BAD_ADDRESS` to.
+  This is the command-line twin of the browser bug fixed in 1.2.2 and was found
+  by running the published Termux runbook end to end. The command now resolves
+  the network with `getNetwork()` and derives with its `addressHrp`; the output
+  also reports `network`, `chainId` and `addressHrp`, and the warning text says
+  which network the wallet belongs to.
+* `deriveWallet`, `deriveWalletRange`, `generateKeyPair` and
+  `keyPairFromPrivateKey` now accept the address prefix as an argument instead
+  of silently applying the mainnet default.
+
+### Tests
+
+Core 242 (was 240): a new `tests/unit/cli-wallet.test.ts` runs the built CLI
+once per network and asserts each address carries that network's prefix, is
+valid under it, and is invalid under all three others.
+
+---
+
 ## [1.2.2] — 2026-10-01
 
 Interface only. No consensus change: the params hash, the genesis hash and

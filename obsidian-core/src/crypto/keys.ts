@@ -79,20 +79,23 @@ export function addressPayload(address: string, hrp: string = ADDRESS_HRP): Uint
  * ID, username, phone number, birth date, account ID, timestamp, or any other
  * predictable application value.
  */
-export function generateKeyPair(): KeyPair {
+export function generateKeyPair(addressHrp: string = ADDRESS_HRP): KeyPair {
   let privateKeyBytes: Uint8Array;
   do {
     privateKeyBytes = randomBytes(PRIVATE_KEY_BYTES);
   } while (!isValidPrivateKey(privateKeyBytes));
-  return keyPairFromPrivateKey(privateKeyBytes);
+  return keyPairFromPrivateKey(privateKeyBytes, addressHrp);
 }
 
-export function keyPairFromPrivateKey(privateKey: Uint8Array | string): KeyPair {
+export function keyPairFromPrivateKey(
+  privateKey: Uint8Array | string,
+  addressHrp: string = ADDRESS_HRP,
+): KeyPair {
   const bytes = typeof privateKey === 'string' ? fromHex(privateKey) : privateKey;
   if (!isValidPrivateKey(bytes)) throw new Error('invalid secp256k1 private key');
   const pub = secp256k1.getPublicKey(bytes, true);
   const pubHex = toHex(pub);
-  return { privateKey: toHex(bytes), publicKey: pubHex, address: addressFromPublicKey(pubHex) };
+  return { privateKey: toHex(bytes), publicKey: pubHex, address: addressFromPublicKey(pubHex, addressHrp) };
 }
 
 export function isValidPrivateKey(bytes: Uint8Array): boolean {
