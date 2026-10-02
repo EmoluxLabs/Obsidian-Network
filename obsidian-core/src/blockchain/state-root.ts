@@ -33,105 +33,62 @@ import type {
 import type { MutableState } from './state.js';
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import { sha256Hex, utf8 } from '../crypto/hash.js';
-import { encode } from '../protocol/encoding.js';
+
+/**
+ * Canonical, type-tagged serialisation of a consensus parameter tree.
+ *
+ * Keys are emitted in lexicographic order so the hash does not depend on
+ * declaration order, and every scalar carries a type tag so that changing `5`
+ * to `"5"`, or `5` to `5n`, changes the bytes. Floating point is rejected
+ * outright rather than serialised: a non-integer consensus parameter could
+ * round differently on different platforms, and nothing in CONSENSUS_PARAMS is
+ * permitted to be one.
+ */
+function canonicalParams(value: unknown, path = 'CONSENSUS_PARAMS'): string {
+  if (typeof value === 'string') return `s:${JSON.stringify(value)}`;
+  if (typeof value === 'bigint') return `i:${value.toString()}`;
+  if (typeof value === 'boolean') return `b:${value ? 1 : 0}`;
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value)) {
+      throw new Error(
+        `consensus parameter ${path} is ${value}, which is not an integer; ` +
+          'floating point must never reach the params hash',
+      );
+    }
+    return `n:${value.toString()}`;
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item, index) => canonicalParams(item, `${path}[${index}]`)).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalParams((value as Record<string, unknown>)[key], `${path}.${key}`)}`);
+    return `{${entries.join(',')}}`;
+  }
+  throw new Error(`consensus parameter ${path} has unsupported type ${value === null ? 'null' : typeof value}`);
+}
+
+/** Fingerprint of any parameter tree. Exported so tests can prove sensitivity. */
+export function computeParamsHash(params: unknown): string {
+  return sha256Hex(utf8(canonicalParams(params))).slice(0, 32);
+}
 
 /**
  * Deterministic fingerprint of the consensus parameter set. Nodes exchange this
  * in the p2p handshake: a peer with a different hash is on a different protocol
  * and is refused, which surfaces accidental forks immediately.
+ *
+ * This hashes the WHOLE parameter object. It used to hash a hand-maintained
+ * list of fields, which silently omitted `gas.minGas`, `tx.minTransfer`,
+ * `tx.maxEventsPerTx`, `consensus.maxReorgDepth`, every `capsules.*` bound not
+ * explicitly listed, and more. A node built with any of those altered passed
+ * the handshake and then forked at the first transaction that touched the
+ * differing rule — the worst failure mode available, because both sides
+ * believed they agreed. Enumerating fields by hand cannot be kept correct as
+ * parameters are added; serialising the object can.
  */
-export const PARAMS_HASH: string = sha256Hex(
-  encode((w) => {
-    const p = CONSENSUS_PARAMS;
-    w.string(p.protocolVersion);
-    w.u128(p.maxSupply);
-    w.u128(p.genesisAllocation);
-    w.u64(BigInt(p.mining.claimIntervalSeconds));
-    w.u32(p.mining.maxClaimsPerCycle);
-    w.u64(BigInt(p.mining.cycleSeconds));
-    w.u128(p.mining.initialDailyReward);
-    w.u128(p.mining.initialClaimReward);
-    w.u64(BigInt(p.mining.activeMinerWindowSeconds));
-    w.u32(p.mining.reductionBasisPointsPerStep);
-    w.u64(BigInt(p.mining.reductionStepMiners));
-    w.u128(p.mining.dailyRewardFloor);
-    w.u32(p.gas.basisPoints);
-    w.u128(p.gas.maxGas);
-    w.u64(BigInt(p.block.targetBlockSeconds));
-    w.u32(p.block.maxBlockBytes);
-    w.u32(p.block.maxBlockTransactions);
-    w.u32(p.block.maxFutureDriftSeconds);
-    w.u32(p.block.medianTimePastWindow);
-    w.u128(p.consensus.minValidatorBond);
-    w.u64(BigInt(p.consensus.unbondingBlocks));
-    w.u32(p.block.confirmationDepthHard);
-    w.u32(p.tx.expiryBlocks);
-    w.u32(p.tx.maxMemoBytes);
-    w.u32(p.tx.maxTxBytes);
-    w.u32(p.ons.minLength);
-    w.u32(p.ons.maxLength);
-    w.u128(p.ons.registrationFee);
-    w.u128(p.ons.renewalFee);
-    w.u64(BigInt(p.ons.termSeconds));
-    w.u128(p.capsules.minCommitment);
-    w.u128(p.capsules.timeTravelMultiplier);
-    w.u32(p.capsules.previewSeconds);
-    w.u32(p.capsules.maxPreviewsPerAccount);
-    w.u64(BigInt(p.circle.parcelSquareMetres));
-    w.u32(p.circle.appreciationStepBps);
-    w.u32(p.circle.depreciationStepBps);
-    w.u128(p.circle.minGlv);
-    w.u128(p.circle.maxGlv);
-    w.u32(p.social.monetisationMinFollowers);
-    w.u32(p.social.monetisationMinMonthlyViews);
-    w.u32(p.social.creatorShareBps);
-    w.u32(p.social.networkShareBps);
-    w.u128(p.social.businessPagePrice);
-    w.u32(p.oracle.maxAgeSeconds);
-    w.u32(p.oracle.minSources);
-    w.u32(p.oracle.maxDeviationBps);
-    w.u64(p.oracle.minPriceUsdMicro);
-    w.u64(p.oracle.maxPriceUsdMicro);
-    w.u32(p.registry.maxInvitesPerAccount);
-    w.u128(p.registry.newAccountBalance);
-    // Proof of Time: the timing rule is consensus, so it is fingerprinted.
-    w.string(p.proofOfTime.consensus);
-    w.string(p.proofOfTime.weightRule);
-    w.u32(p.proofOfTime.difficultyWindowBlocks);
-    w.u32(p.proofOfTime.difficultyTargetSeconds);
-    w.u32(p.proofOfTime.minDifficultyBps);
-    w.u32(p.proofOfTime.maxDifficultyBps);
-    w.u32(p.proofOfTime.minBlockSpacingMs);
-    w.u64(BigInt(p.proofOfTime.timeRateWindowSeconds));
-    // Node runner rewards: the 40/60 split and every scoring input are
-    // consensus. A node built with a different split has a different params
-    // hash and is refused at the handshake instead of silently forking.
-    w.u32(p.nodeRewards.nodePoolShareBps);
-    w.u32(p.nodeRewards.treasuryShareBps);
-    w.u64(BigInt(p.nodeRewards.periodSeconds));
-    w.u32(p.nodeRewards.minUptimeBps);
-    w.u32(p.nodeRewards.minScoreBps);
-    w.u32(p.nodeRewards.minAttesters);
-    w.u32(p.nodeRewards.bootstrapUptimeBps);
-    w.u32(p.nodeRewards.maxAttestationsPerAttester);
-    w.u32(p.nodeRewards.heartbeatsPerPeriod);
-    w.u32(p.nodeRewards.maxFaultReportsPerReporterPerPeriod);
-    w.u32(p.nodeRewards.faultPenaltyBps);
-    w.u32(p.nodeRewards.responsiveHeightLag);
-    w.u32(p.nodeRewards.scoreWeights.uptimeBps);
-    w.u32(p.nodeRewards.scoreWeights.participationBps);
-    w.u32(p.nodeRewards.scoreWeights.reliabilityBps);
-    w.u32(p.nodeRewards.scoreWeights.responsivenessBps);
-    w.u32(p.nodeRewards.participationWeights.blocksBps);
-    w.u32(p.nodeRewards.participationWeights.coverageBps);
-    w.u32(p.nodeRewards.maxNodeShareBps);
-    w.u32(p.nodeRewards.walletChangeDelayPeriods);
-    w.u32(p.nodeRewards.evidenceWindowPeriods);
-    w.u32(p.nodeRewards.minRegistrationBlocks);
-    w.u64(BigInt(p.nodeRewards.proofMaxValiditySeconds));
-    w.u128(p.nodeRewards.registrationBond);
-  }),
-).slice(0, 32);
+export const PARAMS_HASH: string = computeParamsHash(CONSENSUS_PARAMS);
 
 function encodeAccount(w: Writer, address: string, a: Account): void {
   w.string(address);

@@ -18,6 +18,7 @@ import {
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { potWeight } from '../../src/blockchain/block.js';
 import { compareTips } from '../../src/consensus/proposer.js';
+import { PARAMS_HASH, computeParamsHash } from '../../src/blockchain/state-root.js';
 
 /** Build a descending ancestor list (nearest parent first) with fixed spacing. */
 function chainOf(count: number, spacingSeconds: number, tipTime = 1_000_000, txCount = 0) {
@@ -224,5 +225,86 @@ describe('Time-Rate', () => {
     const b = timeRate(chainOf(31, 2, 5_000_000, 4));
     expect(a.blocksPerMinute).toBe(b.blocksPerMinute);
     expect(a.transactionsPerMinute).toBe(b.transactionsPerMinute);
+  });
+});
+
+/**
+ * PARAMS_HASH completeness.
+ *
+ * The handshake refuses a peer whose params hash differs, and `executeGovernance`
+ * asserts that parameters cannot change without a coordinated upgrade. Both
+ * claims are only true if the hash actually covers every parameter. It used to
+ * cover a hand-written list, which had drifted: `gas.minGas`, `tx.minTransfer`,
+ * `consensus.maxReorgDepth` and others were absent, so two nodes could disagree
+ * about a consensus rule, pass the handshake, and fork at the first transaction
+ * that touched it.
+ *
+ * This walks every leaf of the real parameter tree, changes it, and requires the
+ * hash to move. A parameter added in future with no effect on the hash fails
+ * here rather than in production.
+ */
+describe('PARAMS_HASH covers every consensus parameter', () => {
+  /** Every path to a scalar leaf in the tree, as arrays of keys/indices. */
+  function leafPaths(value: unknown, prefix: Array<string | number> = []): Array<Array<string | number>> {
+    if (Array.isArray(value)) {
+      return value.flatMap((item, index) => leafPaths(item, [...prefix, index]));
+    }
+    if (value !== null && typeof value === 'object') {
+      return Object.keys(value as Record<string, unknown>).flatMap((key) =>
+        leafPaths((value as Record<string, unknown>)[key], [...prefix, key]),
+      );
+    }
+    return [prefix];
+  }
+
+  function clone<T>(value: T): T {
+    if (Array.isArray(value)) return value.map((item) => clone(item)) as unknown as T;
+    if (value !== null && typeof value === 'object' && typeof value !== 'bigint') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, clone(item)]),
+      ) as T;
+    }
+    return value;
+  }
+
+  /** A different value of the same type, so the test proves coverage not type-tagging. */
+  function perturb(value: unknown): unknown {
+    if (typeof value === 'bigint') return value + 1n;
+    if (typeof value === 'number') return value + 1;
+    if (typeof value === 'boolean') return !value;
+    if (typeof value === 'string') return `${value}-changed`;
+    throw new Error(`cannot perturb ${typeof value}`);
+  }
+
+  const paths = leafPaths(CONSENSUS_PARAMS);
+
+  it('finds a non-trivial number of parameters to check', () => {
+    expect(paths.length).toBeGreaterThan(80);
+  });
+
+  it('changes when any single leaf changes', () => {
+    const baseline = computeParamsHash(CONSENSUS_PARAMS);
+    expect(baseline).toBe(PARAMS_HASH);
+
+    const unchanged: string[] = [];
+    for (const path of paths) {
+      const mutated = clone(CONSENSUS_PARAMS) as Record<string, unknown>;
+      let cursor: Record<string | number, unknown> = mutated;
+      for (const key of path.slice(0, -1)) cursor = cursor[key] as Record<string | number, unknown>;
+      const last = path[path.length - 1];
+      cursor[last] = perturb(cursor[last]);
+      if (computeParamsHash(mutated) === baseline) unchanged.push(path.join('.'));
+    }
+
+    expect(unchanged, `these parameters do not affect PARAMS_HASH: ${unchanged.join(', ')}`).toEqual([]);
+  });
+
+  it('does not depend on key declaration order', () => {
+    const reversed = Object.fromEntries(Object.entries(CONSENSUS_PARAMS).reverse());
+    expect(computeParamsHash(reversed)).toBe(PARAMS_HASH);
+  });
+
+  it('refuses a floating-point parameter rather than hashing it', () => {
+    expect(() => computeParamsHash({ ...CONSENSUS_PARAMS, bad: 1.5 })).toThrow(/not an integer/);
   });
 });

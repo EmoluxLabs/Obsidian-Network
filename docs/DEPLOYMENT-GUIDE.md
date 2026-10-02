@@ -340,7 +340,7 @@ curl -s localhost:38630/status
 `curl` fetches a web address and prints the result. Expect to see:
 
 - `"protocolVersion":"1.1.0"`
-- `"paramsHash":"dbbf8511bfe5bee493f80f3dd23a047a"`
+- `"paramsHash":"286b5a6f0bcfef5a3e77ca02e726d260"`
 
 Stop the node with **Ctrl+C** in the first terminal.
 
@@ -357,8 +357,8 @@ node dist/index.js genesis init --network mainnet
 This prints a JSON document. Deterministically, every time, it contains:
 
 ```json
-"genesisId": "4c2c37aa2ea29512cee4833151697237c1372ff3",
-"genesisHash": "42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31"
+"genesisId": "b8957c46a98f35cb5d322aaee62fe2ffe65b7088",
+"genesisHash": "3781e72b987734de191791f76b9a2c0fa184938b09644c9342c2c3149c236652"
 ```
 
 To see just those two lines:
@@ -807,7 +807,7 @@ for p in 38630 38640 38650; do
 done
 ```
 
-All three must print `dbbf8511bfe5bee493f80f3dd23a047a`.
+All three must print `286b5a6f0bcfef5a3e77ca02e726d260`.
 
 ### C9. Create a wallet
 
@@ -1229,10 +1229,10 @@ of this. What follows is the same sequence with more explanation for a beginner.
 |---|---|
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
-| Genesis id | `4c2c37aa2ea29512cee4833151697237c1372ff3` |
-| Genesis hash | `42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31` |
-| Protocol version | `1.1.0` |
-| PARAMS_HASH | `dbbf8511bfe5bee493f80f3dd23a047a` |
+| Genesis id | `b8957c46a98f35cb5d322aaee62fe2ffe65b7088` |
+| Genesis hash | `3781e72b987734de191791f76b9a2c0fa184938b09644c9342c2c3149c236652` |
+| Protocol version | `1.3.0` |
+| PARAMS_HASH | `286b5a6f0bcfef5a3e77ca02e726d260` |
 | RPC / P2P port | 8630 / 8631 |
 | Address prefix | `obs1` |
 | Max supply | 21,000,000 OBS |
@@ -1278,7 +1278,7 @@ different jurisdictions. Provision each per §D3–D8 with `--network mainnet`.
 node dist/index.js start --config config/mainnet.json
 ```
 
-Expect `height=0` and `genesisId=4c2c37aa2ea29512cee4833151697237c1372ff3`.
+Expect `height=0` and `genesisId=b8957c46a98f35cb5d322aaee62fe2ffe65b7088`.
 
 Confirm the state is genuinely empty:
 
@@ -2515,9 +2515,9 @@ curl -s https://rpc1.example.org/status
 
 **Protocol**
 - [ ] `/status` reports `protocolVersion: 1.1.0`
-- [ ] PARAMS_HASH `dbbf8511bfe5bee493f80f3dd23a047a` on **every** node
+- [ ] PARAMS_HASH `286b5a6f0bcfef5a3e77ca02e726d260` on **every** node
 - [ ] `genesis init` deterministic across two machines
-- [ ] Mainnet genesis id `4c2c37aa2ea29512cee4833151697237c1372ff3`
+- [ ] Mainnet genesis id `b8957c46a98f35cb5d322aaee62fe2ffe65b7088`
 - [ ] Height 0 supply is 0; `invariantOk: true`
 
 **Release**

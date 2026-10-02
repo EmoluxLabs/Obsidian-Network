@@ -7,7 +7,164 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
+a node running it. For 1.3.0 that is `286b5a6f0bcfef5a3e77ca02e726d260`.
+
+---
+
+## [1.3.0] — 2026-10-02
+
+**Consensus-breaking.** The params hash becomes
+`286b5a6f0bcfef5a3e77ca02e726d260` and the mainnet genesis hash becomes
+`3781e72b987734de191791f76b9a2c0fa184938b09644c9342c2c3149c236652`
+(genesis id `b8957c46a98f35cb5d322aaee62fe2ffe65b7088`). A node on 1.2.x will
+not peer with a node on 1.3.0, and `MIN_CORE_VERSION` is raised to 1.3.0 to
+make that refusal explicit rather than mysterious. **Mainnet has not launched
+under 1.2.0 rules and will not. Launch from 1.3.0.**
+
+This release is the outcome of a full-ecosystem audit. Five critical defects
+were found; two of them could halt the chain permanently, one silently
+destroyed user funds, and one meant wallet keys were not recoverable by any
+other BIP-32 implementation.
+
+### Fixed — the chain can no longer be halted
+
+* **A validator that goes offline no longer stops block production.** Proposer
+  selection had no notion of a round: every node computed
+  `activeValidators[height mod count]` and refused to build on anything else,
+  so a validator that crashed was named as the proposer of the next height, and
+  the next, forever. The surviving majority sat idle waiting for a machine that
+  was never coming back.
+
+  Selection is now `activeValidators[(height + round) mod count]`, where
+  `round = max(0, floor((block.timestamp - parent.timestamp) / targetBlockSeconds) - 1)`.
+  Each elapsed slot hands the turn to the next validator, and once every
+  validator has been offered the height any node may propose. The round is
+  derived from two timestamps already committed to the headers, so every node
+  computes it from the block alone — no new header field, no round negotiation,
+  nothing new to sign. **Round 0 is byte-identical to the old behaviour**, so
+  this only changes what the chain accepts when a validator actually misses its
+  slot. A missed slot now costs one slot instead of the network.
+
+* **`VALIDATOR REGISTER` over an existing record no longer destroys the bond.**
+  `setValidator` overwrites wholesale, so registering again while `UNBONDING`
+  erased the bond the old record still held without crediting it back —
+  destroying OBS, breaking the supply invariant, and throwing out of
+  `finalizeBlock`. Because the offending transaction stayed in the mempool, every
+  subsequent block assembly threw too: one 50 OBS transaction stopped the node
+  producing. `REGISTER` now rejects any account that already has a validator
+  record, and points at `VALIDATOR CLAIM_UNBONDED`.
+
+  Defence in depth in `buildNextBlock`: each candidate is now checked against
+  the supply invariant on its own trial clone and evicted if it breaks it, and
+  assembly falls back to an empty block if a batch still fails to finalise. No
+  mempool combination can stall a producer.
+
+### Fixed — transactions are no longer lost
+
+* **Transactions in reorged-out blocks are returned to the mempool.** `reorganise()`
+  rebuilt state and swapped the canonical chain, but nothing collected the
+  transactions from the blocks being disconnected. On a five-second chain with a
+  round-robin proposer set, shallow reorgs are ordinary operation — so an
+  accepted, mined, confirmed transaction could silently cease to exist, with no
+  event, no error, and no way for the sender to learn it had to resend.
+
+  Observed on a three-node cluster: a mining claim was mined at one height and
+  erased at the next, taking the miner's 100,000 OBS genesis allocation with it.
+  The abandoned branch's transactions are now captured before it stops being
+  canonical and re-queued unless the winning branch already included them;
+  `revalidateMempool()` then drops whatever the new branch made stale.
+
+* **Mined transactions now leave the mempool.** `Mempool.removeMany` is
+  documented *"Remove transactions that a block has already included"* and was
+  never called from anywhere. Only the producer dropped its own transactions, so
+  every follower held each transaction it had heard about until expiry — up to
+  20 minutes after confirmation — re-gossiping it, re-offering it to the block
+  builder, and having it re-rejected each time. `connectBlock` now evicts and
+  revalidates.
+
+* **The replay-protection window is gone.** `recentTxIds` was not reachable from
+  `encodeState`, so two nodes could hold different windows and still agree on
+  the state root — divergence with nothing to detect it. It was also wrong: it
+  blocked honest re-inclusion of a transaction whose block lost a reorg, which
+  is exactly the case above. Nonce equality already prevents replay. Removing it
+  does not change the state root; cross-block replays now return
+  `ERR_BAD_NONCE` instead of `ERR_REPLAY`.
+
+### Fixed — wallet keys are BIP-32
+
+* **Key derivation was not BIP-32 and the chain code was empty.** The
+  hand-rolled derivation HMAC'd with the constant `"Bitcoin seed"` instead of
+  the parent chain code, and used SHA-256 where the specification says SHA-512,
+  so the chain code was a slice of a digest that was too short to contain one.
+  Keys derived this way restore in **no** other wallet, while the exported
+  recovery sheet promised a standard BIP-44 path. `src/crypto/mnemonic.ts` now
+  delegates to `@scure/bip32`; every hand-rolled routine is deleted. The browser
+  bundle remains free of node built-ins.
+
+  Anyone holding a phrase generated before 1.3.0 derives different addresses
+  under 1.3.0. No mainnet exists yet, so no balances are affected, but any
+  devnet or testnet phrase must be treated as a different wallet.
+
+### Fixed — the params hash covers the parameters
+
+* **`PARAMS_HASH` hashed a hand-maintained list of fields and had drifted.**
+  `gas.minGas`, `tx.minTransfer`, `tx.maxEventsPerTx`, `consensus.maxReorgDepth`,
+  `nodeRewards.maxEndpointLength` and others were absent, so a node built with
+  any of them altered **passed the handshake** and then forked at the first
+  transaction that touched the differing rule — the worst available failure
+  mode, because both sides believed they agreed. The hash is now taken over a
+  canonical, type-tagged serialisation of the whole `CONSENSUS_PARAMS` object:
+  keys sorted, every scalar tagged so `5`, `"5"` and `5n` differ, and
+  floating-point values rejected outright rather than serialised.
+
+  A new test walks every leaf of the real parameter tree, changes it, and
+  requires the hash to move. A parameter added later with no effect on the hash
+  fails there instead of in production.
+
+### Added
+
+* `tests/e2e/cluster.test.mjs` — *"the chain keeps producing when the only
+  scheduled validator goes offline"*: registers one validator so round 0 names
+  it at every height, `SIGKILL`s it, and requires the two survivors to advance
+  and agree. It halts against 1.2.x. It is last in the file because it destroys
+  a node.
+* `tests/unit/crypto-and-amounts.test.ts` — the official BIP-32 vectors 1, 2 and
+  3, including the leading-zero retention vector.
+* `tests/unit/proof-of-time.test.ts` — `PARAMS_HASH` leaf-coverage, key-order
+  independence, and refusal of floating point.
+* `computeParamsHash()` is exported so the fingerprint can be checked against an
+  arbitrary parameter tree.
+
+### Fixed — tooling and documentation
+
+* `npm run typecheck` passes. It was failing on two unused test-only
+  declarations (`encodeSignedTx` in the harness, `obsForUsdMicro` and its dead
+  `medianUsdMicro`/`usdMicroToSeals` chain, left behind when 1.2.0 moved every
+  price into OBS).
+* The e2e harness's `nextChainNonce()` returned the nonce bare while `waitFor()`
+  resolves on truthiness, so **nonce 0 spun until timeout** and then reported
+  that the cluster disagreed. Latent until a test used an account that had never
+  sent a transaction.
+* The rotation rule was published in three places as
+  `activeValidators[height mod count]` — `/validators`, `src/protocol/params.ts`
+  and `docs/proof-of-time.md`. All three now document the round and the liveness
+  backstop.
+* `docs/mainnet-launch.md` and `docs/DEPLOYMENT-GUIDE.md` both still listed
+  protocol version `1.1.0`; neither was updated at the 1.2.0 bump. Both now read
+  1.3.0 and carry the current genesis and params identity.
+
+### Verified
+
+Core 255 tests, interface 187 tests, 55 protocol invariants, edge suite 7,
+release-signing 5, 3-node cluster end-to-end 14. `npm run typecheck` clean.
+Mainnet genesis determinism re-confirmed across independent runs.
+
+### Not included
+
+`releases/` still contains the 1.2.16 archives. Cutting 1.3.0 artifacts is a
+separate, deliberate step (`scripts/package-releases.sh`), and
+`docs/DEVNET-TERMUX-RUNBOOK.md` stays pinned to 1.2.16 because that is the
+release it walks through.
 
 ---
 

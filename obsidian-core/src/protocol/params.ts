@@ -36,7 +36,7 @@ export const CONSENSUS_PARAMS = {
    *     retroactively repriced.
    * An oracle outage can no longer make the chain unable to price anything.
    */
-  protocolVersion: '1.2.0',
+  protocolVersion: '1.3.0',
 
   // ── Proof of Time (PoT) ───────────────────────────────────────────────────
   /**

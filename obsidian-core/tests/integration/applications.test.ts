@@ -15,7 +15,7 @@ import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { RevenueSource, splitPlatformRevenue } from '../../src/economy/accounting.js';
 import { formatObs, parseObs } from '../../src/protocol/amount.js';
 import { CapsuleOp, LandOp, OnsOp, SocialOp, TreasuryOp, TxType, ValidatorOp } from '../../src/protocol/types.js';
-import { expectedGas, usdMicroToSeals } from '../../src/transactions/helpers.js';
+import { expectedGas } from '../../src/transactions/helpers.js';
 import { computeCapsuleId } from '../../src/transactions/executors/capsule.js';
 import { computeParcelId, parcelOfficialValue } from '../../src/transactions/executors/land.js';
 import { divisionSeed } from '../../src/land/registry.js';
@@ -63,15 +63,10 @@ async function fundedHarness(): Promise<{ h: Harness; alice: TestWallet }> {
   return { h, alice };
 }
 
-/** Live protocol price in micro-USD (the median every node uses to price USD features). */
-function medianUsdMicro(h: Harness): bigint {
-  return h.chain.world.s.oracle.medianPriceUsdMicro;
-}
-
-/** Convert a USD micro amount into OBS seals at the protocol's current median. */
-function obsForUsdMicro(h: Harness, usdMicro: bigint): bigint {
-  return usdMicroToSeals(usdMicro, medianUsdMicro(h));
-}
+// `medianUsdMicro` / `obsForUsdMicro` lived here until 1.2.0 moved every
+// protocol price into OBS. Nothing has consulted the oracle median to price a
+// feature since, so the helpers were dead weight that still failed the test
+// typecheck as unused.
 
 /** Two independent oracle sources make the protocol price usable. */
 function seedOracle(h: Harness, submitter: TestWallet, second: TestWallet, priceUsdMicro = PRICE): void {
