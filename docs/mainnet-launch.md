@@ -14,7 +14,7 @@ before it has users than after.
 | Chain id | `7777` |
 | Genesis id | `4c2c37aa2ea29512cee4833151697237c1372ff3` |
 | Genesis hash | `42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31` |
-| Protocol version | `1.1.0` |
+| Protocol version | `1.2.0` |
 | Params hash | published at `/params`; must be identical on every node |
 | Default RPC port | 8630 |
 | Default p2p port | 8631 |
@@ -69,17 +69,17 @@ Never launch from a working copy. Launch from a signed release archive.
 sha256sum -c SHA256SUMS
 
 # the artifact you will actually run
-../scripts/verify-release.sh obsidian-node-operator-1.1.0.tar.gz
+../scripts/verify-release.sh obsidian-node-operator-1.2.17.tar.gz
 
 # the same code with its test suite attached, which the operator package omits
-../scripts/verify-release.sh obsidian-core-1.1.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.2.17.tar.gz --with-tests
 ```
 
 Expected: every archive reports `OK`, and the verifier prints the package
 version and protocol version it found. The core archive additionally runs its
-233 tests and they must pass. The node operator package ships `dist/` without
-tests, so `--with-tests` reports "no test script; skipping" there — that is why
-you verify the core archive too.
+246 tests and they must pass. The node operator package ships `dist/` without
+tests, so `--with-tests` reports "ships no self-contained test suite; skipping" there — that is
+why you verify the core archive too, which does ship its suite.
 
 `verify-release.sh` exits non-zero if a digest does not match or the archive is
 not listed in `SHA256SUMS`, so it is safe to use as a gate in a deployment
@@ -229,7 +229,7 @@ Every one of these must report `present: false`: `wac`,
 And run the economic invariants against the build you deployed:
 
 ```bash
-node scripts/check-invariants.mjs     # expect: all 50 invariants hold
+node scripts/check-invariants.mjs     # expect: all 55 invariants hold
 ```
 
 ### 2.5 Publish the seed list
@@ -349,7 +349,7 @@ evidence is what makes the bug findable.
 ```
 [ ] Release archives verified: sha256sum -c SHA256SUMS
 [ ] verify-release.sh --with-tests passes on the node operator archive
-[ ] node scripts/check-invariants.mjs -> all 50 invariants hold
+[ ] node scripts/check-invariants.mjs -> all 55 invariants hold
 [ ] >= 3 bootstrap nodes, independent operators, independent hosting
 [ ] NTP disciplined on every host (timedatectl: synchronized yes)
 [ ] OBSIDIAN_KEYSTORE_PASSPHRASE set; companion .pass files deleted

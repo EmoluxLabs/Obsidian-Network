@@ -9,8 +9,8 @@
  *      which is the price of the first protocol purchase there.
  *
  * Initial GLV is derived from a published factor table with deterministic
- * integer arithmetic, bounded by the protocol minimum ($100) and maximum
- * ($30,000) from CONSENSUS_PARAMS.circle:
+ * integer arithmetic, bounded by the protocol minimum (0.01 OBS) and maximum
+ * (5 OBS) from CONSENSUS_PARAMS.circle:
  *
  *   GLV = clamp(min, base(population, economy, infrastructure, tourism,
  *                globalSignificance) * countryMultiplier, max)

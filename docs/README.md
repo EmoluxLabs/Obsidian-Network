@@ -9,6 +9,8 @@ less than you might hope, which are called out explicitly rather than buried.
 | Document | What it answers |
 | --- | --- |
 | [protocol.md](protocol.md) | How the chain works: blocks, transactions, state roots, consensus, the four networks |
+| [consensus.md](consensus.md) | Block validity, fork choice, reorganisation, the validator set and jailing |
+| [economics.md](economics.md) | Issuance, every OBS-denominated fee, the 40/60 revenue split, node runner rewards and the supply invariant |
 | [proof-of-time.md](proof-of-time.md) | What Proof of Time is, how time is established and verified, PoT Difficulty, Time-Rate, and why cryptographic hashing does not make this a proof-of-work chain |
 | [mining.md](mining.md) | How OBS is issued, how a claim works, why your device clock is irrelevant |
 | [wallet.md](wallet.md) | Where keys live, what a backup actually is, what "non-custodial" costs you |
@@ -35,8 +37,13 @@ less than you might hope, which are called out explicitly rather than buried.
 | [self-hosting.md](self-hosting.md) | Anyone running the interface: systemd, Docker, nginx, Cloudflare |
 | [api.md](api.md) | Every RPC route, with the fields it returns |
 | [transaction-format.md](transaction-format.md) | Canonical encoding, signing, gas, and how to submit without the interface |
+| [release-process.md](release-process.md) | How a release is versioned, built, gated, signed and checked for peering compatibility |
 | [release-verification.md](release-verification.md) | How to verify a release archive before running it |
 | [mainnet-launch.md](mainnet-launch.md) | The launch runbook: bootstrap set, genesis verification, the allocation event, monitoring, rollback, and the launch checklist |
+| [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) | The beginner's step-by-step guide: from one phone to three-node mainnet, with every command explained |
+| [DEVNET-TERMUX-RUNBOOK.md](DEVNET-TERMUX-RUNBOOK.md) | Running a devnet from Android with Termux |
+| [ORACLE-VPS-DEPLOYMENT.md](ORACLE-VPS-DEPLOYMENT.md) | Deploying the oracle feed on a VPS |
+| [soak-testing.md](soak-testing.md) | Running the soak harness and reading its CSV output |
 
 ## Reports
 

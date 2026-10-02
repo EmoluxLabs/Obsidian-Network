@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { ChainManager } from '../../src/blockchain/chain.js';
 import type { WorldState } from '../../src/blockchain/state.js';
 import { buildBlock, blockHash, encodeBlock, decodeBlock } from '../../src/blockchain/block.js';
-import { signTransaction, encodeSignedTx } from '../../src/transactions/encode.js';
+import { signTransaction } from '../../src/transactions/encode.js';
 import { generateRecoveryPhrase, deriveWallet } from '../../src/crypto/mnemonic.js';
 import { addressFromPublicKey, generateKeyPair, nodeIdFromPublicKey, signDigest } from '../../src/crypto/keys.js';
 import { sha256, toHex, utf8 } from '../../src/crypto/hash.js';

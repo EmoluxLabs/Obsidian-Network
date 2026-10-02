@@ -22,11 +22,12 @@ Node.js ≥ 20.10.
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
 
-cd obsidian-core && npm ci && npm run build && npm test        # 233 tests
-cd ../obsidian-interface && npm ci && npm run build && npm test # 123 tests
-cd .. && node --test cloudflare/test/worker.test.mjs            # 7 tests
+cd obsidian-core && npm ci && npm run build && npm test        # 246 tests
+cd ../obsidian-interface && npm ci && npm run build && npm test # 191 tests
+cd .. && node --test cloudflare/test/worker.test.mjs            # 9 tests
 node --test tests/e2e/cluster.test.mjs                          # 13 tests
-node scripts/check-invariants.mjs                               # 50 invariants
+node --test tests/scripts/release-signing.test.mjs              # 8 tests
+node scripts/check-invariants.mjs                               # 55 invariants
 ```
 
 All of that must pass before you open a pull request; CI runs exactly these.

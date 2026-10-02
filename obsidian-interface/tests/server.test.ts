@@ -92,7 +92,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
   writeFileSync(join(siteRoot, 'landing', 'index.html'), '<!doctype html><title>landing</title>', 'utf8');
   writeFileSync(join(siteRoot, 'app', 'index.html'), '<!doctype html><title>app</title>', 'utf8');
   writeFileSync(join(publicDir, 'index.html'), '<!doctype html><title>root</title>', 'utf8');
-  writeFileSync(join(coreDir, 'protocol.js'), 'export const version = "1.0.0";\n', 'utf8');
+  writeFileSync(join(coreDir, 'protocol.js'), 'export const version = "1.2.17";\n', 'utf8');
 
   const requests: string[] = [];
   let statusFailures = options.stubStatusFails ?? 0;

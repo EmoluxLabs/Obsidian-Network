@@ -119,7 +119,7 @@ export const CONSENSUS_PARAMS = {
    * user-to-user transfers, mining rewards, creator earnings, marketplace
    * proceeds and escrowed funds are never platform revenue either. The
    * classification is enumerated in /docs/economics.md and enforced in
-   * src/economy/revenue.ts.
+   * src/economy/accounting.ts.
    */
   nodeRewards: {
     /** 40% of qualifying platform revenue goes to node runners. */

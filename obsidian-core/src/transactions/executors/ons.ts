@@ -2,10 +2,10 @@
  * ONS — Obsidian Name Service (spec §39).
  *
  * A `.obs` name maps to exactly one wallet address at a time and the mapping is
- * blockchain state, not a database row. Names are priced in USD and paid in OBS
- * at a fixed OBS price; the fee is protocol revenue and is remitted to
- * the designated treasury wallet on-chain (it cannot be minted, and the
- * treasury cannot change except by the protocol rule).
+ * blockchain state, not a database row. Names are priced in OBS by a consensus
+ * parameter (a flat 0.05 OBS to register or renew); the fee is protocol revenue
+ * and is remitted to the designated treasury wallet on-chain (it cannot be
+ * minted, and the treasury cannot change except by the protocol rule).
  *
  * Registration is a commitment: anyone may register an available name, and
  * ownership can be transferred or sold according to protocol rules.

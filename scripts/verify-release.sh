@@ -146,12 +146,38 @@ if [ -f "$WORK/package.json" ]; then
 fi
 
 if [ "$WITH_TESTS" = 1 ]; then
-  if [ -f "$WORK/package.json" ] && node -e "process.exit(require('$WORK/package.json').scripts?.test ? 0 : 1)"; then
-    echo "→ running the shipped test suite (install + build required first)"
-    ( cd "$WORK" && npm ci >/dev/null && npm test )
+  # Only the node package ships a suite that is self-contained: its tests import
+  # nothing outside its own tree. The interface suite drives a real node from
+  # the repository, so it cannot run inside a distribution archive, and the
+  # operator package ships no tests at all. Attempting either here would report
+  # a packaging decision as a failure.
+  TEST_DIR=""
+  CANDIDATES=()
+  if [ -f "$WORK/package.json" ] && { [ -d "$WORK/tests" ] || [ -d "$WORK/test" ]; }; then
+    CANDIDATES+=("$WORK")
+  fi
+  while IFS= read -r pkg; do
+    dir="$(dirname "$pkg")"
+    [ "$(basename "$dir")" = "obsidian-core" ] || continue
+    [ -d "$dir/tests" ] || continue
+    case " ${CANDIDATES[*]:-} " in *" $dir "*) continue ;; esac
+    CANDIDATES+=("$dir")
+  done < <(find "$WORK" -maxdepth 3 -name package.json -not -path '*/node_modules/*' 2>/dev/null | sort)
+
+  if [ "${#CANDIDATES[@]}" -eq 1 ]; then
+    TEST_DIR="${CANDIDATES[0]}"
+  elif [ "${#CANDIDATES[@]}" -gt 1 ]; then
+    echo "  several node packages in this archive; run them explicitly:"
+    for dir in "${CANDIDATES[@]}"; do echo "    cd ${dir#"$WORK"/} && npm ci && npm test"; done
+  fi
+
+  if [ -n "$TEST_DIR" ] && node -e "process.exit(require('$TEST_DIR/package.json').scripts?.test ? 0 : 1)"; then
+    echo "→ running the shipped test suite in ${TEST_DIR#"$WORK"/} (install first)"
+    ( cd "$TEST_DIR" && npm ci >/dev/null && npm test )
+  elif [ -n "$TEST_DIR" ]; then
+    echo "  ${TEST_DIR#"$WORK"/} has no test script; skipping (nothing to run)"
   else
-    echo "  this archive has no test script; skipping (nothing to run)"
+    echo "  this archive ships no self-contained test suite; skipping (nothing to run)"
   fi
 fi
-
 echo "OK: ${BASE} verified."

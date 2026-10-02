@@ -64,6 +64,7 @@ echo "packaging Obsidian Network $VERSION from $COMMIT_SHORT"
 CORE_TESTS=0
 INTERFACE_TESTS=0
 EDGE_TESTS=0
+SIGNING_TESTS=0
 CLUSTER_TESTS=0
 
 # RELEASE_LOG_DIR keeps every gate's output: a failed release packaging run is
@@ -115,6 +116,7 @@ if [ "$SKIP_BUILD" = 0 ]; then
   # The verification script is what a stranger runs before trusting this
   # build, so its behaviour is gated like any other shipped code.
   gate "release verification and signing behaviour" "$LOGS/signing.log" node --test tests/scripts/release-signing.test.mjs
+  SIGNING_TESTS="$(count_node_test "$LOGS/signing.log")"
 
   if [ "$SKIP_E2E" = 0 ]; then
     gate "three-node cluster end-to-end test (this starts real nodes on ports 39630-39635)" "$LOGS/cluster.log" node --test tests/e2e/cluster.test.mjs
@@ -126,8 +128,9 @@ if [ "$SKIP_BUILD" = 0 ]; then
   CORE_TESTS="${CORE_TESTS:-0}"
   INTERFACE_TESTS="${INTERFACE_TESTS:-0}"
   EDGE_TESTS="${EDGE_TESTS:-0}"
+  SIGNING_TESTS="${SIGNING_TESTS:-0}"
   CLUSTER_TESTS="${CLUSTER_TESTS:-0}"
-  for pair in "core:$CORE_TESTS" "interface:$INTERFACE_TESTS" "edge:$EDGE_TESTS"; do
+  for pair in "core:$CORE_TESTS" "interface:$INTERFACE_TESTS" "edge:$EDGE_TESTS" "signing:$SIGNING_TESTS"; do
     if [ "${pair#*:}" = "0" ]; then
       echo "no tests ran for ${pair%%:*} — refusing to package" >&2
       exit 1
@@ -137,7 +140,7 @@ if [ "$SKIP_BUILD" = 0 ]; then
     echo "the cluster end-to-end test reported no passes — refusing to package" >&2
     exit 1
   fi
-  TOTAL_TESTS=$((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + CLUSTER_TESTS))
+  TOTAL_TESTS=$((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS + CLUSTER_TESTS))
 else
   TOTAL_TESTS=0
 fi
@@ -173,8 +176,8 @@ echo "→ staging archives under $STAGING"
 stage "$STAGING/obsidian-core" \
   obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/tsconfig.json obsidian-core/tsconfig.test.json obsidian-core/vitest.config.ts \
-  obsidian-core/src obsidian-core/dist obsidian-core/config obsidian-core/deployment \
-  obsidian-core/README.md .env.example 2>/dev/null || true
+  obsidian-core/src obsidian-core/tests obsidian-core/dist obsidian-core/config \
+  obsidian-core/deployment obsidian-core/README.md .env.example 2>/dev/null || true
 cp LICENSE "$STAGING/obsidian-core/" 2>/dev/null || true
 
 # ── 2. obsidian-interface: server, built bundles and the site shells ─────────
@@ -213,7 +216,7 @@ cp scripts/check-invariants.mjs "$STAGING/obsidian-node-operator/check-invariant
 stage "$STAGING/obsidian-interface-selfhost" \
   obsidian-interface/dist obsidian-interface/public obsidian-interface/web/core \
   obsidian-interface/package.json obsidian-interface/package-lock.json \
-  obsidian-interface/deployment obsidian-interface/tests \
+  obsidian-interface/deployment \
   landing mine wallet explorer social capsule ons circle developer node app audit \
   docs LICENSE
 
@@ -264,9 +267,9 @@ NODE
 ( cd "$RELEASES" && sha256sum $(ls *.zip *.tar.gz | sort) > SHA256SUMS )
 
 if [ "$SKIP_BUILD" = 0 ] && [ "$SKIP_E2E" = 0 ]; then
-  TEST_SUMMARY="* ${TOTAL_TESTS} automated tests, all of them run immediately before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}) and the three-node cluster end-to-end suite (${CLUSTER_TESTS})"
+  TEST_SUMMARY="* ${TOTAL_TESTS} automated tests, all of them run immediately before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}) and the three-node cluster end-to-end suite (${CLUSTER_TESTS})"
 elif [ "$SKIP_BUILD" = 0 ]; then
-  TEST_SUMMARY="* $((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS)) automated tests run before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}). The three-node cluster end-to-end suite was skipped (--skip-e2e): run \`node --test tests/e2e/cluster.test.mjs\` before trusting this build."
+  TEST_SUMMARY="* $((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS)) automated tests run before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}). The three-node cluster end-to-end suite was skipped (--skip-e2e): run \`node --test tests/e2e/cluster.test.mjs\` before trusting this build."
 else
   TEST_SUMMARY="* No tests were run for this packaging pass (--skip-build). Treat these archives as source-only until you run the suites yourself."
 fi
@@ -300,7 +303,7 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
 
 ## What is in this release
 
-* consensus, p2p, RPC, indexer and the nine transaction executors
+* consensus, p2p, RPC, indexer and the eleven transaction types
 ${TEST_SUMMARY}
 * no WAC, no \$5 activation, no legacy signup allocation, no admin mint, no
   native exchange — verify with \`curl -s localhost:8630/audit/compliance\`

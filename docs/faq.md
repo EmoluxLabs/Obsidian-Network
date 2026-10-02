@@ -61,9 +61,14 @@ interface yourself, or read the RPC directly — the format is documented in
 `docs/api.md`.
 
 **What happens if the dollar price feed dies?**
-Everything priced in dollars — ONS registration, business pages, land — closes
-with `ERR_ORACLE_UNAVAILABLE`. The protocol refuses rather than guessing, and
-nothing about consensus depends on the oracle.
+Nothing in the protocol depends on it. ONS registration (0.05 OBS), business
+pages (0.005 OBS), land (0.01–5 OBS per m²) and capsules are all priced in OBS
+by consensus parameters, so no fee and no state transition reads a dollar
+price, and an unavailable feed cannot close a feature. A node may still publish
+an OBS/USD observation for reporting (`GET /oracle`), and a consumer that asks
+for it gets a stale or thin feed refused rather than replaced with a guess —
+but no page and no state transition converts through it. Consensus never
+consults it.
 
 **Can Obsidian take a cut of my tips?**
 No. Tips go 100% to the creator. The protocol's revenue comes from gas (to the

@@ -8,7 +8,7 @@ chain state rather than as rows in a company database.
 * Chain id / network id: `7777` / `obsidian-mainnet-1` (plus testnet `7778`,
   staging `7779`, devnet `7780`)
 * Address prefix: `obs` (testnet `tobs`, staging `sobs`, devnet `dobs`)
-* Protocol version: `1.1.0`
+* Protocol version: `1.2.0`
 * Consensus: **Proof of Time (PoT)** — see [proof-of-time.md](proof-of-time.md)
 
 ## 1. Blocks

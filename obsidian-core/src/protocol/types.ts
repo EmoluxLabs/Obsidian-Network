@@ -466,7 +466,7 @@ export interface ParcelRecord {
   /** Square metres (protocol parcels are 1 m²). */
   squareMetres: number;
   owner: string;
-  /** Official protocol location value at the time of last update, USD micro. */
+  /** Official protocol location value at the time of last update, in seals. */
   glvSeals: bigint;
   /**
    * Division purchase counter when this parcel was issued or last acquired.
@@ -479,7 +479,7 @@ export interface ParcelRecord {
   /** Administrative level of `subId`. */
   level?: number;
   subId?: string;
-  /** Individual location value established by a marketplace trade, USD micro. */
+  /** Individual location value established by a marketplace trade, in seals. */
   ilvSeals?: bigint;
   /** Owner's marketplace asking price in OBS (not USD). */
   mspObs?: bigint;
