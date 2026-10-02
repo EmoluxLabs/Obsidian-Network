@@ -86,9 +86,8 @@ export function applyTransactions(
       reject(ErrCode.DUPLICATE_TX, 'the same transaction appears twice in one block', { txId });
     }
     seenInBlock.add(txId);
-    if (state.hasTxId(txId)) {
-      reject(ErrCode.REPLAY, 'transaction was already applied in an earlier block', { txId });
-    }
+    // Cross-block replay is covered by strict nonce equality below: an already
+    // applied transaction carries a nonce the sender's account has moved past.
 
     const account = state.getAccount(tx.sender);
     const apply: ApplyContext = {
@@ -119,7 +118,6 @@ export function applyTransactions(
     gasBaseTotal += result.gasBase;
 
     state.setNonce(tx.sender, tx.nonce + 1, apply);
-    state.rememberTxId(txId);
     state.s.metrics.totalTransactions += 1;
   }
 

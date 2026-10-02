@@ -26,7 +26,6 @@ import { Logger } from './security/logger.js';
 import { describeConfig, type LoadedConfig } from './config/config.js';
 import { CONSENSUS_PARAMS } from './protocol/params.js';
 import { maxBig } from './protocol/amount.js';
-import { scheduledProposer } from './consensus/proposer.js';
 import type { Block, ProtocolEvent } from './protocol/types.js';
 
 export interface NodeRuntimeInfo {
@@ -168,8 +167,14 @@ export async function startNode(options: StartOptions): Promise<NodeRuntimeInfo>
   timers.push(
     setInterval(() => {
       if (!config.miningEnabled) return;
-      const scheduled = scheduledProposer(chain.world, chain.height + 1);
-      if (scheduled !== null && scheduled !== identity.address) return;
+      // null means "anyone may produce": either no validator is registered, or
+      // every validator has let this height's slot lapse (the liveness
+      // backstop in consensus/proposer.ts).
+      const scheduled = chain.scheduledProposerNow();
+      if (scheduled !== null && scheduled !== identity.address) {
+        logger.debug('not this node’s slot', { height: chain.height + 1, scheduled });
+        return;
+      }
       try {
         const block = chain.buildNextBlock({
           address: identity.address,

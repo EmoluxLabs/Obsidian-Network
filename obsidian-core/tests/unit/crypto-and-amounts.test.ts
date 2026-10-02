@@ -13,6 +13,8 @@ import {
   verifyAddressSignature,
 } from '../../src/crypto/keys.js';
 import { generateRecoveryPhrase, deriveWallet, isValidRecoveryPhrase } from '../../src/crypto/mnemonic.js';
+import { HDKey } from '@scure/bip32';
+import { mnemonicToSeedSync } from '@scure/bip39';
 import { sha256, utf8, toHex, fromHex, domainHash } from '../../src/crypto/hash.js';
 import { bech32Decode } from '../../src/crypto/bech32.js';
 import { encodeSignedTx, signTransaction, validateTxStructure } from '../../src/transactions/encode.js';
@@ -278,5 +280,87 @@ describe('error catalogue', () => {
     } catch (error) {
       expect((error as { code: string }).code).toBe('ERR_BAD_GAS');
     }
+  });
+});
+
+/**
+ * BIP-32 conformance.
+ *
+ * These are the official test vectors from the BIP-32 specification. They are
+ * here because derivation was once hand-rolled in src/crypto/mnemonic.ts in a
+ * way that was not BIP-32 at all — it HMAC'd with the constant "Bitcoin seed"
+ * instead of the parent chain code, and used SHA-256 where the spec says
+ * SHA-512, so the chain code was an empty slice. Keys derived that way restore
+ * in no other wallet, while the exported recovery sheet promised users a
+ * standard BIP-44 path. A spec we claim to implement gets its own vectors.
+ */
+describe('BIP-32 conformance (official test vectors)', () => {
+  const vector1 = fromHex('000102030405060708090a0b0c0d0e0f');
+  const vector2 = fromHex(
+    'fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542',
+  );
+
+  it('matches vector 1 at m, m/0H and m/0H/1', () => {
+    const master = HDKey.fromMasterSeed(vector1);
+    expect(master.publicExtendedKey).toBe(
+      'xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8',
+    );
+    expect(master.privateExtendedKey).toBe(
+      'xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi',
+    );
+    expect(master.derive("m/0'").publicExtendedKey).toBe(
+      'xpub68Gmy5EdvgibQVfPdqkBBCHxA5htiqg55crXYuXoQRKfDBFA1WEjWgP6LHhwBZeNK1VTsfTFUHCdrfp1bgwQ9xv5ski8PX9rL2dZXvgGDnw',
+    );
+    expect(master.derive("m/0'/1").publicExtendedKey).toBe(
+      'xpub6ASuArnXKPbfEwhqN6e3mwBcDTgzisQN1wXN9BJcM47sSikHjJf3UFHKkNAWbWMiGj7Wf5uMash7SyYq527Hqck2AxYysAA7xmALppuCkwQ',
+    );
+  });
+
+  it('matches vector 2 at m, m/0 and m/0/2147483647H', () => {
+    const master = HDKey.fromMasterSeed(vector2);
+    expect(master.publicExtendedKey).toBe(
+      'xpub661MyMwAqRbcFW31YEwpkMuc5THy2PSt5bDMsktWQcFF8syAmRUapSCGu8ED9W6oDMSgv6Zz8idoc4a6mr8BDzTJY47LJhkJ8UB7WEGuduB',
+    );
+    expect(master.derive('m/0').publicExtendedKey).toBe(
+      'xpub69H7F5d8KSRgmmdJg2KhpAK8SR3DjMwAdkxj3ZuxV27CprR9LgpeyGmXUbC6wb7ERfvrnKZjXoUmmDznezpbZb7ap6r1D3tgFxHmwMkQTPH',
+    );
+    expect(master.derive("m/0/2147483647'").publicExtendedKey).toBe(
+      'xpub6ASAVgeehLbnwdqV6UKMHVzgqAG8Gr6riv3Fxxpj8ksbH9ebxaEyBLZ85ySDhKiLDBrQSARLq1uNRts8RuJiHjaDMBU4Zn9h8LZNnBC5y4a',
+    );
+  });
+
+  it('matches vector 3, which pins retention of leading zeros', () => {
+    const vector3 = fromHex(
+      '4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be',
+    );
+    const master = HDKey.fromMasterSeed(vector3);
+    expect(master.publicExtendedKey).toBe(
+      'xpub661MyMwAqRbcEZVB4dScxMAdx6d4nFc9nvyvH3v4gJL378CSRZiYmhRoP7mBy6gSPSCYk6SzXPTf3ND1cZAceL7SfJ1Z3GC8vBgp2epUt13',
+    );
+    expect(master.derive("m/0'").publicExtendedKey).toBe(
+      'xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y',
+    );
+  });
+
+  it('derives the documented BIP-44 path and keeps indices independent', () => {
+    const phrase = generateRecoveryPhrase();
+    const first = deriveWallet(phrase, 0, 0, undefined, DEVNET.addressHrp);
+    const second = deriveWallet(phrase, 0, 1, undefined, DEVNET.addressHrp);
+    expect(first.derivationPath).toBe("m/44'/7777'/0'/0/0");
+    expect(second.derivationPath).toBe("m/44'/7777'/0'/0/1");
+    expect(first.privateKey).not.toBe(second.privateKey);
+    expect(first.address).not.toBe(second.address);
+  });
+
+  it('agrees with a plain @scure/bip32 derivation of the same path', () => {
+    const phrase = generateRecoveryPhrase();
+    const derived = deriveWallet(phrase, 3, 7, undefined, DEVNET.addressHrp);
+    const reference = HDKey.fromMasterSeed(mnemonicToSeedSync(phrase)).derive("m/44'/7777'/3'/0/7");
+    expect(derived.privateKey).toBe(toHex(reference.privateKey!));
+  });
+
+  it('is deterministic: the same phrase always restores the same wallet', () => {
+    const phrase = generateRecoveryPhrase();
+    expect(deriveWallet(phrase, 0, 0).address).toBe(deriveWallet(phrase, 0, 0).address);
   });
 });

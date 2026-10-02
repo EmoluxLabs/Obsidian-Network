@@ -51,6 +51,8 @@ import {
   compareTips,
   isProposerAllowed,
   medianTimePast,
+  proposerRound,
+  scheduledProposer,
 } from '../consensus/proposer.js';
 import { buildGenesisBlock, createGenesisState, genesisId } from '../genesis/initialize.js';
 import { assertNetworkSafety } from '../protocol/networks.js';
@@ -435,8 +437,18 @@ export class ChainManager extends EventEmitter {
     // Apply on top of the PARENT state, not the current head: this is what makes
     // fork branches validatable without trusting this node's own view.
     const parentState = this.stateAtHeight(parentEntry.height, parentEntry.hash);
-    if (this.options.enforceProposerRotation !== false && !isProposerAllowed(parentState, header.producer, header.height)) {
-      reject(ErrCode.NOT_PRODUCER_TURN, `proposer ${header.producer} is not scheduled for height ${header.height}`);
+    // The round comes from the two timestamps the headers already commit to, so
+    // a block produced after the scheduled validator let its slot lapse is
+    // accepted from whoever the rotation hands the turn to next.
+    const round = proposerRound(parentEntry.timestamp, header.timestamp);
+    if (
+      this.options.enforceProposerRotation !== false &&
+      !isProposerAllowed(parentState, header.producer, header.height, round)
+    ) {
+      reject(
+        ErrCode.NOT_PRODUCER_TURN,
+        `proposer ${header.producer} is not scheduled for height ${header.height} round ${round}`,
+      );
     }
 
     const applied = applyBlock(parentState, block, { net: this.options.net });
@@ -474,6 +486,14 @@ export class ChainManager extends EventEmitter {
       this.rememberState(entry.height, applied.state);
       this.store.setCanonical(this.store.rebuildCanonicalFrom(entry.hash));
       this.persistCheckpoint();
+      // Everything this block mined is settled, so it must leave the pool.
+      // Only the producer used to drop its own transactions, which meant a
+      // follower kept every transaction it had ever heard about until the
+      // transaction expired: re-gossiped to its peers, re-offered to the block
+      // builder and re-rejected, for the whole expiry window. `removeMany` was
+      // written for exactly this and was never called.
+      this.mempool.removeMany(block.transactions.map((tx) => tx.id));
+      this.revalidateMempool();
     }
     this.emit('block', block, applied.events);
     return { state: this.state, reorged, connected: true };
@@ -500,6 +520,21 @@ export class ChainManager extends EventEmitter {
     if (depth > CONSENSUS_PARAMS.consensus.maxReorgDepth) {
       reject(ErrCode.ORPHAN_BLOCK, `reorg depth ${depth} exceeds the protocol maximum ${CONSENSUS_PARAMS.consensus.maxReorgDepth}`);
     }
+    // Everything the abandoned branch had mined, captured before the branch
+    // stops being canonical. A reorg is not a reason for an honest, fully paid
+    // transaction to disappear: it was only ever in a block that lost, and the
+    // sender has no way to know that or to resend it. Without this the chain
+    // silently drops those transactions on the floor — observed live, where a
+    // depth-1 reorg erased a mining claim and the miner's balance with it.
+    const orphaned: TxEnvelope[] = [];
+    for (let height = forkHeight + 1; ; height += 1) {
+      const hash = this.store.getCanonicalHashAtHeight(height);
+      if (!hash) break;
+      const block = this.store.getBlockByHash(hash);
+      if (!block) break;
+      orphaned.push(...block.transactions);
+    }
+
     const forkEntry = chain[forkHeight];
     let state = this.stateAtHeight(forkHeight, forkEntry.hash, true);
     for (let height = forkHeight + 1; height < chain.length; height += 1) {
@@ -514,6 +549,25 @@ export class ChainManager extends EventEmitter {
     this.stateHistory.clear();
     this.rememberState(chain.length - 1, state);
     this.store.setCanonical(chain);
+
+    // Return the orphaned transactions the winning branch did not already
+    // re-include. `revalidateMempool` immediately below drops any that the new
+    // branch made stale (nonce already consumed), so what survives is exactly
+    // the set that is still valid and still unmined.
+    if (orphaned.length > 0) {
+      const reincluded = new Set<string>();
+      for (let height = forkHeight + 1; height < chain.length; height += 1) {
+        const block = this.store.getBlockByHash(chain[height].hash);
+        for (const tx of block?.transactions ?? []) reincluded.add(tx.id);
+      }
+      let requeued = 0;
+      for (const tx of orphaned) {
+        if (reincluded.has(tx.id)) continue;
+        if (this.mempool.add(tx).accepted) requeued += 1;
+      }
+      if (requeued > 0) this.emit('mempool-requeued', { count: requeued, fromHeight: forkHeight + 1 });
+    }
+
     this.persistCheckpoint(true);
     this.revalidateMempool();
   }
@@ -576,11 +630,22 @@ export class ChainManager extends EventEmitter {
       if (!poolEntry) continue;
       const expectedNonce = this.state.getAccount(poolEntry.tx.sender)?.nonce ?? 0;
       if (poolEntry.tx.nonce < expectedNonce) this.mempool.remove(entry.txId);
-      if (this.state.hasTxId(entry.txId)) this.mempool.remove(entry.txId);
     }
   }
 
   // ── Block production ──────────────────────────────────────────────────────
+
+  /**
+   * Who is entitled to produce the next block at this node's current protocol
+   * time, or null when any node may. Shares its round arithmetic with
+   * `buildNextBlock` so the production loop and the builder can never disagree
+   * about whose turn it is.
+   */
+  scheduledProposerNow(): string | null {
+    const head = this.store.head;
+    if (!head) return null;
+    return scheduledProposer(this.state, head.height + 1, proposerRound(head.timestamp, this.protocolTime));
+  }
 
   /**
    * Build the next block for this slot. Returns null when this node is not the
@@ -589,10 +654,12 @@ export class ChainManager extends EventEmitter {
   buildNextBlock(producer: { address: string; privateKey: string; publicKey: string }): Block | null {
     const head = this.store.head;
     if (!head) return null;
-    if (!isProposerAllowed(this.state, producer.address, head.height + 1)) return null;
 
     const height = head.height + 1;
     const timestamp = this.protocolTime;
+    // Same round the verifiers will recompute from the finished header.
+    const round = proposerRound(head.timestamp, timestamp);
+    if (!isProposerAllowed(this.state, producer.address, height, round)) return null;
     const ctx: BlockContext = {
       height,
       timestamp,
@@ -618,6 +685,17 @@ export class ChainManager extends EventEmitter {
       trial.advanceBlock(height, timestamp);
       try {
         const outcome = applyTransactions(trial, [tx], ctx, this.options.net);
+        // A transaction that leaves the supply invariant broken must never
+        // reach finalizeBlock: there it throws, and the throw would abort block
+        // assembly on every subsequent attempt for as long as the transaction
+        // sat in the mempool — a permanent stall from one cheap transaction.
+        // Catch it here instead, where the offender is known, and evict it.
+        const invariant = outcome.state.verifySupplyInvariant();
+        if (!invariant.ok) {
+          this.mempool.remove(tx.id);
+          this.emit('rejected-transaction', { txId: tx.id, reason: invariant.reason });
+          continue; // `working` is untouched: only the discarded trial saw this tx
+        }
         working = outcome.state;
         events.push(...outcome.events);
         accepted.push(tx);
@@ -626,8 +704,24 @@ export class ChainManager extends EventEmitter {
       }
     }
 
-    events.push(...runBlockRoutines(working, ctx, this.options.net));
-    const finalized = finalizeBlock(working, events);
+    let finalized: ReturnType<typeof finalizeBlock>;
+    try {
+      events.push(...runBlockRoutines(working, ctx, this.options.net));
+      finalized = finalizeBlock(working, events);
+    } catch (error) {
+      // Every transaction passed on its own, yet the assembled block does not
+      // finalise. Producing nothing would stall this node for as long as the
+      // mempool held the offending combination, so drop the batch and fall back
+      // to an empty block: the chain keeps moving and the next slot is clean.
+      for (const tx of accepted) this.mempool.remove(tx.id);
+      this.emit('block-assembly-failed', { height, transactions: accepted.length, error });
+      working = this.state.clone();
+      working.advanceBlock(height, timestamp);
+      accepted.length = 0;
+      events.length = 0;
+      events.push(...runBlockRoutines(working, ctx, this.options.net));
+      finalized = finalizeBlock(working, events);
+    }
 
     return buildBlock({
       protocolVersion: PROTOCOL_VERSION,

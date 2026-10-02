@@ -212,7 +212,16 @@ describe('mining claims (spec §17–§27)', () => {
     rewindMiningTimer(h, bob.address);
     const replay = h.tryBlock([tx], { simulate: false });
     expect(replay.accepted).toBe(false);
-    expect([ErrCode.DUPLICATE_TX, ErrCode.REPLAY, ErrCode.MINING_CLAIM_REPLAY]).toContain(replay.code);
+    // ERR_BAD_NONCE is the usual answer: the sender's nonce has already moved
+    // past this transaction, which is what makes a replay impossible without a
+    // separate tx-id set. The other codes stay listed because a claim can also
+    // be stopped earlier, by the per-block duplicate guard or the claim-id set.
+    expect([
+      ErrCode.BAD_NONCE,
+      ErrCode.DUPLICATE_TX,
+      ErrCode.REPLAY,
+      ErrCode.MINING_CLAIM_REPLAY,
+    ]).toContain(replay.code);
   });
 
   it('blocks a re-signed claim that reuses an already accepted claim id', async () => {

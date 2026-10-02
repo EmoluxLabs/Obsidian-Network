@@ -17,13 +17,33 @@
  * node that lies about time is rejected the same way a forged signature would be.
  *
  * PROPOSER SELECTION
- *   Deterministic round-robin over the active validator set, sorted by address:
- *       proposer(height) = activeValidators[height mod validatorCount]
+ *   Deterministic round-robin over the active validator set, sorted by address,
+ *   offset by the ROUND — how many slots have elapsed since the parent block:
+ *       round(parent, block) = max(0, floor((block.ts - parent.ts) / targetBlockSeconds) - 1)
+ *       proposer(height, round) = activeValidators[(height + round) mod validatorCount]
+ *
+ *   Round 0 is the common case and reduces to the plain `height mod count`
+ *   rotation. The round exists so that a validator which does not show up costs
+ *   the network one slot instead of the chain: once its slot has elapsed the
+ *   turn passes to the next validator, and once EVERY validator has been given
+ *   a slot (round >= validatorCount) any node may propose. Without that
+ *   backstop a single offline validator halts block production permanently,
+ *   because the schedule would keep naming an address that never answers.
+ *
+ *   The round is derived from the parent timestamp and the block's own
+ *   timestamp — both already committed to the header — so every node computes
+ *   the same answer from the block alone, with no extra header field and no
+ *   out-of-band round negotiation. A proposer cannot claim an arbitrary round:
+ *   the timestamp rules in src/consensus/time.ts bound how far into the future
+ *   a block may be dated (maxFutureDriftSeconds) and require it to exceed the
+ *   median time past, so the reachable round range is small and verifiable.
+ *
  *   There is no randomness to grind, no leader election race and no committee
  *   that can be bribed into silence beyond the round-robin schedule. Jailed
  *   validators are skipped by construction because they are not in the active
  *   set. While NO validator is registered the network is in "genesis open"
- *   mode, where any node may propose; the first registered validator closes it.
+ *   mode, where any node may propose; the first registered validator closes it
+ *   for round 0 only.
  *
  * FORK CHOICE
  *   The chain with the greatest PoT Weight wins, then the greatest height, then
@@ -35,15 +55,41 @@
 import type { WorldState } from '../blockchain/state.js';
 import type { Block } from '../protocol/types.js';
 import { blockHash } from '../blockchain/block.js';
+import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import { medianTimePast, validateBlockTime } from './time.js';
 
 export { medianTimePast };
 
-/** Address scheduled to propose at `height`, or null in genesis-open mode. */
-export function scheduledProposer(state: WorldState, height: number): string | null {
+/**
+ * How many proposer slots elapsed between a block and its parent.
+ *
+ * A block produced on schedule (one target interval after its parent) is round
+ * 0. Each further whole interval of delay advances the round by one, handing
+ * the turn to the next validator in the rotation. Derived purely from two
+ * timestamps that are already committed to the headers, so it is identical on
+ * every node that has the blocks.
+ */
+export function proposerRound(parentTimestamp: number, blockTimestamp: number): number {
+  const elapsed = blockTimestamp - parentTimestamp;
+  if (!Number.isFinite(elapsed) || elapsed <= 0) return 0;
+  const slots = Math.floor(elapsed / CONSENSUS_PARAMS.block.targetBlockSeconds);
+  return Math.max(0, slots - 1);
+}
+
+/**
+ * Address scheduled to propose at `height` in `round`, or null when any node
+ * may propose — which happens in two cases:
+ *
+ *   - no validator is registered at all (genesis-open mode), or
+ *   - the round has passed every validator in the set, so each one has already
+ *     been offered this height and declined it. This is the liveness backstop:
+ *     it is what stops an absent validator from stalling the chain forever.
+ */
+export function scheduledProposer(state: WorldState, height: number, round = 0): string | null {
   const active = state.activeValidators();
   if (active.length === 0) return null;
-  return active[height % active.length];
+  if (round >= active.length) return null;
+  return active[(height + round) % active.length];
 }
 
 export interface ForkChoiceInput {
@@ -71,20 +117,22 @@ export function tipOf(block: Block): ForkChoiceInput {
   };
 }
 
-export function assertProposerAllowed(state: WorldState, block: Block): void {
-  const scheduled = scheduledProposer(state, block.header.height);
-  if (scheduled === null) return; // genesis-open mode
+export function assertProposerAllowed(state: WorldState, block: Block, parentTimestamp: number): void {
+  const round = proposerRound(parentTimestamp, block.header.timestamp);
+  const scheduled = scheduledProposer(state, block.header.height, round);
+  if (scheduled === null) return; // genesis-open mode, or every validator skipped this height
   if (block.header.producer !== scheduled) {
     const error = new Error(
-      `proposer for height ${block.header.height} must be ${scheduled}, received ${block.header.producer}`,
+      `proposer for height ${block.header.height} round ${round} must be ${scheduled}, ` +
+        `received ${block.header.producer}`,
     );
     (error as Error & { code?: string }).code = 'ERR_NOT_PRODUCER_TURN';
     throw error;
   }
 }
 
-export function isProposerAllowed(state: WorldState, producer: string, height: number): boolean {
-  const scheduled = scheduledProposer(state, height);
+export function isProposerAllowed(state: WorldState, producer: string, height: number, round = 0): boolean {
+  const scheduled = scheduledProposer(state, height, round);
   return scheduled === null || scheduled === producer;
 }
 

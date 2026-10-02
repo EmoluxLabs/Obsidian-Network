@@ -47,8 +47,10 @@ export const CONSENSUS_PARAMS = {
    * computation anyone spent:
    *
    *   - the proposer for a height is scheduled deterministically from the
-   *     validator set (`proposer = activeValidators[height mod n]`), so nobody
-   *     competes by spending work;
+   *     validator set (`proposer = activeValidators[(height + round) mod n]`,
+   *     where the round counts slots elapsed since the parent), so nobody
+   *     competes by spending work, and an absent validator costs one slot
+   *     rather than halting the chain;
    *   - a block's timestamp must exceed the median time past of its ancestors
    *     and may not run ahead of the network's time (see `block` below), so a
    *     node cannot manufacture time;

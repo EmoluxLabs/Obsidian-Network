@@ -59,8 +59,18 @@ export function executeValidator(
       const commission = body.commissionBps ?? 0;
       if (commission > 10_000) reject(ErrCode.MALFORMED, 'commission is expressed in basis points (0-10000)');
       const account = state.touchAccount(tx.sender, apply);
-      if (account.validator && account.validator.status !== 'UNBONDING') {
-        reject(ErrCode.REPLAY, 'this account is already a registered validator');
+      if (account.validator) {
+        // Registering over an UNBONDING record used to be allowed. It could
+        // not be: `setValidator` overwrites the record wholesale, so the bond
+        // still held by the old one was erased without ever being credited
+        // back — destroying it, breaking the supply invariant, and throwing
+        // out of finalizeBlock. The unbonded stake has to be claimed first.
+        reject(
+          ErrCode.REPLAY,
+          account.validator.status === 'UNBONDING'
+            ? 'this account is unbonding: claim the stake (VALIDATOR CLAIM_UNBONDED) before registering again'
+            : 'this account is already a registered validator',
+        );
       }
       assertGas(tx.gas, body.bond);
       state.debit(tx.sender, body.bond + tx.gas, apply, 'validator bond + gas');

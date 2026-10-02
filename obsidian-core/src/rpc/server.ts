@@ -581,7 +581,12 @@ export class RpcServer {
           missedSlots: validator?.missedSlots ?? 0,
         };
       }),
-      rotation: 'proposer(height) = activeValidators[height mod count]',
+      rotation: 'proposer(height, round) = activeValidators[(height + round) mod count]',
+      round: 'round = max(0, floor((block.timestamp - parent.timestamp) / targetBlockSeconds) - 1)',
+      liveness:
+        'a validator that misses its slot costs the network one slot, not the chain: the turn passes ' +
+        'to the next validator, and once round >= count every validator has been offered the height ' +
+        'and any node may propose',
     });
   }
 

@@ -115,19 +115,45 @@ asserts chain time must advance on every block.
 
 ## 4. Who may produce a block
 
-`scheduledProposer(state, height)` — `obsidian-core/src/consensus/proposer.ts`
+`scheduledProposer(state, height, round)` — `obsidian-core/src/consensus/proposer.ts`
 
 ```
-proposer(height) = activeValidators[height mod validatorCount]
+round(parent, block) = max(0, floor((block.timestamp - parent.timestamp) / targetBlockSeconds) - 1)
+proposer(height, round) = activeValidators[(height + round) mod validatorCount]
 ```
 
 Deterministic round-robin over the bonded, unjailed validator set, sorted by
 address. There is no randomness to grind, no leader election to win and no
 advantage to computing faster. While **no** validator is registered the network
 is in "genesis open" mode and any node may propose; the first registered
-validator closes it.
+validator closes it for round 0.
 
 A block produced out of turn is rejected with `ERR_NOT_PRODUCER_TURN`.
+
+### The round, and why it exists
+
+A validator that does not show up must cost the network **one slot, not the
+chain**. The round counts how many target intervals have elapsed since the
+parent block: a block produced on schedule is round 0 and the rule reduces to
+the plain `height mod validatorCount` rotation. Each further interval of
+silence advances the round and hands the turn to the next validator, and once
+`round >= validatorCount` every validator has been offered this height and
+declined it, so **any** node may propose.
+
+That last clause is the liveness backstop. Without it the schedule keeps naming
+an address that never answers, every honest node refuses to build on anything
+else, and a single offline validator halts block production permanently.
+
+The round is derived entirely from two timestamps that are already committed to
+the headers, so every node computes the same answer from the block alone — no
+extra header field, no out-of-band round negotiation, and nothing new to sign.
+A proposer cannot simply claim a high round to steal a turn: the timestamp rules
+in section 3 bound how far ahead a block may be dated and require it to exceed
+the median time past, so the reachable round range is small and every node
+checks it against the same chain data.
+
+Verify it: `tests/e2e/cluster.test.mjs` registers a single validator, SIGKILLs
+it, and requires the remaining nodes to keep producing blocks.
 
 ---
 

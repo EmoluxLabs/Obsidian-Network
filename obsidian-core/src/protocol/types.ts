@@ -781,8 +781,6 @@ export interface StateSnapshot {
   oracle: OracleState;
   pool: MiningPoolState;
   metrics: Metrics;
-  /** Set of accepted transaction ids inside the validity window (replay guard). */
-  recentTxIds: Hex[];
   /** Set of accepted mining claim ids with heights, for claim replay protection. */
   recentClaimIds: Record<string, number>;
   /** Follow edges "followerAccount->followedAccount", sorted, for the graph. */

@@ -1,7 +1,7 @@
 {
   "name": "@obsidian/core",
   "version": "1.2.16",
-  "description": "Obsidian Core \u2014 standalone node software for the Obsidian Network blockchain (OBS).",
+  "description": "Obsidian Core — standalone node software for the Obsidian Network blockchain (OBS).",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -38,6 +38,7 @@
   "dependencies": {
     "@noble/curves": "1.6.0",
     "@noble/hashes": "1.5.0",
+    "@scure/bip32": "1.5.0",
     "@scure/bip39": "1.4.0",
     "esbuild": "^0.25.12",
     "ws": "8.22.0"

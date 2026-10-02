@@ -2,13 +2,18 @@
  * BIP-39 mnemonics and hierarchical deterministic wallet derivation.
  *
  * Obsidian wallets use standard BIP-39 (English wordlist, 256-bit entropy =>
- * 24 words) and a BIP-32 style derivation path:
+ * 24 words) and a standard BIP-32 / BIP-44 derivation path:
  *
  *      m / 44' / 7777' / account' / 0 / index
  *
  * where 7777 is the registered Obsidian coin type placeholder (7847 was
  * requested from SLIP-0044; the constant is protocol data and can be changed
  * only by a documented consensus upgrade, never silently).
+ *
+ * "Standard" is load-bearing: the words a user writes down must restore the
+ * same keys in any BIP-32 wallet, because that is what the exported recovery
+ * sheet promises them. Derivation therefore goes through @scure/bip32 and is
+ * pinned by the official BIP-32 test vectors in the unit tests.
  *
  * Guarantees enforced here:
  *   - Entropy comes exclusively from the OS CSPRNG.
@@ -20,9 +25,8 @@
 
 import { generateMnemonic as bip39Generate, validateMnemonic, mnemonicToSeedSync } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
-import { hmacSha256, utf8, toHex, fromHex } from './hash.js';
+import { HDKey } from '@scure/bip32';
 import { keyPairFromPrivateKey, type KeyPair } from './keys.js';
-import { secp256k1 } from '@noble/curves/secp256k1';
 
 export const OBSIDIAN_COIN_TYPE = 7777;
 export const DEFAULT_DERIVATION_PREFIX = `m/44'/${OBSIDIAN_COIN_TYPE}'`;
@@ -44,60 +48,26 @@ export function normalizePhrase(phrase: string): string {
   return phrase.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function compressedPublicKey(privateKey: Uint8Array): Uint8Array {
-  return secp256k1.getPublicKey(privateKey, true);
-}
-
-/** BIP-32 CKDpriv on secp256k1 (hardened and non-hardened indices). */
-function deriveChildPrivateKey(parent: Uint8Array, index: number): Uint8Array {
-  const hardened = index >= 0x80000000;
-  let data: Uint8Array;
-  if (hardened) {
-    data = new Uint8Array(1 + 32 + 4);
-    data[0] = 0x00;
-    data.set(parent, 1);
-  } else {
-    data = new Uint8Array(33 + 4);
-    data.set(compressedPublicKey(parent), 0);
-  }
-  new DataView(data.buffer, data.byteOffset, data.byteLength).setUint32(
-    data.length - 4,
-    index >>> 0,
-    false,
-  );
-  const I = hmacSha256(utf8('Bitcoin seed'), data);
-  const IL = I.slice(0, 32);
-  const IR = I.slice(32);
-  const parentInt = BigInt(`0x${toHex(parent)}`);
-  const ilInt = BigInt(`0x${toHex(IL)}`);
-  const order = secp256k1.CURVE.n;
-  const child = (ilInt + parentInt) % order;
-  if (child === 0n) throw new Error('derived child key is zero; use the next index');
-  let hex = child.toString(16);
-  if (hex.length < 64) hex = hex.padStart(64, '0');
-  const childKey = fromHex(hex);
-  // IR retained for chain-code continuity in future extended-key APIs.
-  void IR;
-  return childKey;
-}
-
-function masterKeyFromSeed(seed: Uint8Array): Uint8Array {
-  const I = hmacSha256(utf8('Bitcoin seed'), seed);
-  return I.slice(0, 32);
-}
-
-function parsePath(path: string): number[] {
-  const parts = path.trim().split('/');
-  if (parts[0] !== 'm') throw new Error("derivation path must start with 'm'");
-  return parts.slice(1).map((segment) => {
-    const hardened = segment.endsWith("'") || segment.endsWith('h');
-    const body = hardened ? segment.slice(0, -1) : segment;
-    if (!/^\d+$/.test(body)) throw new Error(`invalid path segment: ${segment}`);
-    const index = Number.parseInt(body, 10);
-    if (index >= 0x80000000) throw new Error(`path segment out of range: ${segment}`);
-    return hardened ? index + 0x80000000 : index;
-  });
-}
+/**
+ * BIP-32 derivation is delegated to @scure/bip32 — the reference
+ * implementation from the same authors as the @noble primitives this package
+ * already depends on.
+ *
+ * It is NOT hand-rolled here, and must not be again. The previous version
+ * HMAC'd with the literal string "Bitcoin seed" at every level instead of the
+ * parent chain code, and used HMAC-SHA256 where BIP-32 specifies HMAC-SHA512 —
+ * so `I` was 32 bytes and the chain code (`I.slice(32)`) was an empty array
+ * that got discarded outright. Two consequences, both severe:
+ *
+ *   - The keys were not BIP-32 keys. A user's 24 words restored nothing in any
+ *     standard wallet, despite the export file printing a BIP-44 path at them.
+ *   - Substituting a public constant for the secret chain code collapses the
+ *     hardened/non-hardened boundary: the per-index offset becomes publicly
+ *     computable, so sibling keys stop being independent.
+ *
+ * The BIP-32 test vectors in tests/unit/crypto-and-amounts.test.ts exist to
+ * keep both of those from coming back.
+ */
 
 export interface DerivedWallet extends KeyPair {
   derivationPath: string;
@@ -120,15 +90,13 @@ export function deriveWallet(
   const normalized = normalizePhrase(phrase);
   if (!validateMnemonic(normalized, wordlist)) throw new Error('invalid recovery phrase');
   const seed = mnemonicToSeedSync(normalized);
-  let key = masterKeyFromSeed(seed);
   const path = `${prefix}/${account}'/0/${index}`;
-  for (const segment of parsePath(path)) {
-    key = deriveChildPrivateKey(key, segment);
-  }
-  const pair = keyPairFromPrivateKey(key, addressHrp);
+  const node = HDKey.fromMasterSeed(seed).derive(path);
+  if (!node.privateKey) throw new Error(`derivation path ${path} produced no private key`);
+  const pair = keyPairFromPrivateKey(node.privateKey, addressHrp);
   // Best-effort scrubbing of intermediate material.
+  node.wipePrivateData();
   seed.fill(0);
-  key.fill(0);
   return { ...pair, derivationPath: path, account, index };
 }
 

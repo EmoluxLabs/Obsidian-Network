@@ -47,8 +47,6 @@ const AUTHORISED_ISSUANCE: ReadonlySet<IssuanceSource> = new Set<IssuanceSource>
   'MINING_REWARD',
 ]);
 
-/** Retention window for the in-state replay guard. */
-export const RECENT_TX_ID_WINDOW = 50_000;
 export const RECENT_CLAIM_ID_WINDOW = 200_000;
 
 export function emptyGenesisState(): GenesisState {
@@ -137,8 +135,6 @@ export interface MutableState {
   oracle: OracleState;
   pool: MiningPoolState;
   metrics: Metrics;
-  recentTxIds: string[];
-  recentTxIdSet: Set<string>;
   recentClaimIds: Map<string, number>;
   validators: Set<string>;
   socialFollowing: Set<string>;
@@ -202,8 +198,6 @@ export class WorldState {
       oracle: emptyOracleState(),
       pool: emptyPoolState(),
       metrics: emptyMetrics(),
-      recentTxIds: [],
-      recentTxIdSet: new Set(),
       recentClaimIds: new Map(),
       validators: new Set(),
       socialFollowing: new Set(),
@@ -235,7 +229,6 @@ export class WorldState {
       oracle: { ...this.s.oracle, observations: { ...this.s.oracle.observations } },
       pool: { ...this.s.pool, recentDistributions: this.s.pool.recentDistributions.map((c) => ({ ...c })) },
       metrics: { ...this.s.metrics },
-      recentTxIds: [...this.s.recentTxIds],
       recentClaimIds: { ...Object.fromEntries(this.s.recentClaimIds) },
       validators: [...this.s.validators].sort(),
       socialFollowing: [...this.s.socialFollowing].sort(),
@@ -273,8 +266,6 @@ export class WorldState {
     s.oracle = { ...snapshot.oracle, observations: { ...snapshot.oracle.observations } };
     s.pool = { ...snapshot.pool, recentDistributions: snapshot.pool.recentDistributions.map((c) => ({ ...c })) };
     s.metrics = { ...snapshot.metrics };
-    s.recentTxIds = [...snapshot.recentTxIds];
-    s.recentTxIdSet = new Set(s.recentTxIds);
     s.recentClaimIds = new Map(Object.entries(snapshot.recentClaimIds));
     s.validators = new Set(snapshot.validators);
     s.socialFollowing = new Set(snapshot.socialFollowing ?? []);
@@ -445,19 +436,13 @@ export class WorldState {
 
   // ── Replay guards ─────────────────────────────────────────────────────────
 
-  hasTxId(txId: string): boolean {
-    return this.s.recentTxIdSet.has(txId);
-  }
-
-  rememberTxId(txId: string): void {
-    if (this.s.recentTxIdSet.has(txId)) return;
-    this.s.recentTxIds.push(txId);
-    this.s.recentTxIdSet.add(txId);
-    if (this.s.recentTxIds.length > RECENT_TX_ID_WINDOW) {
-      const removed = this.s.recentTxIds.splice(0, this.s.recentTxIds.length - RECENT_TX_ID_WINDOW);
-      for (const id of removed) this.s.recentTxIdSet.delete(id);
-    }
-  }
+  // There is no transaction-id replay window. Strict nonce equality
+  // (`tx.nonce === account.nonce`, enforced in state-machine.ts) already makes
+  // an exact replay impossible, and a tx-id set would be *wrong* across a
+  // reorg: when a rollback frees a nonce again, re-including the very same
+  // signed transaction is the correct outcome, not a replay. The set was also
+  // the only consensus-relevant field `encodeState` never hashed, so two nodes
+  // could disagree about what to accept while publishing identical state roots.
 
   rememberClaimId(claimId: string, height: number): void {
     this.s.recentClaimIds.set(claimId, height);
