@@ -1279,7 +1279,7 @@ sha256sum -c SHA256SUMS
 ```
 
 The operator package ships `dist/` without tests, so `--with-tests` reports
-"ships no test suite; skipping" there — verify the core archive too, which
+"ships no self-contained test suite; skipping" there — verify the core archive too, which
 ships its suite and runs it (246 tests as of 1.2.17).
 
 ### E4. Three independent nodes

@@ -177,7 +177,7 @@ if [ "$WITH_TESTS" = 1 ]; then
   elif [ -n "$TEST_DIR" ]; then
     echo "  ${TEST_DIR#"$WORK"/} has no test script; skipping (nothing to run)"
   else
-    echo "  this archive ships no test suite; skipping (nothing to run)"
+    echo "  this archive ships no self-contained test suite; skipping (nothing to run)"
   fi
 fi
 echo "OK: ${BASE} verified."
