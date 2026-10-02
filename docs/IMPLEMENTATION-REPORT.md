@@ -1,6 +1,6 @@
 # Obsidian Network — implementation report
 
-**Version 1.1.0 · protocol 1.1.0 · fourteen deliverables, eighteen answers.**
+**Version 1.2.17 · protocol 1.2.0 · fourteen deliverables, eighteen answers.**
 
 This report follows the fifteen required points in order. It states what exists,
 what was verified, and — where it applies — what is **not** production ready. No
@@ -14,8 +14,8 @@ dressed up.
 ## 1. Core node and consensus — **done, tested**
 
 `obsidian-core/` contains the node: block production and validation, the state
-machine, canonical encoding, the p2p layer, the RPC server, the indexer and nine
-transaction executors.
+machine, canonical encoding, the p2p layer, the RPC server, the indexer and eleven
+transaction types.
 
 * Deterministic binary encoding (`src/protocol/encoding.ts`) with one canonical
   encoder and no JSON in any hashing or signing path; every hash is domain
@@ -31,10 +31,10 @@ transaction executors.
   data directory written by another network is refused at startup.
 
 **Verification:** `cd obsidian-core && npm ci && npm run build && npm test` →
-**233 tests in 10 files, all passing** (consensus 42, applications 27, node
-runners 27, protocol security 19, RPC hardening 21, crypto/amounts 26, mining
+**246 tests in 11 files, all passing** (consensus 42, applications 27, node
+runners 27, protocol security 22, RPC hardening 25, crypto/amounts 30, mining
 schedule 17, Proof of Time 23, node reward economics 24, peer retry and ban
-policy 7).
+policy 7, CLI wallet 2).
 
 On top of that, `node --test tests/e2e/cluster.test.mjs` (13 tests) starts three
 real nodes chained by seed peers and drives them end to end — a mining claim, a
@@ -206,29 +206,32 @@ never return balances and never echo key material.
   validation of its own prerequisites, systemd unit, nginx config, Dockerfile and
   compose file, all under `obsidian-interface/deployment/`.
 
-**Verification:** `obsidian-interface/tests/` — **151 tests** in three layers.
+**Verification:** `obsidian-interface/tests/` — **187 tests** in twelve files.
 
-1. **HTTP server (21 + 12 + 11 + 12 + 8 tests)**: invite-only registration,
+1. **HTTP server (39 + 23 + 17 + 12 + 8 + 11 tests)**: invite-only registration,
    invite reuse, the five-invite cap, session lifecycle, origin policy, header
    policy, allowlist rejection, failover between a healthy and a dead node,
    honest 503s, 413 on oversized bodies, an honest 404 instead of a mismatched
    fallback page, and the read proxy forwarding a query-carrying route
    (`/blocks?limit=`, `/mining/status?address=`, `/names?prefix=`) instead of
    refusing it.
-2. **Amount formatting (18 tests)**: the two exact shapes a node uses — seal
+2. **Amount formatting (11 tests):** the two exact shapes a node uses — seal
    counts (`10^18` seals = 1 OBS) and OBS decimal strings — plus micro-USD,
    whole-dollar registry values and the exact dollar → OBS conversion the fee
    pages perform. No floating point anywhere in an amount path.
-3. **Browser pages (23 jsdom tests + 7 live-node tests)**: the shipped page
-   modules are imported into a DOM and driven. The fixture suite covers the
-   landing page's three CTAs, all eleven pages mounting masthead/main/heading
-   with no inline handlers, the shared navigation, wallet creation (asserting no
+3. **Browser pages (35 + 12 jsdom tests + 12 live-node tests)**: the shipped
+   page modules are imported into a DOM and driven. The fixture suite covers the
+   landing page's three CTAs, every page module mounting masthead/main/heading
+   (all except the live-node-only `node` page) with no inline handlers, the shared navigation, wallet creation (asserting no
    private key, recovery phrase or passphrase ever reaches storage or the
    network), the short-passphrase refusal and the existing-vault unlock. The
    live-node suite starts a real `obsidian-core` node on loopback ports and
    reads it through the real page modules: landing numbers, the explorer's block
    table and block detail, the mining schedule, the land registry, empty states,
-   and browser-side wallet creation with a node reachable.
+   and browser-side wallet creation with a node reachable. Two further files
+   are build gates rather than feature tests: `no-usd-copy.test.ts` (5) rejects
+   dollar-denominated copy anywhere the interface or the docs ships it, and
+   `shipped-bundle.test.ts` (2) fails when a bundle drifts from its source.
 
 During development the interface was also run against the three-node devnet:
 `/api/nodes` reported all three healthy (heights 33/33/33, latencies 16–23 ms)
@@ -246,7 +249,7 @@ and `/api/rpc` served live chain reads.
 * **A Cloudflare outage cannot stop consensus**: nothing in the node consults it,
   no node URL is Cloudflare-only, and DNS-only records are used for p2p and seeds.
 
-**Verification:** `cloudflare/test/worker.test.mjs` — 7 tests, passing (cache hit
+**Verification:** `cloudflare/test/worker.test.mjs` — 9 tests, passing (cache hit
 naming its node, POST never cached, session routes bypassing cache, honest 503,
 CSP not weakened).
 
@@ -255,15 +258,15 @@ CSP not weakened).
 `scripts/package-releases.sh` builds and tests all three components, then emits:
 
 ```
-releases/obsidian-core-1.0.0.{zip,tar.gz}
-releases/obsidian-interface-1.0.0.{zip,tar.gz}
-releases/obsidian-cloudflare-1.0.0.{zip,tar.gz}
-releases/obsidian-node-operator-1.0.0.{zip,tar.gz}      # what an operator installs
-releases/obsidian-interface-selfhost-1.0.0.{zip,tar.gz} # ready-to-serve interface
-releases/obsidian-network-source-1.0.0.tar.gz           # git archive of the commit
+releases/obsidian-core-1.2.17.{zip,tar.gz}
+releases/obsidian-interface-1.2.17.{zip,tar.gz}
+releases/obsidian-cloudflare-1.2.17.{zip,tar.gz}
+releases/obsidian-node-operator-1.2.17.{zip,tar.gz}      # what an operator installs
+releases/obsidian-interface-selfhost-1.2.17.{zip,tar.gz} # ready-to-serve interface
+releases/obsidian-network-source-1.2.17.tar.gz           # git archive of the commit
 releases/SHA256SUMS
 releases/MANIFEST.json          # version, commit, networks, protocol constants, asset sizes
-releases/RELEASE-NOTES-1.0.0.md
+releases/RELEASE-NOTES-1.2.17.md
 ```
 
 `scripts/verify-release.sh` refuses any archive not listed in `SHA256SUMS`,
@@ -320,12 +323,15 @@ there.
 
 ## 13. Documentation — **done**
 
-`docs/` contains 21 documents: protocol, Proof of Time, mining, wallet, ONS,
+`docs/` contains 28 documents: protocol, consensus, economics, Proof of Time,
+mining, wallet, ONS,
 capsules, circle, social, explorer, security model (including a candid
 limitations section), FAQ, removal report, node operator guide, node runner
 rewards, self-hosting guide, API reference, transaction format, release
-verification, the mainnet launch runbook, the documentation index, and this
-report. At the repository root there are also `CHANGELOG.md` (with
+process, release verification, the mainnet launch runbook, the documentation
+index, and this report, plus the beginner's deployment guide, the Termux devnet
+runbook, the oracle VPS deployment guide and the soak-testing guide. At the repository root
+there are also `CHANGELOG.md` (with
 consensus-breaking releases flagged as such), `CONTRIBUTING.md` and
 `SECURITY.md`. Every document
 describes observable behaviour and names the command that shows it.
@@ -447,7 +453,7 @@ operational, and it is now closed.
   is the same on every node, bringing up the interface and the edge, the
   monitoring signals with their halt conditions, what to do if the launch goes
   wrong before and after the allocation is claimed, and a 20-line checklist.
-* **`scripts/check-invariants.mjs`** asserts **50** economic and protocol
+* **`scripts/check-invariants.mjs`** asserts **55** economic and protocol
   invariants against the built parameters — the 21,000,000 cap, the 100,000
   genesis allocation, zero at registration, the 4-hour/6-claim schedule, the
   0.0002 OBS floor, gas at 2 bps capped at 0.01 OBS returning to the mining
@@ -457,8 +463,8 @@ operational, and it is now closed.
   non-zero on drift; that was confirmed by mutating a parameter in the build and
   watching it fail, then restoring it.
 * **CI** (`.github/workflows/ci.yml`) runs on every push: core build, typecheck
-  and 233 tests; interface build and 151 tests; the 7 edge worker tests; the 13
-  three-node cluster tests; the 50 invariants; **mainnet genesis determinism**
+  and 246 tests; interface build and 187 tests; the 9 edge worker tests; the 13
+  three-node cluster tests; the 55 invariants; **mainnet genesis determinism**
   (the same genesis id twice); a **real mainnet node boot** asserting
   `invariantOk: true`, the 21,000,000 cap and all 16 removed features still
   absent; and a full `package-releases.sh` run whose archives are checksum
@@ -472,22 +478,22 @@ operational, and it is now closed.
 `4c2c37aa2ea29512cee4833151697237c1372ff3`, hash
 `42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31`, identical
 across repeated runs; a mainnet node started from the packaged
-`obsidian-node-operator-1.1.0.tar.gz` reporting height 0, total supply
+`obsidian-node-operator-1.2.17.tar.gz` reporting height 0, total supply
 `0.000000000000000000`, `invariantOk: true` and params hash
 `dbbf8511bfe5bee493f80f3dd23a047a`; `node scripts/check-invariants.mjs` →
-*protocol 1.1.0: all 50 invariants hold*.
+*protocol 1.2.0: all 55 invariants hold*.
 
 ## 15. Final status — **what is verified, what is not**
 
-**Verified by automated tests in this workspace (404 tests, all passing):**
+**Verified by automated tests in this workspace (463 tests, all passing):**
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `obsidian-core` unit | 97 | canonical encoding, hashing, addresses, amounts, mining schedule, peer retry policy, **Proof of Time (23)**, **node reward economics (24)** |
-| `obsidian-core` integration | 96 | consensus, blocks, reorg rules, all ten transaction types, indexer, **node runner registration, evidence and settlement (27)** |
-| `obsidian-core` security | 40 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route, **PoT/revenue/registry routes and the extended compliance audit (3)** |
-| `obsidian-interface` | 151 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, **node runner page and PoT surfacing (9)** |
-| `cloudflare` | 7 | cache/proxy semantics, honest failures, no CSP weakening |
+| `obsidian-core` unit | 103 | canonical encoding, hashing, addresses, amounts, mining schedule, CLI wallet, peer retry policy, **Proof of Time (23)**, **node reward economics (24)** |
+| `obsidian-core` integration | 96 | consensus, blocks, reorg rules, all eleven transaction types, indexer, **node runner registration, evidence and settlement (27)** |
+| `obsidian-core` security | 47 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route, **PoT/revenue/registry routes and the extended compliance audit (3)** |
+| `obsidian-interface` | 187 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, **node runner page and PoT surfacing (9)** |
+| `cloudflare` | 9 | cache/proxy semantics, honest failures, no CSP weakening |
 | `tests/e2e/cluster.test.mjs` | 13 | three real nodes: genesis claim, payment + gas, replay, oracle, ONS, supply invariant, explorer masking, protocol-time eligibility, **PoT state agreement, 40/60 split** |
 
 **Verified by running the system:** the cluster suite above *is* that run — three
@@ -503,10 +509,10 @@ with `sha256sum -c SHA256SUMS` and `scripts/verify-release.sh`):
 
 | Artefact | What was actually done with it |
 | --- | --- |
-| `obsidian-node-operator-1.0.0.tar.gz` | extracted to an empty directory, `npm ci --omit=dev`, started on devnet: `/health` reported `status ok`, `supplyOk true` and the expected `genesisId`/`paramsHash`, `/audit/compliance` reported every removed mechanism `present: false`, and the node produced blocks |
-| `obsidian-interface-selfhost-1.0.0.tar.gz` | extracted and started against that node: the landing page, `/mine/` (its own title and shell), `/api/health` (`healthyNodes: 1`), `/api/rpc?path=/status`, `/api/nodes` and `/js/explorer.js` all served correctly, with the strict CSP and `X-Frame-Options: DENY` present; `/api/rpc?path=/../etc/passwd` was refused with `ERR_REJECTED` and an unknown path returned an honest 404 |
+| `obsidian-node-operator-1.2.17.tar.gz` | extracted to an empty directory, `npm ci --omit=dev`, started on devnet: `/health` reported `status ok`, `supplyOk true` and the expected `genesisId`/`paramsHash`, `/audit/compliance` reported every removed mechanism `present: false`, and the node produced blocks |
+| `obsidian-interface-selfhost-1.2.17.tar.gz` | extracted and started against that node: the landing page, `/mine/` (its own title and shell), `/api/health` (`healthyNodes: 1`), `/api/rpc?path=/status`, `/api/nodes` and `/js/explorer.js` all served correctly, with the strict CSP and `X-Frame-Options: DENY` present; `/api/rpc?path=/../etc/passwd` was refused with `ERR_REJECTED` and an unknown path returned an honest 404 |
 | `SHA256SUMS` | `sha256sum -c` printed OK for all eleven archives |
-| `obsidian-network-source-1.0.0.tar.gz` | the repository at the release commit, produced by `git archive` |
+| `obsidian-network-source-1.2.17.tar.gz` | the repository at the release commit, produced by `git archive` |
 
 The self-host interface package has no runtime dependencies (Node.js built-ins
 only), which is why it runs straight from the extracted archive.

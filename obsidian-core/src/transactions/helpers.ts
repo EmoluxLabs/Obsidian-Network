@@ -55,9 +55,12 @@ export interface OraclePrice {
 }
 
 /**
- * Read the protocol price used to convert USD-denominated features into OBS.
- * Fails closed: a stale or absent price rejects the transaction rather than
- * inventing a value, so an oracle outage can never corrupt consensus state.
+ * Read the published OBS/USD observation.
+ *
+ * Kept for reporting and for the RPC quote routes; no fee and no state
+ * transition converts through it any more (see /docs/economics.md). It still
+ * fails closed: a stale or absent feed rejects rather than inventing a value,
+ * so a consumer can never mistake an outage for a price.
  */
 export function requirePrice(state: WorldState, protocolTime: number): OraclePrice {
   const oracle = state.s.oracle;

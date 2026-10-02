@@ -10,8 +10,8 @@ Deleting it changes nothing about the chain.
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network/obsidian-interface
 npm ci
-npm run build      # builds core → copies browser-safe modules → bundles 11 sites → typecheck
-npm test           # 151 tests: tokens, store, node pool, real HTTP server, config discovery, formatters, browser pages, live node
+npm run build      # builds core → copies browser-safe modules → bundles 12 sites → typecheck
+npm test           # 187 tests: tokens, store, node pool, real HTTP server, config discovery, formatters, browser pages, live node
 npm run verify     # typecheck + build + test in one shot
 ```
 
@@ -19,12 +19,12 @@ npm run verify     # typecheck + build + test in one shot
 
 1. builds `obsidian-core` and copies only the browser-safe modules into
    `web/core` (the sync **fails** if any copied module imports a Node built-in);
-2. bundles 11 page entries with `esbuild --platform=browser`;
+2. bundles 12 page entries with `esbuild --platform=browser`;
 3. runs `scripts/check-browser-safe.mjs`, which refuses node built-ins and
    `process.env` reads in the shipped bundles;
-4. writes the site directories (`landing/`, `mine/`, `wallet/`, `explorer/`,
-   `social/`, `capsule/`, `ons/`, `circle/`, `developer/`, `app/`, `audit/`) at
-   the repository root, each with its own `index.html`.
+4. writes the twelve site directories (`landing/`, `mine/`, `wallet/`,
+   `explorer/`, `social/`, `capsule/`, `ons/`, `circle/`, `node/`, `developer/`,
+   `app/`, `audit/`) at the repository root, each with its own `index.html`.
 
 ## 2. Configure
 
@@ -62,7 +62,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now obsidian-interface
 docker build -f obsidian-interface/deployment/docker/Dockerfile -t obsidian/interface .
 docker run -d --rm -p 127.0.0.1:8788:8788 \
   -e OBSIDIAN_NODE_URLS=http://host.docker.internal:8630 --add-host host.docker.internal:host-gateway \
-  obsidian/interface:1.0.0
+  obsidian/interface:1.2.17
 
 # nginx in front (TLS + cache), see deployment/nginx/obsidian-interface.conf
 ```

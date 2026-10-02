@@ -22,6 +22,7 @@ import { encodeOnsBody } from '../../core/transactions/executors/ons.js';
 import { encodeCapsuleBody } from '../../core/transactions/executors/capsule.js';
 import { encodeLandBody } from '../../core/transactions/executors/land.js';
 import { encodeSocialBody } from '../../core/transactions/executors/social.js';
+import { PROTOCOL_VERSION } from '../../core/version.js';
 import { encodeOracleBody } from '../../core/transactions/executors/oracle.js';
 import { encodeValidatorBody } from '../../core/transactions/executors/validator.js';
 import { encodeTreasuryBody } from '../../core/transactions/executors/treasury.js';
@@ -33,7 +34,6 @@ export interface SubmitResult {
   note: string;
 }
 
-const PROTOCOL_VERSION = '1.0.0';
 const VALIDITY_SECONDS = 600;
 
 async function context(client: ObsidianClient, wallet: Wallet) {
@@ -236,7 +236,7 @@ export const operations = {
   ): Promise<SubmitResult> {
     const quote = await client.landQuote(input.divisionId);
     const price = parseObs(quote.priceObs ?? '0');
-    if (price <= 0n) throw new Error('this division has no protocol price yet (the oracle must publish a price first)');
+    if (price <= 0n) throw new Error('this division has no protocol price yet (no protocol sale has set a GLV for it)');
     const ctx = await context(client, wallet);
     const signed = wallet.sign({
       chainId: ctx.chainId,

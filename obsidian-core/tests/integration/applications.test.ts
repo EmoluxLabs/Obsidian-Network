@@ -15,7 +15,7 @@ import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { RevenueSource, splitPlatformRevenue } from '../../src/economy/accounting.js';
 import { formatObs, parseObs } from '../../src/protocol/amount.js';
 import { CapsuleOp, LandOp, OnsOp, SocialOp, TreasuryOp, TxType, ValidatorOp } from '../../src/protocol/types.js';
-import { expectedGas, usdMicroToSeals } from '../../src/transactions/helpers.js';
+import { expectedGas } from '../../src/transactions/helpers.js';
 import { computeCapsuleId } from '../../src/transactions/executors/capsule.js';
 import { computeParcelId, parcelOfficialValue } from '../../src/transactions/executors/land.js';
 import { divisionSeed } from '../../src/land/registry.js';
@@ -61,16 +61,6 @@ async function fundedHarness(): Promise<{ h: Harness; alice: TestWallet }> {
   h.produce([signedClaim(h, alice)]);
   expect(h.chain.world.s.genesis.allocationClaimed).toBe(true);
   return { h, alice };
-}
-
-/** Live protocol price in micro-USD (the median every node uses to price USD features). */
-function medianUsdMicro(h: Harness): bigint {
-  return h.chain.world.s.oracle.medianPriceUsdMicro;
-}
-
-/** Convert a USD micro amount into OBS seals at the protocol's current median. */
-function obsForUsdMicro(h: Harness, usdMicro: bigint): bigint {
-  return usdMicroToSeals(usdMicro, medianUsdMicro(h));
 }
 
 /** Two independent oracle sources make the protocol price usable. */
@@ -705,7 +695,7 @@ describe('treasury (spec §13, §14, §76)', () => {
     expect([ErrCode.UNAUTHORIZED, ErrCode.INSUFFICIENT_FUNDS, ErrCode.BAD_GAS]).toContain(outcome.code);
   });
 
-  it('never lets governance mint or move value in 1.0.0', async () => {
+  it('never lets governance mint or move value in this protocol version', async () => {
     const { h, alice } = await fundedHarness();
     const outcome = h.tryBlock(
       [h.sign(alice, TxType.GOVERNANCE, new Uint8Array(0), { gas: 0n })],

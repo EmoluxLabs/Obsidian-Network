@@ -138,8 +138,8 @@ private.
 
 ```bash
 # in Termux
-scp ~/Obsidian-Network/releases/obsidian-node-operator-1.1.0.tar.gz ubuntu@YOUR_IP:/tmp/
-scp ~/Obsidian-Network/releases/obsidian-interface-selfhost-1.1.0.tar.gz ubuntu@YOUR_IP:/tmp/
+scp ~/Obsidian-Network/releases/obsidian-node-operator-1.2.17.tar.gz ubuntu@YOUR_IP:/tmp/
+scp ~/Obsidian-Network/releases/obsidian-interface-selfhost-1.2.17.tar.gz ubuntu@YOUR_IP:/tmp/
 scp ~/Obsidian-Network/releases/SHA256SUMS ubuntu@YOUR_IP:/tmp/
 ```
 
@@ -147,8 +147,8 @@ scp ~/Obsidian-Network/releases/SHA256SUMS ubuntu@YOUR_IP:/tmp/
 # on the server
 cd /tmp && sha256sum -c SHA256SUMS 2>/dev/null | grep -E 'node-operator|selfhost'
 sudo mkdir -p /opt/obsidian/core /opt/obsidian/interface
-sudo tar -xzf obsidian-node-operator-1.1.0.tar.gz -C /opt/obsidian/core --strip-components=1
-sudo tar -xzf obsidian-interface-selfhost-1.1.0.tar.gz -C /opt/obsidian/interface
+sudo tar -xzf obsidian-node-operator-1.2.17.tar.gz -C /opt/obsidian/core --strip-components=1
+sudo tar -xzf obsidian-interface-selfhost-1.2.17.tar.gz -C /opt/obsidian/interface
 ```
 
 **B. Clone a public repository** (simplest, source is public anyway):

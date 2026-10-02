@@ -26,8 +26,8 @@ The interface is a *cache with an allowlist*, never an authority:
 
 ```bash
 npm ci
-npm run build     # compile the server, typecheck, bundle the browser apps, write the 11 site shells
-npm test          # 151 tests: auth, invites, store, node pool, HTTP server, config discovery,
+npm run build     # compile the server, typecheck, bundle the browser apps, write the 12 site shells
+npm test          # 187 tests: auth, invites, store, node pool, HTTP server, config discovery,
                   # amount formatters, jsdom page tests, and a suite that drives the real
                   # pages against a real obsidian-core node (needs `npm run build` first)
 ```

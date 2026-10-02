@@ -130,7 +130,7 @@ export function executeTreasury(
 }
 
 /**
- * GOVERNANCE transactions are reserved and always rejected in protocol 1.0.0.
+ * GOVERNANCE transactions are reserved and always rejected in this protocol version.
  * Parameter changes require a documented protocol version upgrade because every
  * consensus parameter participates in PARAMS_HASH, which peers verify during
  * the handshake. This is deliberate: no transaction, and no administrator, can

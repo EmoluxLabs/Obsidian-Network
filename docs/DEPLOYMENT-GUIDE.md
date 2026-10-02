@@ -1,6 +1,6 @@
 # Obsidian Network — the complete beginner's deployment guide
 
-**For branch `arena/01a0e1df-obsidian-network` · protocol 1.1.0 · written for someone with an Android phone and no prior coding experience.**
+**For branch `arena/01a0fd74-obsidian-network` · protocol 1.2.0 · written for someone with an Android phone and no prior coding experience.**
 
 This guide is built from the actual repository. Every command in it was run
 against this code. Where the repository does not support something, it says
@@ -49,7 +49,7 @@ Each term is explained the first time it matters. Skim this, then come back.
 | **Repository (repo)** | The folder containing all the project's code and its history. |
 | **Git** | The program that tracks every change to the repo. |
 | **Clone** | Download a copy of the repo to your device. |
-| **Branch** | A named line of development. Yours is `arena/01a0e1df-obsidian-network`. |
+| **Branch** | A named line of development. Yours is `arena/01a0fd74-obsidian-network`. |
 | **Commit** | One saved change, with a message and a unique id like `b34e581`. |
 | **Push / pull** | Send your commits to GitHub / fetch GitHub's commits to you. |
 | **Node.js** | The program that runs this project's JavaScript. Version 20.10+ required. |
@@ -78,10 +78,10 @@ wrong one is how people ship old code.
 
 | Thing | What it is | When you deploy from it |
 |---|---|---|
-| **Development branch** (`arena/01a0e1df-obsidian-network`) | Where work happens. Changes often. This is where all 404 tests and the 1.1.0 archives currently live. | Local devnet and private testnet only. |
-| **`main` branch** | Convention: the branch that reflects "current accepted state". **In this repository `main` is still at the original `459a6c1 Initial commit`** — none of the work has been merged into it yet. | Never deploy `main` today; it is effectively empty. |
-| **Release branch** | A branch frozen for a release, e.g. `release/1.1.0`, that only receives fixes. **NOT DOCUMENTED IN THE CURRENT REPOSITORY** — no release branch exists and no document describes one. | Optional; see §B. |
-| **Git tag** | A permanent, immovable label on one exact commit, e.g. `v1.1.0`. Unlike a branch it never moves. **No tags currently exist in this repository.** | Tag first, then build the archive from the tag. |
+| **Development branch** (`arena/01a0fd74-obsidian-network`) | Where work happens. Changes often. This is where all 463 tests and the 1.2.17 archives currently live. | Local devnet and private testnet only. |
+| **`main` branch** | Convention: the branch that reflects "current accepted state". `main` now carries the full tree (PR #1 merged the work branch, and its tree is identical to the `v1.2.17` tag). | Prefer a tagged release archive; `main` moves, a tag does not. |
+| **Release branch** | A branch frozen for a release, e.g. `release/1.2.17`, that only receives fixes. **NOT DOCUMENTED IN THE CURRENT REPOSITORY** — no release branch exists and no document describes one. | Optional; see §B. |
+| **Git tag** | A permanent, immovable label on one exact commit, e.g. `v1.2.17`. Unlike a branch it never moves. Annotated release tags `v1.2.0` … `v1.2.17` exist on the remote. | Tag first, then build the archive from the tag. |
 | **Release archive** | The `.zip`/`.tar.gz` files in `releases/`, built by `scripts/package-releases.sh`, each listed in `SHA256SUMS`. This is what `docs/mainnet-launch.md` says to launch from. | **Mainnet. Always.** |
 | **Deployed node** | A running `obsidian-core` process with a data directory. It is not code, it is a live thing holding chain state. | — |
 | **Frontend deployment** | The static site folders (`landing/`, `mine/`, …) served by the interface, a static host, or Cloudflare Pages. | — |
@@ -153,10 +153,10 @@ out. A testnet node handed mainnet's genesis rejects it at the handshake.
 | You want | Use | Why |
 |---|---|---|
 | Run a different network | `--network <name>` | Already built in, isolated by consensus |
-| A frozen, named version | **A tag** (`v1.1.0`) | Immutable; cannot drift |
+| A frozen, named version | **A tag** (`v1.2.17`) | Immutable; cannot drift |
 | Something to deploy | **A release archive** from `releases/` | Checksummed, matches a commit |
 | Ongoing work | This work branch | One place where change happens |
-| A long-lived fix line | `release/1.1.x`, only if needed | Optional; see §B |
+| A long-lived fix line | `release/1.2.x`, only if needed | Optional; see §B |
 
 The practical rule: **branches for work, tags for versions, flags for
 networks.** Promotion from testnet to mainnet is not a merge — it is running
@@ -177,21 +177,21 @@ Two nodes on different networks should differ **only** in those, never in code.
 ### If you create the branches anyway
 
 They are harmless as long as you treat them as **snapshots, not deployment
-targets** — and they do fix one real problem, since `main` is still at
-`459a6c1 Initial commit`. Paste this into a terminal (Termux on Android, Git
+targets** — and they do fix one real problem: a branch pins one commit while
+`main` moves. Paste this into a terminal (Termux on Android, Git
 Bash on Windows — not PowerShell, the loop is Bash syntax):
 
 ```bash
 cd ~/Obsidian-Network
-git checkout arena/01a0e1df-obsidian-network
-git pull origin arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
+git pull origin arena/01a0fd74-obsidian-network
 
-for b in main develop staging testnet devnet release/1.1.0; do
-  git branch -f "$b" arena/01a0e1df-obsidian-network
+for b in main develop staging testnet devnet release/1.2.17; do
+  git branch -f "$b" arena/01a0fd74-obsidian-network
   git push -u origin "$b"
 done
 
-git checkout arena/01a0e1df-obsidian-network   # back to the work branch
+git checkout arena/01a0fd74-obsidian-network   # back to the work branch
 git branch -a
 ```
 
@@ -238,19 +238,19 @@ git branch --show-current
 Expect exactly:
 
 ```
-arena/01a0e1df-obsidian-network
+arena/01a0fd74-obsidian-network
 ```
 
 If it says anything else, switch:
 
 ```bash
-git checkout arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
 ```
 
 ### A4. Pull the latest code
 
 ```bash
-git pull origin arena/01a0e1df-obsidian-network
+git pull origin arena/01a0fd74-obsidian-network
 ```
 
 `pull` downloads commits from GitHub (`origin`) and applies them to your copy.
@@ -291,21 +291,23 @@ it, so it fails on a clean checkout if the core has not been built.
 
 ### A7. Run the project's actual tests
 
-Four separate suites, **404 tests total**:
+Five test suites, **463 tests total**, plus the invariant check:
 
 ```bash
-npm --prefix obsidian-core test          # 233 tests
-npm --prefix obsidian-interface test     # 151 tests
-node --test cloudflare/test/worker.test.mjs   # 7 tests
+npm --prefix obsidian-core test               # 246 tests
+npm --prefix obsidian-interface test          # 187 tests
+node --test cloudflare/test/worker.test.mjs   # 9 tests
 node --test tests/e2e/cluster.test.mjs        # 13 tests, starts 3 real nodes
+node --test tests/scripts/release-signing.test.mjs  # 8 tests, signing tooling
 ```
 
-The last one binds ports 39630–39635 and takes about a minute. **Do not run two
-copies of it at once** — they fight over the ports and fail for no real reason.
+The cluster suite binds ports 39630–39635 and takes about a minute. **Do not run
+two copies of it at once** — they fight over the ports and fail for no real
+reason.
 
 ### A8. Run the invariant check
 
-This asserts 50 economic and protocol constants — the 21,000,000 cap, the
+This asserts 55 economic and protocol constants — the 21,000,000 cap, the
 mining schedule, the 40/60 split, and the absence of removed features.
 
 ```bash
@@ -315,12 +317,12 @@ node scripts/check-invariants.mjs
 Expect exactly:
 
 ```
-protocol 1.1.0: all 50 invariants hold.
+protocol 1.2.0: all 55 invariants hold.
 ```
 
 Any other output means a consensus constant has changed. Stop.
 
-### A9. Verify protocol 1.1.0 and PARAMS_HASH
+### A9. Verify protocol 1.2.0 and PARAMS_HASH
 
 Start a throwaway devnet node, ask it what it is, then stop it.
 
@@ -339,7 +341,7 @@ curl -s localhost:38630/status
 
 `curl` fetches a web address and prints the result. Expect to see:
 
-- `"protocolVersion":"1.1.0"`
+- `"protocolVersion":"1.2.0"`
 - `"paramsHash":"dbbf8511bfe5bee493f80f3dd23a047a"`
 
 Stop the node with **Ctrl+C** in the first terminal.
@@ -384,7 +386,7 @@ Expect 11 lines, each ending `OK`.
 Then verify an archive properly:
 
 ```bash
-../scripts/verify-release.sh obsidian-core-1.1.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.2.17.tar.gz --with-tests
 ```
 
 This checks the digest, extracts to a temporary folder (never over your work),
@@ -393,17 +395,25 @@ digest mismatches or the archive is not listed, so it is safe to use as a gate.
 
 ### A12. Signatures
 
-**NOT DOCUMENTED IN THE CURRENT REPOSITORY.** The release process produces
-SHA-256 checksums and a `MANIFEST.json`, and `docs/release-verification.md`
-describes verifying them — but there is **no GPG/PGP signing key, no `.asc` or
-`.sig` files, and no signing step in `scripts/package-releases.sh`**. The word
-"signed release" appears in the documentation as an intention.
+**The tooling exists; no release is signed yet.** Since 1.2.16
+`scripts/sign-release.sh` produces a detached GPG signature over `SHA256SUMS`
+(re-checking every digest first, so an authentic signature can never cover a
+stale list) and exports the public key. `scripts/verify-release.sh` verifies a
+signature when one is present, with `gpg` or with `gpgv` alone, and prints
+`UNSIGNED RELEASE` when there is none: a check that was not performed is never
+reported as passed.
 
-**What is needed before proceeding:** a decision on who holds the release
-signing key, where its public half is published, and whether signing happens
-locally or in CI. Until then, checksums prove *integrity* (the file was not
-corrupted) but not *authenticity* (that you produced it). For a public mainnet
-this gap should be closed.
+```bash
+# the publisher, once, on a machine they control:
+gpg --full-generate-key                 # ed25519, with a passphrase
+./scripts/sign-release.sh               # or: ./scripts/sign-release.sh <KEYID>
+```
+
+**What is still needed before a mainnet launch:** the publisher must create the
+key, sign the release and publish the fingerprint somewhere the archives are
+not hosted. Until then checksums prove *integrity* (the file was not corrupted)
+but not *authenticity* (that you produced it), and every release should be
+treated as unsigned. See `docs/release-verification.md` §1b.
 
 ---
 
@@ -427,13 +437,13 @@ A backup branch is a second name pointing at the same commit, so you can always
 come back.
 
 ```bash
-git checkout arena/01a0e1df-obsidian-network
-git pull origin arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
+git pull origin arena/01a0fd74-obsidian-network
 git branch backup/pre-main-$(date +%Y%m%d)
 git push origin backup/pre-main-$(date +%Y%m%d)
 ```
 
-> Your working session is tied to `arena/01a0e1df-obsidian-network`. Creating a
+> Your working session is tied to `arena/01a0fd74-obsidian-network`. Creating a
 > backup branch is a safety net; keep doing your actual work on the session
 > branch.
 
@@ -454,11 +464,12 @@ message.
 ```bash
 git checkout main
 git pull origin main
-git merge arena/01a0e1df-obsidian-network
+git merge arena/01a0fd74-obsidian-network
 ```
 
-**Expect conflicts.** `main` is at `459a6c1 Initial commit` and contains a
-different `README.md`; your branch has rewritten it and added everything else.
+**Expect no conflicts today.** `main` already contains the full tree (PR #1
+merged the work branch). If you merge an older branch, take the branch being
+merged in wherever the two disagree.
 
 ### B4. If conflicts occur
 
@@ -480,7 +491,7 @@ with your branch's tree:
 
 ```bash
 git checkout main
-git reset --hard arena/01a0e1df-obsidian-network
+git reset --hard arena/01a0fd74-obsidian-network
 git push --force-with-lease origin main
 ```
 
@@ -494,13 +505,13 @@ Compare the file trees. If the two hashes match, the contents are byte-identical
 
 ```bash
 git rev-parse main^{tree}
-git rev-parse arena/01a0e1df-obsidian-network^{tree}
+git rev-parse arena/01a0fd74-obsidian-network^{tree}
 ```
 
 And confirm nothing differs:
 
 ```bash
-git diff main arena/01a0e1df-obsidian-network --stat
+git diff main arena/01a0fd74-obsidian-network --stat
 ```
 
 Empty output = identical.
@@ -513,14 +524,14 @@ you would have built before tagging. The point of tagging first is that the
 archives can then name an immutable commit instead of "whatever was checked out
 that afternoon".
 
-**Do this today, without merging to `main` first.** `main` is still at
-`459a6c1 Initial commit`; tagging it would label an empty repository. Tag the
-branch you actually work on.
+**Tag the commit you actually deploy.** `main` now carries the full tree, and
+annotated tags `v1.2.0` … `v1.2.17` already exist on the remote; if you cut a
+new release, tag the commit you built the archives from.
 
 ```bash
 cd ~/Obsidian-Network
-git checkout arena/01a0e1df-obsidian-network
-git pull origin arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
+git pull origin arena/01a0fd74-obsidian-network
 git status              # must print: nothing to commit, working tree clean
 ```
 
@@ -532,23 +543,23 @@ Confirm the version the tag is claiming. The script reads it from
 `obsidian-core/package.json` and aborts if the interface disagrees:
 
 ```bash
-node -p "require('./obsidian-core/package.json').version"     # -> 1.1.0
+node -p "require('./obsidian-core/package.json').version"     # -> 1.2.17
 ```
 
 Create and push the tag:
 
 ```bash
-git tag -a v1.1.0 -m "Obsidian Network 1.1.0 - protocol 1.1.0, PoT, node runner rewards"
-git push origin v1.1.0
+git tag -a v1.2.17 -m "Obsidian Network 1.2.17 - protocol 1.2.0, PoT, node runner rewards"
+git push origin v1.2.17
 ```
 
 `-a` makes an *annotated* tag, which records who made it and when. Verify it
 landed on the commit you meant:
 
 ```bash
-git show --stat v1.1.0 | head -5
-git rev-parse v1.1.0^{commit}
-git rev-parse arena/01a0e1df-obsidian-network
+git show --stat v1.2.17 | head -5
+git rev-parse v1.2.17^{commit}
+git rev-parse arena/01a0fd74-obsidian-network
 ```
 
 The last two commands must print the **same** commit id.
@@ -556,7 +567,7 @@ The last two commands must print the **same** commit id.
 ### B6b. Rebuild the archives from the tag
 
 Because the tag points at the commit you are already standing on, you do **not**
-need to check the tag out — and you should not, because `git checkout v1.1.0`
+need to check the tag out — and you should not, because `git checkout v1.2.17`
 puts you in "detached HEAD", a state that confuses beginners and makes any
 accidental commit hard to find. Just build where you are:
 
@@ -571,11 +582,12 @@ cd ~/Obsidian-Network
 2. Refuses to continue if the working tree is dirty.
 3. Records the commit id and a UTC build timestamp.
 4. Builds both packages.
-5. **Runs the test suites** - core, interface, edge worker, and the three-node
-   cluster end-to-end test - and counts them.
+5. **Runs the test suites** - core, interface, edge worker, release verification
+   and signing behaviour, and the three-node cluster end-to-end test - reading
+   the counts back from the runs themselves.
 6. Produces the archives with `git archive`, so what you download is exactly
    what was committed.
-7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-1.1.0.md`.
+7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-1.2.17.md`.
 
 Expect it to take several minutes; the cluster test alone starts three real
 nodes. It is the slow step on purpose.
@@ -603,12 +615,12 @@ Confirm the manifest names the tagged commit:
 grep -i commit MANIFEST.json
 ```
 
-It must show the same id as `git rev-parse v1.1.0^{commit}`.
+It must show the same id as `git rev-parse v1.2.17^{commit}`.
 
 Then verify an archive the way a stranger would, including running its tests:
 
 ```bash
-../scripts/verify-release.sh obsidian-core-1.1.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.2.17.tar.gz --with-tests
 ```
 
 This exits non-zero on a digest mismatch or an unlisted archive, so it is safe
@@ -617,7 +629,7 @@ to use as a gate in a script.
 Finally, read the generated notes:
 
 ```bash
-head -20 RELEASE-NOTES-1.1.0.md
+head -20 RELEASE-NOTES-1.2.17.md
 ```
 
 The test counts in there are **counted live during packaging**, not typed by
@@ -631,8 +643,8 @@ The archives changed, so the repository is now dirty again:
 cd ~/Obsidian-Network
 git status
 git add releases
-git commit -m "Rebuild 1.1.0 release archives from tag v1.1.0"
-git push origin arena/01a0e1df-obsidian-network
+git commit -m "Rebuild 1.2.17 release archives from tag v1.2.17"
+git push origin arena/01a0fd74-obsidian-network
 ```
 
 > Note the ordering quirk: the tag labels the commit *before* the rebuilt
@@ -645,13 +657,13 @@ git push origin arena/01a0e1df-obsidian-network
 Tags are meant to be permanent, but nothing is published yet, so:
 
 ```bash
-git tag -d v1.1.0                  # delete locally
-git push origin :refs/tags/v1.1.0  # delete on GitHub
+git tag -d v1.2.17                  # delete locally
+git push origin :refs/tags/v1.2.17  # delete on GitHub
 ```
 
 Then tag again. **Once other people have pulled a tag, never move it** - move a
 tag and two people will have different code under the same name, which is the
-exact failure the tag exists to prevent. Cut `v1.1.1` instead.
+exact failure the tag exists to prevent. Cut `v1.2.18` instead.
 
 ### B7. How to avoid deploying an old commit
 
@@ -690,7 +702,7 @@ Android: see [§M](#m-android-guide). Windows: see [§N](#n-windows-guide).
 ```bash
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
-git checkout arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
 npm --prefix obsidian-core ci
 npm --prefix obsidian-core run build
 ```
@@ -992,7 +1004,7 @@ node --version      # must be >= 20.10
 
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
-git checkout arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
 npm --prefix obsidian-core ci
 npm --prefix obsidian-core run build
 ```
@@ -1191,8 +1203,10 @@ directions that every metric the dashboard and the rules reference is actually
 served, and that every metric served appears on a panel or in a rule — a
 renamed metric fails the build instead of silently blanking a panel.
 
-**Still not shipped:** no paging integration (Alertmanager routing is yours to
-configure) and no recording rules.
+**Still not shipped:** real destinations and no recording rules.
+`alertmanager.yml` ships with `CHANGE-ME` receiver placeholders, so
+Alertmanager refuses to start until you supply a real one — a routing file that
+silently delivers to `example.invalid` looks healthy and tells nobody anything.
 
 ### D12. Clock discipline
 
@@ -1231,7 +1245,7 @@ of this. What follows is the same sequence with more explanation for a beginner.
 | Chain id | `7777` |
 | Genesis id | `4c2c37aa2ea29512cee4833151697237c1372ff3` |
 | Genesis hash | `42735b1aabd4dd9252cd5e37a9e058dcfea71bbcff758b679c3b93cde51acb31` |
-| Protocol version | `1.1.0` |
+| Protocol version | `1.2.0` |
 | PARAMS_HASH | `dbbf8511bfe5bee493f80f3dd23a047a` |
 | RPC / P2P port | 8630 / 8631 |
 | Address prefix | `obs1` |
@@ -1260,8 +1274,8 @@ inside the state transition.
 ```bash
 cd releases
 sha256sum -c SHA256SUMS
-../scripts/verify-release.sh obsidian-node-operator-1.1.0.tar.gz
-../scripts/verify-release.sh obsidian-core-1.1.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-node-operator-1.2.17.tar.gz
+../scripts/verify-release.sh obsidian-core-1.2.17.tar.gz --with-tests
 ```
 
 The operator package ships `dist/` without tests, so `--with-tests` reports
@@ -1308,7 +1322,7 @@ running different consensus rules and will fork. Stop it.
 
 ```bash
 curl -s localhost:8630/audit/compliance
-node scripts/check-invariants.mjs          # all 50 invariants hold
+node scripts/check-invariants.mjs          # all 55 invariants hold
 node dist/index.js audit --network mainnet
 ```
 
@@ -1439,7 +1453,7 @@ compile the server.
 - `obsidian-interface/dist/` (the server), unless you are hosting statics only
 
 The ready-made bundle of exactly this is the release archive
-`obsidian-interface-selfhost-1.1.0.tar.gz`.
+`obsidian-interface-selfhost-1.2.17.tar.gz`.
 
 ### F3. Where they should live
 
@@ -1573,7 +1587,7 @@ node --version        # must be v20.10.0 or higher
 cd ~
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
-git checkout arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
 ```
 
 **3. Build the core** (a few minutes on a phone):
@@ -1805,7 +1819,7 @@ Follow `docs/node-operator.md`; this is the short version.
 
 1. **Hardware**: §D1 above.
 2. **OS**: Linux. Install Node.js 20.10+.
-3. **Install**: clone and build, or use `obsidian-node-operator-1.1.0.tar.gz`
+3. **Install**: clone and build, or use `obsidian-node-operator-1.2.17.tar.gz`
    (built `dist/`, deployment recipes, docs, `verify-release.sh`,
    `check-invariants.mjs`).
 4. **Keys**: `node dist/index.js keygen`. Set
@@ -2217,7 +2231,7 @@ settings → Personal access tokens).
 ### M4. Switch to the branch
 
 ```bash
-git checkout arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
 git branch --show-current
 ```
 
@@ -2347,7 +2361,7 @@ server; the third logs in. After that, no password.
 
 ```bash
 # phone -> server
-scp releases/obsidian-node-operator-1.1.0.tar.gz user@server:/home/user/
+scp releases/obsidian-node-operator-1.2.17.tar.gz user@server:/home/user/
 
 # server -> phone
 scp user@server:/home/user/node-key.json.backup ~/storage/shared/
@@ -2368,7 +2382,7 @@ ssh user@server 'curl -s localhost:8630/status'
 
 Codespaces gives you a real Linux machine in a browser tab, free for a monthly
 quota. On github.com, open the repository → **Code** → **Codespaces** → create
-one on branch `arena/01a0e1df-obsidian-network`. Every command in this guide
+one on branch `arena/01a0fd74-obsidian-network`. Every command in this guide
 works there, and it will not be killed by Android.
 
 ---
@@ -2413,7 +2427,7 @@ run `gh auth login`.
 cd ~
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
-git checkout arena/01a0e1df-obsidian-network
+git checkout arena/01a0fd74-obsidian-network
 
 npm --prefix obsidian-core ci
 npm --prefix obsidian-core run build
@@ -2451,9 +2465,9 @@ ssh user@your-server-ip
 ### N6. Deploy
 
 ```bash
-scp releases/obsidian-node-operator-1.1.0.tar.gz user@server:/home/user/
+scp releases/obsidian-node-operator-1.2.17.tar.gz user@server:/home/user/
 ssh user@server
-tar -xzf obsidian-node-operator-1.1.0.tar.gz
+tar -xzf obsidian-node-operator-1.2.17.tar.gz
 cd obsidian-core && npm ci --omit=dev
 ```
 
@@ -2462,9 +2476,9 @@ Then follow §D6–D8.
 ### N7. Frontend deployment
 
 ```bash
-scp releases/obsidian-interface-selfhost-1.1.0.tar.gz user@server:/home/user/
+scp releases/obsidian-interface-selfhost-1.2.17.tar.gz user@server:/home/user/
 ssh user@server
-tar -xzf obsidian-interface-selfhost-1.1.0.tar.gz
+tar -xzf obsidian-interface-selfhost-1.2.17.tar.gz
 cd obsidian-interface && npm ci --omit=dev
 ```
 
@@ -2500,32 +2514,33 @@ curl -s https://rpc1.example.org/status
 
 **Repository**
 - [ ] `git status` clean
-- [ ] On branch `arena/01a0e1df-obsidian-network`
+- [ ] On branch `arena/01a0fd74-obsidian-network`
 - [ ] `git pull` done; commit id recorded: ________
 - [ ] Dependencies installed with `npm ci`
 
 **Build and tests**
 - [ ] `obsidian-core` builds
 - [ ] `obsidian-interface` builds (`wrote 12 site shells`)
-- [ ] Core tests: 233 pass
-- [ ] Interface tests: 151 pass
-- [ ] Edge worker tests: 7 pass
+- [ ] Core tests: 246 pass
+- [ ] Interface tests: 187 pass
+- [ ] Edge worker tests: 9 pass
 - [ ] Cluster e2e: 13 pass
-- [ ] `node scripts/check-invariants.mjs` → all 50 invariants hold
+- [ ] Release signing tooling: 8 pass
+- [ ] `node scripts/check-invariants.mjs` → all 55 invariants hold
 
 **Protocol**
-- [ ] `/status` reports `protocolVersion: 1.1.0`
+- [ ] `/status` reports `protocolVersion: 1.2.0`
 - [ ] PARAMS_HASH `dbbf8511bfe5bee493f80f3dd23a047a` on **every** node
 - [ ] `genesis init` deterministic across two machines
 - [ ] Mainnet genesis id `4c2c37aa2ea29512cee4833151697237c1372ff3`
 - [ ] Height 0 supply is 0; `invariantOk: true`
 
 **Release**
-- [ ] Tag created (`v1.1.0`) and pushed
+- [ ] Tag created (e.g. `v1.2.17`) and pushed
 - [ ] Archives built from the tag
 - [ ] `sha256sum -c SHA256SUMS` → 11 OK
 - [ ] `verify-release.sh ... --with-tests` passes
-- [ ] Signatures — **NOT IMPLEMENTED**; gap acknowledged
+- [ ] Signatures — tooling ships (`scripts/sign-release.sh`); releases are **UNSIGNED** until a key is created and publication-ready
 
 **Wallet and access**
 - [ ] Wallet created offline; recovery phrase on paper
@@ -2567,7 +2582,7 @@ curl -s https://rpc1.example.org/status
 **Operations**
 - [ ] systemd services enabled and surviving reboot
 - [ ] Backups taken and a restore rehearsed
-- [ ] Monitoring/alerting in place (manual polling is the documented option)
+- [ ] Monitoring/alerting in place (scrape config, rules, dashboard and routing ship under `deployment/monitoring/`; fill in real receivers)
 - [ ] `/audit/compliance`: all 16 removed features absent
 - [ ] Rollback procedure practised
 
@@ -2586,9 +2601,9 @@ An honest comparison, with the evidence.
 ### What the repository actually proves today
 
 **Strong evidence:**
-- **404 automated tests** pass: core 233, interface 151, edge 7, three-node
-  cluster 13.
-- **50 protocol invariants** hold, and the checker is proven to fail on drift.
+- **463 automated tests** pass: core 246, interface 187, edge worker 9,
+  release signing 8, three-node cluster 13.
+- **55 protocol invariants** hold, and the checker is proven to fail on drift.
 - **CI is green across 7 jobs** on every push, including a **Docker job** that
   builds both images, runs a two-container stack, watches the chain height
   advance inside the container, and confirms stopping the interface does not
@@ -2630,8 +2645,9 @@ An honest comparison, with the evidence.
 4. **Sign-in has never run at scale with real users.** The Gmail/password/MFA
    flow is covered end-to-end over real HTTP, including canonical-address
    dedupe, TOTP replay and recovery-code reuse, but it has not met a crowd.
-5. **`main` is empty** and **no tags exist**. There is no released, tagged,
-   immutable point to launch from yet.
+5. **No launch has run from a tagged release.** `main` now carries the full
+   tree and annotated tags `v1.2.0` … `v1.2.17` exist, but no mainnet has yet
+   been started from one.
 6. **One operator.** Mainnet needs three independent operators; you currently
    have one person. This is organisational, not technical, and it is the
    hardest one to fix quickly.
@@ -2677,8 +2693,8 @@ allocation is a one-way door, the reward system has never completed a real
 period, and three independent operators do not yet exist. None of those are
 fixed by launching sooner.
 
-**Do not deploy from `main`.** It is still at `459a6c1 Initial commit`. Deploying
-it would ship an empty repository.
+**Do not deploy from `main`.** It now carries the full tree, but it moves;
+deploy from a verified, tagged release archive (`docs/mainnet-launch.md` §1.1).
 
 **Do not deploy mainnet from a branch.** `docs/mainnet-launch.md` §1.1 is
 explicit: launch from a verified release archive.

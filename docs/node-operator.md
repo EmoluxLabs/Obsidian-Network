@@ -135,7 +135,7 @@ container image.
 ## 8. Upgrades
 
 ```bash
-git fetch --tags && git checkout v1.0.1
+git fetch --tags && git checkout v1.2.17
 npm ci && npm run build
 npm test                     # the suite must pass before you restart a live node
 sudo systemctl restart obsidian-node

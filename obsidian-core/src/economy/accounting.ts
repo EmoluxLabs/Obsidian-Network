@@ -64,7 +64,7 @@ export enum RevenueSource {
   ONS_REGISTRATION = 'ONS_REGISTRATION',
   /** A `.obs` name renewal. */
   ONS_RENEWAL = 'ONS_RENEWAL',
-  /** A business page: the platform's $50-equivalent page fee. */
+  /** A business page: the flat 0.005 OBS activation fee. */
   BUSINESS_PAGE = 'BUSINESS_PAGE',
   /** An explicit treasury revenue payment signed by a platform wallet. */
   EXPLICIT_PAYMENT = 'EXPLICIT_PAYMENT',

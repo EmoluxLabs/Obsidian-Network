@@ -15,7 +15,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations, randomHex } from '../lib/operations.js';
-import { el, obs, obsFromSeals, spinner, toast, kv, short, when } from '../lib/ui.js';
+import { el, spinner, toast, kv, short, when } from '../lib/ui.js';
 
 const client = new ObsidianClient();
 const feed = el('section', { class: 'card', id: 'feed' }, spinner('reading the feed from the chain…'));

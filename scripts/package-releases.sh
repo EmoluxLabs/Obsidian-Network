@@ -300,7 +300,7 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
 
 ## What is in this release
 
-* consensus, p2p, RPC, indexer and the nine transaction executors
+* consensus, p2p, RPC, indexer and the eleven transaction types
 ${TEST_SUMMARY}
 * no WAC, no \$5 activation, no legacy signup allocation, no admin mint, no
   native exchange — verify with \`curl -s localhost:8630/audit/compliance\`

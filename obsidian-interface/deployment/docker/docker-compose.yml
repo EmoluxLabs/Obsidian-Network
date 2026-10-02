@@ -15,7 +15,7 @@ services:
       # Repository root: the Dockerfile builds obsidian-core first.
       context: ../../..
       dockerfile: obsidian-interface/deployment/docker/Dockerfile
-    image: obsidian/interface:1.1.0
+    image: obsidian/interface:1.2.17
     restart: unless-stopped
     environment:
       OBSIDIAN_NODE_URLS: ${OBSIDIAN_NODE_URLS:-http://host.docker.internal:8630}

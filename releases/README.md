@@ -6,15 +6,15 @@ manifest that says what they contain. Everything here was produced by
 
 | Asset | What it is | Who it is for |
 | --- | --- | --- |
-| `obsidian-core-1.0.0.zip` / `.tar.gz` | the node: source, tests, built `dist/`, `config/`, deployment recipes | anyone who wants to read or build the protocol |
-| `obsidian-interface-1.0.0.zip` / `.tar.gz` | the reader: server, tests, browser bundles, every site directory | anyone deploying the apps |
-| `obsidian-cloudflare-1.0.0.zip` / `.tar.gz` | the edge worker, tests and Terraform | optional edge caching, never consensus |
-| `obsidian-node-operator-1.0.0.zip` / `.tar.gz` | built node + systemd/nginx/Docker recipes + operator docs | running a node in production |
-| `obsidian-interface-selfhost-1.0.0.zip` / `.tar.gz` | built interface + all 11 site directories + docs | serving the interface yourself |
-| `obsidian-network-source-1.0.0.tar.gz` | the entire repository at that commit (`git archive`) | auditors and forks |
+| `obsidian-core-1.2.17.zip` / `.tar.gz` | the node: source, tests, built `dist/`, `config/`, deployment recipes | anyone who wants to read or build the protocol |
+| `obsidian-interface-1.2.17.zip` / `.tar.gz` | the reader: server, tests, browser bundles, every site directory | anyone deploying the apps |
+| `obsidian-cloudflare-1.2.17.zip` / `.tar.gz` | the edge worker, tests and Terraform | optional edge caching, never consensus |
+| `obsidian-node-operator-1.2.17.zip` / `.tar.gz` | built node + systemd/nginx/Docker recipes + operator docs | running a node in production |
+| `obsidian-interface-selfhost-1.2.17.zip` / `.tar.gz` | built interface + all 12 site directories + docs | serving the interface yourself |
+| `obsidian-network-source-1.2.17.tar.gz` | the entire repository at that commit (`git archive`) | auditors and forks |
 | `SHA256SUMS` | SHA-256 of every archive | verifying the download |
 | `MANIFEST.json` | commit, build time, network parameters, asset sizes | cross-checking a build against a chain |
-| `RELEASE-NOTES-1.0.0.md` | what is in the release and what is not | reading before deploying |
+| `RELEASE-NOTES-1.2.17.md` | what is in the release and what is not | reading before deploying |
 
 ## Verify before you run anything
 
@@ -22,7 +22,7 @@ manifest that says what they contain. Everything here was produced by
 cd releases
 sha256sum -c SHA256SUMS                 # every digest must print OK
 cat MANIFEST.json                       # commit, networks, supply constants
-../scripts/verify-release.sh obsidian-core-1.0.0.tar.gz
+../scripts/verify-release.sh obsidian-core-1.2.17.tar.gz
 ```
 
 `verify-release.sh` refuses an archive that is not listed in `SHA256SUMS`,
@@ -32,7 +32,7 @@ entry points, and with `--with-tests` runs the shipped suite.
 ## Run the node package
 
 ```bash
-tar -xzf obsidian-node-operator-1.0.0.tar.gz && cd obsidian-core
+tar -xzf obsidian-node-operator-1.2.17.tar.gz && cd obsidian-core
 npm ci --omit=dev
 node dist/index.js start --config config/devnet.json --data-dir ./data/devnet
 curl -s http://127.0.0.1:38630/health | jq
@@ -42,7 +42,7 @@ curl -s http://127.0.0.1:38630/audit/compliance | jq   # removed mechanics absen
 ## Run the self-hosted interface package
 
 ```bash
-tar -xzf obsidian-interface-selfhost-1.0.0.tar.gz && cd obsidian-interface
+tar -xzf obsidian-interface-selfhost-1.2.17.tar.gz && cd obsidian-interface
 node dist/server/main.js --nodes http://127.0.0.1:38630 --port 8788
 # → http://127.0.0.1:8788/  (landing, mine, wallet, explorer, …)
 ```

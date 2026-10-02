@@ -36,7 +36,7 @@ cat MANIFEST.json          # asset sizes, networks, protocol constants
 
 ## What is in this release
 
-* consensus, p2p, RPC, indexer and the nine transaction executors
+* consensus, p2p, RPC, indexer and the eleven transaction types
 * 455 automated tests, all of them run immediately before packaging: core (246), interface (187), edge worker (9) and the three-node cluster end-to-end suite (13)
 * no WAC, no $5 activation, no legacy signup allocation, no admin mint, no
   native exchange — verify with `curl -s localhost:8630/audit/compliance`
