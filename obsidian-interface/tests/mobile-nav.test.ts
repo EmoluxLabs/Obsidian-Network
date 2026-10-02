@@ -9,7 +9,7 @@
  * doors: Start Mining, Create Wallet, Explorer.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -120,6 +120,37 @@ describe('inner pages', () => {
     expect(document.querySelector('.nav-toggle')).not.toBeNull();
     expect(document.querySelectorAll('#site-nav .nav-link').length).toBeGreaterThanOrEqual(10);
     expect(document.querySelector('#site-nav .nav-link.active')?.getAttribute('href')).toBe('/mine/');
+  });
+});
+
+describe('the page fits the screen', () => {
+  it('never lets anything be wider than the viewport', () => {
+    // One unbroken hash or a wide table used to widen the document itself, and
+    // a document wider than the screen has to be panned around to read.
+    expect(css).toMatch(/html, body \{ max-width: 100%; overflow-x: hidden; \}/);
+    expect(css).toMatch(/img, svg, video, canvas, table, pre \{ max-width: 100%; \}/);
+    expect(css).toMatch(/\.mono, code, \.hash, \.address \{ overflow-wrap: anywhere; \}/);
+  });
+
+  it('stops pinning the masthead on a phone', () => {
+    // A sticky header reserves a fixed slice of a short screen. With the old
+    // ten-link navigation that slice was the whole viewport, which is why the
+    // site could only be read in desktop view.
+    expect(css).toMatch(/position: sticky;/);                       // still sticky on desktop
+    expect(css).toMatch(/@media \(max-width: 720px\) \{[\s\S]*?\.masthead \{ position: static; \}/);
+  });
+
+  it('lets an opened drawer scroll instead of growing without end', () => {
+    expect(css).toMatch(/\.masthead\.menu-open \.nav \{ max-height: 60vh; overflow-y: auto; \}/);
+  });
+
+  it('declares a responsive viewport in every generated shell', () => {
+    const sites = ['landing', 'mine', 'wallet', 'explorer', 'circle', 'ons', 'social', 'capsule', 'node', 'audit', 'developer', 'app'];
+    for (const site of sites) {
+      const shell = resolve(here, '../..', site, 'index.html');
+      if (!existsSync(shell)) continue;
+      expect(readFileSync(shell, 'utf8'), site).toContain('width=device-width, initial-scale=1');
+    }
   });
 });
 

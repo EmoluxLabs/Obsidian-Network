@@ -36,6 +36,15 @@
 
 html { scroll-behavior: smooth; }
 
+/*
+ * Nothing may be wider than the screen. A single unbroken hash, address or
+ * table used to widen the document on a phone, and a document wider than the
+ * viewport is a page you have to pan around to read.
+ */
+html, body { max-width: 100%; overflow-x: hidden; }
+img, svg, video, canvas, table, pre { max-width: 100%; }
+.mono, code, .hash, .address { overflow-wrap: anywhere; }
+
 body {
   margin: 0;
   background:
@@ -408,6 +417,16 @@ tr:hover td { background: rgba(245, 181, 68, 0.03); }
 .footer-links { display: grid; gap: 6px; align-content: start; }
 
 @media (max-width: 720px) {
+  /*
+   * Stop pinning the header. A sticky masthead on a short screen keeps a
+   * fixed slice of the viewport for itself; with the old ten-link navigation
+   * that slice was the whole screen, and the page could only be read in
+   * desktop view. On a phone the header scrolls away like everything else.
+   */
+  .masthead { position: static; }
+  /* A drawer opened on a small screen scrolls rather than growing forever. */
+  .masthead.menu-open .nav { max-height: 60vh; overflow-y: auto; }
+
   /* Brand and menu share the first row; the headline sits under them, so the
      masthead costs two short rows instead of a screenful. */
   .masthead-inner {

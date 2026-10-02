@@ -11,6 +11,40 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.14] — 2026-10-02
+
+Interface. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+### Fixed
+
+1.2.13 moved the ten navigation links behind a menu button. This finishes the
+job — two more reasons the page did not fit a phone:
+
+* **The masthead was `position: sticky`.** A pinned header reserves a fixed
+  slice of the viewport for itself at every scroll position. On a short screen
+  that slice was most of the screen, so even after the links were collapsed
+  the header kept taking space the content needed. Below 720px the masthead is
+  now `position: static` and scrolls away like everything else; it stays
+  sticky on desktop, where there is room for it.
+* **Nothing stopped the document being wider than the screen.** A single
+  unbroken address, transaction hash or wide table could push the page past
+  the viewport, and a document wider than the screen has to be panned around
+  to read. `html, body` are now capped at `100%` with horizontal overflow
+  hidden, media and tables are capped at `100%`, and monospace runs
+  (`.mono`, `code`, `.hash`, `.address`) break anywhere rather than forcing
+  the page wide.
+* An opened drawer is capped at `60vh` and scrolls, so the menu cannot grow
+  past the screen on a small device either.
+
+### Tests
+
+Interface 187 (was 183). Four new cases: no element may be wider than the
+viewport, the masthead must be static below 720px while staying sticky above
+it, the drawer must scroll rather than grow, and every one of the twelve
+generated shells must declare `width=device-width, initial-scale=1`.
+
+---
+
 ## [1.2.13] — 2026-10-02
 
 Interface. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
