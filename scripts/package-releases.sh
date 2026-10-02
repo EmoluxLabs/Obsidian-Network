@@ -64,6 +64,7 @@ echo "packaging Obsidian Network $VERSION from $COMMIT_SHORT"
 CORE_TESTS=0
 INTERFACE_TESTS=0
 EDGE_TESTS=0
+SIGNING_TESTS=0
 CLUSTER_TESTS=0
 
 # RELEASE_LOG_DIR keeps every gate's output: a failed release packaging run is
@@ -115,6 +116,7 @@ if [ "$SKIP_BUILD" = 0 ]; then
   # The verification script is what a stranger runs before trusting this
   # build, so its behaviour is gated like any other shipped code.
   gate "release verification and signing behaviour" "$LOGS/signing.log" node --test tests/scripts/release-signing.test.mjs
+  SIGNING_TESTS="$(count_node_test "$LOGS/signing.log")"
 
   if [ "$SKIP_E2E" = 0 ]; then
     gate "three-node cluster end-to-end test (this starts real nodes on ports 39630-39635)" "$LOGS/cluster.log" node --test tests/e2e/cluster.test.mjs
@@ -126,8 +128,9 @@ if [ "$SKIP_BUILD" = 0 ]; then
   CORE_TESTS="${CORE_TESTS:-0}"
   INTERFACE_TESTS="${INTERFACE_TESTS:-0}"
   EDGE_TESTS="${EDGE_TESTS:-0}"
+  SIGNING_TESTS="${SIGNING_TESTS:-0}"
   CLUSTER_TESTS="${CLUSTER_TESTS:-0}"
-  for pair in "core:$CORE_TESTS" "interface:$INTERFACE_TESTS" "edge:$EDGE_TESTS"; do
+  for pair in "core:$CORE_TESTS" "interface:$INTERFACE_TESTS" "edge:$EDGE_TESTS" "signing:$SIGNING_TESTS"; do
     if [ "${pair#*:}" = "0" ]; then
       echo "no tests ran for ${pair%%:*} — refusing to package" >&2
       exit 1
@@ -137,7 +140,7 @@ if [ "$SKIP_BUILD" = 0 ]; then
     echo "the cluster end-to-end test reported no passes — refusing to package" >&2
     exit 1
   fi
-  TOTAL_TESTS=$((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + CLUSTER_TESTS))
+  TOTAL_TESTS=$((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS + CLUSTER_TESTS))
 else
   TOTAL_TESTS=0
 fi
@@ -264,9 +267,9 @@ NODE
 ( cd "$RELEASES" && sha256sum $(ls *.zip *.tar.gz | sort) > SHA256SUMS )
 
 if [ "$SKIP_BUILD" = 0 ] && [ "$SKIP_E2E" = 0 ]; then
-  TEST_SUMMARY="* ${TOTAL_TESTS} automated tests, all of them run immediately before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}) and the three-node cluster end-to-end suite (${CLUSTER_TESTS})"
+  TEST_SUMMARY="* ${TOTAL_TESTS} automated tests, all of them run immediately before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}) and the three-node cluster end-to-end suite (${CLUSTER_TESTS})"
 elif [ "$SKIP_BUILD" = 0 ]; then
-  TEST_SUMMARY="* $((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS)) automated tests run before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}). The three-node cluster end-to-end suite was skipped (--skip-e2e): run \`node --test tests/e2e/cluster.test.mjs\` before trusting this build."
+  TEST_SUMMARY="* $((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS)) automated tests run before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}). The three-node cluster end-to-end suite was skipped (--skip-e2e): run \`node --test tests/e2e/cluster.test.mjs\` before trusting this build."
 else
   TEST_SUMMARY="* No tests were run for this packaging pass (--skip-build). Treat these archives as source-only until you run the suites yourself."
 fi
