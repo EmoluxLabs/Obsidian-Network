@@ -249,8 +249,36 @@ jobs:
       # runtime of this job for no additional coverage, and a timing-sensitive
       # suite that starts six real nodes is the wrong thing to make the
       # packaging step depend on.
-      - run: ./scripts/package-releases.sh --allow-dirty --skip-e2e
+      - name: Package the release archives
+        env:
+          # The script keeps every gate's log when this is set. Without it the
+          # logs live in a mktemp directory that is deleted on exit, so a red
+          # release job carries no evidence of why it failed.
+          RELEASE_LOG_DIR: ${{ runner.temp }}/release-logs
+        run: ./scripts/package-releases.sh --allow-dirty --skip-e2e
+
+      # Publish the gate logs as annotations: they show up on the run page next
+      # to the failed step, and are readable through the check-run API, which is
+      # the only route available when the log archive itself cannot be fetched.
+      - name: Release gate logs (on failure)
+        if: failure()
+        run: |
+          set -euo pipefail
+          for log in "$RUNNER_TEMP"/release-logs/*.log; do
+            [ -f "$log" ] || continue
+            body="$(tail -c 3000 "$log" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk '{printf "%s%%0A", $0}')"
+            echo "::error title=$(basename "$log")::$body"
+          done
+
       - run: cd releases && sha256sum -c SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: release-gate-logs
+          path: ${{ runner.temp }}/release-logs
+          retention-days: 14
+
       - uses: actions/upload-artifact@v4
         with:
           name: obsidian-release-archives

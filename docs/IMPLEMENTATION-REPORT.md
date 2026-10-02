@@ -489,7 +489,7 @@ across repeated runs; a mainnet node started from the packaged
 
 ## 15. Final status — **what is verified, what is not**
 
-**Verified by automated tests in this workspace (467 tests, all passing):**
+**Verified by automated tests in this workspace (468 tests, all passing):**
 
 | Suite | Tests | Covers |
 | --- | --- | --- |

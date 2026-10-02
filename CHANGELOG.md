@@ -108,7 +108,7 @@ are built from. Everything below is inside it.
   can close ONS, business pages or land; nothing has read a price feed since
   1.2.0.
 * **The packaging gate counted four of the five suites it runs**, so generated
-  release notes reported 455 tests instead of the 463 (now 467) that ran. The
+  release notes reported 455 tests instead of the 463 (now 468) that ran. The
   signing suite is included, and the note that says so is generated from the
   runs themselves.
 * **`verify-release.sh --with-tests` silently skipped the core archive**: it
@@ -123,11 +123,24 @@ are built from. Everything below is inside it.
 * `npm run typecheck` failed at the previous cut in both packages on unused
   imports and locals. Both are clean, and the release archives were rebuilt from
   the fixed tree.
+* **CI had never been green — and the cause was a test that only passed on the
+  machine it was written on.** `tests/scripts/release-signing.test.mjs` asserted
+  the gpgv-only path, which holds where gnupg is absent (the sandbox: gpgv but
+  no gpg) and breaks where it is present (every GitHub runner): the script
+  prefers `gpg`, and the fixture key is not in the runner's keyring, so the
+  happy-path test failed. Only the `releases` job runs that suite, so it was the
+  one job red in every run the repository has ever had. The gpgv-path tests now
+  run with a PATH that cannot see gpg, the "gnupg is not installed" refusal is
+  asserted on every machine instead of only where it was already true, and a new
+  test imports the shipped key into a temporary keyring and verifies with real
+  gnupg (skipped where none is installed). The release job also keeps its gate
+  logs now and publishes them as annotations on failure, so the next red run
+  carries its own evidence.
 
 ### Tests
 
-Core 246, interface 191 (was 187), signing 8, edge worker 9, invariants 55,
-cluster 13 — 467 total.
+Core 246, interface 191 (was 187), signing 9 (was 8), edge worker 9,
+invariants 55, cluster 13 — 468 total.
 
 ---
 
