@@ -9,7 +9,7 @@
  */
 
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ChainManager } from '../../src/blockchain/chain.js';
@@ -474,6 +474,35 @@ describe('GET /metrics', () => {
       expect(body).toContain('chain_id="7780"');
       expect(body).toContain('obsidian_supply_invariant_ok{network="devnet",chain_id="7780"} 1');
     }
+  });
+
+  /**
+   * The dashboard and the alert rules are shipped files referencing metric
+   * names by string. A renamed metric would leave an operator watching an
+   * empty panel and an alert that can never fire — silent, and exactly when
+   * monitoring matters. So both directions are checked: nothing referenced is
+   * missing, and nothing served is unwatched.
+   */
+  it('matches the shipped Grafana dashboard and alert rules', async () => {
+    const body = await (await fetch(`${base}/metrics`)).text();
+    const served = new Set([...body.matchAll(/^([a-z_]+)\{/gm)].map((m) => m[1]));
+    expect(served.size).toBeGreaterThan(10);
+
+    const root = new URL('../../deployment/monitoring/', import.meta.url);
+    const dashboard = readFileSync(new URL('grafana-dashboard.json', root), 'utf8');
+    const alerts = readFileSync(new URL('obsidian-alerts.yml', root), 'utf8');
+    JSON.parse(dashboard); // a dashboard that will not parse cannot be imported
+
+    const referenced = new Set([
+      ...[...dashboard.matchAll(/(obsidian_[a-z_]+)/g)].map((m) => m[1]),
+      ...[...alerts.matchAll(/(obsidian_[a-z_]+)/g)].map((m) => m[1]),
+    ]);
+
+    const missing = [...referenced].filter((name) => !served.has(name)).sort();
+    expect(missing, `referenced by monitoring but not served: ${missing.join(', ')}`).toEqual([]);
+
+    const unwatched = [...served].filter((name) => !referenced.has(name)).sort();
+    expect(unwatched, `served but on no panel or alert: ${unwatched.join(', ')}`).toEqual([]);
   });
 
   it('leaks no address, balance or key material', async () => {

@@ -1,0 +1,59 @@
+# Alerting rules for Obsidian Core.
+#
+# Three of these are the ones worth having on day one: a chain that stopped
+# advancing, a node with no peers, and a supply invariant that is false.
+# The last of those should be impossible — if it fires, stop the node.
+groups:
+  - name: obsidian-node
+    rules:
+      - alert: ObsidianChainStalled
+        # Height has not increased for five minutes. Devnet produces a block
+        # every 5s and mainnet every 10s, so this is ~30 missed blocks.
+        expr: increase(obsidian_chain_height[5m]) == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: 'No new blocks on {{ $labels.network }} for 5 minutes'
+          description: 'obsidian_chain_height has not moved on {{ $labels.instance }}. Check the node process, disk space, and whether it has peers.'
+
+      - alert: ObsidianNodeIsolated
+        expr: obsidian_peers == 0
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: '{{ $labels.instance }} has no peers'
+          description: 'A node with no peers cannot learn about the canonical chain. Check seed nodes, the p2p port and the firewall.'
+
+      - alert: ObsidianSupplyInvariantBroken
+        # This must never happen: the state machine refuses issuance past the
+        # cap. If it does, the node is running modified or corrupt code.
+        expr: obsidian_supply_invariant_ok == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: 'SUPPLY INVARIANT FALSE on {{ $labels.instance }}'
+          description: 'Total supply exceeds the 21,000,000 OBS maximum. Stop this node and investigate before it serves anyone.'
+
+      - alert: ObsidianNodeSyncing
+        expr: obsidian_syncing == 1
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: '{{ $labels.instance }} has been syncing for 30 minutes'
+          description: 'Normal after a restart or a long outage. Sustained syncing means the node cannot catch up — check bandwidth, disk I/O and peer quality.'
+
+      - alert: ObsidianMempoolBacklog
+        expr: obsidian_mempool_transactions > 1000
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: 'Mempool backlog on {{ $labels.instance }}'
+          description: '{{ $value }} transactions are waiting. Blocks hold up to 2,000 transactions, so a sustained backlog means the node is not producing or not relaying.'
+
+      - alert: ObsidianNodeRestarted
+        expr: obsidian_uptime_seconds < 300
+        for: 0m
+        labels: { severity: info }
+        annotations:
+          summary: '{{ $labels.instance }} restarted'
+          description: 'Process uptime is under five minutes. Expected after a deploy; unexpected otherwise, and worth correlating with a crash loop.'

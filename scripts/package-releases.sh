@@ -192,6 +192,7 @@ stage "$STAGING/obsidian-cloudflare" \
 stage "$STAGING/obsidian-node-operator" \
   obsidian-core/dist obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/deployment/docker obsidian-core/deployment/systemd obsidian-core/deployment/nginx \
+  obsidian-core/deployment/monitoring \
   obsidian-core/deployment/node.env.example obsidian-core/config \
   docs LICENSE
 cp scripts/verify-release.sh "$STAGING/obsidian-node-operator/verify-release.sh"

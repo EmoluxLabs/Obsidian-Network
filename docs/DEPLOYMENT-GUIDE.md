@@ -1171,9 +1171,28 @@ firewall as the rest of the RPC port and scrape it from inside your network.
 Supply figures are floats because Prometheus has no integer type; the exact
 18-decimal seal amounts remain on `/supply`.
 
-**STILL NOT IN THE REPOSITORY:** no Grafana dashboard JSON and no alerting
-rules are shipped. *What is needed:* dashboards built on the metric names
-above.
+A ready scrape config, alert rules and dashboard ship with the node operator
+archive under `obsidian-core/deployment/monitoring/`:
+
+| File | What it is |
+| --- | --- |
+| `prometheus.yml` | scrape config, 15s interval, one job with a commented second target |
+| `obsidian-alerts.yml` | six rules: chain stalled, node isolated, supply invariant false, syncing too long, mempool backlog, process restarted |
+| `grafana-dashboard.json` | 18 panels — import it in Grafana and pick your Prometheus data source |
+
+```bash
+cp obsidian-core/deployment/monitoring/*.yml /etc/prometheus/
+# Grafana → Dashboards → New → Import → upload grafana-dashboard.json
+```
+
+The dashboard has a `network` variable, so one Grafana serves mainnet,
+testnet and devnet from the same Prometheus. A test asserts in both
+directions that every metric the dashboard and the rules reference is actually
+served, and that every metric served appears on a panel or in a rule — a
+renamed metric fails the build instead of silently blanking a panel.
+
+**Still not shipped:** no paging integration (Alertmanager routing is yours to
+configure) and no recording rules.
 
 ### D12. Clock discipline
 
@@ -2582,9 +2601,10 @@ An honest comparison, with the evidence.
 **Genuine gaps, stated plainly:**
 1. **No release signing.** Checksums prove integrity, not authorship. For a
    public mainnet handling real value, this should be closed first.
-2. **Partial monitoring.** `/metrics` exists from 1.2.6 and is Prometheus
-   scrapeable (see §D11), but no Grafana dashboards and no alerting rules are
-   shipped — you still have to write those yourself.
+2. **Monitoring ships, paging does not.** `/metrics` (1.2.6), plus a scrape
+   config, six alert rules and an 18-panel Grafana dashboard (1.2.12) under
+   `deployment/monitoring/`. You still have to route alerts somewhere:
+   Alertmanager configuration and on-call escalation are not provided.
 3. **Nothing has ever run for more than minutes.** `docs/IMPLEMENTATION-REPORT.md`
    says so: no multi-day soak test, so memory growth over weeks is unknown, and
    **node reward settlement has never been observed over real 24-hour periods** —

@@ -11,6 +11,51 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.12] — 2026-10-02
+
+Monitoring. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+### Added
+
+`/metrics` shipped in 1.2.6 with nothing to point at it, which left the
+deployment guide honestly admitting "no dashboards, no alerting". That gap is
+now closed — `obsidian-core/deployment/monitoring/`, included in the node
+operator archive:
+
+* **`prometheus.yml`** — scrape config, 15s interval, one job and a commented
+  second target. Every sample already carries `network` and `chain_id` from
+  the node, so one Prometheus can scrape several chains without conflating
+  them.
+* **`obsidian-alerts.yml`** — six rules. Three are the ones worth having on
+  day one: `ObsidianChainStalled` (height flat for 5 minutes),
+  `ObsidianNodeIsolated` (zero peers for 10 minutes) and
+  `ObsidianSupplyInvariantBroken` (supply past the 21,000,000 cap — which the
+  state machine makes impossible, so if it fires the node is running modified
+  or corrupt code and should be stopped). Then `ObsidianNodeSyncing`,
+  `ObsidianMempoolBacklog` and `ObsidianNodeRestarted`.
+* **`grafana-dashboard.json`** — 18 panels with a `network` template variable:
+  supply invariant, height, peers, syncing, supply, active miners, genesis
+  allocation, block production rate, mempool depth, pool balance, transaction
+  and claim rates, uptime, accounts, names and validators.
+
+### Tests
+
+Core 245 (was 244). The new case asserts the monitoring files against a
+running RPC server **in both directions**: every `obsidian_*` metric the
+dashboard or the rules reference must be served, and every metric served must
+appear on a panel or in a rule. A renamed metric now fails the build instead
+of silently leaving an operator with a blank panel and an alert that can never
+fire. The dashboard is also parsed, so a file Grafana could not import cannot
+ship.
+
+### Still missing
+
+No Alertmanager routing and no recording rules: where an alert goes is a
+deployment decision, and inventing one would be a claim this project has not
+earned.
+
+---
+
 ## [1.2.11] — 2026-10-02
 
 Documentation. No code change to the node or the server; `PROTOCOL_VERSION`
