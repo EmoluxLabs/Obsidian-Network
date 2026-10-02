@@ -112,6 +112,10 @@ if [ "$SKIP_BUILD" = 0 ]; then
   gate "edge worker tests" "$LOGS/edge.log" node --test cloudflare/test/worker.test.mjs
   EDGE_TESTS="$(count_node_test "$LOGS/edge.log")"
 
+  # The verification script is what a stranger runs before trusting this
+  # build, so its behaviour is gated like any other shipped code.
+  gate "release verification and signing behaviour" "$LOGS/signing.log" node --test tests/scripts/release-signing.test.mjs
+
   if [ "$SKIP_E2E" = 0 ]; then
     gate "three-node cluster end-to-end test (this starts real nodes on ports 39630-39635)" "$LOGS/cluster.log" node --test tests/e2e/cluster.test.mjs
     CLUSTER_TESTS="$(count_node_test "$LOGS/cluster.log")"
@@ -196,6 +200,7 @@ stage "$STAGING/obsidian-node-operator" \
   obsidian-core/deployment/node.env.example obsidian-core/config \
   docs LICENSE
 cp scripts/verify-release.sh "$STAGING/obsidian-node-operator/verify-release.sh"
+cp scripts/sign-release.sh "$STAGING/obsidian-node-operator/sign-release.sh"
 # The launch runbook asks operators to check the economic invariants against the
 # build they are about to run, so the checker ships with the build.
 cp scripts/check-invariants.mjs "$STAGING/obsidian-node-operator/check-invariants.mjs"

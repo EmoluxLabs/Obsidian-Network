@@ -2,8 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Verify a release archive before you run it.
 #
-#   ./verify-release.sh obsidian-core-1.2.15.tar.gz
-#   ./verify-release.sh obsidian-node-operator-1.2.15.zip --with-tests
+#   ./verify-release.sh obsidian-core-1.2.16.tar.gz
+#   ./verify-release.sh obsidian-node-operator-1.2.16.zip --with-tests
 #
 # Checks, in order:
 #   1. the archive is listed in SHA256SUMS and its digest matches;
@@ -38,7 +38,55 @@ for candidate in "$ARCHIVE_DIR/SHA256SUMS" "$HERE/SHA256SUMS"; do
   [ -f "$candidate" ] && { SUMS="$candidate"; break; }
 done
 
+# ── Authorship ───────────────────────────────────────────────────────────────
+# A digest proves the bytes are intact. It proves nothing about who produced
+# them: whoever can swap an archive can swap the digest list beside it. If a
+# detached signature is present it is checked here, and if it is absent that
+# is said out loud rather than passed over in silence.
+check_signature() {
+  local sums="$1" sig="$1.asc" key
+  key="$(dirname "$sums")/SIGNING-KEY.asc"
+
+  if [ ! -f "$sig" ]; then
+    echo "→ UNSIGNED RELEASE"
+    echo "  No $(basename "$sig") beside the digest list, so this check proves the"
+    echo "  archive is intact — not who built it. Obtain the digest over a channel"
+    echo "  the publisher controls, or ask them to sign the release."
+    return 0
+  fi
+
+  if command -v gpg >/dev/null 2>&1; then
+    echo "→ verifying the signature over $(basename "$sums")"
+    if gpg --verify "$sig" "$sums"; then
+      echo "  signature OK — now confirm the key fingerprint against a source that"
+      echo "  is NOT hosted with the archives."
+    else
+      echo "  SIGNATURE DID NOT VERIFY — do not run this archive." >&2
+      return 1
+    fi
+  elif command -v gpgv >/dev/null 2>&1 && [ -f "$key" ]; then
+    echo "→ verifying with gpgv against $(basename "$key")"
+    local ring
+    ring="$(mktemp)"
+    # gpgv needs a binary keyring, and the shipped key is armoured.
+    if command -v gpg >/dev/null 2>&1; then
+      gpg --dearmor < "$key" > "$ring"
+    else
+      echo "  cannot dearmor $(basename "$key") without gpg — skipping" >&2
+      rm -f "$ring"
+      return 0
+    fi
+    gpgv --keyring "$ring" "$sig" "$sums" || { rm -f "$ring"; return 1; }
+    rm -f "$ring"
+  else
+    echo "→ a signature is present but gpg is not installed, so it was not checked."
+    echo "  Install gnupg and run: gpg --verify $(basename "$sig") $(basename "$sums")"
+  fi
+  return 0
+}
+
 if [ -n "$SUMS" ]; then
+  check_signature "$SUMS"
   echo "→ checking $BASE against $SUMS"
   SUMS_DIR="$(dirname "$SUMS")"
   EXPECTED="$(mktemp)"
