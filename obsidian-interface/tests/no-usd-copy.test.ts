@@ -84,6 +84,38 @@ describe('no page quotes a dollar price or waits on a price feed', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('quotes no dollar price in the product documentation', () => {
+    // The docs drifted the same way the pages did: circle.md still sold land
+    // at "$100 to $30,000 per m²" and ons.md documented an oracle conversion,
+    // five releases after the protocol stopped pricing anything in dollars.
+    const docsDir = join(repo, 'docs');
+    if (!existsSync(docsDir)) return;
+    const allowed = [
+      // Deliberate denials of fees this project refuses to charge.
+      'Where did the $5 activation',
+      'no** `$5` activation',
+      'No $5 activation',
+      'Until 1.2.0 this fee was a dollar amount',
+      // The removal report and the implementation report exist to record what
+      // was deleted; naming the removed `$5 USDT` gate is their purpose.
+      '`$5 USDT` activation',
+      // A defect record quoting the symptom it describes, not a price claim.
+      'Circle listed every country as `$0.02`',
+    ];
+    const offenders: string[] = [];
+    for (const file of readdirSync(docsDir).filter((f) => f.endsWith('.md'))) {
+      const text = readFileSync(join(docsDir, file), 'utf8');
+      for (const line of text.split('\n')) {
+        if (!/\$\d/.test(line)) continue;
+        if (allowed.some((phrase) => line.includes(phrase))) continue;
+        // µ$ bounds describe the oracle transaction type, which still exists.
+        if (line.includes('µ$')) continue;
+        offenders.push(`${file}: ${line.trim().slice(0, 120)}`);
+      }
+    }
+    expect(offenders, `dollar prices in docs:\n${offenders.join('\n')}`).toEqual([]);
+  });
+
   it('ships no dollar price in the generated site HTML', () => {
     const sites = ['landing', 'circle', 'ons', 'social', 'developer', 'mine', 'wallet', 'app'];
     const offenders: string[] = [];

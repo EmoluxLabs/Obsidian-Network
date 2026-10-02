@@ -26,8 +26,10 @@ landmarks or coordinates to a division.
 | **MSP** — Market Sale Price | the owner when listing | the owner may relist freely; listing does not move GLV |
 
 Division GLVs are set at deployment from published economic data (population,
-economic activity, infrastructure, tourism) and bounded between **$100 and
-$30,000 per m²**. `GET /land/countries` lists countries with division counts and
+economic activity, infrastructure, tourism) and bounded between
+**0.01 OBS and 5 OBS per m²** (`circle.minGlv` / `circle.maxGlv`). The band is
+denominated in OBS and fixed by consensus: no exchange rate takes part, and a
+chain that has never seen a price submission values land correctly. `GET /land/countries` lists countries with division counts and
 their GLV, and `GET /land/divisions?country=NG` lists a country's divisions with
 the GLV each division carries right now.
 
@@ -35,12 +37,12 @@ the GLV each division carries right now.
 
 * One transaction releases **at most one parcel** and the parcel is **≤ 1 m²**
   (`circle.parcelSquareMetres = 1`).
-* The price is the **current GLV** of the division, converted to OBS at the
-  protocol oracle price. A transaction whose declared price does not match the
-  official conversion is rejected with `ERR_PRICE_MISMATCH` — you cannot buy land
-  by quoting yesterday's price or by rounding in your favour.
+* The price is the **current GLV** of the division, already in OBS. A
+  transaction whose declared price does not match the official value is
+  rejected with `ERR_PRICE_MISMATCH` — you cannot buy land by quoting a stale
+  value or by rounding in your favour.
 * The purchase **raises the GLV** by 25 basis points
-  (`circle.appreciationStepBps = 25`), capped at $30,000/m².
+  (`circle.appreciationStepBps = 25`), capped at 5 OBS/m².
 * Because the GLV moves between purchases, **a buyer never benefits
   retroactively** from the demand they themselves created: the next buyer pays
   the updated price, and no existing parcel is revalued by a later purchase.
@@ -63,7 +65,7 @@ rule, and the treasury wallet is the wallet that received the genesis allocation
 
 * the owner is paid the **current GLV** (its official value at that moment), not
   the price they originally paid and not the MSP;
-* the GLV **decreases** by 25 basis points, floored at $100/m².
+* the GLV **decreases** by 25 basis points, floored at 0.01 OBS/m².
 
 This is the mechanism that makes the protocol a buyer of last resort without
 inventing value: what it pays out is what its own valuation says the land is

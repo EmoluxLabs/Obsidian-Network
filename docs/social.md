@@ -41,9 +41,9 @@ the Mining Pool. A tip is a payment you can verify like any other.
 
 ## 4. Business pages and the 70/30 split
 
-A business page costs the protocol's **$50 equivalent** in OBS
-(`social.businessPagePriceUsd = 50.00`, converted at the oracle median) and that
-payment goes to the **treasury**. On monetised revenue, the protocol split is:
+A business page costs **0.005 OBS** (`social.businessPagePrice`), a consensus
+parameter with no conversion of any kind, and that payment goes to the
+**treasury**. On monetised revenue, the protocol split is:
 
 * **70% to the creator** (`creatorShareBps = 7000`),
 * **30% to the network — the treasury** (`networkShareBps = 3000`).

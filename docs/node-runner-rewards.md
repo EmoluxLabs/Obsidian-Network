@@ -59,7 +59,7 @@ classify every basis point from chain data alone.
 |---|---|
 | `ONS_REGISTRATION` | A `.obs` name registration fee |
 | `ONS_RENEWAL` | A `.obs` name renewal fee |
-| `BUSINESS_PAGE` | The $50-equivalent OBS Social business page fee |
+| `BUSINESS_PAGE` | The OBS Social business page fee (0.005 OBS) |
 | `LAND_PROTOCOL_SALE` | Land released by the protocol market (the protocol is the seller) |
 | `EXPLICIT_PAYMENT` | A `TREASURY / PAY_REVENUE` transaction |
 

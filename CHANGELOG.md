@@ -11,6 +11,48 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.11] — 2026-10-02
+
+Documentation. No code change to the node or the server; `PROTOCOL_VERSION`
+stays 1.2.0 and the params hash is unchanged.
+
+### Fixed
+
+The product pages were corrected in 1.2.8–1.2.10, but the documentation had
+drifted exactly the same way and still priced the protocol in dollars:
+
+* `docs/circle.md` — land "bounded between **$100 and $30,000 per m²**",
+  appreciation "capped at $30,000/m²", depreciation "floored at $100/m²", and
+  a purchase price "converted to OBS at the protocol oracle price". The real
+  band is **0.01–5 OBS per m²** with no conversion at all.
+* `docs/ons.md` — the fee table said "$5.00 equivalent, paid in OBS at the
+  protocol price", followed by a paragraph explaining that registration fails
+  with `ERR_ORACLE_UNAVAILABLE` when fewer than two sources are fresh. The fee
+  is **0.05 OBS**, and an empty feed can no longer close a feature it does not
+  price.
+* `docs/social.md` — "$50 equivalent … `social.businessPagePriceUsd = 50.00`,
+  converted at the oracle median" → **0.005 OBS**, `social.businessPagePrice`.
+* `docs/faq.md`, `docs/node-runner-rewards.md`, `docs/removal-report.md` and
+  `docs/IMPLEMENTATION-REPORT.md` — the same `$50` business page and
+  `$100–$30,000` GLV figures in revenue tables and summaries.
+
+Deliberate mentions of dollars are kept and are all denials or history: "where
+did the $5 activation go", "no $5 activation", the removal report's record of
+the deleted `$5 USDT` gate, and one defect record quoting its own symptom.
+
+### Added
+
+* The copy guard added in 1.2.10 now covers `docs/*.md` as well as the page
+  sources and generated HTML — five checks in total. Documentation is part of
+  the product surface, and it drifted for the same reason the pages did:
+  nothing was checking it.
+
+### Tests
+
+Interface 175 (was 174). Core 244. Invariants 55.
+
+---
+
 ## [1.2.10] — 2026-10-02
 
 Interface only. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.

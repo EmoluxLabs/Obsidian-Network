@@ -9,17 +9,20 @@ sits in the middle.
 
 | Parameter | Value |
 | --- | --- |
-| Fee | $5.00 equivalent, paid in OBS at the protocol price |
+| Fee | **0.05 OBS** (`ons.registrationFee`), renewal **0.05 OBS** |
 | Term | 365 days (`termSeconds`) |
 | Grace | 30 days (`graceSeconds`) |
 | Length | 3–63 characters |
 
-The dollar fee is converted through the **protocol oracle median**: at least two
-independent submissions, bounded (1 µ$ … 1e12 µ$), no older than 36 hours, and at
-most 25% apart. If fewer than two sources are fresh, the node rejects the
-registration with `ERR_ORACLE_UNAVAILABLE`. The interface shows the price it read
-from the node and cannot price a name on its own — try it with the oracle empty
-and the button refuses, which is the intended behaviour, not a bug.
+The fee is a **consensus parameter denominated in OBS**: the same number on
+every node, with no exchange rate and no price feed involved. Registration
+therefore works on a chain that has never received a price submission — the
+interface reads `ons.registrationFeeObs` from `GET /params` and will not invent
+a fee if it cannot reach a node at all.
+
+Until 1.2.0 this fee was a dollar amount converted at an oracle median, and an
+empty feed closed registration. That is gone: a dead feed can no longer close a
+feature it does not price.
 
 ## 2. Transferring
 

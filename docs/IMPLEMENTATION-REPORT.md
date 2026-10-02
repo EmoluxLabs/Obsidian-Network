@@ -175,10 +175,10 @@ so the state machine cannot quietly reintroduce it. Procedure and expected outpu
 | --- | --- |
 | Wallet | non-custodial, browser-generated keys, send/receive, local signing, export |
 | Explorer | blocks, transactions, names, parcels, capsules; **never wallet balances**, masked addresses, own id format |
-| OBS Social | profiles, posts, comments, follows, DMs (client-side encrypted), tipping 100% to the creator, business pages at $50-equivalent with the 70/30 split (30% → treasury) |
+| OBS Social | profiles, posts, comments, follows, DMs (client-side encrypted), tipping 100% to the creator, business pages at 0.005 OBS with the 70/30 split (30% → treasury) |
 | ONS | `.obs` names mapped to exactly one wallet, transferable, **mapping stored as blockchain state** |
 | Time Capsule Wall | immutable commitments, ≥0.0001 OBS lock, unlock transfers the lock to the Mining Pool without the creator online, 1000× Time Travel preview paid to the pool once per capsule per account for 30 s, plus capsule statistics |
-| Obsidian Circle | Earth → country → first-level division navigation (`/land/countries`, `/land/divisions?country=`, `/land/quote/`), search by country/division and id, GLV/ILV/MSP fields, USD pricing paid in OBS at the protocol price, one ≤1 m² plot per transaction with the GLV updated between purchases, no retroactive benefit for the buyer, buybacks that pay the current GLV and reduce it, a marketplace that never moves the GLV, and gifting at standard gas. Sub-division/street/landmark/`lat,lon` search is **not implemented** (see §15, gap 5) |
+| Obsidian Circle | Earth → country → first-level division navigation (`/land/countries`, `/land/divisions?country=`, `/land/quote/`), search by country/division and id, GLV/ILV/MSP fields, OBS pricing inside the 0.01–5 OBS band with no price source, one ≤1 m² plot per transaction with the GLV updated between purchases, no retroactive benefit for the buyer, buybacks that pay the current GLV and reduce it, a marketplace that never moves the GLV, and gifting at standard gas. Sub-division/street/landmark/`lat,lon` search is **not implemented** (see §15, gap 5) |
 
 **Verification:** `tests/integration/applications.test.ts` (27 tests) exercises
 ONS registration/transfer/update, capsule create/preview/unlock economics, land
@@ -451,8 +451,8 @@ operational, and it is now closed.
   invariants against the built parameters — the 21,000,000 cap, the 100,000
   genesis allocation, zero at registration, the 4-hour/6-claim schedule, the
   0.0002 OBS floor, gas at 2 bps capped at 0.01 OBS returning to the mining
-  pool, the 40/60 split, the 70/30 creator split, the $50 business page, the
-  5-invite limit, the $100–$30,000 GLV bounds, the capsule minimum and 1000×
+  pool, the 40/60 split, the 70/30 creator split, the 0.005 OBS business page, the
+  5-invite limit, the 0.01–5 OBS GLV bounds, the capsule minimum and 1000×
   multiplier, and the absence of WAC, mining KYC and a native exchange. It exits
   non-zero on drift; that was confirmed by mutating a parameter in the build and
   watching it fail, then restoring it.
@@ -524,8 +524,8 @@ no node has ever sent.
 | Live-node UI suite | `Reward / day` read `undefined` and printed `0 OBS` while the node sent `dailyRewardObs` / `dailyRewardSeals` | pages read the node's names; `obs()` now formats seal counts *and* decimal strings exactly |
 | Live-node UI suite | `Protocol price` always read `no price yet`: the page asked for `medianPriceUsd`, the node sends `priceUsd` + `priceUsdMicro` + `usable` | oracle reads go through `oraclePriceText` / `oraclePriceMicro`, which refuse a stale or thin feed |
 | Live-node UI suite | Explorer block rows showed `undefined` transactions and `undefined B` (`transactionCount`/`sizeBytes` vs the node's `txCount`/`size`) | `BlockSummary` and the block detail now match the node |
-| Live-node UI suite | ONS registration computed a fee from `ons.registrationUsdMicro`, which does not exist, so the fee was `0 OBS` | the fee is `ons.registrationFeeUsd` (dollars) converted at the node's median in exact integer maths |
-| Live-node UI suite | Circle listed every country as `$0.02` (whole-dollar `glvUsd` read as micro-USD) and showed no divisions at all | new node route `GET /land/divisions?country=XX`; the atlas drills Earth → country → division → quote, and dollar values are formatted per field |
+| Live-node UI suite | ONS registration computed a fee from `ons.registrationUsdMicro`, which does not exist, so the fee was `0 OBS` | superseded in 1.2.0: the fee is now `ons.registrationFeeObs`, a flat 0.05 OBS with no conversion |
+| Live-node UI suite | Circle listed every country as `$0.02` (whole-dollar `glvUsd` read as micro-USD) and showed no divisions at all | new node route `GET /land/divisions?country=XX`; the atlas drills Earth → country → division → quote. Superseded in 1.2.0: land is priced in OBS and no dollar value is displayed at all |
 | Live-node UI suite | Capsule wall read `commitment` and compared status to `'sealed'`; the node sends `commitmentObs` and `LOCKED` | wall and Time Travel pricing read chain state and the protocol multiplier |
 | HTTP server tests | **Every parameterised read through the interface proxy was refused** (`/blocks?limit=`, `/mining/status?address=`, `/names?prefix=`, `/land/search?q=`, `/capsules?limit=`, `/social/feed?limit=`) because the allowlist matched the whole `path` value including its query | the proxy splits route from query, allowlists the route, and forwards the query (regression test included) |
 

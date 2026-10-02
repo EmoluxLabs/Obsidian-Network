@@ -67,7 +67,7 @@ nothing about consensus depends on the oracle.
 
 **Can Obsidian take a cut of my tips?**
 No. Tips go 100% to the creator. The protocol's revenue comes from gas (to the
-Mining Pool), ONS registration fees, land protocol sales, the $50 business page
+Mining Pool), ONS registration fees, land protocol sales, the 0.005 OBS business page
 and the network's 30% share of monetised creator revenue — all recorded on chain.
 
 **Where does that revenue go?**

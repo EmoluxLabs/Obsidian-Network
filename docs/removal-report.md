@@ -92,7 +92,7 @@ grep -rn "GENESIS_ALLOCATION\|MINING_REWARD" obsidian-core/src/blockchain/state-
   `/genesis`, and it is where platform revenue is routed — never user funds.
 * **Value accrues through use**, not through a toll: gas returns to the Mining
   Pool, tips go entirely to creators, the network's 30% share of monetisation and
-  the $50 business-page fee go to the treasury.
+  the 0.005 OBS business-page fee go to the treasury.
 
 ## 5. Regression coverage
 
