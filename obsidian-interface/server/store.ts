@@ -95,7 +95,7 @@ export class AccountStore {
   private genesisInvite: GenesisInviteRecord | null = null;
   private readonly sessionTtl: number;
 
-  constructor(private readonly options: StoreOptions) {
+  constructor(options: StoreOptions) {
     this.path = join(options.dataDir, 'interface-accounts.json');
     this.sessionTtl = options.sessionTtlSeconds ?? 14 * 24 * 3600;
     this.load();

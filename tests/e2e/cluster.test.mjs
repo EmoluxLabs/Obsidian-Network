@@ -27,6 +27,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { after, before } from 'node:test';
 import { connect } from 'node:net';
+import { cpus } from 'node:os';
 // Read the protocol version from the build under test rather than hard-coding
 // it: a version bump is a protocol change, and these tests must follow the
 // software, not a literal that silently goes stale.
@@ -47,6 +48,29 @@ const A = { name: 'e2e-a', rpc: 39630, p2p: 39631 };
 const B = { name: 'e2e-b', rpc: 39632, p2p: 39633, seed: `127.0.0.1:${A.p2p}` };
 const C = { name: 'e2e-c', rpc: 39634, p2p: 39635, seed: `127.0.0.1:${B.p2p}` };
 const NODES = [A, B, C];
+
+/**
+ * Timeout scale.
+ *
+ * This suite runs three real nodes, each producing a block every five seconds,
+ * plus the test runner. On a two-core machine (a CI container, or a laptop
+ * that is also building) those four processes do not get the CPU they need:
+ * transactions take longer to be mined than the fixed 45s waits allowed, and
+ * the suite reported four consensus failures that were really starvation.
+ * Measured here: 13/13 in 56s idle, 4 failures at 300s under load, same code.
+ *
+ * Waits therefore scale with the hardware. This hides no hang — a genuinely
+ * stuck chain still fails, just later — and OBSIDIAN_E2E_TIMEOUT_SCALE lets an
+ * operator set the factor explicitly.
+ */
+const SCALE = (() => {
+  const fromEnv = Number(process.env.OBSIDIAN_E2E_TIMEOUT_SCALE);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+  const cores = cpus()?.length || 1;
+  return cores >= 6 ? 1 : cores >= 4 ? 2 : 4;
+})();
+/** Scale a wall-clock budget to the machine this is running on. */
+const ms = (base) => Math.round(base * SCALE);
 
 const children = [];
 const dataDirs = [];
@@ -178,7 +202,7 @@ const balance = async (node, address) => (await post(`${rpc(node)}/wallet/balanc
  * refused with `ERR_BAD_NONCE` at inclusion time. Waiting for agreement makes
  * the signed nonce the one the whole network already knows.
  */
-async function nextChainNonce(address, timeoutMs = 60_000) {
+async function nextChainNonce(address, timeoutMs = ms(60_000)) {
   return waitFor(async () => {
     for (const record of children) assertAlive(record);
     const nonces = await Promise.all(NODES.map((node) => get(`${rpc(node)}/wallet/${encodeURIComponent(address)}/next-nonce`).then((response) => response.body.nextNonce)));
@@ -187,7 +211,7 @@ async function nextChainNonce(address, timeoutMs = 60_000) {
 }
 
 /** Wait until a transaction sent with `nonce` has been mined on every node. */
-async function waitForMined(address, nonce, timeoutMs = 60_000) {
+async function waitForMined(address, nonce, timeoutMs = ms(60_000)) {
   return waitFor(async () => {
     const nonces = await Promise.all(NODES.map((node) => get(`${rpc(node)}/wallet/${encodeURIComponent(address)}/next-nonce`).then((response) => response.body.nextNonce)));
     return nonces.every((value) => value > nonce) ? nonces[0] : false;
@@ -199,7 +223,7 @@ async function poolBalanceSeals(node) {
   return core.parseObs((await get(`${rpc(node)}/supply`)).body.poolBalanceObs);
 }
 
-async function waitFor(fn, { timeoutMs = 60_000, intervalMs = 500, what = 'condition' } = {}) {
+async function waitFor(fn, { timeoutMs = ms(60_000), intervalMs = 500, what = 'condition' } = {}) {
   const started = Date.now();
   let lastError;
   while (Date.now() - started < timeoutMs) {
@@ -215,7 +239,7 @@ async function waitFor(fn, { timeoutMs = 60_000, intervalMs = 500, what = 'condi
 }
 
 /** Wait until every node reports the same balance for an address. */
-async function waitForBalanceAllNodes(address, seals, timeoutMs = 45_000) {
+async function waitForBalanceAllNodes(address, seals, timeoutMs = ms(45_000)) {
   return waitFor(async () => {
     for (const record of children) assertAlive(record);
     const seen = await Promise.all(NODES.map((node) => balance(node, address)));
@@ -362,12 +386,12 @@ before(async () => {
   await waitFor(async () => {
     for (const record of started) assertAlive(record);
     return (await status(B)).peers >= 1;
-  }, { timeoutMs: 90_000, what: `node B to connect to node A (${logOf(b) || 'no logs yet'})` });
+  }, { timeoutMs: ms(90_000), what: `node B to connect to node A (${logOf(b) || 'no logs yet'})` });
 
   await waitFor(async () => {
     for (const record of started) assertAlive(record);
     return (await status(C)).peers >= 1;
-  }, { timeoutMs: 90_000, what: `node C to connect to node B (${logOf(c) || 'no logs yet'})` });
+  }, { timeoutMs: ms(90_000), what: `node C to connect to node B (${logOf(c) || 'no logs yet'})` });
 });
 
 after(async () => {
@@ -394,7 +418,7 @@ after(async () => {
 
 // ── tests ───────────────────────────────────────────────────────────────────
 
-test('three nodes reach consensus on the same chain', { skip, timeout: 120_000 }, async () => {
+test('three nodes reach consensus on the same chain', { skip, timeout: ms(120_000) }, async () => {
   const heights = await Promise.all(NODES.map(async (node) => (await status(node)).height));
   const genesis = await Promise.all(NODES.map(async (node) => (await status(node)).genesisId));
   assert.equal(new Set(genesis).size, 1, 'every node must agree on the genesis id');
@@ -402,7 +426,7 @@ test('three nodes reach consensus on the same chain', { skip, timeout: 120_000 }
   assert.ok(Math.min(...heights) > 0, 'every node should have produced or synced blocks');
 });
 
-test('the first mining claim receives the 100,000 OBS genesis allocation', { skip, timeout: 120_000 }, async () => {
+test('the first mining claim receives the 100,000 OBS genesis allocation', { skip, timeout: ms(120_000) }, async () => {
   const miner = await ensureMiner();
 
   const seen = await Promise.all(NODES.map((node) => status(node)));
@@ -416,13 +440,13 @@ test('the first mining claim receives the 100,000 OBS genesis allocation', { ski
   }
 });
 
-test('a second miner does not receive the genesis allocation', { skip, timeout: 120_000 }, async () => {
+test('a second miner does not receive the genesis allocation', { skip, timeout: ms(120_000) }, async () => {
   const second = newWallet();
   // The protocol accepts one claim per wallet per block, so wait for a fresh slot.
   const ready = await waitFor(async () => {
     const mining = (await get(`${rpc(A)}/mining/status?address=${second.address}`)).body;
     return mining.eligible && mining.secondsRemaining <= 0 ? mining : false;
-  }, { timeoutMs: 90_000, what: 'a second miner to become eligible' });
+  }, { timeoutMs: ms(90_000), what: 'a second miner to become eligible' });
 
   const signed = core.signTransaction({
     protocolVersion: PROTOCOL_VERSION,
@@ -444,7 +468,7 @@ test('a second miner does not receive the genesis allocation', { skip, timeout: 
   assert.ok(CLAIM_REWARD < GENESIS_ALLOCATION, 'the ordinary reward must be far below the genesis allocation');
 });
 
-test('a payment moves OBS, pays the capped gas, and every node agrees', { skip, timeout: 120_000 }, async () => {
+test('a payment moves OBS, pays the capped gas, and every node agrees', { skip, timeout: ms(120_000) }, async () => {
   const miner = await ensureMiner();
   const recipient = newWallet();
   const amount = core.parseObs('250');
@@ -484,14 +508,14 @@ test('a payment moves OBS, pays the capped gas, and every node agrees', { skip, 
   // Gas leaves the sender and lands in the Mining Pool, exactly once.
   for (const node of NODES) {
     await waitFor(async () => (await poolBalanceSeals(node)) >= poolBefore + gas, {
-      timeoutMs: 30_000,
+      timeoutMs: ms(30_000),
       intervalMs: 400,
       what: `${node.name} to credit the ${gas} seals of gas to the Mining Pool`,
     });
   }
 });
 
-test('a transaction signed for another chain is refused', { skip, timeout: 60_000 }, async () => {
+test('a transaction signed for another chain is refused', { skip, timeout: ms(60_000) }, async () => {
   const miner = await ensureMiner();
   const at = await protocolTime(A);
   const signed = core.signTransaction({
@@ -511,7 +535,7 @@ test('a transaction signed for another chain is refused', { skip, timeout: 60_00
   assert.match(JSON.stringify(response.body), /WRONG_CHAIN_ID|WRONG_NETWORK/);
 });
 
-test('a replayed transaction is refused and the balance does not move twice', { skip, timeout: 120_000 }, async () => {
+test('a replayed transaction is refused and the balance does not move twice', { skip, timeout: ms(120_000) }, async () => {
   const miner = await ensureMiner();
   const recipient = newWallet();
   const amount = core.parseObs('3');
@@ -541,7 +565,7 @@ test('a replayed transaction is refused and the balance does not move twice', { 
   assert.equal(after.balanceSeals, amount.toString(), 'the replay must not have moved more OBS');
 });
 
-test('a name registers and resolves without any price source at all', { skip, timeout: 180_000 }, async () => {
+test('a name registers and resolves without any price source at all', { skip, timeout: ms(180_000) }, async () => {
   const miner = await ensureMiner();
 
   // Since 1.2.0 every protocol price is denominated in OBS, so there is no
@@ -587,10 +611,10 @@ test('a name registers and resolves without any price source at all', { skip, ti
   await waitFor(async () => {
     const records = await Promise.all(NODES.map((node) => get(`${rpc(node)}/names/${name}`)));
     return records.every((record) => record.status === 200 && record.body.address === miner.address);
-  }, { timeoutMs: 45_000, intervalMs: 500, what: 'every node to serve the registered name' });
+  }, { timeoutMs: ms(45_000), intervalMs: 500, what: 'every node to serve the registered name' });
 });
 
-test('the supply invariant holds and the cap is respected on every node', { skip, timeout: 60_000 }, async () => {
+test('the supply invariant holds and the cap is respected on every node', { skip, timeout: ms(60_000) }, async () => {
   const maximum = 21_000_000n * ONE;
   for (const node of NODES) {
     const { body } = await get(`${rpc(node)}/supply`);
@@ -603,7 +627,7 @@ test('the supply invariant holds and the cap is respected on every node', { skip
   }
 });
 
-test('removed mechanisms are absent from the running protocol', { skip, timeout: 60_000 }, async () => {
+test('removed mechanisms are absent from the running protocol', { skip, timeout: ms(60_000) }, async () => {
   const expectedAbsent = [
     'wac',
     'legacyGenesisAllocation',
@@ -626,7 +650,7 @@ test('removed mechanisms are absent from the running protocol', { skip, timeout:
   }
 });
 
-test('the explorer never exposes a balance or an unmasked address', { skip, timeout: 60_000 }, async () => {
+test('the explorer never exposes a balance or an unmasked address', { skip, timeout: ms(60_000) }, async () => {
   const miner = await ensureMiner();
   const history = await get(`${rpc(A)}/address/${miner.address}?limit=5`);
   assert.equal(history.status, 200);
@@ -637,7 +661,7 @@ test('the explorer never exposes a balance or an unmasked address', { skip, time
   assert.ok(!serialised.includes(miner.address), 'the full address must never appear in explorer output');
 });
 
-test('mining eligibility follows protocol time, not the caller', { skip, timeout: 60_000 }, async () => {
+test('mining eligibility follows protocol time, not the caller', { skip, timeout: ms(60_000) }, async () => {
   const miner = await ensureMiner();
   // Every node answers on its own protocol clock, and none of them can be talked
   // out of a cooldown: the endpoint takes an address and nothing else, so there
@@ -665,7 +689,7 @@ test('mining eligibility follows protocol time, not the caller', { skip, timeout
   }
 });
 
-test('every node reports the same Proof of Time state, derived from the blocks it serves', { skip, timeout: 60_000 }, async () => {
+test('every node reports the same Proof of Time state, derived from the blocks it serves', { skip, timeout: ms(60_000) }, async () => {
   const states = [];
   for (const node of NODES) {
     const { status: code, body } = await get(`${rpc(node)}/pot`);
@@ -718,7 +742,7 @@ test('every node reports the same Proof of Time state, derived from the blocks i
   }
 });
 
-test('the platform revenue split is 40/60 and adds back to the whole on every node', { skip, timeout: 60_000 }, async () => {
+test('the platform revenue split is 40/60 and adds back to the whole on every node', { skip, timeout: ms(60_000) }, async () => {
   for (const node of NODES) {
     const { status: code, body } = await get(`${rpc(node)}/revenue`);
     assert.equal(code, 200, `${node.name}: /revenue must be served`);

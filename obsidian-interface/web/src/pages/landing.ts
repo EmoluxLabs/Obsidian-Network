@@ -77,7 +77,8 @@ const pillars = el(
     el(
       'p',
       {},
-      'Names, parcels, capsules, posts, tips, validator bonds and oracle prices are chain state with a Merkle root every node recomputes. ' +
+      'Names, parcels, capsules, posts, tips and validator bonds are chain state with a Merkle root every node recomputes. ' +
+        'Their prices are consensus parameters denominated in OBS, so the protocol needs no exchange rate and no price source to function. ' +
         'The interface here is a window; it can be replaced by any node operator.',
     ),
   ),

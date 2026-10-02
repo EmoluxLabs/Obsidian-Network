@@ -43,7 +43,6 @@ import {
   potWeight,
   decodeBlock,
   encodeBlock,
-  summarizeBlock,
 } from './block.js';
 import { BlockStore, CHECKPOINT_INTERVAL_BLOCKS, type IndexEntry } from '../storage/blockstore.js';
 import { Mempool } from './mempool.js';

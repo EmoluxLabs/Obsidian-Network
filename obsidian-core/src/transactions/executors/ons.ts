@@ -21,7 +21,6 @@ import {
   type TxEnvelope,
 } from '../../protocol/types.js';
 import { assertAddress, assertAmount, assertGas } from '../helpers.js';
-import { treasuryWallet } from '../../genesis/rules.js';
 import { RevenueSource } from '../../economy/accounting.js';
 import type { ExecutorContext } from '../types.js';
 
@@ -93,7 +92,6 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
   const body = decodeOnsBody(tx.body);
   const name = normalizeName(body.name);
   const protocolTime = apply.timestamp;
-  const treasury = treasuryWallet(state);
 
   switch (body.op) {
     case OnsOp.REGISTER: {

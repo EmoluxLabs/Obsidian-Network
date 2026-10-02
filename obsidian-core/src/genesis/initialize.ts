@@ -16,7 +16,7 @@ import { sha256Hex, utf8, domainHash, toHex } from '../crypto/hash.js';
 import { DOMAIN } from '../protocol/domains.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
 import type { Block } from '../protocol/types.js';
-import { buildBlock, blockHash } from '../blockchain/block.js';
+import { blockHash } from '../blockchain/block.js';
 import { PARAMS_HASH, computeStateRoot } from '../blockchain/state-root.js';
 import { emptyGenesisState } from '../blockchain/state.js';
 import { WorldState } from '../blockchain/state.js';

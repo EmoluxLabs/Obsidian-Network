@@ -232,7 +232,6 @@ export class P2PService extends EventEmitter {
   private advertisePort = 0;
   private maxInbound: number;
   private maxOutbound: number;
-  private connecting = false;
   private readonly dialing = new Set<string>();
   private server: WebSocketServer | null = null;
   private timers: NodeJS.Timeout[] = [];

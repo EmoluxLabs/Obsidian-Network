@@ -17,7 +17,6 @@
  * there are no hidden flags that change consensus behaviour.
  */
 
-import { existsSync } from 'node:fs';
 import { loadConfig, type LoadedConfig } from './config/config.js';
 import { startNode, validateDataDir } from './node.js';
 import {

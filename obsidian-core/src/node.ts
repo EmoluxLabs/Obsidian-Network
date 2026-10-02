@@ -23,7 +23,7 @@ import { Keystore, keystorePassphraseFromEnv } from './crypto/keystore.js';
 import { addressFromPublicKey, nodeIdFromPublicKey } from './crypto/keys.js';
 import { genesisDocumentFor, genesisId as computeGenesisId } from './genesis/initialize.js';
 import { Logger } from './security/logger.js';
-import { loadConfig, describeConfig, type LoadedConfig } from './config/config.js';
+import { describeConfig, type LoadedConfig } from './config/config.js';
 import { CONSENSUS_PARAMS } from './protocol/params.js';
 import { maxBig } from './protocol/amount.js';
 import { scheduledProposer } from './consensus/proposer.js';

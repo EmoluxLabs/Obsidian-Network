@@ -11,6 +11,53 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.9] — 2026-10-02
+
+Interface copy and a repository-wide dead-code sweep. No consensus change;
+`PROTOCOL_VERSION` stays 1.2.0 and the params hash is unchanged.
+
+### Fixed
+
+* **The landing page still described an oracle the protocol no longer uses.**
+  One pillar listed "oracle prices" among the things the platform keeps as
+  chain state, which reads as the network needing an external USD source to
+  work. It does not. That pillar now says prices are consensus parameters
+  denominated in OBS and that no exchange rate is required.
+* **The developer page carried a whole "Prices and the oracle" section**
+  claiming "dollar-priced features (ONS registration, business pages, land)
+  convert through the protocol price" and would fail with
+  `ERR_ORACLE_UNAVAILABLE`. All of that stopped being true in 1.2.0. It now
+  documents the OBS parameter table, and says plainly that a node may still
+  publish an OBS/USD observation for reporting while no fee and no state
+  transition reads it. Its verification snippet also stopped naming the
+  long-gone 1.0.0 archive.
+
+### Changed
+
+* `noUnusedLocals` and `noUnusedParameters` are now on for obsidian-core and
+  the interface server. Only the browser bundle enforced them, which is how
+  four dead oracle imports (`usdMicroToSeals`, `sealsToUsdMicro`,
+  `requirePrice`) survived the repricing that removed their reason to exist.
+  The sweep cleared fourteen findings in total: unused imports in `chain.ts`,
+  `proposer.ts`, `initialize.ts`, `node.ts`, `index.ts`, `node-registry.ts`
+  and `ons.ts`; a dead `connecting` field in `p2p.ts`; dead locals in
+  `mining/rules.ts`, `land.ts` and `ons.ts`; and four unused parameters marked
+  `_ctx` so the signatures stay stable.
+
+  One of these was checked as a possible consensus bug and cleared:
+  `mining/rules.ts` computed `storedCycleStart` and never used it, while
+  cycle comparison used the raw stored value. Every write of
+  `mining.cycleStartAt` goes through `alignedCycleStart()`, so the comparison
+  was already correct and no claim accounting was affected.
+
+### Tests
+
+Core 244, interface 177, invariants 55, cluster e2e 13, worker 7 — unchanged
+and all green, which is the point: this release removes code, it does not
+change behaviour.
+
+---
+
 ## [1.2.8] — 2026-10-01
 
 Interface and docs. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.

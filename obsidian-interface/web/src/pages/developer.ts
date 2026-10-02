@@ -85,18 +85,25 @@ layout({
       { class: 'card' },
       el('h2', {}, 'Release integrity'),
       el('p', {}, 'Each release in /releases is an archive with a SHA-256 checksum list. Verify before you run a binary that will hold keys:'),
-      el('pre', { class: 'code' }, 'sha256sum --check SHA256SUMS\nsha256sum obsidian-core-1.0.0.tar.gz   # compare against the published digest'),
+      el('pre', { class: 'code' }, 'sha256sum --check SHA256SUMS   # verifies every published archive at once'),
       el('p', { class: 'fineprint' }, 'Nodes also compare core version, protocol version, network id and genesis id when they handshake, so a mismatched binary is rejected instead of corrupting your view of the chain.'),
     ),
     el(
       'section',
       { class: 'card' },
-      el('h2', {}, 'Prices and the oracle'),
+      el('h2', {}, 'Prices'),
       el(
         'p',
         {},
-        'Dollar-priced features (ONS registration, business pages, land) convert through the protocol price: the median of at least two independent submissions, published on chain, bounded and time-limited. ' +
-          'If fewer than two sources are fresh, the protocol refuses the transaction with `ERR_ORACLE_UNAVAILABLE`. It never guesses, and the interface cannot price anything on its own.',
+        'Every protocol fee is denominated in OBS and fixed by consensus: name registration and renewal, business pages, the land price band and the validator bond are all entries in the parameter table, ' +
+          'readable at GET /params and covered by the params hash. Nothing converts through an exchange rate, so no price feed can be stale, thin or manipulated into changing what anything costs, ' +
+          'and a chain that has never seen a price submission prices every feature correctly.',
+      ),
+      el(
+        'p',
+        { class: 'fineprint' },
+        'Nodes can still publish an OBS/USD observation on chain for reporting, and GET /oracle serves it, but no fee and no state transition reads it. ' +
+          'What OBS trades for is a matter for the markets that trade it.',
       ),
     ),
   ],

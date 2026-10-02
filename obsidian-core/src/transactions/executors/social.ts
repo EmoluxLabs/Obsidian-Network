@@ -21,7 +21,6 @@ import {
   assertAddress,
   assertAmount,
   assertGas,
-  requirePrice,
   splitBps,
 } from '../helpers.js';
 import { treasuryWallet } from '../../genesis/rules.js';

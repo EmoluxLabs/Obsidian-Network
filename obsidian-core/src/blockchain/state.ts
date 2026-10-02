@@ -368,7 +368,7 @@ export class WorldState {
    * machine never allows a negative balance, which is what makes OBS
    * double-spend-free at the account level.
    */
-  debit(address: string, amount: bigint, ctx: ApplyContext, reason: string): void {
+  debit(address: string, amount: bigint, _ctx: ApplyContext, reason: string): void {
     if (amount < 0n) reject(ErrCode.AMOUNT_NEGATIVE, 'debit amount must not be negative');
     if (amount === 0n) return;
     const account = this.s.accounts.get(address);
@@ -400,7 +400,7 @@ export class WorldState {
   issue(
     source: IssuanceSource,
     amount: bigint,
-    ctx: ApplyContext,
+    _ctx: ApplyContext,
     reason: string,
   ): void {
     if (!AUTHORISED_ISSUANCE.has(source)) {
@@ -726,7 +726,7 @@ export class WorldState {
   }
 
   /** Pay node runner rewards out of the pool. Only the settlement routine calls this. */
-  nodeRewardOutflow(amount: bigint, ctx: ApplyContext, reason: string): void {
+  nodeRewardOutflow(amount: bigint, _ctx: ApplyContext, reason: string): void {
     if (amount <= 0n) return;
     if (this.s.nodeRewards.balance < amount) {
       reject(ErrCode.INSUFFICIENT_FUNDS, 'node runner pool cannot cover this payout', {

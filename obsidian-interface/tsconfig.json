@@ -7,6 +7,10 @@
     "outDir": "dist",
     "rootDir": ".",
     "strict": true,
+    // Dead imports are how an oracle dependency survived a repricing that
+    // removed it: the compiler now refuses them.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": false,
     "noFallthroughCasesInSwitch": true,

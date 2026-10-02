@@ -34,7 +34,6 @@ import {
   assertAddress,
   assertAmount,
   assertGas,
-  requirePrice,
 } from '../helpers.js';
 import { treasuryWallet } from '../../genesis/rules.js';
 import { divisionSeed, normaliseDivisionId, DIVISION_LEVEL_CODES } from '../../land/registry.js';
@@ -159,7 +158,6 @@ export function executeLand(
   const { state, apply, net } = ctx;
   const body = decodeLandBody(tx.body);
   validateDescriptor(body, net);
-  const protocolTime = apply.timestamp;
   const treasury = treasuryWallet(state);
   const parcelId = computeParcelId(body);
   const divisionId = normaliseDivisionId(body.divisionId);

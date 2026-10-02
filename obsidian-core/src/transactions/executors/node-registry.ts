@@ -43,7 +43,6 @@ import { Reader, Writer } from '../../protocol/encoding.js';
 import { ErrCode, reject } from '../../protocol/errors.js';
 import {
   NodeRegistryOp,
-  TxType,
   type NodeRegistryBody,
   type NodeRecord,
   type TxEnvelope,
@@ -503,7 +502,7 @@ function requireRegisteredNode(ctx: ExecutorContext, body: NodeRegistryBody): No
  * gives every statement a nonce (so two identical heartbeats cannot both land)
  * and keeps the node's identity key from needing any funds to exist.
  */
-function assertNodeStatementSender(ctx: ExecutorContext, node: NodeRecord, sender: string): void {
+function assertNodeStatementSender(_ctx: ExecutorContext, node: NodeRecord, sender: string): void {
   if (sender !== node.rewardWallet) {
     reject(
       ErrCode.UNAUTHORIZED,

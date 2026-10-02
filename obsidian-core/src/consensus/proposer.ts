@@ -32,7 +32,6 @@
  *   verified transactions — the state a chain carries — not spent computation.
  */
 
-import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import type { WorldState } from '../blockchain/state.js';
 import type { Block } from '../protocol/types.js';
 import { blockHash } from '../blockchain/block.js';

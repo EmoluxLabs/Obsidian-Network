@@ -75,7 +75,6 @@ export function evaluateMining(
 
   const mining = account?.mining;
   const cycleStart = alignedCycleStart(protocolTime);
-  const storedCycleStart = mining ? alignedCycleStart(Math.max(mining.cycleStartAt, 1)) : cycleStart;
   const sameCycle = mining ? mining.cycleStartAt === cycleStart : true;
   const claimsThisCycle = mining && sameCycle ? mining.claimsThisCycle : 0;
 
