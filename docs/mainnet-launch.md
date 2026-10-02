@@ -78,8 +78,8 @@ sha256sum -c SHA256SUMS
 Expected: every archive reports `OK`, and the verifier prints the package
 version and protocol version it found. The core archive additionally runs its
 246 tests and they must pass. The node operator package ships `dist/` without
-tests, so `--with-tests` reports "no test script; skipping" there — that is why
-you verify the core archive too.
+tests, so `--with-tests` reports "ships no test suite; skipping" there — that is
+why you verify the core archive too, which does ship its suite.
 
 `verify-release.sh` exits non-zero if a digest does not match or the archive is
 not listed in `SHA256SUMS`, so it is safe to use as a gate in a deployment

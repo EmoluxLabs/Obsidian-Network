@@ -176,8 +176,8 @@ echo "→ staging archives under $STAGING"
 stage "$STAGING/obsidian-core" \
   obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/tsconfig.json obsidian-core/tsconfig.test.json obsidian-core/vitest.config.ts \
-  obsidian-core/src obsidian-core/dist obsidian-core/config obsidian-core/deployment \
-  obsidian-core/README.md .env.example 2>/dev/null || true
+  obsidian-core/src obsidian-core/tests obsidian-core/dist obsidian-core/config \
+  obsidian-core/deployment obsidian-core/README.md .env.example 2>/dev/null || true
 cp LICENSE "$STAGING/obsidian-core/" 2>/dev/null || true
 
 # ── 2. obsidian-interface: server, built bundles and the site shells ─────────
@@ -216,7 +216,7 @@ cp scripts/check-invariants.mjs "$STAGING/obsidian-node-operator/check-invariant
 stage "$STAGING/obsidian-interface-selfhost" \
   obsidian-interface/dist obsidian-interface/public obsidian-interface/web/core \
   obsidian-interface/package.json obsidian-interface/package-lock.json \
-  obsidian-interface/deployment obsidian-interface/tests \
+  obsidian-interface/deployment \
   landing mine wallet explorer social capsule ons circle developer node app audit \
   docs LICENSE
 
