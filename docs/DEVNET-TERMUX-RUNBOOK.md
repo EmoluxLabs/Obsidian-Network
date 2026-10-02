@@ -1,5 +1,13 @@
 # Devnet on Termux — start a node and test the whole platform
 
+> **For protocol 1.3.0, use [`DEVNET-TERMUX-QUICKSTART.md`](DEVNET-TERMUX-QUICKSTART.md) instead.**
+>
+> This document walks through the **1.2.16 release archives**, which is still
+> exactly what it says it is — but 1.2.16 predates the 1.3.0 consensus fixes
+> (validator-outage liveness, reorg transaction loss, BIP-32 derivation) and
+> uses the old params hash `dbbf8511bfe5bee493f80f3dd23a047a`. A 1.2.16 node
+> will not peer with a 1.3.0 node.
+
 Every command below was run end to end before this page was written, against
 the **1.2.16 release archives**, not a working tree. Paste them into **Termux on
 Android** (on a laptop: Git Bash on Windows, or any shell on Linux/macOS —
