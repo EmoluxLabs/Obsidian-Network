@@ -1,0 +1,12 @@
+node_modules
+dist
+.data
+public/js
+web/core
+*.log
+*.keystore.json
+node-key.json
+*.pass
+.env
+coverage
+.vitest

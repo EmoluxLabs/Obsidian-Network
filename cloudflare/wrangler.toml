@@ -1,0 +1,42 @@
+# Obsidian interface at the edge.
+#
+# Every value below marked CHANGE-ME is a placeholder. `npm run preflight`
+# (scripts/check-wrangler.mjs) refuses to pass while any of them remain, and
+# the deploy script runs it first — a worker deployed against example.invalid
+# looks deployed and serves nobody.
+#
+# The worker is a cache and a proxy in front of the interface. See README.md
+# for the rule it must never break: it never becomes an authority on chain
+# data.
+name = "obsidian-gateway"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+workers_dev = false
+
+# Your Cloudflare account. Find it with: npx wrangler whoami
+account_id = "CHANGE-ME-account-id"
+
+# OIDC/service tokens are not needed: this worker performs no privileged action.
+
+[vars]
+# The origin that actually reads Obsidian Core nodes (your interface instance).
+OBSIDIAN_ORIGIN = "https://CHANGE-ME.example.org"
+# Static asset origin (Pages, R2 or the same interface).
+OBSIDIAN_ASSETS_ORIGIN = "https://CHANGE-ME.example.org"
+# Seconds a cached chain read may be reused. Keep it short: stale chain data is
+# still chain data, and a user who needs certainty should read a node directly.
+CHAIN_CACHE_SECONDS = "5"
+
+[observability]
+enabled = true
+
+# Route the zone's traffic through this worker.
+[[routes]]
+pattern = "CHANGE-ME.example.org/*"
+zone_name = "CHANGE-ME.example.org"
+
+# Cache API storage for proxied chain reads.
+# Create one with: npx wrangler kv namespace create OBSIDIAN_CACHE
+[[kv_namespaces]]
+binding = "OBSIDIAN_CACHE"
+id = "CHANGE-ME-kv-namespace-id"

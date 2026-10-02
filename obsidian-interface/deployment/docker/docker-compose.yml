@@ -1,0 +1,32 @@
+# Obsidian Interface — front this at a CDN, a reverse proxy or nothing at all.
+#
+#   docker compose -f obsidian-interface/deployment/docker/docker-compose.yml up -d
+#
+# Point it at nodes you run (or that you trust to be honest) — the interface is a
+# reader, and if every node it is configured with is down it says so instead of
+# inventing chain data.
+name: obsidian-interface
+
+services:
+  interface:
+    build:
+      # Context is the repository root: the browser bundle is compiled from the
+      # same core modules the node runs.
+      # Repository root: the Dockerfile builds obsidian-core first.
+      context: ../../..
+      dockerfile: obsidian-interface/deployment/docker/Dockerfile
+    image: obsidian/interface:1.1.0
+    restart: unless-stopped
+    environment:
+      OBSIDIAN_NODE_URLS: ${OBSIDIAN_NODE_URLS:-http://host.docker.internal:8630}
+      OBSIDIAN_INTERFACE_TRUST_PROXY: ${OBSIDIAN_INTERFACE_TRUST_PROXY:-true}
+      OBSIDIAN_INTERFACE_LOG_LEVEL: ${OBSIDIAN_INTERFACE_LOG_LEVEL:-info}
+    ports:
+      - "${OBSIDIAN_INTERFACE_BIND:-127.0.0.1}:8788:8788"
+    volumes:
+      - interface-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  interface-data:

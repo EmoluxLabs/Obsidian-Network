@@ -1,0 +1,24 @@
+# Prometheus scrape configuration for Obsidian Core.
+#
+# /metrics carries no address, no balance and no identity, but it is still part
+# of the RPC surface: keep the RPC port on a private interface and scrape it
+# from inside your network. Do not publish it.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - obsidian-alerts.yml
+
+scrape_configs:
+  - job_name: obsidian
+    metrics_path: /metrics
+    static_configs:
+      # One target per node. The `instance` label is added automatically; every
+      # sample already carries `network` and `chain_id` from the node itself,
+      # so a single Prometheus can scrape mainnet and devnet without
+      # conflating them.
+      - targets: ['127.0.0.1:8630']
+        labels: { deployment: mainnet-1 }
+      # - targets: ['127.0.0.1:38630']
+      #   labels: { deployment: devnet-1 }
