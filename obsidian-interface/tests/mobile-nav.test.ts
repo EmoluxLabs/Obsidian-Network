@@ -63,9 +63,9 @@ describe('the landing page offers three doors, not a directory', () => {
     expect(navLinks).toContain('/social/');
     expect(navLinks.length).toBeGreaterThanOrEqual(10);
 
-    // And CSS hides it on the landing page at every width until `menu-open`.
-    expect(css).toMatch(/\.masthead\.landing \.nav \{\s*display: none;/);
-    expect(css).toMatch(/\.masthead\.landing\.menu-open \.nav \{/);
+    // And CSS hides it at every width, on every page, until `menu-open`.
+    expect(css).toMatch(/\.masthead \.nav \{ display: none; \}/);
+    expect(css).toMatch(/\.masthead\.menu-open \.nav \{/);
   });
 });
 
@@ -112,7 +112,7 @@ describe('the menu button', () => {
 });
 
 describe('inner pages', () => {
-  it('still carry the full navigation, plus the button for narrow screens', async () => {
+  it('carry the full navigation inside the same drawer', async () => {
     await render('mine');
     const header = document.querySelector('.masthead')!;
     expect(header.classList.contains('landing')).toBe(false);
@@ -141,7 +141,9 @@ describe('the page fits the screen', () => {
   });
 
   it('lets an opened drawer scroll instead of growing without end', () => {
-    expect(css).toMatch(/\.masthead\.menu-open \.nav \{ max-height: 60vh; overflow-y: auto; \}/);
+    // The drawer scrolls at every width, and is capped tighter on a phone.
+    expect(css).toMatch(/\.masthead\.menu-open \.nav \{[\s\S]*?max-height: 70vh;[\s\S]*?overflow-y: auto;/);
+    expect(css).toMatch(/@media \(max-width: 720px\) \{[\s\S]*?max-height: 60vh;/);
   });
 
   it('declares a responsive viewport in every generated shell', () => {
@@ -155,9 +157,13 @@ describe('the page fits the screen', () => {
 });
 
 describe('the phone layout itself', () => {
-  it('collapses the navigation below 900px and shrinks the masthead below 720px', () => {
-    expect(css).toMatch(/@media \(max-width: 900px\) \{[\s\S]*?\.nav-toggle \{ display: inline-flex; \}/);
-    expect(css).toMatch(/@media \(max-width: 900px\) \{[\s\S]*?\.masthead \.nav \{ display: none; \}/);
+  it('keeps the navigation behind the button at every width, and shrinks the masthead below 720px', () => {
+    // Not inside a media query: there must be no viewport width at which the
+    // ten-link bar renders inline and takes the screen back.
+    const navRules = css.slice(css.indexOf('.nav-toggle { display: inline-flex; }'));
+    expect(navRules.startsWith('.nav-toggle { display: inline-flex; }')).toBe(true);
+    expect(css).toMatch(/\n\.masthead \.nav \{ display: none; \}/);
+    expect(css).toMatch(/\n\.nav-toggle \{ display: inline-flex; \}/);
     // Touch targets large enough to hit.
     expect(css).toMatch(/\.nav-toggle \{[\s\S]*?min-height: 44px;/);
     expect(css).toMatch(/\.cta \{ min-height: 44px;/);

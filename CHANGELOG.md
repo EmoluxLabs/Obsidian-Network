@@ -11,6 +11,35 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.15] — 2026-10-02
+
+Interface. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+### Fixed
+
+* **The navigation could still take over the screen above 900px.** 1.2.13 put
+  the ten product links behind a menu button, but only collapsed them below
+  900px on inner pages — the landing page was collapsed at every width, inner
+  pages were not. Any viewport wider than that, including a phone that reports
+  a wide viewport and any browser in desktop mode, still got the inline
+  ten-link bar.
+
+  The product list is now behind the menu button **at every width, on every
+  page**. There is no viewport size at which it renders inline, so there is no
+  size at which it can cover the content again. The drawer scrolls at `70vh`,
+  tightened to `60vh` on a phone.
+
+This is the last of the width-dependent behaviour: one menu, one behaviour,
+everywhere.
+
+### Tests
+
+Interface 187, unchanged in count — the existing drawer cases were rewritten
+to assert the rules are **not** inside a media query, which is the property
+that was wrong.
+
+---
+
 ## [1.2.14] — 2026-10-02
 
 Interface. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.

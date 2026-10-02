@@ -188,21 +188,28 @@ a:hover { text-decoration: underline; }
 .masthead.menu-open .nav-toggle-bars::before { transform: translateY(6px) rotate(45deg); }
 .masthead.menu-open .nav-toggle-bars::after { transform: translateY(-6px) rotate(-45deg); }
 
-/* The landing page keeps every product behind the button at all widths. */
-.masthead.landing .nav-toggle { display: inline-flex; }
-.masthead.landing .nav { display: none; }
-.masthead.landing.menu-open .nav {
+/*
+ * The product list lives behind the button at every width, on every page.
+ *
+ * It was collapsed only below 900px at first, which left the ten-link bar
+ * rendering inline on anything wider — including phones that report a wide
+ * viewport, and any tablet or desktop-mode browser. One menu, one behaviour,
+ * no width at which the navigation can take over the screen again.
+ */
+.nav-toggle { display: inline-flex; }
+.masthead .nav { display: none; }
+.masthead.menu-open .nav {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 8px;
   padding-bottom: 18px;
+  max-height: 70vh;
+  overflow-y: auto;
 }
 
 @media (max-width: 900px) {
-  .nav-toggle { display: inline-flex; }
-  .masthead .nav { display: none; }
+  /* One column on a narrow screen, with the blurb pushed to the right edge. */
   .masthead.menu-open .nav {
-    display: grid;
     grid-template-columns: 1fr;
     gap: 4px;
     padding-bottom: 16px;
@@ -425,7 +432,7 @@ tr:hover td { background: rgba(245, 181, 68, 0.03); }
    */
   .masthead { position: static; }
   /* A drawer opened on a small screen scrolls rather than growing forever. */
-  .masthead.menu-open .nav { max-height: 60vh; overflow-y: auto; }
+  .masthead.menu-open .nav { max-height: 60vh; }
 
   /* Brand and menu share the first row; the headline sits under them, so the
      masthead costs two short rows instead of a screenful. */
