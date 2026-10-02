@@ -1,6 +1,6 @@
 # Obsidian Network 1.2.17
 
-Built from commit `daeeb3a5eec8bf077e0bca8d1a81442af4cf9f3e` at 2026-10-02T17:26:32Z.
+Built from commit `8f744ddd4a79cdf9f60e35dd9bff8a165f41eef3` at 2026-10-02T17:36:56Z.
 
 ## Verify before you run
 
@@ -37,7 +37,7 @@ cat MANIFEST.json          # asset sizes, networks, protocol constants
 ## What is in this release
 
 * consensus, p2p, RPC, indexer and the eleven transaction types
-* 463 automated tests, all of them run immediately before packaging: core (246), interface (187), edge worker (9), release verification and signing behaviour (8) and the three-node cluster end-to-end suite (13)
+* 467 automated tests, all of them run immediately before packaging: core (246), interface (191), edge worker (9), release verification and signing behaviour (8) and the three-node cluster end-to-end suite (13)
 * no WAC, no $5 activation, no legacy signup allocation, no admin mint, no
   native exchange — verify with `curl -s localhost:8630/audit/compliance`
 

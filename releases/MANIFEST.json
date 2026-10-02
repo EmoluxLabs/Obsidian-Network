@@ -1,8 +1,8 @@
 {
   "product": "Obsidian Network",
   "version": "1.2.17",
-  "commit": "daeeb3a5eec8bf077e0bca8d1a81442af4cf9f3e",
-  "builtAt": "2026-10-02T17:26:32Z",
+  "commit": "8f744ddd4a79cdf9f60e35dd9bff8a165f41eef3",
+  "builtAt": "2026-10-02T17:36:56Z",
   "protocolVersion": "1.2.0",
   "networks": {
     "mainnet": {
@@ -35,15 +35,15 @@
   "assets": [
     {
       "name": "obsidian-cloudflare-1.2.17.tar.gz",
-      "bytes": 134985
+      "bytes": 135076
     },
     {
       "name": "obsidian-cloudflare-1.2.17.zip",
-      "bytes": 160276
+      "bytes": 160375
     },
     {
       "name": "obsidian-core-1.2.17.tar.gz",
-      "bytes": 577775
+      "bytes": 577800
     },
     {
       "name": "obsidian-core-1.2.17.zip",
@@ -51,31 +51,31 @@
     },
     {
       "name": "obsidian-interface-1.2.17.tar.gz",
-      "bytes": 2009607
+      "bytes": 2010795
     },
     {
       "name": "obsidian-interface-1.2.17.zip",
-      "bytes": 2174226
+      "bytes": 2176594
     },
     {
       "name": "obsidian-interface-selfhost-1.2.17.tar.gz",
-      "bytes": 1876271
+      "bytes": 1876017
     },
     {
       "name": "obsidian-interface-selfhost-1.2.17.zip",
-      "bytes": 2007658
+      "bytes": 2007757
     },
     {
       "name": "obsidian-network-source-1.2.17.tar.gz",
-      "bytes": 896260
+      "bytes": 898925
     },
     {
       "name": "obsidian-node-operator-1.2.17.tar.gz",
-      "bytes": 469972
+      "bytes": 470076
     },
     {
       "name": "obsidian-node-operator-1.2.17.zip",
-      "bytes": 612149
+      "bytes": 612248
     }
   ],
   "verification": "sha256sum -c SHA256SUMS, then compare the digests with the published release notes"
