@@ -28,7 +28,7 @@ const STATUS_FIXTURE = {
   genesisId: '7d48c9f211e2c4fe94ee2be4d1a1f734e4b7aba6',
   networkId: 'obsidian-devnet-1',
   chainId: 7780,
-  protocolVersion: '1.0.0',
+  protocolVersion: '1.2.0',
   paramsHash: '8385f8ece803d89f6ce43411db38afce',
   totalBlocks: 12,
   peers: 2,
@@ -78,9 +78,9 @@ const ORACLE_FIXTURE = {
   ],
 };
 
-/** `/params`: the dollar prices that the pages convert at the protocol median. */
+/** `/params`: what the pages read for the protocol version and the OBS fee table. */
 const PARAMS_FIXTURE = {
-  protocolVersion: '1.0.0',
+  protocolVersion: '1.2.0',
   paramsHash: '8385f8ece803d89f6ce43411db38afce',
   maximumSupplyObs: '21000000.000000000000000000',
   genesisAllocationObs: '100000.000000000000000000',
@@ -136,8 +136,8 @@ const NETWORK_FIXTURE = {
   network: { name: 'devnet', networkId: 'obsidian-devnet-1', chainId: 7780, addressHrp: 'dobs', p2pMagic: 'OBSD', defaultRpcPort: 38630, defaultP2pPort: 38631, displayName: 'OBS Devnet', isProduction: false },
   genesisId: '7d48c9f211e2c4fe94ee2be4d1a1f734e4b7aba6',
   paramsHash: '8385f8ece803d89f6ce43411db38afce',
-  coreVersion: '1.0.0',
-  protocolVersion: '1.0.0',
+  coreVersion: '1.2.17',
+  protocolVersion: '1.2.0',
   bootstrap: { hint: 'Query /nodes on several known nodes and cross-check.', seedNodes: [], domains: [] },
 };
 

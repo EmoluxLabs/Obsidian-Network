@@ -206,7 +206,7 @@ never return balances and never echo key material.
   validation of its own prerequisites, systemd unit, nginx config, Dockerfile and
   compose file, all under `obsidian-interface/deployment/`.
 
-**Verification:** `obsidian-interface/tests/` — **187 tests** in twelve files.
+**Verification:** `obsidian-interface/tests/` — **191 tests** in thirteen files.
 
 1. **HTTP server (39 + 23 + 17 + 12 + 8 + 11 tests)**: invite-only registration,
    invite reuse, the five-invite cap, session lifecycle, origin policy, header
@@ -232,6 +232,10 @@ never return balances and never echo key material.
    are build gates rather than feature tests: `no-usd-copy.test.ts` (5) rejects
    dollar-denominated copy anywhere the interface or the docs ships it, and
    `shipped-bundle.test.ts` (2) fails when a bundle drifts from its source.
+   `operations-signing.test.ts` (4) decodes what the browser operations actually
+   sign and compares the envelope with the node's parameter set — it exists
+   because the operations module once hard-coded a protocol version the state
+   machine rejects, and nothing drove that path.
 
 During development the interface was also run against the three-node devnet:
 `/api/nodes` reported all three healthy (heights 33/33/33, latencies 16–23 ms)
@@ -463,7 +467,7 @@ operational, and it is now closed.
   non-zero on drift; that was confirmed by mutating a parameter in the build and
   watching it fail, then restoring it.
 * **CI** (`.github/workflows/ci.yml`) runs on every push: core build, typecheck
-  and 246 tests; interface build and 187 tests; the 9 edge worker tests; the 13
+  and 246 tests; interface build and 191 tests; the 9 edge worker tests; the 13
   three-node cluster tests; the 55 invariants; **mainnet genesis determinism**
   (the same genesis id twice); a **real mainnet node boot** asserting
   `invariantOk: true`, the 21,000,000 cap and all 16 removed features still
@@ -485,14 +489,14 @@ across repeated runs; a mainnet node started from the packaged
 
 ## 15. Final status — **what is verified, what is not**
 
-**Verified by automated tests in this workspace (463 tests, all passing):**
+**Verified by automated tests in this workspace (467 tests, all passing):**
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
 | `obsidian-core` unit | 103 | canonical encoding, hashing, addresses, amounts, mining schedule, CLI wallet, peer retry policy, **Proof of Time (23)**, **node reward economics (24)** |
 | `obsidian-core` integration | 96 | consensus, blocks, reorg rules, all eleven transaction types, indexer, **node runner registration, evidence and settlement (27)** |
 | `obsidian-core` security | 47 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route, **PoT/revenue/registry routes and the extended compliance audit (3)** |
-| `obsidian-interface` | 187 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, **node runner page and PoT surfacing (9)** |
+| `obsidian-interface` | 191 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, **node runner page and PoT surfacing (9)** |
 | `cloudflare` | 9 | cache/proxy semantics, honest failures, no CSP weakening |
 | `tests/e2e/cluster.test.mjs` | 13 | three real nodes: genesis claim, payment + gas, replay, oracle, ONS, supply invariant, explorer masking, protocol-time eligibility, **PoT state agreement, 40/60 split** |
 

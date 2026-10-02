@@ -87,10 +87,47 @@ limit stated rather than papered over.
   on far longer periods than this touched. `docs/soak-testing.md` says so, and
   the deployment guide's gap list still records the soak gap as open.
 
+### Fixed after the first cut of this release
+
+The 1.2.17 tag was re-cut so that it labels the commit the published archives
+are built from. Everything below is inside it.
+
+* **Browser-signed transactions were rejected by every node.**
+  `obsidian-interface/web/src/lib/operations.ts` carried a hard-coded
+  `protocolVersion: '1.0.0'` while the state machine accepts exactly the version
+  in `CONSENSUS_PARAMS` (1.2.0), so a payment, claim, name or land purchase made
+  in the interface failed with `VERSION_MISMATCH`. It now imports the synced
+  core constant, and `tests/operations-signing.test.ts` decodes what each
+  operation signs and compares it with the node's parameter set — reintroducing
+  the literal makes three of those tests fail.
+* **The documentation audit was finished.** Every stale count, protocol version,
+  archive name, branch name and feature claim found in the tree was corrected
+  against the code and the suites as they actually run, and the three referenced
+  but missing documents (`docs/consensus.md`, `docs/economics.md`,
+  `docs/release-process.md`) were written. The FAQ no longer claims the oracle
+  can close ONS, business pages or land; nothing has read a price feed since
+  1.2.0.
+* **The packaging gate counted four of the five suites it runs**, so generated
+  release notes reported 455 tests instead of the 463 (now 467) that ran. The
+  signing suite is included, and the note that says so is generated from the
+  runs themselves.
+* **`verify-release.sh --with-tests` silently skipped the core archive**: it
+  looked for `package.json` only at the archive root, and the node is nested one
+  level down. Underneath sat a second gap — the core archive shipped no tests at
+  all while the docs promised "source, tests, built `dist/`". The node suite is
+  packaged now and the archive runs its 246 tests on request. The interface
+  archive is skipped deliberately: its live-node suite drives a node from the
+  repository and is not self-contained in a distribution archive. The
+  runtime-only selfhost bundle no longer ships test sources whose imports it
+  cannot satisfy.
+* `npm run typecheck` failed at the previous cut in both packages on unused
+  imports and locals. Both are clean, and the release archives were rebuilt from
+  the fixed tree.
+
 ### Tests
 
-Core 246 (was 245), interface 187, signing 8 (was 5), edge worker 9 (was 7),
-invariants 55, cluster 13.
+Core 246, interface 191 (was 187), signing 8, edge worker 9, invariants 55,
+cluster 13 — 467 total.
 
 ---
 
