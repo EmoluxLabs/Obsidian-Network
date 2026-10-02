@@ -1,8 +1,8 @@
 {
   "product": "Obsidian Network",
-  "version": "1.2.12",
-  "commit": "28d97cd1b7c1444e3cb1e47d15ac3e812892a87d",
-  "builtAt": "2026-10-02T06:43:38Z",
+  "version": "1.2.13",
+  "commit": "88843b33492a83ee40dddeb5a4f056aa67050a54",
+  "builtAt": "2026-10-02T07:01:15Z",
   "protocolVersion": "1.2.0",
   "networks": {
     "mainnet": {
@@ -34,47 +34,47 @@
   "genesisAllocationObs": "100000",
   "assets": [
     {
-      "name": "obsidian-cloudflare-1.2.12.tar.gz",
-      "bytes": 119532
+      "name": "obsidian-cloudflare-1.2.13.tar.gz",
+      "bytes": 119544
     },
     {
-      "name": "obsidian-cloudflare-1.2.12.zip",
+      "name": "obsidian-cloudflare-1.2.13.zip",
       "bytes": 141150
     },
     {
-      "name": "obsidian-core-1.2.12.tar.gz",
-      "bytes": 529814
+      "name": "obsidian-core-1.2.13.tar.gz",
+      "bytes": 529855
     },
     {
-      "name": "obsidian-core-1.2.12.zip",
+      "name": "obsidian-core-1.2.13.zip",
       "bytes": 687953
     },
     {
-      "name": "obsidian-interface-1.2.12.tar.gz",
-      "bytes": 1965351
+      "name": "obsidian-interface-1.2.13.tar.gz",
+      "bytes": 1989141
     },
     {
-      "name": "obsidian-interface-1.2.12.zip",
-      "bytes": 2129683
+      "name": "obsidian-interface-1.2.13.zip",
+      "bytes": 2150060
     },
     {
-      "name": "obsidian-interface-selfhost-1.2.12.tar.gz",
-      "bytes": 1874797
+      "name": "obsidian-interface-selfhost-1.2.13.tar.gz",
+      "bytes": 1896269
     },
     {
-      "name": "obsidian-interface-selfhost-1.2.12.zip",
-      "bytes": 2011905
+      "name": "obsidian-interface-selfhost-1.2.13.zip",
+      "bytes": 2031466
     },
     {
-      "name": "obsidian-network-source-1.2.12.tar.gz",
-      "bytes": 861352
+      "name": "obsidian-network-source-1.2.13.tar.gz",
+      "bytes": 865363
     },
     {
-      "name": "obsidian-node-operator-1.2.12.tar.gz",
-      "bytes": 448589
+      "name": "obsidian-node-operator-1.2.13.tar.gz",
+      "bytes": 448655
     },
     {
-      "name": "obsidian-node-operator-1.2.12.zip",
+      "name": "obsidian-node-operator-1.2.13.zip",
       "bytes": 584940
     }
   ],

@@ -11,6 +11,49 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.13] — 2026-10-02
+
+Interface. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+### Fixed
+
+* **The site was unusable on a phone.** The masthead rendered all ten
+  navigation links inline at every screen width, each one two lines tall.
+  On a phone they wrapped into ten stacked rows and filled the viewport, so
+  the page itself sat below the fold and the only way to read anything was to
+  switch the browser to desktop view. The links are now a drawer:
+
+  - a **menu button** in the top corner of the masthead, 44px tall, with
+    `aria-expanded` / `aria-controls`, an animated bars-to-cross icon, close
+    on link choice and close on `Escape`;
+  - **collapsed below 900px** on every page, and **collapsed at every width on
+    the landing page**, where a first-time visitor should be given three doors
+    rather than a directory of ten products;
+  - the landing page's three calls to action — **Start Mining**, **Create
+    Wallet**, **Explorer** — remain exactly where they were, in the hero. The
+    masthead deliberately does not duplicate them.
+
+* **The masthead itself was too tall on a phone.** Below 720px the brand and
+  the menu button now share one row with the headline beneath them, the node
+  strip and headline type are smaller, and page padding is tighter — two short
+  rows instead of a screenful. The hero's three buttons go full width instead
+  of squeezing side by side, each at least 48px tall.
+
+No inline script was added: the Content-Security-Policy is still
+`script-src 'self'`, and the drawer is wired up from the page bundle.
+
+### Tests
+
+Interface 183 (was 175). Eight new cases in `tests/mobile-nav.test.ts`: the
+landing masthead adds no navigation of its own, the landing page ships exactly
+three calls to action in that order, the full product list still exists for
+the drawer, the button toggles and reports its state to assistive technology,
+it closes on link choice and on Escape, inner pages keep the full navigation
+and mark the current one active, and the stylesheet really does collapse the
+nav below 900px with large enough touch targets.
+
+---
+
 ## [1.2.12] — 2026-10-02
 
 Monitoring. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.

@@ -141,6 +141,67 @@ a:hover { text-decoration: underline; }
 .nav-label { font-weight: 600; font-size: 0.86rem; }
 .nav-blurb { font-size: 0.68rem; color: var(--text-faint); }
 
+/* ── Menu button and the drawer ────────────────────────────────────────────
+   Ten two-line links wrapped into ten rows on a phone and pushed the page
+   itself off the screen. The link list is now a drawer: hidden behind a
+   button on narrow screens, and hidden behind it on the landing page at every
+   width, because a first-time visitor gets three doors, not a directory. */
+
+.masthead-actions { display: flex; align-items: center; gap: 10px; justify-self: end; }
+
+.nav-toggle {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--ink-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  /* A 44px target: a menu button that is hard to hit is a broken menu. */
+  min-height: 44px;
+}
+.nav-toggle:hover { background: var(--ink-3); }
+.nav-toggle:focus-visible { outline: 2px solid var(--accent, #6ea8fe); outline-offset: 2px; }
+.nav-toggle-bars { position: relative; width: 18px; height: 2px; background: currentColor; border-radius: 2px; }
+.nav-toggle-bars::before,
+.nav-toggle-bars::after {
+  content: ''; position: absolute; left: 0; width: 18px; height: 2px;
+  background: currentColor; border-radius: 2px; transition: transform 0.18s ease, opacity 0.18s ease;
+}
+.nav-toggle-bars::before { top: -6px; }
+.nav-toggle-bars::after { top: 6px; }
+.masthead.menu-open .nav-toggle-bars { background: transparent; }
+.masthead.menu-open .nav-toggle-bars::before { transform: translateY(6px) rotate(45deg); }
+.masthead.menu-open .nav-toggle-bars::after { transform: translateY(-6px) rotate(-45deg); }
+
+/* The landing page keeps every product behind the button at all widths. */
+.masthead.landing .nav-toggle { display: inline-flex; }
+.masthead.landing .nav { display: none; }
+.masthead.landing.menu-open .nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  padding-bottom: 18px;
+}
+
+@media (max-width: 900px) {
+  .nav-toggle { display: inline-flex; }
+  .masthead .nav { display: none; }
+  .masthead.menu-open .nav {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding-bottom: 16px;
+  }
+  .masthead.menu-open .nav-link { flex-direction: row; align-items: baseline; gap: 8px; min-height: 44px; }
+  .masthead.menu-open .nav-blurb { margin-left: auto; }
+}
+
 /* ── Layout ────────────────────────────────────────────────────────────── */
 
 .page { max-width: 1180px; margin: 0 auto; padding: 32px 24px 80px; display: grid; gap: 22px; }
@@ -166,6 +227,7 @@ a:hover { text-decoration: underline; }
 .lede { max-width: 74ch; color: var(--text-dim); font-size: 1.02rem; }
 
 .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 26px 0 14px; }
+.cta { min-height: 44px; display: inline-flex; align-items: center; }
 .cta {
   display: inline-block;
   padding: 13px 26px;
@@ -346,10 +408,28 @@ tr:hover td { background: rgba(245, 181, 68, 0.03); }
 .footer-links { display: grid; gap: 6px; align-content: start; }
 
 @media (max-width: 720px) {
-  .masthead-inner { grid-template-columns: 1fr; }
+  /* Brand and menu share the first row; the headline sits under them, so the
+     masthead costs two short rows instead of a screenful. */
+  .masthead-inner {
+    grid-template-columns: auto 1fr;
+    grid-template-areas: 'brand actions' 'headline headline';
+    align-items: center;
+    gap: 10px 12px;
+    padding-bottom: 10px;
+  }
+  .masthead-inner .brand { grid-area: brand; }
+  .masthead-inner .headline { grid-area: headline; }
+  .masthead-actions { grid-area: actions; justify-self: end; }
+  .headline h1 { font-size: 1.25rem; }
+  .headline p { font-size: 0.82rem; }
+  .node-strip { font-size: 0.7rem; gap: 10px; padding-bottom: 10px; }
+  /* The hero's three doors go full width rather than squeezing side by side. */
+  .cta-row { gap: 10px; }
+  .cta-row .cta { flex: 1 1 100%; justify-content: center; min-height: 48px; }
   .hero { padding: 30px 22px; }
   .kv { grid-template-columns: 1fr; }
   .kv dt { margin-top: 8px; }
+  .page { padding: 20px 16px 64px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

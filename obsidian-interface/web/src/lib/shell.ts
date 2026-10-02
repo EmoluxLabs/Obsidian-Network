@@ -24,10 +24,20 @@ export const SITES: Site[] = [
   { id: 'app', href: '/app/', label: 'Account', blurb: 'Invites & nodes' },
 ];
 
+/*
+ * The landing page's three doors — Start Mining, Create Wallet, Explorer —
+ * are rendered by the page itself, in the hero. The masthead deliberately
+ * adds nothing next to them: on the landing page it is a brand, a node strip
+ * and a menu button, so the first thing a visitor sees is what this is rather
+ * than a directory of ten products.
+ */
+
 export function layout(options: { current: string; title: string; tagline: string; children: Child[] }): void {
+  const isLanding = options.current === 'landing';
+
   const nav = el(
     'nav',
-    { class: 'nav' },
+    { class: 'nav', id: 'site-nav', 'aria-label': 'All products' },
     ...SITES.map((site) =>
       el(
         'a',
@@ -40,6 +50,27 @@ export function layout(options: { current: string; title: string; tagline: strin
 
   const banner = el('div', { class: 'node-strip', id: 'node-strip' }, el('span', { class: 'muted' }, 'contacting nodes…'));
   const accountSlot = el('div', { class: 'account-slot', id: 'account-slot' });
+
+  // The ten-link navigation used to be rendered inline on every screen width.
+  // On a phone it wrapped into ten two-line rows and filled the viewport, so
+  // the page itself was below the fold until you asked for desktop view. It is
+  // now a drawer: always behind this button on the landing page, and behind it
+  // on narrow screens everywhere else.
+  const navToggle = el(
+    'button',
+    {
+      type: 'button',
+      class: 'nav-toggle',
+      id: 'nav-toggle',
+      'aria-expanded': 'false',
+      'aria-controls': 'site-nav',
+      'aria-label': 'Open menu',
+    },
+    el('span', { class: 'nav-toggle-bars', 'aria-hidden': 'true' }),
+    el('span', { class: 'nav-toggle-text' }, 'Menu'),
+  );
+
+
 
   const header = el(
     'header',
@@ -69,11 +100,31 @@ export function layout(options: { current: string; title: string; tagline: strin
         ),
       ),
       el('div', { class: 'headline' }, el('h1', {}, options.title), el('p', {}, options.tagline)),
-      accountSlot,
+      el('div', { class: 'masthead-actions' }, accountSlot, navToggle),
     ),
     banner,
     nav,
   );
+  header.classList.add('masthead');
+  if (isLanding) header.classList.add('landing');
+
+  // No inline script anywhere: the CSP is `script-src 'self'` and that promise
+  // is only worth something if the markup never needs relaxing.
+  const setOpen = (open: boolean): void => {
+    header.classList.toggle('menu-open', open);
+    navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    navToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  };
+  navToggle.addEventListener('click', () => setOpen(!header.classList.contains('menu-open')));
+  nav.addEventListener('click', (event) => {
+    if ((event.target as HTMLElement).closest('a')) setOpen(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && header.classList.contains('menu-open')) {
+      setOpen(false);
+      navToggle.focus();
+    }
+  });
 
   const main = el('main', { class: 'page' }, ...options.children);
   const footer = el(
