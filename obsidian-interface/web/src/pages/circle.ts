@@ -42,7 +42,7 @@ layout({
       'section',
       { class: 'notice' },
       el('strong', {}, 'Pricing, in one paragraph. '),
-      'Each first-level division (a state, a province, a governorate) carries a GLV from $100 to $30,000 per m², set once at deployment. Buying from the protocol releases one plot of at most 1 m² at the current GLV, and the purchase itself raises the GLV by 25 basis points up to the $30,000 ceiling — buyers never get a discount from later buyers\' demand, and never benefit retroactively from their own. ' +
+      'Each first-level division (a state, a province, a governorate) carries a GLV denominated in OBS, inside the protocol band, set once at deployment. Buying from the protocol releases one plot of at most 1 m² at the current GLV, and the purchase itself raises the GLV by 25 basis points up to the ceiling — buyers never get a discount from later buyers\' demand, and never benefit retroactively from their own. ' +
         'Owners may list parcels at any MSP on the marketplace; listing never moves the GLV. A buyback pays the current GLV to the owner and reduces the GLV. Gifts are ordinary transfers and pay ordinary gas.',
     ),
     el('section', { class: 'search-bar' }, search, go),
@@ -128,13 +128,18 @@ async function loadDivisions(countryCode: string, countryName: string): Promise<
 async function showDivision(countryCode: string, divisionId: string, divisionName: string): Promise<void> {
   detailPanel.replaceChildren(spinner(`pricing ${divisionId}…`));
   try {
-    const quote = await client.landQuote(divisionId);
+    // The band comes from the node's parameter table, in OBS. It used to be
+    // described on this page as "$100 to $30,000 per m²", which stopped being
+    // true when land was repriced into OBS in 1.2.0.
+    const [quote, params] = await Promise.all([client.landQuote(divisionId), client.params().catch(() => undefined)]);
+    const band = params ? `${obs(params.circle.minGlvObs)} – ${obs(params.circle.maxGlvObs)} OBS / m²` : 'read from the node';
     detailPanel.replaceChildren(
       el('h2', {}, `${divisionName} · ${divisionId}`),
       kv([
         ['GLV now', `${obs(quote.glvObs)} OBS / m²`],
         ['Protocol price for 1 m²', quote.priceObs ? `${obs(quote.priceObs)} OBS` : '—'],
         ['Gas for that purchase', quote.gasObs ? `${obs(quote.gasObs)} OBS` : '—'],
+        ['Protocol band', band],
         ['Priced in', 'OBS — no external price source participates'],
         ['Buy-back value (ILV)', 'current GLV at buy-back time on chain'],
       ]),

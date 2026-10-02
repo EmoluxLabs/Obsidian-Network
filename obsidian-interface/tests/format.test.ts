@@ -12,15 +12,9 @@ import { describe, expect, it } from 'vitest';
 import {
   obs,
   obsFromSeals,
-  oraclePriceMicro,
-  oraclePriceText,
   rewardLine,
   rewardPerClaim,
   sealsFromObs,
-  usd,
-  usdDollars,
-  usdMicroFromDollars,
-  usdText,
 } from '../web/src/lib/ui.js';
 
 describe('seal counts → OBS', () => {
@@ -86,56 +80,12 @@ describe('exact round trips used to build transactions', () => {
   });
 });
 
-describe('dollar formatting', () => {
-  it('formats micro-USD exactly', () => {
-    expect(usd('50000000')).toBe('$50');
-    expect(usd('50000000', 2)).toBe('$50');
-    expect(usd('50123456')).toBe('$50.12');
-    expect(usd('20403550000', 2)).toBe('$20,403.55');
-    expect(usd('0')).toBe('$0');
-  });
-
-  it('formats whole-dollar registry values as dollars, not as micro-USD', () => {
-    // /land/countries sends "20403" meaning $20,403 — read as micro-USD it would print $0.02.
-    expect(usdDollars('20403')).toBe('$20,403');
-    expect(usdDollars('20403', 2)).toBe('$20,403');
-    expect(usdDollars('100')).toBe('$100');
-  });
-
-  it('passes through amounts the node already formatted', () => {
-    expect(usdText('$20,403.55')).toBe('$20,403.55');
-    expect(usdDollars('$100')).toBe('$100');
-    expect(usd(undefined)).toBe('—');
-  });
-
-  it('converts dollars to micro-USD without a float', () => {
-    expect(usdMicroFromDollars('50.00')).toBe(50_000_000n);
-    expect(usdMicroFromDollars('5.000000')).toBe(5_000_000n);
-    expect(usdMicroFromDollars('0.01')).toBe(10_000n);
-    expect(() => usdMicroFromDollars('$5')).toThrow();
-  });
-
-  it('converts the registration fee to OBS at the protocol median exactly', () => {
-    // $5.00 at $50.10/OBS = 0.099800399201596806 OBS (truncated to seals).
-    const fee = usdMicroFromDollars('5.000000');
-    const price = oraclePriceMicro({ usable: true, priceUsdMicro: '50100000' })!;
-    expect(obsFromSeals((fee * 10n ** 18n) / price)).toBe('0.099800399201596806');
-  });
-});
-
-describe('protocol price display', () => {
-  it('shows a price only when the node says the feed is usable', () => {
-    expect(oraclePriceText({ usable: true, priceUsd: '$50.1', priceUsdMicro: '50100000' })).toBe('$50.1');
-    expect(oraclePriceText({ usable: false, priceUsd: '$50.1' })).toBe('no price yet');
-    expect(oraclePriceText(undefined)).toBe('no price yet');
-  });
-
-  it('gives the fee maths a median only when the feed is usable', () => {
-    expect(oraclePriceMicro({ usable: true, priceUsdMicro: '50100000' })).toBe(50_100_000n);
-    expect(oraclePriceMicro({ usable: false, priceUsdMicro: '50100000' })).toBeUndefined();
-    expect(oraclePriceMicro({ usable: true, priceUsdMicro: '0' })).toBeUndefined();
-  });
-});
+/*
+ * The dollar-formatting and protocol-price suites were removed in 1.2.10 with
+ * the helpers they covered. Protocol fees are denominated in OBS, no page
+ * converts through an exchange rate, and `tests/no-usd-copy.test.ts` now
+ * asserts that no page can quote a dollar amount at all.
+ */
 
 describe('mining schedule fields', () => {
   it('reads the node\'s real field names', () => {

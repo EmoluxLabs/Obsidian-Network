@@ -96,57 +96,18 @@ export function sealsFromObs(value: string | bigint): bigint {
   return BigInt(whole) * 10n ** 18n + BigInt(fraction.padEnd(18, '0') || '0');
 }
 
-/**
- * Format micro-USD (a node integer string) as dollars: `usd('50000000')` = `$50.00`.
- * A string that is already formatted (`"$50.1"`) passes through untouched.
+/*
+ * The USD formatting helpers (`usd`, `usdDollars`, `usdMicroFromDollars`,
+ * `usdText`) and the oracle readers (`oraclePriceText`, `oraclePriceMicro`)
+ * lived here until 1.2.10.
+ *
+ * They were removed, not merely unused. Every protocol fee is denominated in
+ * OBS and fixed by consensus, so no page converts anything through an
+ * exchange rate; keeping dollar formatters around invites the next page to
+ * reach for one and reintroduce a dependency the protocol deliberately does
+ * not have. `GET /oracle` still exists for reporting and any consumer that
+ * wants it can read it directly.
  */
-export function usd(microUsd: string | number | bigint | undefined | null, digits = 2): string {
-  if (microUsd === undefined || microUsd === null) return '—';
-  const text = typeof microUsd === 'bigint' ? microUsd.toString() : String(microUsd).trim();
-  if (text === '') return '—';
-  if (text.startsWith('$')) return text;
-  if (!/^-?\d+$/.test(text)) return '—';
-  const value = BigInt(text);
-  const negative = value < 0n;
-  const abs = negative ? -value : value;
-  const whole = (abs / 1_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const fraction = (abs % 1_000_000n).toString().padStart(6, '0').slice(0, Math.max(0, digits)).replace(/0+$/, '');
-  return `${negative ? '-' : ''}$${whole}${fraction ? `.${fraction}` : ''}`;
-}
-
-/**
- * Format whole dollars. `/land/countries.glvUsd` is `"20403"` — dollars, not
- * micro-USD — and reading it as micro-USD would print `$0.02` for `$20,403`.
- */
-export function usdDollars(dollars: string | number | bigint | undefined | null, digits = 0): string {
-  if (dollars === undefined || dollars === null) return '—';
-  const text = typeof dollars === 'bigint' ? dollars.toString() : String(dollars).trim();
-  if (text === '') return '—';
-  if (text.startsWith('$')) return text;
-  if (!/^-?\d+(\.\d+)?$/.test(text)) return '—';
-  const [whole, fraction = ''] = text.split('.');
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const trimmed = fraction.slice(0, Math.max(0, digits)).replace(/0+$/, '');
-  return `$${grouped}${trimmed ? `.${trimmed}` : ''}`;
-}
-
-/**
- * Whole-dollar string → micro-USD, exact. `/params.social.businessPagePriceUsd`
- * arrives as `"50.00"` (dollars), while fees are computed in micro-USD, and
- * converting through a float would round the protocol fee.
- */
-export function usdMicroFromDollars(dollars: string | number | bigint): bigint {
-  const text = typeof dollars === 'bigint' ? dollars.toString() : String(dollars).trim();
-  if (!/^\d+(\.\d{0,6})?$/.test(text)) throw new Error(`not a USD amount: ${dollars}`);
-  const [whole, fraction = ''] = text.split('.');
-  return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0') || '0');
-}
-
-/** Pass through an amount the node already formatted (`"$50.1"`). */
-export function usdText(text: string | undefined | null): string {
-  if (text === undefined || text === null || text === '') return '—';
-  return String(text);
-}
 
 /**
  * Reward amounts from `/mining/schedule` or `/mining/status`. `obs()` accepts
@@ -159,21 +120,6 @@ export function rewardLine(schedule: { dailyRewardSeals?: string; dailyRewardObs
 
 export function rewardPerClaim(schedule: { claimRewardSeals?: string; claimRewardObs?: string; rewardPerClaimObs?: string }): string {
   return `${obs(schedule.claimRewardObs ?? schedule.claimRewardSeals ?? schedule.rewardPerClaimObs)} OBS`;
-}
-
-/** A protocol price is only a price when the node says the feed is usable. */
-export function oraclePriceText(oracle: { usable?: boolean; priceUsd?: string; priceUsdMicro?: string } | undefined): string {
-  if (!oracle || oracle.usable !== true) return 'no price yet';
-  if (oracle.priceUsd !== undefined && oracle.priceUsd !== '') return usdText(oracle.priceUsd);
-  return usd(oracle.priceUsdMicro ?? '0');
-}
-
-/** The oracle median in micro-USD, or undefined when the feed is stale or too thin. */
-export function oraclePriceMicro(oracle: { usable?: boolean; priceUsdMicro?: string } | undefined): bigint | undefined {
-  if (!oracle || oracle.usable !== true) return undefined;
-  const micro = oracle.priceUsdMicro ?? '';
-  if (!/^\d+$/.test(micro) || micro === '0') return undefined;
-  return BigInt(micro);
 }
 
 export function relativeTime(timestampSeconds: number): string {

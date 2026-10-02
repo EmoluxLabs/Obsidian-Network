@@ -11,6 +11,54 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.10] — 2026-10-02
+
+Interface only. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+### Fixed
+
+* **Obsidian Circle still advertised land in dollars.** Its pricing paragraph
+  read "each first-level division carries a GLV from **$100 to $30,000 per
+  m²**… raises the GLV by 25 basis points up to the **$30,000 ceiling**". Land
+  was repriced into OBS in 1.2.0 and the real band is **0.01 – 5 OBS per m²**,
+  so the page quoted figures off by six orders of magnitude in a currency the
+  protocol does not use. It now describes the band in OBS and the division
+  detail shows a **Protocol band** row read live from `/params`
+  (`circle.minGlvObs` – `circle.maxGlvObs`).
+
+  This was the last dollar price in the product, and it was found by scanning
+  the shipped bundles rather than by reading the pages — four manual passes
+  over the copy had missed it.
+
+### Removed
+
+* The USD helpers in `web/src/lib/ui.ts` — `usd`, `usdDollars`,
+  `usdMicroFromDollars`, `usdText` — and the oracle readers
+  `oraclePriceText` / `oraclePriceMicro`. Every one was unused by every page
+  after the repricing. They are deleted rather than left in place: keeping
+  dollar formatters invites the next page to reach for one and reintroduce a
+  dependency the protocol deliberately does not have. `GET /oracle` still
+  exists for reporting, and no fee or state transition reads it.
+* Their unit tests went with them; `format.test.ts` and `ui.ts` both say why.
+
+### Added
+
+* `tests/no-usd-copy.test.ts` — four checks over the page sources and the
+  generated site HTML: no literal dollar amount may be shown to a user
+  (the standing denial "no $5 activation" is the one deliberate exception),
+  no copy may claim a feature is gated on a price feed, no page may read
+  `registrationFeeUsd` / `businessPagePriceUsd` / `minGlvUsd` / `maxGlvUsd`,
+  and no generated shell may contain a dollar price. Prose is not covered by
+  any type and no fixture catches it; this is the check that would have found
+  the Circle paragraph in 1.2.0.
+
+### Tests
+
+Interface 174 (177 minus the 7 deleted USD-helper cases, plus 4 new copy
+guards). Core 244 unchanged. Invariants 55.
+
+---
+
 ## [1.2.9] — 2026-10-02
 
 Interface copy and a repository-wide dead-code sweep. No consensus change;
