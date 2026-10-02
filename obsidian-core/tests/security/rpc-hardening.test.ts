@@ -505,6 +505,38 @@ describe('GET /metrics', () => {
     expect(unwatched, `served but on no panel or alert: ${unwatched.join(', ')}`).toEqual([]);
   });
 
+  /**
+   * Routing is half of monitoring. These assert the shipped Alertmanager file
+   * is coherent with the rules beside it, and that it cannot be deployed by
+   * accident: every destination is a placeholder, so Alertmanager refuses to
+   * start until a human supplies a real one.
+   */
+  it('routes every alert it defines, and refuses to ship a working destination', () => {
+    const root = new URL('../../deployment/monitoring/', import.meta.url);
+    const alerts = readFileSync(new URL('obsidian-alerts.yml', root), 'utf8');
+    const routing = readFileSync(new URL('alertmanager.yml', root), 'utf8');
+
+    // Every receiver referenced by the routing tree must be defined.
+    const referenced = [...routing.matchAll(/receiver: ([a-z-]+)/g)].map((m) => m[1]);
+    const defined = [...routing.matchAll(/^  - name: ([a-z-]+)$/gm)].map((m) => m[1]);
+    const undefinedReceivers = referenced.filter((name) => !defined.includes(name));
+    expect(undefinedReceivers, `routed to undefined receivers: ${undefinedReceivers.join(', ')}`).toEqual([]);
+
+    // The alert that must never be batched is routed with no group wait.
+    expect(routing).toMatch(/alertname = "ObsidianSupplyInvariantBroken"[\s\S]*?group_wait: 0s/);
+
+    // Any alertname mentioned in the routing must actually exist in the rules.
+    const ruleNames = [...alerts.matchAll(/- alert: (\w+)/g)].map((m) => m[1]);
+    expect(ruleNames.length).toBeGreaterThanOrEqual(6);
+    for (const match of routing.matchAll(/alertname = "(\w+)"/g)) {
+      expect(ruleNames, `routing references unknown alert ${match[1]}`).toContain(match[1]);
+    }
+
+    // And nothing here is a usable destination.
+    const liveUrls = [...routing.matchAll(/url: '([^']+)'/g)].map((m) => m[1]).filter((url) => !url.includes('CHANGE-ME'));
+    expect(liveUrls, `a real destination is committed: ${liveUrls.join(', ')}`).toEqual([]);
+  });
+
   it('leaks no address, balance or key material', async () => {
     {
       const body = await (await fetch(`${base}/metrics`)).text();

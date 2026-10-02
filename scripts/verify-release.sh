@@ -2,8 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Verify a release archive before you run it.
 #
-#   ./verify-release.sh obsidian-core-1.2.16.tar.gz
-#   ./verify-release.sh obsidian-node-operator-1.2.16.zip --with-tests
+#   ./verify-release.sh obsidian-core-1.2.17.tar.gz
+#   ./verify-release.sh obsidian-node-operator-1.2.17.zip --with-tests
 #
 # Checks, in order:
 #   1. the archive is listed in SHA256SUMS and its digest matches;
@@ -18,10 +18,18 @@ set -euo pipefail
 
 ARCHIVE="${1:-}"
 WITH_TESTS=0
-[ "${2:-}" = "--with-tests" ] && WITH_TESTS=1
+SIGNATURE_ONLY=0
+for flag in "${@:2}"; do
+  case "$flag" in
+    --with-tests) WITH_TESTS=1 ;;
+    # Check authorship and stop. Used by the test suite, and useful when you
+    # want to decide whether to trust a download before spending time on it.
+    --signature-only) SIGNATURE_ONLY=1 ;;
+  esac
+done
 
 if [ -z "$ARCHIVE" ]; then
-  echo "usage: $0 <archive.zip|archive.tar.gz> [--with-tests]" >&2
+  echo "usage: $0 <archive.zip|archive.tar.gz> [--with-tests] [--signature-only]" >&2
   exit 2
 fi
 [ -f "$ARCHIVE" ] || { echo "no such archive: $ARCHIVE" >&2; exit 1; }
@@ -68,15 +76,26 @@ check_signature() {
     echo "→ verifying with gpgv against $(basename "$key")"
     local ring
     ring="$(mktemp)"
-    # gpgv needs a binary keyring, and the shipped key is armoured.
+    # gpgv needs a binary keyring and the shipped key is armoured. Rather than
+    # demanding full gnupg just to strip base64 armour, do it here, so a
+    # minimal install that has only gpgv can still check authorship.
     if command -v gpg >/dev/null 2>&1; then
       gpg --dearmor < "$key" > "$ring"
+    elif command -v node >/dev/null 2>&1; then
+      node "$HERE/dearmor.mjs" "$key" "$ring" || { rm -f "$ring"; return 1; }
     else
-      echo "  cannot dearmor $(basename "$key") without gpg — skipping" >&2
+      echo "  a signature is present but neither gpg nor node can check it." >&2
       rm -f "$ring"
       return 0
     fi
-    gpgv --keyring "$ring" "$sig" "$sums" || { rm -f "$ring"; return 1; }
+    if gpgv --keyring "$ring" "$sig" "$sums"; then
+      echo "  signature OK — now confirm the key fingerprint against a source that"
+      echo "  is NOT hosted with the archives."
+    else
+      echo "  SIGNATURE DID NOT VERIFY — do not run this archive." >&2
+      rm -f "$ring"
+      return 1
+    fi
     rm -f "$ring"
   else
     echo "→ a signature is present but gpg is not installed, so it was not checked."
@@ -87,6 +106,10 @@ check_signature() {
 
 if [ -n "$SUMS" ]; then
   check_signature "$SUMS"
+  if [ "$SIGNATURE_ONLY" = 1 ]; then
+    echo "signature check complete (--signature-only)"
+    exit 0
+  fi
   echo "→ checking $BASE against $SUMS"
   SUMS_DIR="$(dirname "$SUMS")"
   EXPECTED="$(mktemp)"

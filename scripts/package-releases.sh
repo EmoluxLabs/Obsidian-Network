@@ -201,6 +201,10 @@ stage "$STAGING/obsidian-node-operator" \
   docs LICENSE
 cp scripts/verify-release.sh "$STAGING/obsidian-node-operator/verify-release.sh"
 cp scripts/sign-release.sh "$STAGING/obsidian-node-operator/sign-release.sh"
+cp scripts/dearmor.mjs "$STAGING/obsidian-node-operator/dearmor.mjs"
+# A soak is the operator's job, not the packager's, so the tool goes with the
+# build rather than staying in the source tree.
+cp scripts/soak.mjs "$STAGING/obsidian-node-operator/soak.mjs"
 # The launch runbook asks operators to check the economic invariants against the
 # build they are about to run, so the checker ships with the build.
 cp scripts/check-invariants.mjs "$STAGING/obsidian-node-operator/check-invariants.mjs"

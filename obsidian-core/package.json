@@ -1,6 +1,6 @@
 {
   "name": "@obsidian/core",
-  "version": "1.2.16",
+  "version": "1.2.17",
   "description": "Obsidian Core \u2014 standalone node software for the Obsidian Network blockchain (OBS).",
   "license": "Apache-2.0",
   "type": "module",

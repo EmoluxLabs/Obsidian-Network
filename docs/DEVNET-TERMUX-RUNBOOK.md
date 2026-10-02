@@ -1,7 +1,7 @@
 # Devnet on Termux — start a node and test the whole platform
 
 Every command below was run end to end before this page was written, against
-the **1.2.16 release archives**, not a working tree. Paste them into **Termux on
+the **1.2.17 release archives**, not a working tree. Paste them into **Termux on
 Android** (on a laptop: Git Bash on Windows, or any shell on Linux/macOS —
 **not** PowerShell).
 
@@ -33,7 +33,7 @@ not a release.
 
 ```bash
 mkdir -p ~/obsidian && cd ~/obsidian
-git clone --depth 1 --branch v1.2.16 \
+git clone --depth 1 --branch v1.2.17 \
   https://github.com/EmoluxLabs/Obsidian-Network.git src
 cd ~/obsidian/src/releases
 sha256sum -c SHA256SUMS
@@ -47,18 +47,18 @@ passes its own tests:
 
 ```bash
 cd ~/obsidian/src
-./scripts/verify-release.sh releases/obsidian-node-operator-1.2.16.tar.gz
+./scripts/verify-release.sh releases/obsidian-node-operator-1.2.17.tar.gz
 ```
 
-It should end with `OK: obsidian-node-operator-1.2.16.tar.gz verified.`
+It should end with `OK: obsidian-node-operator-1.2.17.tar.gz verified.`
 
 ## 3. Unpack and install (internet — the last step that needs it)
 
 ```bash
 mkdir -p ~/obsidian/run/node ~/obsidian/run/iface
 cd ~/obsidian/src/releases
-tar xzf obsidian-node-operator-1.2.16.tar.gz      -C ~/obsidian/run/node
-tar xzf obsidian-interface-selfhost-1.2.16.tar.gz -C ~/obsidian/run/iface
+tar xzf obsidian-node-operator-1.2.17.tar.gz      -C ~/obsidian/run/node
+tar xzf obsidian-interface-selfhost-1.2.17.tar.gz -C ~/obsidian/run/iface
 
 cd ~/obsidian/run/node/obsidian-core      && npm ci --omit=dev
 cd ~/obsidian/run/iface/obsidian-interface && npm ci --omit=dev
@@ -81,7 +81,7 @@ node dist/index.js start \
 
 Leave this session running. Within about five seconds you should see
 `produced block` lines, one every five seconds. The startup line must say
-`"chainId":7780` and `"version":"1.2.16"`.
+`"chainId":7780` and `"version":"1.2.17"`.
 
 Open a **second Termux session** (swipe from the left edge → **New session**)
 for everything below.
@@ -232,9 +232,9 @@ node --test tests/e2e/cluster.test.mjs    # 13 — starts 3 real nodes, ~1 minut
 Build the interface **before** testing it, or you will get spurious
 `../../core/*.js` failures.
 
-## 10b. Prove the 1.2.16 wallet fix (the `obs1`-on-devnet bug)
+## 10b. Prove the 1.2.17 wallet fix (the `obs1`-on-devnet bug)
 
-Before 1.2.16 the browser wallet derived a **mainnet** `obs1…` address no matter
+Before 1.2.17 the browser wallet derived a **mainnet** `obs1…` address no matter
 which network the interface was on, and the node then refused everything it
 signed with `not a valid address for this network`. Four checks, with the node
 and the interface both running:
@@ -285,7 +285,7 @@ The address must start `dobs1` and the balance call must answer `200` with
   says *"This wallet is a mainnet wallet, but this interface is on devnet"* and
   offers to re-derive. Accept it — the 24 words and the private key do not
   change, only the address does. Then `/mine/` will let you claim; before
-  1.2.16 it let you sign a claim the node could only throw away.
+  1.2.17 it let you sign a claim the node could only throw away.
 
 ## 11. Stop and reset
 
@@ -305,7 +305,7 @@ Invitation: redemption is recorded per deployment, in that folder.
 
 ### Upgrading an interface you have already opened in a browser
 
-From 1.2.16 the markup points at content-hashed bundles
+From 1.2.17 the markup points at content-hashed bundles
 (`/js/wallet.js?v=<hash>`), so a new build gets a new URL and your browser
 cannot serve you the old one. Check it after any upgrade:
 

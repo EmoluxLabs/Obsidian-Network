@@ -1,0 +1,84 @@
+# Alertmanager routing for Obsidian Core.
+#
+# The alert rules in obsidian-alerts.yml decide *what* is wrong. This decides
+# *who finds out*. Both halves are needed: an alert nobody receives is a log
+# line with extra steps.
+#
+# Placeholders below are marked CHANGE-ME. The node will run without this file;
+# Alertmanager will not start with the placeholders still in it, which is
+# deliberate — a monitoring stack that silently routes to nowhere is worse than
+# one that refuses to boot.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: ['alertname', 'network', 'instance']
+  # Wait briefly to batch alerts that fire together (a node going down trips
+  # several at once), then do not repeat for four hours.
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # A false supply invariant is the one alert that must never wait for a
+    # batch window: it means a node is serving a chain that violates the cap.
+    - matchers: [alertname = "ObsidianSupplyInvariantBroken"]
+      receiver: critical
+      group_wait: 0s
+      repeat_interval: 15m
+      continue: false
+
+    # Chain and connectivity failures on a production network page.
+    - matchers:
+        - severity = "critical"
+        - network =~ "mainnet|testnet"
+      receiver: critical
+      repeat_interval: 1h
+
+    # Everything on a throwaway network is informational, however loud.
+    - matchers: [network = "devnet"]
+      receiver: low-noise
+      repeat_interval: 24h
+
+    - matchers: [severity = "warning"]
+      receiver: default
+
+    - matchers: [severity = "info"]
+      receiver: low-noise
+
+inhibit_rules:
+  # If the chain has stalled, the mempool backlog that follows is a symptom,
+  # not news.
+  - source_matchers: [alertname = "ObsidianChainStalled"]
+    target_matchers: [alertname = "ObsidianMempoolBacklog"]
+    equal: ['instance']
+  # A node that just restarted will report syncing; that is expected.
+  - source_matchers: [alertname = "ObsidianNodeRestarted"]
+    target_matchers: [alertname = "ObsidianNodeSyncing"]
+    equal: ['instance']
+
+receivers:
+  - name: default
+    webhook_configs:
+      - url: 'CHANGE-ME-https://example.invalid/alerts'
+        send_resolved: true
+
+  - name: critical
+    # Use at least two independent channels for critical: a single provider
+    # outage must not also be an alerting outage.
+    webhook_configs:
+      - url: 'CHANGE-ME-https://example.invalid/alerts/critical'
+        send_resolved: true
+    # email_configs:
+    #   - to: 'CHANGE-ME-oncall@example.org'
+    #     from: 'alerts@example.org'
+    #     smarthost: 'smtp.example.org:587'
+    #     auth_username: 'CHANGE-ME'
+    #     auth_password_file: '/etc/alertmanager/smtp-password'
+
+  - name: low-noise
+    webhook_configs:
+      - url: 'CHANGE-ME-https://example.invalid/alerts/low'
+        send_resolved: false

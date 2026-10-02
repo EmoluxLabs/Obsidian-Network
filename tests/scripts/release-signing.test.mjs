@@ -95,3 +95,61 @@ test('signing refuses to sign digests that do not match the archives', { skip: !
   assert.ok(signing > recheck, 'signing happens before the digest re-check');
   assert.match(text, /refusing to sign/);
 });
+
+const fixtures = join(here, 'fixtures');
+
+test('a genuine signature verifies, with gpgv alone', { skip: !existsSync(join(fixtures, 'SHA256SUMS.asc')) }, () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'obsidian-goodsig-'));
+  try {
+    for (const file of ['SHA256SUMS', 'SHA256SUMS.asc', 'SIGNING-KEY.asc']) {
+      copyFileSync(join(fixtures, file), join(scratch, file));
+    }
+    writeFileSync(join(scratch, 'fixture-archive.tar.gz'), 'not a real archive');
+    copyFileSync(join(repo, 'scripts', 'dearmor.mjs'), join(scratch, 'dearmor.mjs'));
+    copyFileSync(verify, join(scratch, 'verify-release.sh'));
+
+    const result = run('bash', [join(scratch, 'verify-release.sh'), 'fixture-archive.tar.gz', '--signature-only'], scratch);
+    assert.equal(result.ok, true, result.out);
+    // gpgv's own "Good signature" line goes to stderr; what this asserts is
+    // the script's contract: it reports OK only after gpgv exited zero.
+    assert.match(result.out, /signature OK/);
+    assert.match(result.out, /verifying with gpgv/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test('a tampered digest list fails the signature and stops the script', { skip: !existsSync(join(fixtures, 'SHA256SUMS.asc')) }, () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'obsidian-badsig-'));
+  try {
+    for (const file of ['SHA256SUMS', 'SHA256SUMS.asc', 'SIGNING-KEY.asc']) {
+      copyFileSync(join(fixtures, file), join(scratch, file));
+    }
+    // Exactly the attack the signature exists to stop: the archive and its
+    // digest both replaced, consistently.
+    writeFileSync(join(scratch, 'SHA256SUMS'), 'deadbeef  evil-archive.tar.gz\n');
+    writeFileSync(join(scratch, 'fixture-archive.tar.gz'), 'not a real archive');
+    copyFileSync(join(repo, 'scripts', 'dearmor.mjs'), join(scratch, 'dearmor.mjs'));
+    copyFileSync(verify, join(scratch, 'verify-release.sh'));
+
+    const result = run('bash', [join(scratch, 'verify-release.sh'), 'fixture-archive.tar.gz', '--signature-only'], scratch);
+    assert.equal(result.ok, false, `a bad signature must fail the script:\n${result.out}`);
+    assert.match(result.out, /BAD signature|SIGNATURE DID NOT VERIFY/);
+    assert.doesNotMatch(result.out, /signature OK/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test('dearmor rejects something that is not a public key', () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'obsidian-dearmor-'));
+  try {
+    const bogus = join(scratch, 'key.asc');
+    writeFileSync(bogus, 'hello, not a key');
+    const result = run(process.execPath, [join(repo, 'scripts', 'dearmor.mjs'), bogus, join(scratch, 'out')], scratch);
+    assert.equal(result.ok, false);
+    assert.match(result.out, /not an armoured PGP public key/);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});

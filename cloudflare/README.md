@@ -29,9 +29,25 @@ The worker's job is: **forward, cache, and stay out of the way**.
 
 ```bash
 cd cloudflare
-npx wrangler deploy            # publishes the worker
+node check-wrangler.mjs            # refuses while placeholders remain
+npx wrangler deploy                # publishes the worker
 node --test test/worker.test.mjs   # proves the worker is still just a proxy
 ```
+
+`wrangler.toml` ships with `CHANGE-ME` placeholders for the account, the KV
+namespace, both origins and the route. **Run `check-wrangler.mjs` first.** A
+deploy with a bad `account_id` fails loudly at Cloudflare, but a deploy that
+merely points `OBSIDIAN_ORIGIN` at an example domain *succeeds* and serves a
+broken site from a real hostname — that is the failure this check exists to
+prevent. Fill in:
+
+| Placeholder | Where it comes from |
+| --- | --- |
+| `account_id` | `npx wrangler whoami` |
+| `kv_namespaces.id` | `npx wrangler kv namespace create OBSIDIAN_CACHE` |
+| `OBSIDIAN_ORIGIN` | the interface instance that reads your nodes |
+| `OBSIDIAN_ASSETS_ORIGIN` | Pages, R2, or the same interface |
+| `routes.pattern` / `zone_name` | the zone this worker serves |
 
 ## Deploying the sites
 

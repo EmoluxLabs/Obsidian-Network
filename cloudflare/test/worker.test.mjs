@@ -146,3 +146,67 @@ test('the worker does not weaken the interface CSP or add its own scripts', asyn
   assert.equal(response.headers.get('content-security-policy'), "default-src 'self'; script-src 'self'");
   assert.match(await response.text(), /landing/);
 });
+
+/**
+ * The configuration is part of the deployment, not a note beside it.
+ *
+ * A worker published with `OBSIDIAN_ORIGIN = "https://interface.example"`
+ * deploys successfully and serves a broken site from a real hostname, which
+ * is the kind of failure that gets noticed by users rather than by CI.
+ */
+test('the shipped wrangler.toml is rejected until its placeholders are filled in', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { dirname, resolve } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const here = dirname(fileURLToPath(import.meta.url));
+  const checker = resolve(here, '..', 'check-wrangler.mjs');
+
+  let failed = false;
+  let output = '';
+  try {
+    output = execFileSync(process.execPath, [checker], { encoding: 'utf8' });
+  } catch (error) {
+    failed = true;
+    output = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+  }
+  assert.equal(failed, true, 'the template must not pass the readiness check');
+  assert.match(output, /not ready to deploy/);
+  assert.match(output, /account_id/);
+});
+
+test('a filled-in config passes the same check', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join, dirname, resolve } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const here = dirname(fileURLToPath(import.meta.url));
+  const checker = resolve(here, '..', 'check-wrangler.mjs');
+
+  const dir = mkdtempSync(join(tmpdir(), 'wrangler-'));
+  const file = join(dir, 'wrangler.toml');
+  writeFileSync(
+    file,
+    [
+      'name = "obsidian-gateway"',
+      'main = "src/worker.js"',
+      'account_id = "0123456789abcdef0123456789abcdef"',
+      '[vars]',
+      'OBSIDIAN_ORIGIN = "https://interface.obsidian.network"',
+      'OBSIDIAN_ASSETS_ORIGIN = "https://interface.obsidian.network"',
+      '[[routes]]',
+      'pattern = "obsidian.network/*"',
+      'zone_name = "obsidian.network"',
+      '[[kv_namespaces]]',
+      'binding = "OBSIDIAN_CACHE"',
+      'id = "f00dcafef00dcafef00dcafef00dcafe"',
+      '',
+    ].join('\n'),
+  );
+  try {
+    const output = execFileSync(process.execPath, [checker, file], { encoding: 'utf8' });
+    assert.match(output, /ready to deploy/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

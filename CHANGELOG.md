@@ -11,6 +11,89 @@ a node running it. For 1.2.0 that is `dbbf8511bfe5bee493f80f3dd23a047a`.
 
 ---
 
+## [1.2.17] — 2026-10-02
+
+Operations. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.
+
+Four open gaps closed as far as they honestly can be, and each one's remaining
+limit stated rather than papered over.
+
+### Release signing — tooling now proven, releases still unsigned
+
+* `verify-release.sh` verifies with `gpg`, or with **`gpgv` alone** via a new
+  `scripts/dearmor.mjs` that strips PGP armour in pure Node. A minimal install
+  no longer needs full gnupg to check authorship.
+* A **bad signature now aborts the script.** It previously printed the warning
+  and carried on to report the archive verified — found by testing the attack
+  rather than the happy path.
+* `--signature-only` checks authorship and stops.
+* Tests go from 5 to 8, with committed fixtures: a real Ed25519 key and a real
+  detached signature. A genuine signature verifies; a tampered digest list
+  fails and stops the run; `dearmor` rejects a file that is not a public key.
+  The happy path is no longer merely described.
+
+  **No release is signed, including this one.** The fixture key is a test key
+  and is never used to sign anything published. A real key must be generated
+  by the publisher on a machine they control.
+
+### Alertmanager routing
+
+* `deployment/monitoring/alertmanager.yml` — routing tree, two inhibit rules
+  (a mempool backlog behind a stalled chain, a syncing node behind a restart),
+  and severity/network-aware receivers. `ObsidianSupplyInvariantBroken`
+  bypasses batching entirely (`group_wait: 0s`, repeat 15m); devnet is
+  low-noise and repeats at most daily, because a throwaway network must never
+  train an operator to ignore alerts.
+* Every destination is a `CHANGE-ME` placeholder, so Alertmanager refuses to
+  start until a real one is supplied — a routing file that quietly delivers to
+  `example.invalid` looks healthy and tells nobody anything.
+* A test asserts the routing is coherent with the rules: every receiver
+  referenced is defined, every `alertname` matched exists in
+  `obsidian-alerts.yml`, the invariant alert is routed with no group wait, and
+  **no real destination is ever committed**.
+* `deployment/monitoring/README.md` documents verification with `amtool` and
+  insists on an end-to-end delivery test: "if that does not reach a human, the
+  monitoring is decorative."
+
+### Cloudflare placeholders
+
+* `wrangler.toml` placeholders are now explicit `CHANGE-ME` markers, including
+  the previously missing `account_id`.
+* `cloudflare/check-wrangler.mjs` refuses to pass while any placeholder or
+  example domain remains, naming every offending line. A bad `account_id`
+  fails loudly at Cloudflare anyway; a bad `OBSIDIAN_ORIGIN` **deploys
+  successfully and serves a broken site from a real hostname**, which is the
+  failure this prevents.
+* Two worker tests: the shipped template must be rejected, a filled-in config
+  must pass.
+
+### Soak testing
+
+* `scripts/soak.mjs` samples `/metrics` plus process RSS to CSV and fails on a
+  stalled chain, a false supply invariant, or RSS growth beyond
+  `--max-growth-pct` across the **second half** of the run (the first half is
+  warm-up; measuring from process start reports normal cache fill as a leak).
+* `--match` resolves the node by command line and refuses a process too small
+  to be a node. The first run here reported a flat 2.8 MB because it was
+  measuring a wrapper shell — "no memory growth" about the wrong process is
+  worse than no measurement.
+* **Measured, not asserted:** 90 samples over 44.5 minutes, 0 scrape failures,
+  height 0 → 535 at **12.01 blocks/min** against a 5-second target, supply
+  invariant held on every sample, RSS **81,008 → 79,632 kB across the second
+  half (-1.7%)**. PASS.
+
+  That is a smoke test, not a soak: 45 minutes is not multi-day, one node is
+  not a network, an empty mempool is not load, and node reward settlement runs
+  on far longer periods than this touched. `docs/soak-testing.md` says so, and
+  the deployment guide's gap list still records the soak gap as open.
+
+### Tests
+
+Core 246 (was 245), interface 187, signing 8 (was 5), edge worker 9 (was 7),
+invariants 55, cluster 13.
+
+---
+
 ## [1.2.16] — 2026-10-02
 
 Release tooling. No consensus change; `PROTOCOL_VERSION` stays 1.2.0.

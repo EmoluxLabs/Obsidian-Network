@@ -2609,11 +2609,21 @@ An honest comparison, with the evidence.
    than its owner can use signs nothing worth checking. **Until the publisher
    creates a key and runs that script, every release here is unsigned and
    should be treated as such.** See `docs/release-verification.md` §1b.
-2. **Monitoring ships, paging does not.** `/metrics` (1.2.6), plus a scrape
-   config, six alert rules and an 18-panel Grafana dashboard (1.2.12) under
-   `deployment/monitoring/`. You still have to route alerts somewhere:
-   Alertmanager configuration and on-call escalation are not provided.
-3. **Nothing has ever run for more than minutes.** `docs/IMPLEMENTATION-REPORT.md`
+2. **Monitoring ships; your destinations do not.** `/metrics` (1.2.6), a
+   scrape config, six alert rules, an 18-panel Grafana dashboard (1.2.12) and
+   an Alertmanager routing file (1.2.17) under `deployment/monitoring/`. The
+   routing ships with `CHANGE-ME` placeholders for every receiver, so
+   Alertmanager refuses to start until you supply a real destination — a
+   routing file that silently delivers to `example.invalid` looks healthy and
+   tells nobody anything. On-call escalation is still yours to arrange.
+3. **Nothing has been soaked for days.** `scripts/soak.mjs` records height,
+   peers, mempool, supply, the invariant and RSS to a CSV and fails on a
+   stalled chain, a false invariant or sustained memory growth — see
+   `docs/soak-testing.md`. The longest run recorded in this repository is
+   44.5 minutes — 90 samples, 12.01 blocks/min, invariant held on every
+   sample, RSS down 1.7% across the second half — single node, no transaction
+   load, on a 2-core sandbox. That is a smoke test, not a soak. The original
+   statement still stands: `docs/IMPLEMENTATION-REPORT.md`
    says so: no multi-day soak test, so memory growth over weeks is unknown, and
    **node reward settlement has never been observed over real 24-hour periods** —
    it is tested by invoking the block routine at a period boundary.
