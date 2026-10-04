@@ -87,15 +87,26 @@ curl -s "http://127.0.0.1:8630/land/quote/NG-EN" | jq                   # price 
 curl -s "http://127.0.0.1:8630/land/parcels?divisionId=NG-EN" | jq      # parcels in a division
 ```
 
-Search matches a country name or code, a division name or a division id, and
-returns matching divisions. Parcels are then read per division. Every field in a
-parcel record — GLV, ILV, MSP, area, plot index, owner — comes from chain state,
-and the coordinates a buyer supplied are part of the parcel's body on chain.
+Search has two modes, and the response says which one answered (`kind`):
 
-**Not implemented:** resolving a city, district, street, landmark or `lat,lon`
-pair to a division. The shipped geography table stops at first-level divisions,
-so a coordinate lookup would have to invent an answer; the interface says what
-it matches instead.
+* **Registry** (`q=Lagos`, `q=NG`, `q=NG-LA`) matches a country name or ISO
+  alpha-2 code, a first-level division name, or an ISO 3166-2 id, and returns
+  matching divisions.
+* **Coordinates** (`q=6.5244,3.3792`, optionally `radius=` in metres, default
+  5000, max 50000) searches this chain for parcels whose own LAND coordinates
+  lie within that radius, nearest first.
+
+Parcels are then read per division. Every field in a parcel record — GLV, ILV,
+MSP, area, plot index, owner — comes from chain state, and the coordinates a
+buyer supplied are part of the parcel's body on chain.
+
+**Why coordinates search parcels rather than geocode a place name.** A node may
+not fetch anything: consensus data has to be identical, offline and verifiable
+everywhere, so a city/district/street/landmark gazetteer cannot be part of it.
+What the protocol does hold is the ISO 3166-2 division layer and the coordinates
+on each parcel, and those are real. A name that is not in the registry therefore
+returns no match rather than a guess, and the interface says what it matches
+instead of implying a world map it does not have.
 
 ## 7. What the protocol deliberately does not do
 

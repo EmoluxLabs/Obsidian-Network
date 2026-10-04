@@ -123,6 +123,50 @@ are built from. Everything below is inside it.
 * `npm run typecheck` failed at the previous cut in both packages on unused
   imports and locals. Both are clean, and the release archives were rebuilt from
   the fixed tree.
+* **Six RPC endpoints answered `500 ERR_INTERNAL` to a request the caller got
+  wrong.** `/tx/encode`, `/tx/gas` and `/wallet/quote` parsed the body with a
+  bare `JSON.parse`, so an empty or malformed body threw and the node reported
+  *its own* failure; `/tx/submit`, `/tx/simulate` and `/wallet/balance` were
+  guarded against unparseable text but not against a body that parses to `null`,
+  which then threw on the first field read. All six now share one guarded
+  parser that answers `400 ERR_MALFORMED` (and rejects `null`, arrays and bare
+  scalars, which are not request objects). The status code is part of the API
+  contract, so the security suite now sweeps *every* POST route with six kinds
+  of bad body and fails if any answers anything but 400 — the check that
+  previously covered one route, which is exactly why five of them were broken.
+* **Circle search now answers a GPS query honestly instead of implying a map it
+  does not have.** The search box promised "city, district, street, landmark or
+  GPS (lat,lon)" while the registry holds only the ISO 3166-2 division layer. A
+  node may not fetch a gazetteer — consensus data must be identical and offline
+  everywhere — but every parcel carries the coordinates from the LAND
+  transaction that created it. `GET /land/search?q=lat,lon&radius=` therefore
+  searches *this chain* for parcels whose own coordinates lie within the radius
+  (default 5 km, max 50 km), nearest first, ordered with integer arithmetic;
+  every other query keeps returning divisions. The response names the mode
+  (`kind: registry` or `kind: coordinates`) and what it matched, the interface
+  repeats it, and the docs say plainly that a city or street name is not
+  protocol data and is not searched.
+* **`api.md` documented the wrong body for `POST /tx/gas`** (`{type, body}`
+  instead of `{amountObs, usd}`) and omitted four live routes: `/metrics`,
+  `/land/division/<id>`, `/social/post/<id>` and `/social/following/<id>`. It
+  also now states the error contract explicitly: 4xx is the caller's mistake,
+  5xx is the node's, and an `ERR_INTERNAL` from a malformed request is a bug.
+* **`deployment/node.env.example` documented a fraction of the node's
+  environment.** An operator could not discover `OBSIDIAN_RPC_ALLOW_SUBMIT`,
+  `OBSIDIAN_SEED_NODES`, `OBSIDIAN_STRICT_DATA_DIR`, `OBSIDIAN_PORT_OFFSET` and
+  twenty-odd others from the shipped file. Every variable the node reads is now
+  listed with its default and what it does, including the mainnet escape hatch
+  (`OBSIDIAN_ALLOW_MAINNET`).
+* **Two launch-time claims in `docs/ORACLE-VPS-DEPLOYMENT.md` were false.**
+  "No monitoring stack ships with this project" — one does:
+  `obsidian-core/deployment/monitoring/` carries Prometheus, Alertmanager and
+  Grafana configuration for the node's `/metrics`, with `CHANGE-ME-`
+  placeholders that deliberately stop Alertmanager from starting until a real
+  destination is named. "Release signing is not implemented" — it is:
+  `scripts/sign-release.sh`, `verify-release.sh` and
+  `docs/release-verification.md` are the whole path. The archives here are
+  unsigned because no publisher key is held in this workspace, which is a
+  different statement from the one the guide made.
 * **CI had never been green — and the cause was a test that only passed on the
   machine it was written on.** `tests/scripts/release-signing.test.mjs` asserted
   the gpgv-only path, which holds where gnupg is absent (the sandbox: gpgv but
@@ -139,8 +183,8 @@ are built from. Everything below is inside it.
 
 ### Tests
 
-Core 246, interface 191 (was 187), signing 9 (was 8), edge worker 9,
-invariants 55, cluster 13 — 468 total.
+Core 251 (was 246), interface 191 (was 187), signing 9 (was 8), edge worker 9,
+invariants 55, cluster 13 — 473 total.
 
 ---
 

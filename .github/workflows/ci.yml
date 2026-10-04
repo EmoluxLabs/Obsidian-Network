@@ -1,7 +1,7 @@
 name: CI
 
 # Every claim this project makes about itself is checked here. A green run means
-# the core builds and its 246 tests pass, the interface builds and its 191 tests
+# the core builds and its 251 tests pass, the interface builds and its 191 tests
 # pass, the edge worker and the three-node end-to-end cluster pass, the protocol
 # invariants that must never drift are still intact, and the release archives
 # can actually be produced from this commit.
@@ -21,7 +21,7 @@ env:
 
 jobs:
   core:
-    name: obsidian-core (build, typecheck, 246 tests)
+    name: obsidian-core (build, typecheck, 251 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

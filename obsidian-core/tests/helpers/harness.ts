@@ -427,6 +427,9 @@ export function landBody(
     plotIndex?: bigint;
     price?: bigint;
     to?: string;
+    /** Micro-degrees, as LAND carries them. Optional in the protocol. */
+    latMicro?: number;
+    lonMicro?: number;
   },
 ): Uint8Array {
   return encodeLandBody({
@@ -438,6 +441,8 @@ export function landBody(
     plotIndex: params.plotIndex ?? 0n,
     price: params.price,
     to: params.to,
+    latMicro: params.latMicro,
+    lonMicro: params.lonMicro,
   });
 }
 

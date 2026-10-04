@@ -168,6 +168,40 @@ describe('RPC request limits', () => {
     expect(missing.status).toBe(404);
   });
 
+  /**
+   * Every JSON endpoint must answer 400 to a body it cannot parse.
+   *
+   * Testing one route was not enough: `/wallet/balance` was guarded and
+   * `/tx/encode`, `/tx/gas` and `/wallet/quote` were not, so a client that sent
+   * an empty or malformed body got `500 ERR_INTERNAL` from those three — the
+   * node reporting *its own* failure for the caller's syntax error, and hiding
+   * any real 500 behind the same code. This sweeps the whole surface so the
+   * distinction cannot drift back.
+   */
+  it('answers 400, never 500, for an unparseable body on every POST route', async () => {
+    const routes = ['/tx/submit', '/tx/simulate', '/tx/encode', '/tx/gas', '/wallet/balance', '/wallet/quote'];
+    const bodies = ['', '{', 'not json at all', '[1,2,3', 'null', '"a string"'];
+    const offenders: string[] = [];
+    for (const route of routes) {
+      for (const body of bodies) {
+        const response = await post(route, body);
+        if (response.status >= 500) offenders.push(`${route} <= ${JSON.stringify(body.slice(0, 20))} -> ${response.status}`);
+        else if (response.status !== 400) offenders.push(`${route} <= ${JSON.stringify(body.slice(0, 20))} -> ${response.status} (expected 400)`);
+      }
+    }
+    expect(offenders, `unparseable bodies that did not answer 400:\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  it('names the missing transaction type instead of trailing off', async () => {
+    const empty = await post('/tx/encode', {});
+    expect(empty.status).toBe(400);
+    expect(empty.body).toMatchObject({ error: 'transaction type is required', code: 'ERR_MALFORMED' });
+
+    const unknown = await post('/tx/encode', { type: 'NOT_A_TYPE' });
+    expect(unknown.status).toBe(400);
+    expect(unknown.body).toMatchObject({ error: 'unknown transaction type NOT_A_TYPE', code: 'ERR_MALFORMED' });
+  });
+
   it('requires a valid address for balance lookups', async () => {
     const bad = await post('/wallet/balance', { address: 'obs1notarealaddress' });
     expect(bad.status).toBe(400);

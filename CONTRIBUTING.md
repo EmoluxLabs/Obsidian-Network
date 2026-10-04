@@ -22,7 +22,7 @@ Node.js ≥ 20.10.
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
 
-cd obsidian-core && npm ci && npm run build && npm test        # 246 tests
+cd obsidian-core && npm ci && npm run build && npm test        # 251 tests
 cd ../obsidian-interface && npm ci && npm run build && npm test # 191 tests
 cd .. && node --test cloudflare/test/worker.test.mjs            # 9 tests
 node --test tests/e2e/cluster.test.mjs                          # 13 tests

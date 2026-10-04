@@ -408,7 +408,20 @@ stop for a week may be. Do not treat free capacity as a guarantee for mainnet.
 - **One server is one point of failure.** Mainnet needs three independent
   operators on independent infrastructure. One Oracle box is a testnet.
 - **Oracle Always Free has no SLA.** Fine for a testnet; not a mainnet plan.
-- **No monitoring stack ships with this project.** Poll `/status`, `/peers` and
-  `/supply` yourself — see `docs/DEPLOYMENT-GUIDE.md` §D11.
-- **Release signing is not implemented.** Checksums prove integrity, not
-  authorship.
+- **Monitoring is shipped but not installed for you.** The node serves
+  `GET /metrics`, and `obsidian-core/deployment/monitoring/` carries a
+  Prometheus scrape config, alert rules, an Alertmanager routing file and a
+  Grafana dashboard. `alertmanager.yml` ships with `CHANGE-ME-` placeholders
+  that stop it starting until you name a real destination — deliberately, so a
+  routing file cannot look healthy while telling nobody anything. Install it or
+  poll `/status`, `/peers` and `/supply` yourself (see
+  `docs/DEPLOYMENT-GUIDE.md` §D11); either way, nothing is watched until you
+  set it up.
+- **These archives are unsigned; the signing path exists.** `SHA256SUMS` proves
+  integrity, not authorship. `scripts/sign-release.sh` produces the detached
+  signature over `SHA256SUMS`, `scripts/verify-release.sh` checks it (preferring
+  `gpg`, falling back to the key shipped in `tests/scripts/fixtures/`, and
+  saying plainly when it could not check), and `docs/release-verification.md`
+  documents the whole procedure. The archives in `releases/` carry no `.asc`
+  because no publisher key is held here: a signature is only worth something
+  when the key belongs to the person publishing the release.

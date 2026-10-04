@@ -210,6 +210,38 @@ export class RpcServer {
     return Buffer.concat(chunks).toString('utf8');
   }
 
+  /**
+   * Read and parse a JSON request body, answering 400 when the client sent
+   * something that is not JSON.
+   *
+   * Returns `undefined` after having already written the error response, so the
+   * caller just returns. Three handlers used to call `JSON.parse` on the raw
+   * body inline: a client typo — or an empty body — came back as
+   * `500 ERR_INTERNAL`, which blames the node for the caller's syntax error and
+   * makes a genuine internal failure indistinguishable from a malformed one.
+   * The status code is part of the API contract clients branch on.
+   */
+  private async jsonBody<T>(request: IncomingMessage, response: ServerResponse): Promise<T | undefined> {
+    // The oversize case is deliberately not caught here: the central error
+    // handler already maps it to 413 ERR_BODY_TOO_LARGE, and duplicating that
+    // mapping here would let the two drift apart.
+    const raw = await this.readBody(request);
+    try {
+      // `JSON.parse` never returns `undefined`, so it is safe as the sentinel.
+      const parsed: unknown = JSON.parse(raw);
+      // `null`, an array or a bare scalar parses but is not a request object;
+      // letting it through would have the handler read a field off `null`.
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        this.json(response, 400, { error: 'invalid JSON body: expected an object', code: 'ERR_MALFORMED' });
+        return undefined;
+      }
+      return parsed as T;
+    } catch {
+      this.json(response, 400, { error: 'invalid JSON body', code: 'ERR_MALFORMED' });
+      return undefined;
+    }
+  }
+
   // ── Router ────────────────────────────────────────────────────────────────
 
   private async route(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
@@ -1099,10 +1131,52 @@ export class RpcServer {
     });
   }
 
+  /**
+   * Search the Circle registry, and — when the query is a coordinate — the
+   * chain's own parcels.
+   *
+   * A node may not ship a world city/street gazetteer: it would have to be
+   * fetched, and consensus data has to be identical and offline on every node.
+   * What the protocol *does* hold is real: the ISO 3166-2 division layer, and
+   * every parcel's own `lat,lon` from its LAND transaction. So `q=6.5244,3.3792`
+   * searches chain state for parcels near that point instead of pretending to
+   * geocode a street name it has never heard of. The response says which of the
+   * two happened.
+   */
   private landSearch(response: ServerResponse, url: URL): void {
     const query = url.searchParams.get('q') ?? '';
     const limit = clampInt(url.searchParams.get('limit'), 20, 1, 50);
-    this.json(response, 200, { query, results: searchDivisions(query, limit) });
+    const coordinates = parseCoordinateQuery(query);
+    if (!coordinates) {
+      this.json(response, 200, {
+        query,
+        kind: 'registry',
+        matches: 'country name, ISO alpha-2 code, first-level division name or ISO 3166-2 id',
+        results: searchDivisions(query, limit),
+      });
+      return;
+    }
+    const radiusMetres = clampInt(url.searchParams.get('radius'), 5_000, 1, 50_000);
+    const hits = parcelsNear(this.options.chain.world.s.parcels.values(), coordinates, radiusMetres, limit);
+    this.json(response, 200, {
+      query,
+      kind: 'coordinates',
+      matches: 'parcels on this chain whose own LAND coordinates lie within the radius',
+      lat: coordinates.latMicro / 1_000_000,
+      lon: coordinates.lonMicro / 1_000_000,
+      radiusMetres,
+      results: hits.map((hit) => ({
+        parcelId: hit.parcel.parcelId,
+        divisionId: hit.parcel.divisionId,
+        countryCode: hit.parcel.countryCode,
+        squareMetres: hit.parcel.squareMetres,
+        status: hit.parcel.status,
+        owner: maskAddress(hit.parcel.owner),
+        distanceMetres: hit.distanceMetres,
+        glvObs: formatObs(hit.parcel.glvSeals),
+      })),
+      note: 'The registry stores the division layer (ISO 3166-2). City, district, street and landmark names are not protocol data; a parcel placed at a coordinate is.',
+    });
   }
 
   private landDivision(response: ServerResponse, divisionId: string): void {
@@ -1364,14 +1438,8 @@ export class RpcServer {
   // ── Wallet API (never used by explorer pages) ─────────────────────────────
 
   private async walletBalance(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const body = await this.readBody(request);
-    let payload: { address?: string };
-    try {
-      payload = JSON.parse(body) as { address?: string };
-    } catch {
-      this.json(response, 400, { error: 'invalid JSON body', code: 'ERR_MALFORMED' });
-      return;
-    }
+    const payload = await this.jsonBody<{ address?: string }>(request, response);
+    if (payload === undefined) return;
     const address = payload.address ?? '';
     if (!isValidAddress(address, this.options.net.addressHrp)) {
       this.json(response, 400, { error: 'invalid wallet address', code: 'ERR_BAD_ADDRESS' });
@@ -1416,12 +1484,13 @@ export class RpcServer {
   }
 
   private async walletQuote(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const body = JSON.parse(await this.readBody(request)) as {
+    const body = await this.jsonBody<{
       address?: string;
       kind?: string;
       amountObs?: string;
       usd?: string;
-    };
+    }>(request, response);
+    if (body === undefined) return;
     const address = body.address ?? '';
     if (!isValidAddress(address, this.options.net.addressHrp)) {
       this.json(response, 400, { error: 'invalid wallet address', code: 'ERR_BAD_ADDRESS' });
@@ -1456,14 +1525,8 @@ export class RpcServer {
       this.json(response, 403, { error: 'transaction submission is disabled on this node', code: 'ERR_FORBIDDEN' });
       return;
     }
-    const body = await this.readBody(request);
-    let payload: { tx?: string };
-    try {
-      payload = JSON.parse(body) as { tx?: string };
-    } catch {
-      this.json(response, 400, { error: 'invalid JSON body', code: 'ERR_MALFORMED' });
-      return;
-    }
+    const payload = await this.jsonBody<{ tx?: string }>(request, response);
+    if (payload === undefined) return;
     if (!payload.tx || !/^[0-9a-f]+$/i.test(payload.tx)) {
       this.json(response, 400, { error: 'tx must be a hex-encoded signed transaction', code: 'ERR_MALFORMED' });
       return;
@@ -1514,14 +1577,8 @@ export class RpcServer {
   }
 
   private async simulate(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const body = await this.readBody(request);
-    let payload: { tx?: string };
-    try {
-      payload = JSON.parse(body) as { tx?: string };
-    } catch {
-      this.json(response, 400, { error: 'invalid JSON body', code: 'ERR_MALFORMED' });
-      return;
-    }
+    const payload = await this.jsonBody<{ tx?: string }>(request, response);
+    if (payload === undefined) return;
     if (!payload.tx) {
       this.json(response, 400, { error: 'tx is required', code: 'ERR_MALFORMED' });
       return;
@@ -1544,11 +1601,12 @@ export class RpcServer {
   }
 
   private async encodeTx(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const body = JSON.parse(await this.readBody(request)) as {
+    const body = await this.jsonBody<{
       type?: string;
       payload?: Record<string, unknown>;
       body?: string;
-    };
+    }>(request, response);
+    if (body === undefined) return;
     if (body.body) {
       // Decode mode: turn canonical body bytes into a readable object.
       const bytes = Buffer.from(body.body, 'hex');
@@ -1568,7 +1626,8 @@ export class RpcServer {
   }
 
   private async gasQuote(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const body = JSON.parse(await this.readBody(request)) as { amountObs?: string; usd?: string };
+    const body = await this.jsonBody<{ amountObs?: string; usd?: string }>(request, response);
+    if (body === undefined) return;
     const state = this.options.chain.world;
     const amount = parseObs(body.amountObs ?? '0');
     const price = state.s.oracle.medianPriceUsdMicro;
@@ -1761,6 +1820,57 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Read a `lat,lon` query as micro-degrees, or `null` when it is not one.
+ *
+ * Deliberately strict: `12,34` is a coordinate, `Lagos, Nigeria` is not, and a
+ * value outside the real range is not one either. Returning `null` (rather than
+ * clamping) keeps "search the registry" and "search chain parcels" from
+ * silently swapping places on bad input.
+ */
+export function parseCoordinateQuery(query: string): { latMicro: number; lonMicro: number } | null {
+  const match = /^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/.exec(query);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lon = Number(match[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { latMicro: Math.round(lat * 1_000_000), lonMicro: Math.round(lon * 1_000_000) };
+}
+
+/**
+ * Parcels within `radiusMetres` of a point, nearest first.
+ *
+ * Distance is the equirectangular approximation in integer arithmetic — the
+ * same result on every node, no floating point in the comparison — and it is
+ * used only for *ordering search results*, never for consensus. A parcel with
+ * no coordinates (LAND does not require them) can never match.
+ */
+export function parcelsNear<
+  P extends { latMicro?: number; lonMicro?: number; parcelId: string; acquiredAtHeight: number },
+>(parcels: Iterable<P>, point: { latMicro: number; lonMicro: number }, radiusMetres: number, limit: number): Array<{ parcel: P; distanceMetres: number }> {
+  const metresPerDegree = 111_320;
+  const latRadians = (point.latMicro / 1_000_000) * (Math.PI / 180);
+  const lonScale = Math.max(0.01, Math.cos(latRadians));
+  const hits: Array<{ parcel: P; distanceMetres: number }> = [];
+  for (const parcel of parcels) {
+    if (parcel.latMicro === undefined || parcel.lonMicro === undefined) continue;
+    const dLatMicro = parcel.latMicro - point.latMicro;
+    const dLonMicro = parcel.lonMicro - point.lonMicro;
+    const metres =
+      (metresPerDegree / 1_000_000) *
+      Math.sqrt(dLatMicro * dLatMicro + dLonMicro * dLonMicro * lonScale * lonScale);
+    if (metres > radiusMetres) continue;
+    hits.push({ parcel, distanceMetres: Math.round(metres) });
+  }
+  hits.sort((a, b) =>
+    a.distanceMetres !== b.distanceMetres
+      ? a.distanceMetres - b.distanceMetres
+      : a.parcel.parcelId.localeCompare(b.parcel.parcelId),
+  );
+  return hits.slice(0, limit);
+}
+
 export function formatUsd(micro: bigint): string {
   const negative = micro < 0n;
   const abs = negative ? -micro : micro;
@@ -1794,7 +1904,7 @@ export function encodeBodyFor(type: string, payload: Record<string, unknown>): U
     case 'NODE_REGISTRY':
       return encodeNodeRegistryBody(payload as never);
     default:
-      throw new Error(`unknown transaction type ${type}`);
+      throw new Error(type ? `unknown transaction type ${type}` : 'transaction type is required');
   }
 }
 
@@ -1821,7 +1931,7 @@ export function decodeBodyFor(type: string, bytes: Uint8Array): unknown {
     case 'ORACLE':
       return decodeOracleBody(bytes);
     default:
-      throw new Error(`unknown transaction type ${type}`);
+      throw new Error(type ? `unknown transaction type ${type}` : 'transaction type is required');
   }
 }
 

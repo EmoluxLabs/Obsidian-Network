@@ -37,6 +37,7 @@ import {
   type Harness,
   type TestWallet,
 } from '../helpers/harness.js';
+import { parcelsNear, parseCoordinateQuery } from '../../src/rpc/server.js';
 
 const open: Harness[] = [];
 async function harness(): Promise<Harness> {
@@ -764,5 +765,88 @@ describe('indexer describeTx (explorer summaries)', () => {
     expect(String(serialized.sender)).toContain('…');
     expect(String(serialized.recipient)).toContain('…');
     expect(JSON.stringify(serialized)).not.toContain(alice.address);
+  });
+});
+
+/**
+ * Circle search: the registry layer, and GPS against chain state.
+ *
+ * The search box used to promise "city, district, street, landmark or GPS"
+ * while the registry only holds ISO 3166-2 divisions. A node must not fetch a
+ * gazetteer — consensus data has to be identical and offline everywhere — but
+ * every parcel carries the coordinates from the LAND transaction that created
+ * it, so a coordinate query searches the chain rather than pretending to
+ * geocode a street name.
+ */
+describe('Circle search (registry names and chain coordinates)', () => {
+  const ABUJA = { latMicro: 9_057_000, lonMicro: 7_495_000 };
+
+  it('finds a parcel by the coordinates it was created at, and orders by distance', async () => {
+    const { h, alice } = await fundedHarness();
+    const near = { ...ABUJA, latMicro: ABUJA.latMicro + 1_000, lonMicro: ABUJA.lonMicro + 1_000 };
+    const far = { latMicro: 6_524_400, lonMicro: 3_379_200 }; // Lagos, ~500 km away
+
+    // The protocol market sells at the division's initial GLV, derived from the
+    // shipped geography table — the state map only fills in as divisions trade.
+    const firstPrice = divisionSeed('NG-FC').glvSeals;
+    const secondPrice = divisionSeed('NG-LA').glvSeals;
+
+    // Two parcels in two divisions: one at the query point, one across the country.
+    h.produce([
+      h.sign(alice, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, {
+        divisionId: 'NG-FC', countryCode: 'NG', plotIndex: 0n, price: firstPrice, ...ABUJA,
+      }), { gas: expectedGas(firstPrice) }),
+    ]);
+    h.produce([
+      h.sign(alice, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, {
+        divisionId: 'NG-LA', countryCode: 'NG', plotIndex: 0n, price: secondPrice, ...far,
+      }), { gas: expectedGas(secondPrice) }),
+    ]);
+
+    const all = [...h.chain.world.s.parcels.values()];
+    expect(all).toHaveLength(2);
+    // Every parcel carries its own coordinates, not a lookup.
+    expect(all.filter((parcel) => parcel.latMicro !== undefined)).toHaveLength(2);
+
+    const hits = parcelsNear(all, { latMicro: ABUJA.latMicro, lonMicro: ABUJA.lonMicro }, 5_000, 10);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.parcel.divisionId).toBe('NG-FC');
+    expect(hits[0]!.distanceMetres).toBeLessThan(200);
+
+    // The wide radius sees both, nearest first — the far one is ~500 km away.
+    const wide = parcelsNear(all, { latMicro: ABUJA.latMicro, lonMicro: ABUJA.lonMicro }, 600_000, 10);
+    expect(wide).toHaveLength(2);
+    expect(wide[0]!.parcel.divisionId).toBe('NG-FC');
+    expect(wide[1]!.parcel.divisionId).toBe('NG-LA');
+    expect(wide[1]!.distanceMetres).toBeGreaterThan(400_000);
+    expect(near.latMicro).toBeGreaterThan(ABUJA.latMicro);
+  });
+
+  it('a parcel without coordinates can never match a GPS search', async () => {
+    const { h, alice } = await fundedHarness();
+    const price = divisionSeed('NG-FC').glvSeals;
+    h.produce([
+      h.sign(alice, TxType.LAND, landBody(LandOp.PROTOCOL_BUY, {
+        divisionId: 'NG-FC', countryCode: 'NG', plotIndex: 0n, price,
+      }), { gas: expectedGas(price) }),
+    ]);
+    const parcels = [...h.chain.world.s.parcels.values()];
+    expect(parcels).toHaveLength(1);
+    expect(parcels[0]!.latMicro).toBeUndefined();
+    expect(parcelsNear(parcels, { latMicro: ABUJA.latMicro, lonMicro: ABUJA.lonMicro }, 50_000, 10)).toEqual([]);
+  });
+
+  it('reads a coordinate strictly, and never silently treats a name as one', () => {
+    expect(parseCoordinateQuery('6.5244,3.3792')).toEqual({ latMicro: 6_524_400, lonMicro: 3_379_200 });
+    expect(parseCoordinateQuery(' -90 , -180 ')).toEqual({ latMicro: -90_000_000, lonMicro: -180_000_000 });
+    expect(parseCoordinateQuery('90,180')).toEqual({ latMicro: 90_000_000, lonMicro: 180_000_000 });
+
+    // Out of range is not a coordinate, and neither is a name or a partial pair.
+    expect(parseCoordinateQuery('90.0001,0')).toBeNull();
+    expect(parseCoordinateQuery('0,180.5')).toBeNull();
+    expect(parseCoordinateQuery('Lagos, Nigeria')).toBeNull();
+    expect(parseCoordinateQuery('12')).toBeNull();
+    expect(parseCoordinateQuery('')).toBeNull();
+    expect(parseCoordinateQuery('1e3,2')).toBeNull();
   });
 });

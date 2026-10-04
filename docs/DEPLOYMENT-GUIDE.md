@@ -78,7 +78,7 @@ wrong one is how people ship old code.
 
 | Thing | What it is | When you deploy from it |
 |---|---|---|
-| **Development branch** (`arena/01a0fd74-obsidian-network`) | Where work happens. Changes often. This is where all 468 tests and the 1.2.17 archives currently live. | Local devnet and private testnet only. |
+| **Development branch** (`arena/01a0fd74-obsidian-network`) | Where work happens. Changes often. This is where all 473 tests and the 1.2.17 archives currently live. | Local devnet and private testnet only. |
 | **`main` branch** | Convention: the branch that reflects "current accepted state". `main` now carries the full tree (PR #1 merged the work branch, and its tree is identical to the `v1.2.17` tag). | Prefer a tagged release archive; `main` moves, a tag does not. |
 | **Release branch** | A branch frozen for a release, e.g. `release/1.2.17`, that only receives fixes. **NOT DOCUMENTED IN THE CURRENT REPOSITORY** — no release branch exists and no document describes one. | Optional; see §B. |
 | **Git tag** | A permanent, immovable label on one exact commit, e.g. `v1.2.17`. Unlike a branch it never moves. Annotated release tags `v1.2.0` … `v1.2.17` exist on the remote. | Tag first, then build the archive from the tag. |
@@ -291,10 +291,10 @@ it, so it fails on a clean checkout if the core has not been built.
 
 ### A7. Run the project's actual tests
 
-Five test suites, **468 tests total**, plus the invariant check:
+Five test suites, **473 tests total**, plus the invariant check:
 
 ```bash
-npm --prefix obsidian-core test               # 246 tests
+npm --prefix obsidian-core test               # 251 tests
 npm --prefix obsidian-interface test          # 191 tests
 node --test cloudflare/test/worker.test.mjs   # 9 tests
 node --test tests/e2e/cluster.test.mjs        # 13 tests, starts 3 real nodes
@@ -1280,7 +1280,7 @@ sha256sum -c SHA256SUMS
 
 The operator package ships `dist/` without tests, so `--with-tests` reports
 "ships no self-contained test suite; skipping" there — verify the core archive too, which
-ships its suite and runs it (246 tests as of 1.2.17).
+ships its suite and runs it (251 tests as of 1.2.17).
 
 ### E4. Three independent nodes
 
@@ -2526,7 +2526,7 @@ curl -s https://rpc1.example.org/status
 **Build and tests**
 - [ ] `obsidian-core` builds
 - [ ] `obsidian-interface` builds (`wrote 12 site shells`)
-- [ ] Core tests: 246 pass
+- [ ] Core tests: 251 pass
 - [ ] Interface tests: 191 pass
 - [ ] Edge worker tests: 9 pass
 - [ ] Cluster e2e: 13 pass
@@ -2606,7 +2606,7 @@ An honest comparison, with the evidence.
 ### What the repository actually proves today
 
 **Strong evidence:**
-- **468 automated tests** pass: core 246, interface 191, edge worker 9,
+- **473 automated tests** pass: core 251, interface 191, edge worker 9,
   release signing 9, three-node cluster 13.
 - **55 protocol invariants** hold, and the checker is proven to fail on drift.
 - **CI is green across 7 jobs** on every push, including a **Docker job** that

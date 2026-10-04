@@ -31,7 +31,7 @@ transaction types.
   data directory written by another network is refused at startup.
 
 **Verification:** `cd obsidian-core && npm ci && npm run build && npm test` →
-**246 tests in 11 files, all passing** (consensus 42, applications 27, node
+**251 tests in 11 files, all passing** (consensus 42, applications 30, node
 runners 27, protocol security 22, RPC hardening 25, crypto/amounts 30, mining
 schedule 17, Proof of Time 23, node reward economics 24, peer retry and ban
 policy 7, CLI wallet 2).
@@ -178,7 +178,7 @@ so the state machine cannot quietly reintroduce it. Procedure and expected outpu
 | OBS Social | profiles, posts, comments, follows, DMs (client-side encrypted), tipping 100% to the creator, business pages at 0.005 OBS with the 70/30 split (30% → treasury) |
 | ONS | `.obs` names mapped to exactly one wallet, transferable, **mapping stored as blockchain state** |
 | Time Capsule Wall | immutable commitments, ≥0.0001 OBS lock, unlock transfers the lock to the Mining Pool without the creator online, 1000× Time Travel preview paid to the pool once per capsule per account for 30 s, plus capsule statistics |
-| Obsidian Circle | Earth → country → first-level division navigation (`/land/countries`, `/land/divisions?country=`, `/land/quote/`), search by country/division and id, GLV/ILV/MSP fields, OBS pricing inside the 0.01–5 OBS band with no price source, one ≤1 m² plot per transaction with the GLV updated between purchases, no retroactive benefit for the buyer, buybacks that pay the current GLV and reduce it, a marketplace that never moves the GLV, and gifting at standard gas. Sub-division/street/landmark/`lat,lon` search is **not implemented** (see §15, gap 5) |
+| Obsidian Circle | Earth → country → first-level division navigation (`/land/countries`, `/land/divisions?country=`, `/land/quote/`), search by country/division and id, GLV/ILV/MSP fields, OBS pricing inside the 0.01–5 OBS band with no price source, one ≤1 m² plot per transaction with the GLV updated between purchases, no retroactive benefit for the buyer, buybacks that pay the current GLV and reduce it, a marketplace that never moves the GLV, and gifting at standard gas. Registry search covers country names/codes and ISO 3166-2 division names/ids; a `lat,lon` query searches parcels by their own on-chain coordinates. Sub-division, street and landmark *names* are not protocol data and are deliberately not searched (see §15, gap 5) |
 
 **Verification:** `tests/integration/applications.test.ts` (27 tests) exercises
 ONS registration/transfer/update, capsule create/preview/unlock economics, land
@@ -467,7 +467,7 @@ operational, and it is now closed.
   non-zero on drift; that was confirmed by mutating a parameter in the build and
   watching it fail, then restoring it.
 * **CI** (`.github/workflows/ci.yml`) runs on every push: core build, typecheck
-  and 246 tests; interface build and 191 tests; the 9 edge worker tests; the 13
+  and 251 tests; interface build and 191 tests; the 9 edge worker tests; the 13
   three-node cluster tests; the 55 invariants; **mainnet genesis determinism**
   (the same genesis id twice); a **real mainnet node boot** asserting
   `invariantOk: true`, the 21,000,000 cap and all 16 removed features still
@@ -489,7 +489,7 @@ across repeated runs; a mainnet node started from the packaged
 
 ## 15. Final status — **what is verified, what is not**
 
-**Verified by automated tests in this workspace (468 tests, all passing):**
+**Verified by automated tests in this workspace (473 tests, all passing):**
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
@@ -561,11 +561,16 @@ and the live-node suite fails when the *data* drifts.
    real node (layout, DOM, events, WebCrypto), and the bundles are type-checked
    and browser-safety-checked, but no Chromium/Firefox build was run here, so
    rendering, CSS and exotic browser APIs are unverified.
-5. **Sub-division, street, landmark and GPS land search** — the Circle registry
-   ships country and first-level division geometry (ISO 3166-2) with GLVs per
-   division; searching by city, district, street, landmark or `lat,lon` is not
-   implemented, and the search box says what it does match instead of pretending
-   otherwise.
+5. **Sub-division, street and landmark land search, and a real-browser check of
+   it** — the Circle registry ships country and first-level division geometry
+   (ISO 3166-2) with GLVs per division. Searching by city, district, street or
+   landmark name is *deliberately* not implemented: a node fetches nothing, so a
+   gazetteer cannot be consensus data, and inventing answers would be worse than
+   refusing. What is implemented instead is the GPS half: `q=lat,lon` searches
+   the chain for parcels whose own LAND coordinates fall within a radius
+   (default 5 km, max 50 km), nearest first. The search response names the mode
+   (`kind: registry` or `kind: coordinates`) and what it matched, and the
+   interface repeats that rather than implying a world map it does not have.
 6. **Economic parameters** — the mining schedule, gas rate, land GLV formula,
    oracle bounds and the node-reward scoring weights are implemented exactly as
    specified and tested for correctness; whether they are the *right* numbers

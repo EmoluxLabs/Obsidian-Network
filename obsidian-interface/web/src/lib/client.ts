@@ -474,7 +474,27 @@ export interface LandSearchResult {
 
 export interface LandSearchResponse {
   query: string;
-  results: LandSearchResult[];
+  /** `registry` for a name or code, `coordinates` for a `lat,lon` query. */
+  kind?: 'registry' | 'coordinates';
+  /** What this search actually matches, as the node describes it. */
+  matches?: string;
+  /** Present on a coordinate search. */
+  lat?: number;
+  lon?: number;
+  radiusMetres?: number;
+  results: Array<LandSearchResult | LandParcelNear>;
+}
+
+/** A parcel returned by a `lat,lon` search: the chain's own coordinates, not a gazetteer. */
+export interface LandParcelNear {
+  parcelId: string;
+  divisionId: string;
+  countryCode: string;
+  squareMetres: number;
+  status: string;
+  owner: string;
+  distanceMetres: number;
+  glvObs: string;
 }
 
 export interface LandParcelSummary {
@@ -798,8 +818,9 @@ export class ObsidianClient {
     return this.request(`/land/divisions?country=${encodeURIComponent(countryCode)}`);
   }
 
-  landSearch(query: string): Promise<LandSearchResponse> {
-    return this.request(`/land/search?q=${encodeURIComponent(query)}`);
+  landSearch(query: string, radiusMetres?: number): Promise<LandSearchResponse> {
+    const radius = radiusMetres === undefined ? '' : `&radius=${encodeURIComponent(String(radiusMetres))}`;
+    return this.request(`/land/search?q=${encodeURIComponent(query)}${radius}`);
   }
 
   landParcels(options: { divisionId?: string; owner?: string; limit?: number } = {}): Promise<{

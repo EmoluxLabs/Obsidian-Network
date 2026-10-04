@@ -77,7 +77,7 @@ sha256sum -c SHA256SUMS
 
 Expected: every archive reports `OK`, and the verifier prints the package
 version and protocol version it found. The core archive additionally runs its
-246 tests and they must pass. The node operator package ships `dist/` without
+251 tests and they must pass. The node operator package ships `dist/` without
 tests, so `--with-tests` reports "ships no self-contained test suite; skipping" there — that is
 why you verify the core archive too, which does ship its suite.
 

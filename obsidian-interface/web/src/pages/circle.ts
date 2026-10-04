@@ -16,7 +16,7 @@
  */
 
 import { layout } from '../lib/shell.js';
-import { ObsidianClient } from '../lib/client.js';
+import { ObsidianClient, type LandParcelNear, type LandSearchResult } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
 import { el, obs, spinner, toast, kv, table, short } from '../lib/ui.js';
@@ -26,7 +26,7 @@ const navigation = el('section', { class: 'card' }, spinner('loading the atlas�
 const parcelsPanel = el('section', { class: 'card' }, spinner());
 const detailPanel = el('section', { class: 'card', id: 'parcel-detail' }, el('p', { class: 'muted' }, 'Search a parcel, or pick a division to see what the protocol market can release.'));
 
-const search = el('input', { id: 'circle-search', placeholder: 'Country, state, city, district, street, landmark or GPS (lat,lon)', autocomplete: 'off' });
+const search = el('input', { id: 'circle-search', placeholder: 'Country, state or division name, ISO id, or GPS (lat,lon)', autocomplete: 'off' });
 const go = el('button', { class: 'primary', type: 'button' }, 'Search land');
 go.addEventListener('click', () => void searchLand(search.value.trim()));
 search.addEventListener('keydown', (event) => {
@@ -205,14 +205,40 @@ async function searchLand(term: string): Promise<void> {
   if (!term) return;
   parcelsPanel.replaceChildren(spinner(`searching “${term}”…`));
   try {
-    const { results } = await client.landSearch(term);
+    const response = await client.landSearch(term);
+    const results = response.results;
+    const fineprint =
+      'The registry holds the division layer (ISO 3166-2) only — country, state/province and id. ' +
+      'City, district, street and landmark names are not protocol data, and a node will not fetch a gazetteer to pretend otherwise. ' +
+      'A parcel carries its own coordinates from the LAND transaction that created it, so a GPS search looks at this chain.';
+    if (response.kind === 'coordinates') {
+      const parcels = results as LandParcelNear[];
+      parcelsPanel.replaceChildren(
+        el('h2', {}, `Parcels within ${(response.radiusMetres ?? 5000).toLocaleString()} m of ${response.lat}, ${response.lon}`),
+        parcels.length === 0
+          ? el('p', { class: 'muted' }, 'No parcel on this chain was created at a coordinate inside that radius. Try a larger radius, or search a division name instead.')
+          : table(
+              ['Parcel', 'Division', 'Distance', 'Size', 'Status'],
+              parcels.map((parcel) => [
+                el('span', { class: 'mono' }, parcel.parcelId.slice(0, 16) + '…'),
+                el('span', { class: 'mono' }, `${parcel.divisionId} · ${parcel.countryCode}`),
+                `${parcel.distanceMetres.toLocaleString()} m`,
+                `${parcel.squareMetres} m²`,
+                el('span', {}, parcel.status),
+              ]),
+            ),
+        el('p', { class: 'fineprint' }, fineprint),
+      );
+      return;
+    }
+    const divisions = results as LandSearchResult[];
     parcelsPanel.replaceChildren(
       el('h2', {}, `Results for “${term}”`),
-      results.length === 0
-        ? el('p', { class: 'muted' }, 'No division matched. Search matches country names, country codes, division names and division ids from the protocol table.')
+      divisions.length === 0
+        ? el('p', { class: 'muted' }, `No division matched. ${response.matches ?? 'Search matches country names, country codes, division names and division ids from the protocol table.'}`)
         : table(
             ['Division', 'Id', 'GLV now', 'Country', 'Price a plot'],
-            results.map((hit) => {
+            divisions.map((hit) => {
               const price = el('button', { class: 'link-button', type: 'button' }, 'quote 1 m²');
               price.addEventListener('click', () => void showDivision(hit.countryCode, hit.divisionId, hit.name));
               const glv = `${obs(hit.glvObs ?? '0')} OBS`;
@@ -225,7 +251,7 @@ async function searchLand(term: string): Promise<void> {
               ];
             }),
           ),
-      el('p', { class: 'fineprint' }, 'Every GLV above is derived by the node from the shipped geography table plus this chain\'s purchase and buy-back history.'),
+      el('p', { class: 'fineprint' }, 'Every GLV above is derived by the node from the shipped geography table plus this chain\'s purchase and buy-back history. ' + fineprint),
     );
   } catch (error) {
     parcelsPanel.replaceChildren(el('h2', {}, 'Search'), el('p', { class: 'error' }, (error as Error).message));
