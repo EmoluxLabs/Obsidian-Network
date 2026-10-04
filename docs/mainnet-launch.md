@@ -77,7 +77,7 @@ sha256sum -c SHA256SUMS
 
 Expected: every archive reports `OK`, and the verifier prints the package
 version and protocol version it found. The core archive additionally runs its
-251 tests and they must pass. The node operator package ships `dist/` without
+254 tests and they must pass. The node operator package ships `dist/` without
 tests, so `--with-tests` reports "ships no self-contained test suite; skipping" there — that is
 why you verify the core archive too, which does ship its suite.
 
@@ -85,6 +85,24 @@ why you verify the core archive too, which does ship its suite.
 not listed in `SHA256SUMS`, so it is safe to use as a gate in a deployment
 script. Confirm that for yourself once — append a byte to a copy of an archive
 and watch it refuse.
+
+**Signatures.** A digest list proves the bytes did not change; it does not prove
+who produced them, because anyone who can edit the archive can edit
+`SHA256SUMS` beside it. The signed path is:
+
+```bash
+../scripts/verify-release.sh obsidian-node-operator-1.2.17.tar.gz --signature-only
+```
+
+That checks the detached signature against the publisher key in
+`keys/release-key.pub` and stops there. **The 1.2.17 archives in this repository
+are unsigned**: no publisher key exists in the workspace that built them, so the
+command above reports that there is no signature to check rather than a success.
+Do not announce a launch on unsigned archives — generate the publisher key
+(`scripts/sign-release.sh --keygen` on an offline machine you control), sign the
+archives, publish `keys/release-key.pub` through a second channel, and have
+every operator verify the signature before they run the node. `docs/release-verification.md`
+documents the whole path, including what a `gpgv`-only host can and cannot do.
 
 ### 1.2 Decide the bootstrap set
 
@@ -322,6 +340,27 @@ Per node, alert on:
 
 `docs/node-operator.md` §6 covers the per-node specifics, §7 backup and restore.
 
+**Do not hand-write those checks.** `obsidian-core/deployment/monitoring/`
+carries the whole stack: Prometheus scraping the node's `/metrics`, alert rules
+for every condition above (plus node runner jail, mempool backlog and reorg
+depth), a Grafana dashboard, and an Alertmanager routing tree with two inhibit
+rules — a mempool backlog behind a stalled chain, and a syncing node behind a
+restart — so a single root cause does not page you five times. Start it with:
+
+```bash
+cd obsidian-core/deployment/monitoring
+docker compose up -d          # prometheus :9090, alertmanager :9093, grafana :3000
+```
+
+Every receiver in `alertmanager.yml` is a `CHANGE-ME` placeholder **on purpose**:
+Alertmanager refuses to start until you name a real destination, because a
+routing file that quietly delivers to `example.invalid` looks healthy and tells
+nobody anything. Point at least one receiver at a channel a human actually
+reads, then confirm end to end by triggering it —
+`amtool alert add alertname=ObsidianHeightStalled severity=critical` — and
+watching the message arrive. `deployment/monitoring/README.md` has the amtool
+verification steps.
+
 ---
 
 ## 6. If the launch goes wrong
@@ -349,6 +388,9 @@ evidence is what makes the bug findable.
 ```
 [ ] Release archives verified: sha256sum -c SHA256SUMS
 [ ] verify-release.sh --with-tests passes on the node operator archive
+[ ] Publisher signature verified (--signature-only), or the archives are
+    deliberately unsigned and every operator has been told so in writing
+[ ] Publisher public key published somewhere other than the release page
 [ ] node scripts/check-invariants.mjs -> all 55 invariants hold
 [ ] >= 3 bootstrap nodes, independent operators, independent hosting
 [ ] NTP disciplined on every host (timedatectl: synchronized yes)
@@ -363,6 +405,8 @@ evidence is what makes the bug findable.
 [ ] RPC not exposed unauthenticated; proxy and rate limits in place
 [ ] Interface configured with multiple node URLs; 12 sites return 200
 [ ] Cloudflare removed from the path as a test; consensus unaffected
+[ ] Prometheus, Alertmanager and Grafana up from deployment/monitoring
+[ ] Every CHANGE-ME receiver replaced; a test alert reached a human
 [ ] Monitoring and alerting live before announcement
 [ ] Seed node list published
 [ ] Genesis allocation event observed and identical across all nodes

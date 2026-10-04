@@ -69,8 +69,15 @@ export default {
       }
       const fetched = await fetchUpstream(request, origin);
       if (fetched.ok && fetched.headers.get('x-obsidian-node')) {
+        // Both directives, deliberately. `max-age` is what a browser obeys;
+        // `s-maxage` is what the Workers Cache API is documented to honour when
+        // storing a response with `cache.put`, and Cloudflare's own Cache API
+        // example sets exactly that. Emitting only `max-age` left the entry's
+        // lifetime to platform behaviour the worker never stated, and this
+        // cache exists to bound staleness at CHAIN_CACHE_SECONDS — not to hope.
+        const seconds = Number(env.CHAIN_CACHE_SECONDS ?? 5);
         const store = new Response(fetched.clone().body, fetched);
-        store.headers.set('cache-control', `public, max-age=${Number(env.CHAIN_CACHE_SECONDS ?? 5)}`);
+        store.headers.set('cache-control', `public, max-age=${seconds}, s-maxage=${seconds}`);
         ctx.waitUntil(cache.put(cacheKey, store));
       }
       const response = new Response(fetched.body, fetched);

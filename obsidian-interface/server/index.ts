@@ -832,7 +832,19 @@ export class InterfaceServer {
    * forwarded blindly, so this can never become an open proxy.
    */
   private async proxy(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
-    const raw = url.searchParams.get('path') ?? '/status';
+    const rawPath = url.searchParams.get('path') ?? '/status';
+    // A caller may percent-encode the whole read — `/api/rpc?path=%2Fland%2Fsearch%3Fq%3DKano`
+    // — or write it out flat: `/api/rpc?path=/land/search&q=Kano`. Both mean the
+    // same thing, and only the first used to work: the loose parameters were
+    // read past and dropped, so a search "for Kano" answered 200 with an
+    // unfiltered registry hint. Nothing is dropped now — parameters other than
+    // `path` are folded onto the read, in the order they were written.
+    const extras = [...url.searchParams.entries()].filter(([key]) => key !== 'path');
+    const raw = extras.length
+      ? `${rawPath}${rawPath.includes('?') ? '&' : '?'}${extras
+          .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+          .join('&')}`
+      : rawPath;
     if (raw.length > 512) {
       this.json(response, 400, { error: 'rpc path is too long', code: 'ERR_REJECTED' });
       return;

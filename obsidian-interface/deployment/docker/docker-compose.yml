@@ -21,6 +21,18 @@ services:
       OBSIDIAN_NODE_URLS: ${OBSIDIAN_NODE_URLS:-http://host.docker.internal:8630}
       OBSIDIAN_INTERFACE_TRUST_PROXY: ${OBSIDIAN_INTERFACE_TRUST_PROXY:-true}
       OBSIDIAN_INTERFACE_LOG_LEVEL: ${OBSIDIAN_INTERFACE_LOG_LEVEL:-info}
+      # The Genesis Invitation, without which a fresh interface serves twelve
+      # sites and refuses every registration with
+      # ERR_GENESIS_INVITE_NOT_CONFIGURED — the deployment looks healthy and can
+      # never be claimed. Mint one on the host that will hold the data volume:
+      #   node --input-type=module -e "const {newGenesisInvitation}=await import('./obsidian-interface/dist/server/genesis-invite.js');const {code,hash}=newGenesisInvitation();console.log('CODE '+code);console.log('HASH '+hash)"
+      # Then start with single quotes around the hash — the scrypt string
+      # contains `$`, which the shell would otherwise expand:
+      #   OBSIDIAN_GENESIS_INVITE_HASH='scrypt$...' docker compose up -d
+      OBSIDIAN_GENESIS_INVITE_HASH: ${OBSIDIAN_GENESIS_INVITE_HASH:-}
+      # Where the interface keeps accounts, sessions and the redeemed invite.
+      # It is a docker volume here, so the pass-through is explicit.
+      OBSIDIAN_INTERFACE_DATA_DIR: ${OBSIDIAN_INTERFACE_DATA_DIR:-/data}
     ports:
       - "${OBSIDIAN_INTERFACE_BIND:-127.0.0.1}:8788:8788"
     volumes:

@@ -701,6 +701,31 @@ describe('node proxy', () => {
     }
   });
 
+  it('does not drop loose query parameters written beside path', async () => {
+    // Regression: `?path=/land/search&q=Kano` is how a human writes a read when
+    // hand-checking with curl, and the parameters beside `path` used to be read
+    // past and dropped — an unfiltered answer wearing the shape of a filtered
+    // one. Every spelling must reach the node as the same read.
+    const h = await harness();
+    await h.poolCheck();
+
+    const loose = await fetch(`${h.origin}/api/rpc?path=/blocks&limit=15&offset=30`);
+    expect(loose.status).toBe(200);
+    expect(await loose.json()).toMatchObject({ receivedUrl: '/blocks?limit=15&offset=30' });
+
+    const encoded = await fetch(
+      `${h.origin}/api/rpc?path=${encodeURIComponent('/blocks?limit=15&offset=30')}`,
+    );
+    expect(await encoded.json()).toMatchObject({ receivedUrl: '/blocks?limit=15&offset=30' });
+
+    // Mixed, and with the loose parameter written before `path`.
+    const mixed = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent('/blocks?limit=15')}&offset=30`);
+    expect(await mixed.json()).toMatchObject({ receivedUrl: '/blocks?limit=15&offset=30' });
+
+    const reordered = await fetch(`${h.origin}/api/rpc?limit=15&path=/blocks`);
+    expect(await reordered.json()).toMatchObject({ receivedUrl: '/blocks?limit=15' });
+  });
+
   it('forwards a query-carrying read with its query intact', async () => {
     // Regression: the allowlist used to match the whole `path` value, so every
     // parameterised read (/blocks?limit=, /mining/status?address=, /names?prefix=,

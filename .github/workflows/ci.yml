@@ -1,7 +1,7 @@
 name: CI
 
 # Every claim this project makes about itself is checked here. A green run means
-# the core builds and its 251 tests pass, the interface builds and its 191 tests
+# the core builds and its 254 tests pass, the interface builds and its 192 tests
 # pass, the edge worker and the three-node end-to-end cluster pass, the protocol
 # invariants that must never drift are still intact, and the release archives
 # can actually be produced from this commit.
@@ -21,7 +21,7 @@ env:
 
 jobs:
   core:
-    name: obsidian-core (build, typecheck, 251 tests)
+    name: obsidian-core (build, typecheck, 254 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -41,7 +41,7 @@ jobs:
         working-directory: obsidian-core
 
   interface:
-    name: obsidian-interface (build, 191 tests)
+    name: obsidian-interface (build, 192 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -71,7 +71,7 @@ jobs:
         working-directory: obsidian-interface
 
   edge:
-    name: cloudflare worker (9 tests)
+    name: cloudflare worker (10 tests)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -80,6 +80,24 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       - run: node --test cloudflare/test/worker.test.mjs
+
+  scripts:
+    name: release and operator scripts (14 tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # These decide whether a release is trustworthy and whether a soak run
+      # passed, so they get their own check rather than only running inside the
+      # packaging step — a green releases job that swallowed a red script is
+      # exactly the failure this job makes impossible.
+      - name: Signing and verification behaviour
+        run: node --test tests/scripts/release-signing.test.mjs
+      - name: Soak verdict rules
+        run: node --test tests/scripts/soak-verdict.test.mjs
 
   cluster:
     name: three-node cluster end to end (13 tests)
@@ -187,6 +205,25 @@ jobs:
         working-directory: obsidian-core/deployment/docker
         run: |
           set -euo pipefail
+
+          # Mint a Genesis Invitation for this throwaway stack, the same way an
+          # operator would, and pass it in through the environment. Without it
+          # the stack comes up, serves all twelve sites, and refuses every
+          # registration with ERR_GENESIS_INVITE_NOT_CONFIGURED — the failure
+          # this step exists to catch, because a deployment nobody can claim is
+          # not a deployment.
+          read -r CODE HASH < <(node -e '
+            const { randomBytes, scryptSync } = require("node:crypto");
+            const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+            const group = () => Array.from(randomBytes(16), (b) => ALPHABET[b % 32]).join("");
+            const code = `OBS-GENESIS-${group()}-${group()}-${group()}-${group()}`;
+            const salt = randomBytes(16);
+            const derived = scryptSync(code, salt, 32, { N: 32768, r: 8, p: 1 }).toString("hex");
+            console.log(code, `scrypt$32768$8$1$${salt.toString("hex")}$${derived}`);
+          ')
+          echo "minted a genesis invitation for this run"
+          export OBSIDIAN_GENESIS_INVITE_HASH="$HASH"
+
           docker compose up -d --build
           echo "waiting for the interface to become healthy"
           for i in $(seq 1 90); do
@@ -204,7 +241,22 @@ jobs:
             [ "$code" = "200" ] || { echo "site $p did not return 200"; docker compose logs; exit 1; }
           done
 
-          # The interface must be reading through the node, not inventing data.
+          # The first account must actually be registrable with that invitation, and it
+          # must be the genesis one: the stack reports itself bootstrapped only
+          # if the invitation matched.
+          curl -fsS http://127.0.0.1:8788/api/auth/config | grep -q '"configured":true'
+          curl -fsS -X POST http://127.0.0.1:8788/api/auth/register \
+            -H 'content-type: application/json' \
+            -d "{\"email\":\"launch-check@gmail.com\",\"password\":\"ci-only-passphrase-9\",\"inviteCode\":\"$CODE\"}" \
+            > register.json
+          node -e '
+            const r = require("./register.json");
+            if (!r.account) { console.error("registration failed:", JSON.stringify(r)); process.exit(1); }
+            if (r.bootstrapped !== true) { console.error("the first account did not bootstrap the interface:", JSON.stringify(r)); process.exit(1); }
+            console.log("first account registered:", r.account.accountId);
+          '
+
+          #
           curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/status' | grep -q '"genesisId"'
           curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/pot' | grep -q 'PROOF_OF_TIME'
           curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/supply' | grep -q '"invariantOk":true'
@@ -215,6 +267,13 @@ jobs:
           h2=$(curl -fsS 'http://127.0.0.1:8788/api/rpc?path=/status' | grep -o '"height":[0-9]*' | head -1 | cut -d: -f2)
           echo "height $h1 -> $h2"
           [ "$h2" -gt "$h1" ] || { echo "the containerised chain is not producing blocks"; docker compose logs; exit 1; }
+
+          # The invitation is single-use: the same code must be dead now.
+          second=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8788/api/auth/register \
+            -H 'content-type: application/json' \
+            -d "{\"email\":\"second-check@gmail.com\",\"password\":\"ci-only-passphrase-9\",\"inviteCode\":\"$CODE\"}")
+          echo "second registration attempt with the same invitation: HTTP $second"
+          [ "$second" != "200" ] || { echo "the genesis invitation was redeemable twice"; docker compose logs; exit 1; }
 
           # Stopping the interface must not stop consensus.
           docker compose stop interface

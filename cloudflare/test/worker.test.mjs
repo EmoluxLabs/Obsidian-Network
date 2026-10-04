@@ -210,3 +210,22 @@ test('a filled-in config passes the same check', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a cached chain read states its lifetime in both cache directives', async () => {
+  // Cloudflare's Cache API example uses `s-maxage` to bound an entry stored with
+  // cache.put; `max-age` is the browser-facing directive. The worker promised a
+  // CHAIN_CACHE_SECONDS staleness bound, so it says it in both.
+  const cache = makeCache();
+  globalThis.caches = cache;
+  globalThis.fetch = async () => upstreamResponse({ height: 100 });
+
+  await worker.fetch(new Request('https://obsidian.example/api/rpc?path=/status'), makeEnv(), makeCtx(cache));
+  const stored = [...cache._store.values()][0];
+  assert.match(stored.headers.get('cache-control'), /max-age=5\b/);
+  assert.match(stored.headers.get('cache-control'), /s-maxage=5\b/);
+
+  // And the cached copy that is served still names the node that produced it.
+  const hit = await worker.fetch(new Request('https://obsidian.example/api/rpc?path=/status'), makeEnv(), makeCtx(cache));
+  assert.equal(hit.headers.get('x-obsidian-cache'), 'HIT');
+  assert.equal(hit.headers.get('x-obsidian-node'), 'http://127.0.0.1:8630');
+});

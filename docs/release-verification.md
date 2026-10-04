@@ -101,9 +101,9 @@ that point.
 ```bash
 tar -xzf obsidian-network-source-1.2.17.tar.gz
 cd obsidian-network-1.2.17/obsidian-core
-npm ci && npm run build && npm test        # 251 tests
+npm ci && npm run build && npm test        # 254 tests
 cd ../obsidian-interface
-npm ci && npm run build && npm test        # 191 tests
+npm ci && npm run build && npm test        # 192 tests
 cd ../cloudflare
 node --test test/worker.test.mjs           # 9 tests
 cd ..

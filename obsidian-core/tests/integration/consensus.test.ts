@@ -35,6 +35,8 @@ import {
   type Harness,
 } from '../helpers/harness.js';
 import { PROTOCOL_VERSION } from '../../src/version.js';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const GENESIS_TS = 1_767_225_600;
 const GENESIS_ALLOCATION = parseObs('100000');
@@ -680,3 +682,65 @@ describe('multi-node convergence (spec §111)', () => {
   });
 });
 
+
+/**
+ * Storage integrity after a crash, a full disk or bit rot.
+ *
+ * `obsidian-core validate` is what an operator runs when they suspect the data
+ * directory, so its answer has to mean something. It used to check only that a
+ * file existed at each height and that the parent links matched, which meant an
+ * edited or corrupted block file was reported as `ok: true` — and the node would
+ * go on serving that block to peers and to `/block/<hash>` as chain data. It now
+ * re-hashes each header and re-merkle's each body.
+ */
+describe('data directory integrity (spec §73, §119)', () => {
+  const corrupt = (dir: string, height: number, where: 'header' | 'body'): string => {
+    const blocksDir = join(dir, 'chain', 'blocks');
+    const file = readdirSync(blocksDir).find((name) => name.startsWith(`${height}-`));
+    expect(file, `no block file for height ${height}`).toBeDefined();
+    const path = join(blocksDir, file!);
+    const raw = readFileSync(path);
+    // A block file is header bytes then the transaction list. Flip a byte in the
+    // middle of whichever half the test is targeting.
+    const at = where === 'header' ? 8 : Math.floor(raw.length * 0.75);
+    const edited = Buffer.from(raw);
+    edited[at] = edited[at]! ^ 0xff;
+    writeFileSync(path, edited);
+    return path;
+  };
+
+  it('accepts an untouched data directory', async () => {
+    const h = await harness();
+    h.produce([]);
+    h.produce([]);
+    expect(h.chain.verifyIntegrity()).toEqual({ ok: true, problems: [] });
+  });
+
+  it('reports a header whose bytes no longer hash to the stored block id', async () => {
+    const h = await harness();
+    h.produce([]);
+    h.produce([]);
+    const head = h.chain.tip!;
+    expect(h.chain.verifyIntegrity().ok).toBe(true);
+
+    corrupt(h.dir, head.height, 'header');
+    const result = h.chain.verifyIntegrity();
+    expect(result.ok).toBe(false);
+    expect(result.problems.join(' ')).toMatch(/does not hash to its canonical id/);
+  });
+
+  it('reports a body that no longer matches the transaction root in its header', async () => {
+    const h = await harness();
+    const alice = makeWallet();
+    advance(h, 1);
+    h.produce([claimTx(h, alice)]);                                  // fund the sender
+    h.produce([signedPayment(h, alice, makeWallet().address, parseObs('1'))]); // a block with a body
+    const head = h.chain.tip!;
+    expect(h.chain.verifyIntegrity().ok).toBe(true);
+
+    corrupt(h.dir, head.height, 'body');
+    const result = h.chain.verifyIntegrity();
+    expect(result.ok).toBe(false);
+    expect(result.problems.join(' ')).toMatch(/body does not match its transaction root/);
+  });
+});

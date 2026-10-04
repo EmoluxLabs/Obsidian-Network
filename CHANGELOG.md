@@ -181,10 +181,56 @@ are built from. Everything below is inside it.
   logs now and publishes them as annotations on failure, so the next red run
   carries its own evidence.
 
+### Fixed in the second audit pass
+
+Five defects found by auditing the *published* artefacts rather than the source:
+two deployment assets, one integrity check, one measurement tool and one proxy
+rule. Each is now covered by a test that fails if it comes back.
+
+* **The one-stack Docker Compose file could not register its first account.**
+  `deployment/docker/docker-compose.yml` started the interface next to the node
+  without passing `OBSIDIAN_GENESIS_INVITE_HASH`, so the genesis invitation had
+  nothing to match against and every first registration was refused with
+  `ERR_GENESIS_INVITE_NOT_CONFIGURED` — the stack came up healthy and could
+  never be claimed. The variable is now passed through, with the quoting rule
+  (single quotes: the scrypt string contains `$`) written next to it.
+* **A corrupted block file validated as healthy.** `verifyIntegrity()` checked
+  that each canonical entry had a file and that the parent links held, but never
+  re-derived anything from the bytes — so a block whose header or body had been
+  edited on disk was reported `{ ok: true }` and served onward by the node that
+  loaded it. It now re-hashes each header against the stored block id and
+  re-merkle's the bodies against the header's transaction root, in the same
+  single pass. Three regression tests corrupt a header, corrupt a body and
+  point a parent link at the wrong height, and each must be refused with the
+  block height named.
+* **The edge worker's cached reads had no bound the platform is obliged to
+  honour.** The Cloudflare Cache API example bounds stored entries with
+  `s-maxage`; the worker set only `max-age`, which left the five-second staleness
+  bound to platform behaviour rather than to the stored response. Both
+  directives are set now, and the test reads the stored response back so the
+  `max-age`-only version fails.
+* **The soak tool reported PASS while measuring nothing.** Without `--pid` (or
+  `--match`) it sampled `NaN` for RSS, treated the growth as `0`, and printed a
+  green verdict over the one check a soak exists to perform. The decision now
+  lives in `scripts/soak-verdict.mjs` as a pure function: an unmeasured memory
+  check is a failure, `--skip-memory` records the check as not run instead of
+  pretending it passed, and the runner resolves the node's own pid from its
+  command line when neither flag is given. Five tests pin those rules, the
+  verdict module ships in the operator archive beside `soak.mjs`, and the
+  packaging gate refuses to build if the suite reports no passes.
+* **The interface proxy silently dropped query parameters written beside
+  `path`.** `/api/rpc?path=/land/search&q=Kano` read only `path` and ignored the
+  rest, so a hand-written read answered 200 with the filter discarded — an
+  unfiltered result wearing the shape of a filtered one. Parameters other than
+  `path` are now folded onto the read in the order given, so the flat spelling
+  and the percent-encoded one are the same read; a disallowed route carrying a
+  query is still refused.
+
 ### Tests
 
-Core 251 (was 246), interface 191 (was 187), signing 9 (was 8), edge worker 9,
-invariants 55, cluster 13 — 473 total.
+Core 254 (was 251), interface 192 (was 191), signing 9, edge worker 10 (was 9),
+soak verdict rules 5, invariants 55, cluster 13 — 483 total, from 468 before the
+first pass and 473 after it.
 
 ---
 

@@ -317,17 +317,18 @@ this is.
 cd ~/obsidian/src
 npm --prefix obsidian-core ci
 npm --prefix obsidian-core run build
-npm --prefix obsidian-core test                                    # 251
+npm --prefix obsidian-core test                                    # 254
 npm --prefix obsidian-interface ci
 npm --prefix obsidian-interface run build
-npm --prefix obsidian-interface test                              # 191
+npm --prefix obsidian-interface test                              # 192
 node scripts/check-invariants.mjs                                 # 55
-node --test cloudflare/test/worker.test.mjs                       # 9
+node --test cloudflare/test/worker.test.mjs                       # 10
 node --test tests/scripts/release-signing.test.mjs                # 9
+node --test tests/scripts/soak-verdict.test.mjs                   # 5
 node --test tests/e2e/cluster.test.mjs      # 13 — starts 3 real nodes, ~1 minute
 ```
 
-473 in total. Build the core before the interface, and the interface before
+483 in total. Build the core before the interface, and the interface before
 testing it, or you will get spurious `../../core/*.js` failures.
 
 ## 13. Prove the 1.2.17 wallet fix (the `obs1`-on-devnet bug)

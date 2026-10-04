@@ -10,12 +10,20 @@
  * only grows, a chain that quietly stops, an invariant that flips — and those
  * are visible in raw samples or not at all.
  *
- * Exit code is 1 if the chain stalled, the invariant broke, or RSS grew by
- * more than --max-growth-pct over the second half of the run.
+ * Memory is part of the verdict. The node's pid is taken from --pid, from
+ * --match, or resolved from the node's own command line; if none of those finds
+ * a process the run FAILS rather than reporting a growth of 0% over samples it
+ * never measured. Pass --skip-memory to say out loud that this run is only about
+ * the chain.
+ *
+ * Exit code is 1 if the chain stalled, the invariant broke, RSS could not be
+ * measured, or RSS grew by more than --max-growth-pct over the second half of
+ * the run.
  */
 import { setTimeout as sleep } from 'node:timers/promises';
 import { writeFileSync, appendFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { verdict } from './soak-verdict.mjs';
 
 const args = new Map();
 for (let i = 2; i < process.argv.length; i += 2) args.set(process.argv[i].replace(/^--/, ''), process.argv[i + 1]);
@@ -27,6 +35,13 @@ const OUT = args.get('out') ?? 'soak.csv';
 const MAX_GROWTH = Number(args.get('max-growth-pct') ?? 25);
 let PID = args.get('pid');
 const MATCH = args.get('match');
+/**
+ * Memory is half the point of a soak, so it is a check you opt *out* of, not one
+ * you have to remember to switch on. Without a pid the script used to sample
+ * `NaN` for every row, fall back to a growth of `0`, and print PASS — a green
+ * verdict over a check that never ran.
+ */
+const SKIP_MEMORY = args.has('skip-memory');
 
 /**
  * Resolve the node's own pid.
@@ -64,6 +79,13 @@ if (!PID && MATCH) {
     process.exit(2);
   }
   console.log(`resolved pid ${PID} from --match ${JSON.stringify(MATCH)}`);
+}
+
+// No --pid and no --match: find the node by its own command line rather than
+// giving up on memory, which is what the default invocation used to do.
+if (!PID && !SKIP_MEMORY) {
+  PID = await resolvePid('dist/index.js');
+  if (PID) console.log(`resolved the node's own pid ${PID} (override with --pid or --match)`);
 }
 
 if (PID) {
@@ -137,14 +159,10 @@ if (rows.length < 2) {
 
 const first = rows[0];
 const last = rows[rows.length - 1];
-const half = rows.slice(Math.floor(rows.length / 2));
-const rssStart = half[0].rss_kb;
-const rssEnd = last.rss_kb;
-const growth = Number.isFinite(rssStart) && rssStart > 0 ? ((rssEnd - rssStart) / rssStart) * 100 : 0;
-const blocks = last.height - first.height;
-const minutes = (last.elapsed_s - first.elapsed_s) / 60;
-const invariantHeld = rows.every((r) => r.invariant_ok === 1);
-const stalled = blocks <= 0;
+const { rssStart, rssEnd, memoryMeasured, growth, blocks, minutes, invariantHeld, stalled, problems } = verdict(rows, {
+  maxGrowthPct: MAX_GROWTH,
+  skipMemory: SKIP_MEMORY,
+});
 
 console.log('\n── soak result ─────────────────────────────────────────');
 console.log(`samples              ${rows.length} over ${minutes.toFixed(1)} min (${failures} scrape failures)`);
@@ -152,13 +170,15 @@ console.log(`height               ${first.height} → ${last.height}  (+${blocks
 console.log(`supply (OBS)         ${first.supply_obs} → ${last.supply_obs}`);
 console.log(`supply invariant     ${invariantHeld ? 'held on every sample' : 'BROKE'}`);
 console.log(`mempool max          ${Math.max(...rows.map((r) => r.mempool))}`);
-console.log(`RSS                  ${rssStart} kB → ${rssEnd} kB over the second half (${growth.toFixed(1)}%)`);
+console.log(
+  memoryMeasured
+    ? `RSS                  ${rssStart} kB → ${rssEnd} kB over the second half (${growth.toFixed(1)}%)`
+    : SKIP_MEMORY
+      ? 'RSS                  not checked (--skip-memory)'
+      : 'RSS                  NOT MEASURED — no process to attribute memory to',
+);
 console.log('────────────────────────────────────────────────────────');
 
-const problems = [];
-if (stalled) problems.push('the chain did not advance');
-if (!invariantHeld) problems.push('the supply invariant was false in at least one sample');
-if (growth > MAX_GROWTH) problems.push(`RSS grew ${growth.toFixed(1)}% in the second half (limit ${MAX_GROWTH}%)`);
 if (problems.length) {
   console.error(`\nFAIL: ${problems.join('; ')}`);
   process.exit(1);

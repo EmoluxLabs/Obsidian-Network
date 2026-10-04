@@ -78,7 +78,7 @@ wrong one is how people ship old code.
 
 | Thing | What it is | When you deploy from it |
 |---|---|---|
-| **Development branch** (`arena/01a0fd74-obsidian-network`) | Where work happens. Changes often. This is where all 473 tests and the 1.2.17 archives currently live. | Local devnet and private testnet only. |
+| **Development branch** (`arena/01a0fd74-obsidian-network`) | Where work happens. Changes often. This is where all 483 tests and the 1.2.17 archives currently live. | Local devnet and private testnet only. |
 | **`main` branch** | Convention: the branch that reflects "current accepted state". `main` now carries the full tree (PR #1 merged the work branch, and its tree is identical to the `v1.2.17` tag). | Prefer a tagged release archive; `main` moves, a tag does not. |
 | **Release branch** | A branch frozen for a release, e.g. `release/1.2.17`, that only receives fixes. **NOT DOCUMENTED IN THE CURRENT REPOSITORY** — no release branch exists and no document describes one. | Optional; see §B. |
 | **Git tag** | A permanent, immovable label on one exact commit, e.g. `v1.2.17`. Unlike a branch it never moves. Annotated release tags `v1.2.0` … `v1.2.17` exist on the remote. | Tag first, then build the archive from the tag. |
@@ -291,14 +291,15 @@ it, so it fails on a clean checkout if the core has not been built.
 
 ### A7. Run the project's actual tests
 
-Five test suites, **473 tests total**, plus the invariant check:
+Six test suites, **483 tests total**, plus the invariant check:
 
 ```bash
-npm --prefix obsidian-core test               # 251 tests
-npm --prefix obsidian-interface test          # 191 tests
-node --test cloudflare/test/worker.test.mjs   # 9 tests
+npm --prefix obsidian-core test               # 254 tests
+npm --prefix obsidian-interface test          # 192 tests
+node --test cloudflare/test/worker.test.mjs   # 10 tests
 node --test tests/e2e/cluster.test.mjs        # 13 tests, starts 3 real nodes
 node --test tests/scripts/release-signing.test.mjs  # 9 tests, signing tooling
+node --test tests/scripts/soak-verdict.test.mjs     # 5 tests, soak verdict rules
 ```
 
 The cluster suite binds ports 39630–39635 and takes about a minute. **Do not run
@@ -1280,7 +1281,7 @@ sha256sum -c SHA256SUMS
 
 The operator package ships `dist/` without tests, so `--with-tests` reports
 "ships no self-contained test suite; skipping" there — verify the core archive too, which
-ships its suite and runs it (251 tests as of 1.2.17).
+ships its suite and runs it (254 tests as of 1.2.17).
 
 ### E4. Three independent nodes
 
@@ -1477,6 +1478,20 @@ All of them call **relative** URLs on the same origin:
 - `/api/rpc?path=/status` — allowlisted proxied reads
 - `/api/auth/...` — sign-in and invites
 - `/api/nodes/...` — node pool health
+
+A read that carries a query can be written either way — the whole read
+percent-encoded, or the parameters beside `path`:
+
+```bash
+curl -s 'http://localhost:8788/api/rpc?path=%2Fland%2Fsearch%3Fq%3DKano'
+curl -s 'http://localhost:8788/api/rpc?path=/land/search&q=Kano'
+```
+
+Both are the same read. Parameters written beside `path` are folded onto it in
+the order given; **none is ever silently dropped**, because a dropped filter
+returns an honest-looking 200 for a question nobody asked. Anything other than
+the allowlisted routes — with or without a query — is refused with
+`ERR_REJECTED`.
 
 They never contain a node address. The interface decides which node to read,
 health-checks them, and fails over.
@@ -2526,9 +2541,10 @@ curl -s https://rpc1.example.org/status
 **Build and tests**
 - [ ] `obsidian-core` builds
 - [ ] `obsidian-interface` builds (`wrote 12 site shells`)
-- [ ] Core tests: 251 pass
-- [ ] Interface tests: 191 pass
-- [ ] Edge worker tests: 9 pass
+- [ ] Core tests: 254 pass
+- [ ] Interface tests: 192 pass
+- [ ] Edge worker tests: 10 pass
+- [ ] Soak verdict tests: 5 pass
 - [ ] Cluster e2e: 13 pass
 - [ ] Release signing tooling: 9 pass
 - [ ] `node scripts/check-invariants.mjs` → all 55 invariants hold
@@ -2606,10 +2622,10 @@ An honest comparison, with the evidence.
 ### What the repository actually proves today
 
 **Strong evidence:**
-- **473 automated tests** pass: core 251, interface 191, edge worker 9,
-  release signing 9, three-node cluster 13.
+- **483 automated tests** pass: core 254, interface 192, edge worker 10,
+  release signing 9, soak verdict rules 5, three-node cluster 13.
 - **55 protocol invariants** hold, and the checker is proven to fail on drift.
-- **CI is green across 7 jobs** on every push, including a **Docker job** that
+- **CI is green across 8 jobs** on every push, including a **Docker job** that
   builds both images, runs a two-container stack, watches the chain height
   advance inside the container, and confirms stopping the interface does not
   stop consensus.

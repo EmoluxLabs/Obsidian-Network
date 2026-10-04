@@ -31,8 +31,8 @@ transaction types.
   data directory written by another network is refused at startup.
 
 **Verification:** `cd obsidian-core && npm ci && npm run build && npm test` →
-**251 tests in 11 files, all passing** (consensus 42, applications 30, node
-runners 27, protocol security 22, RPC hardening 25, crypto/amounts 30, mining
+**254 tests in 11 files, all passing** (consensus 45, applications 30, node
+runners 27, protocol security 22, RPC hardening 27, crypto/amounts 30, mining
 schedule 17, Proof of Time 23, node reward economics 24, peer retry and ban
 policy 7, CLI wallet 2).
 
@@ -206,7 +206,7 @@ never return balances and never echo key material.
   validation of its own prerequisites, systemd unit, nginx config, Dockerfile and
   compose file, all under `obsidian-interface/deployment/`.
 
-**Verification:** `obsidian-interface/tests/` — **191 tests** in thirteen files.
+**Verification:** `obsidian-interface/tests/` — **192 tests** in thirteen files.
 
 1. **HTTP server (39 + 23 + 17 + 12 + 8 + 11 tests)**: invite-only registration,
    invite reuse, the five-invite cap, session lifecycle, origin policy, header
@@ -318,7 +318,7 @@ nothing: the recipes looked correct to careful reading and were broken in five
 ways. Only execution settled it.
 
 **Status: verified.** CI run 36757636372 on commit `188510c` is green across all
-seven jobs, the `docker` job among them — both images built, started, answered
+eight jobs, the `docker` job among them — both images built, started, answered
 their own health endpoints, served all twelve sites, proxied `/status`, `/pot`
 and `/supply` from the node, advanced the chain height inside the container, and
 kept producing blocks after the interface was stopped. A green `docker` job is
@@ -467,7 +467,7 @@ operational, and it is now closed.
   non-zero on drift; that was confirmed by mutating a parameter in the build and
   watching it fail, then restoring it.
 * **CI** (`.github/workflows/ci.yml`) runs on every push: core build, typecheck
-  and 251 tests; interface build and 191 tests; the 9 edge worker tests; the 13
+  and 254 tests; interface build and 192 tests; the 10 edge worker tests; the 13
   three-node cluster tests; the 55 invariants; **mainnet genesis determinism**
   (the same genesis id twice); a **real mainnet node boot** asserting
   `invariantOk: true`, the 21,000,000 cap and all 16 removed features still
@@ -489,15 +489,16 @@ across repeated runs; a mainnet node started from the packaged
 
 ## 15. Final status — **what is verified, what is not**
 
-**Verified by automated tests in this workspace (473 tests, all passing):**
+**Verified by automated tests in this workspace (483 tests, all passing):**
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
 | `obsidian-core` unit | 103 | canonical encoding, hashing, addresses, amounts, mining schedule, CLI wallet, peer retry policy, **Proof of Time (23)**, **node reward economics (24)** |
-| `obsidian-core` integration | 96 | consensus, blocks, reorg rules, all eleven transaction types, indexer, **node runner registration, evidence and settlement (27)** |
-| `obsidian-core` security | 47 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route, **PoT/revenue/registry routes and the extended compliance audit (3)** |
-| `obsidian-interface` | 191 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, **node runner page and PoT surfacing (9)** |
-| `cloudflare` | 9 | cache/proxy semantics, honest failures, no CSP weakening |
+| `obsidian-core` integration | 102 | consensus, blocks, reorg rules, all eleven transaction types, indexer, node runner registration, evidence and settlement, **on-disk chain integrity (3)** |
+| `obsidian-core` security | 49 | replay, nonce, gas underpayment, wrong chain, supply cap, explorer masking, Circle registry route, **malformed-body handling on every POST route (2)** |
+| `obsidian-interface` | 192 | token verification, invites, sessions, store hygiene, node pool, HTTP server, site-root discovery, exact amount formatting, jsdom page tests, live-node UI tests, node runner page and PoT surfacing (9), **loose proxy query parameters (1)** |
+| `cloudflare` | 10 | cache/proxy semantics (**both cache directives are set and stored**), honest failures, no CSP weakening |
+| `tests/scripts/soak-verdict.test.mjs` | 5 | a soak that cannot measure memory never reports PASS, and a stalled chain or broken invariant is caught |
 | `tests/e2e/cluster.test.mjs` | 13 | three real nodes: genesis claim, payment + gas, replay, oracle, ONS, supply invariant, explorer masking, protocol-time eligibility, **PoT state agreement, 40/60 split** |
 
 **Verified by running the system:** the cluster suite above *is* that run — three

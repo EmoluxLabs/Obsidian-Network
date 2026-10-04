@@ -180,9 +180,10 @@ Consequences worth being explicit about:
 
 ## 7. CI
 
-`.github/workflows/ci.yml` runs seven jobs on every push: `core` (build,
+`.github/workflows/ci.yml` runs eight jobs on every push: `core` (build,
 typecheck and the core suite), `interface` (build, typecheck and the interface
-suite), `edge` (the worker suite), `cluster` (three real nodes end to end),
+suite), `edge` (the worker suite), `scripts` (release signing and verification
+behaviour, and the soak verdict rules), `cluster` (three real nodes end to end),
 `invariants` (the 55 economic/protocol checks, mainnet genesis determinism and a
 mainnet node boot asserting `invariantOk: true` and every removed feature
 absent), `docker` (both images built, started and probed, plus a two-container

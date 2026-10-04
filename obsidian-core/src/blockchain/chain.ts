@@ -43,6 +43,7 @@ import {
   potWeight,
   decodeBlock,
   encodeBlock,
+  transactionRootOf,
 } from './block.js';
 import { BlockStore, CHECKPOINT_INTERVAL_BLOCKS, type IndexEntry } from '../storage/blockstore.js';
 import { Mempool } from './mempool.js';
@@ -702,7 +703,17 @@ export class ChainManager extends EventEmitter {
     return this.state.toSnapshot(this.store.head?.hash ?? '');
   }
 
-  /** Verify a paused/restored node against its own storage. */
+  /**
+   * Verify a paused/restored node against its own storage.
+   *
+   * This is the check an operator runs after a crash, a full disk or suspected
+   * bit rot, so "the file exists" is not the question: the question is whether
+   * the bytes still *are* that block. Each stored block is therefore re-hashed
+   * from its header and its body is re-merkle'd against the header's `txRoot`,
+   * and the result must equal the hash it is filed under. Without that step a
+   * corrupt or edited block file passed as `ok: true` — the node would keep
+   * serving it to peers and to `/block/<hash>` as if it were chain data.
+   */
   verifyIntegrity(): { ok: boolean; problems: string[] } {
     const problems: string[] = [];
     const head = this.store.head;
@@ -720,6 +731,16 @@ export class ChainManager extends EventEmitter {
       }
       if (block.header.prevHash !== this.store.getCanonicalHashAtHeight(height - 1)) {
         problems.push(`parent link broken at height ${height}`);
+        break;
+      }
+      const recomputed = blockHash(block.header);
+      if (recomputed !== entry.hash) {
+        problems.push(`block ${height} does not hash to its canonical id (stored ${entry.hash.slice(0, 16)}…, recomputed ${recomputed.slice(0, 16)}…)`);
+        break;
+      }
+      const bodyRoot = transactionRootOf(block.transactions);
+      if (bodyRoot !== block.header.txRoot) {
+        problems.push(`block ${height} body does not match its transaction root (header ${block.header.txRoot.slice(0, 16)}…, body ${bodyRoot.slice(0, 16)}…)`);
         break;
       }
     }
