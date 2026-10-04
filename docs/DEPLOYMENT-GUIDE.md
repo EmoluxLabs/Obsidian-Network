@@ -2173,6 +2173,10 @@ website only — consensus does not use TLS between nodes in the way browsers do
 
 ## M. Android guide
 
+> The full, verified walkthrough — release archives, devnet, the interface, the
+> wallet fix and the reset procedure — is `docs/DEVNET-TERMUX-RUNBOOK.md`. This
+> section is the shorter reference for working on the repository itself.
+
 You do not have a PC. This whole thing works from a phone.
 
 ### M1. Install Termux
@@ -2303,9 +2307,9 @@ node scripts/new-genesis-invite.mjs
 ### M10. Multiple terminals
 
 Swipe from the **left edge** of Termux → **New session**. You need three for a
-three-node testnet, plus one for `curl`.
+three-node devnet, plus one for `curl`.
 
-### M11. The whole testnet, from your phone
+### M11. The whole devnet, from your phone
 
 Follow §C exactly — it was written to work in Termux. Summary:
 
