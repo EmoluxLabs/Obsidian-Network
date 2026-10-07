@@ -1,0 +1,67 @@
+# Obsidian Core node as a systemd TEMPLATE: one instance per network.
+#
+#   sudo install -m 0644 obsidian-node@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now obsidian-node@devnet        # or testnet, staging, mainnet
+#
+# The text after the @ is the network, and it is used three times: it is passed
+# to the node as --network, it names this network's settings file, and it names
+# this network's data directory. Two instances therefore cannot share a chain,
+# a key or a settings file, whatever an operator copies and pastes:
+#
+#   settings   /etc/obsidian/<network>/node.env          (YOU create it; see docs/ORACLE-VPS-DEPLOYMENT.md)
+#   data       /var/lib/obsidian/<network>/node          (systemd creates it, owned by `obsidian`, mode 0700)
+#   ports      the network's own: mainnet 8630/8631, testnet 18630/18631,
+#              staging 28630/28631, devnet 38630/38631 (RPC/P2P)
+#
+# Do NOT put OBSIDIAN_NETWORK in the settings file. If it is there and names a
+# different network than the instance, the node refuses to start (it will not
+# guess which chain you meant).
+#
+# The code is the node-operator archive extracted into /opt/obsidian (so the node is
+# /opt/obsidian/obsidian-core). The service runs as the unprivileged `obsidian` user with a
+# read-only view of it.
+[Unit]
+Description=Obsidian Core node (%i)
+Documentation=https://github.com/EmoluxLabs/Obsidian-Network
+After=network-online.target
+Wants=network-online.target
+# An instance for a network nobody configured does not start: a typo in the
+# instance name (obsidian-node@devnett) fails here instead of creating a node.
+ConditionPathExists=/etc/obsidian/%i/node.env
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+WorkingDirectory=/opt/obsidian/obsidian-core
+EnvironmentFile=/etc/obsidian/%i/node.env
+Environment=NODE_ENV=production
+StateDirectory=obsidian/%i
+StateDirectoryMode=0700
+ExecStart=/usr/bin/node dist/index.js start --network %i --data-dir /var/lib/obsidian/%i/node
+Restart=always
+RestartSec=5s
+# Give a graceful shutdown (flush the chain, release the data-directory lock)
+# time to finish before systemd kills the process.
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+# Hardening. The node needs no privileges, no devices and no writable code path.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+# NOT set: MemoryDenyWriteExecute=true. Node.js compiles JavaScript to machine
+# code at run time (V8's JIT), which needs memory it can write and then execute;
+# under that option node fails to start.
+
+[Install]
+WantedBy=multi-user.target

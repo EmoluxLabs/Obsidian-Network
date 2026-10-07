@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# Verify a release archive before you run it.
+#
+#   ./verify-release.sh obsidian-core-1.6.0.tar.gz
+#   ./verify-release.sh obsidian-node-operator-1.6.0.zip --with-tests
+#
+# Checks, in order:
+#   1. the archive is listed in SHA256SUMS and its digest matches;
+#   2. it extracts into a temporary directory (never over your working tree);
+#   3. the expected entry points and version markers are present;
+#   4. with --with-tests, the shipped test suite runs and must pass.
+#
+# Nothing is executed from the archive until step 4, and even then only the test
+# runner — never a node that would touch your keys.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+ARCHIVE="${1:-}"
+WITH_TESTS=0
+SIGNATURE_ONLY=0
+for flag in "${@:2}"; do
+  case "$flag" in
+    --with-tests) WITH_TESTS=1 ;;
+    # Check authorship and stop. Used by the test suite, and useful when you
+    # want to decide whether to trust a download before spending time on it.
+    --signature-only) SIGNATURE_ONLY=1 ;;
+  esac
+done
+
+if [ -z "$ARCHIVE" ]; then
+  echo "usage: $0 <archive.zip|archive.tar.gz> [--with-tests] [--signature-only]" >&2
+  exit 2
+fi
+[ -f "$ARCHIVE" ] || { echo "no such archive: $ARCHIVE" >&2; exit 1; }
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+BASE="$(basename "$ARCHIVE")"
+# SHA256SUMS normally sits beside the archive (that is how releases/ is laid
+# out), but this script is also shipped inside the node operator package where
+# it sits beside itself. Look in both places, archive first: the sums file that
+# accompanies the download is the one that describes it.
+ARCHIVE_DIR="$(cd "$(dirname "$ARCHIVE")" && pwd)"
+SUMS=""
+for candidate in "$ARCHIVE_DIR/SHA256SUMS" "$HERE/SHA256SUMS"; do
+  [ -f "$candidate" ] && { SUMS="$candidate"; break; }
+done
+
+# ── Authorship ───────────────────────────────────────────────────────────────
+# A digest proves the bytes are intact. It proves nothing about who produced
+# them: whoever can swap an archive can swap the digest list beside it. If a
+# detached signature is present it is checked here, and if it is absent that
+# is said out loud rather than passed over in silence.
+check_signature() {
+  local sums="$1" sig="$1.asc" key
+  key="$(dirname "$sums")/SIGNING-KEY.asc"
+
+  if [ ! -f "$sig" ]; then
+    echo "→ UNSIGNED RELEASE"
+    echo "  No $(basename "$sig") beside the digest list, so this check proves the"
+    echo "  archive is intact — not who built it. Obtain the digest over a channel"
+    echo "  the publisher controls, or ask them to sign the release."
+    return 0
+  fi
+
+  if command -v gpg >/dev/null 2>&1; then
+    echo "→ verifying the signature over $(basename "$sums")"
+    if gpg --verify "$sig" "$sums"; then
+      echo "  signature OK — now confirm the key fingerprint against a source that"
+      echo "  is NOT hosted with the archives."
+    else
+      echo "  SIGNATURE DID NOT VERIFY — do not run this archive." >&2
+      return 1
+    fi
+  elif command -v gpgv >/dev/null 2>&1 && [ -f "$key" ]; then
+    echo "→ verifying with gpgv against $(basename "$key")"
+    local ring
+    ring="$(mktemp)"
+    # gpgv needs a binary keyring and the shipped key is armoured. Rather than
+    # demanding full gnupg just to strip base64 armour, do it here, so a
+    # minimal install that has only gpgv can still check authorship.
+    if command -v gpg >/dev/null 2>&1; then
+      gpg --dearmor < "$key" > "$ring"
+    elif command -v node >/dev/null 2>&1; then
+      node "$HERE/dearmor.mjs" "$key" "$ring" || { rm -f "$ring"; return 1; }
+    else
+      echo "  a signature is present but neither gpg nor node can check it." >&2
+      rm -f "$ring"
+      return 0
+    fi
+    if gpgv --keyring "$ring" "$sig" "$sums"; then
+      echo "  signature OK — now confirm the key fingerprint against a source that"
+      echo "  is NOT hosted with the archives."
+    else
+      echo "  SIGNATURE DID NOT VERIFY — do not run this archive." >&2
+      rm -f "$ring"
+      return 1
+    fi
+    rm -f "$ring"
+  else
+    echo "→ a signature is present but gpg is not installed, so it was not checked."
+    echo "  Install gnupg and run: gpg --verify $(basename "$sig") $(basename "$sums")"
+  fi
+  return 0
+}
+
+if [ -n "$SUMS" ]; then
+  check_signature "$SUMS"
+  if [ "$SIGNATURE_ONLY" = 1 ]; then
+    echo "signature check complete (--signature-only)"
+    exit 0
+  fi
+  echo "→ checking $BASE against $SUMS"
+  SUMS_DIR="$(dirname "$SUMS")"
+  EXPECTED="$(mktemp)"
+  grep " $BASE\$" "$SUMS" > "$EXPECTED" || true
+  if [ ! -s "$EXPECTED" ]; then
+    echo "  $BASE is not listed in $SUMS — refusing" >&2
+    rm -f "$EXPECTED"
+    exit 1
+  fi
+  ( cd "$SUMS_DIR" && sha256sum -c "$EXPECTED" )
+  rm -f "$EXPECTED"
+else
+  echo "→ no SHA256SUMS found beside the archive or this script:"
+  echo "  computing the digest so you can compare it by hand"
+  sha256sum "$ARCHIVE"
+fi
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+echo "→ extracting into $WORK"
+case "$ARCHIVE" in
+  *.zip) unzip -q "$ARCHIVE" -d "$WORK" ;;
+  *.tar.gz) tar -xzf "$ARCHIVE" -C "$WORK" ;;
+  *) echo "unsupported archive type: $ARCHIVE" >&2; exit 1 ;;
+esac
+
+echo "→ marker check"
+find "$WORK" -maxdepth 3 -type f \( -name package.json -o -name worker.js -o -name 'README.md' \) | sed "s|$WORK/|  |"
+
+if [ -f "$WORK/package.json" ]; then
+  VERSION="$(node -p "require('$WORK/package.json').version")"
+  echo "  package version: $VERSION"
+fi
+
+if [ "$WITH_TESTS" = 1 ]; then
+  # Only the node package ships a suite that is self-contained: its tests import
+  # nothing outside its own tree. The interface suite drives a real node from
+  # the repository, so it cannot run inside a distribution archive, and the
+  # operator package ships no tests at all. Attempting either here would report
+  # a packaging decision as a failure.
+  TEST_DIR=""
+  CANDIDATES=()
+  if [ -f "$WORK/package.json" ] && { [ -d "$WORK/tests" ] || [ -d "$WORK/test" ]; }; then
+    CANDIDATES+=("$WORK")
+  fi
+  while IFS= read -r pkg; do
+    dir="$(dirname "$pkg")"
+    [ "$(basename "$dir")" = "obsidian-core" ] || continue
+    [ -d "$dir/tests" ] || continue
+    case " ${CANDIDATES[*]:-} " in *" $dir "*) continue ;; esac
+    CANDIDATES+=("$dir")
+  done < <(find "$WORK" -maxdepth 3 -name package.json -not -path '*/node_modules/*' 2>/dev/null | sort)
+
+  if [ "${#CANDIDATES[@]}" -eq 1 ]; then
+    TEST_DIR="${CANDIDATES[0]}"
+  elif [ "${#CANDIDATES[@]}" -gt 1 ]; then
+    echo "  several node packages in this archive; run them explicitly:"
+    for dir in "${CANDIDATES[@]}"; do echo "    cd ${dir#"$WORK"/} && npm ci && npm test"; done
+  fi
+
+  if [ -n "$TEST_DIR" ] && node -e "process.exit(require('$TEST_DIR/package.json').scripts?.test ? 0 : 1)"; then
+    echo "→ running the shipped test suite in ${TEST_DIR#"$WORK"/} (install first)"
+    ( cd "$TEST_DIR" && npm ci >/dev/null && npm test )
+  elif [ -n "$TEST_DIR" ]; then
+    echo "  ${TEST_DIR#"$WORK"/} has no test script; skipping (nothing to run)"
+  else
+    echo "  this archive ships no self-contained test suite; skipping (nothing to run)"
+  fi
+fi
+echo "OK: ${BASE} verified."

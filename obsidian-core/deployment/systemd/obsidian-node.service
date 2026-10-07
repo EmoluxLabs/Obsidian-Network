@@ -1,0 +1,47 @@
+# Obsidian Core node as a systemd service.
+#
+#   sudo install -m 0644 deployment/systemd/obsidian-node.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now obsidian-node
+[Unit]
+Description=Obsidian Core node
+Documentation=https://github.com/EmoluxLabs/Obsidian-Network
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+WorkingDirectory=/opt/obsidian/obsidian-core
+EnvironmentFile=-/etc/obsidian/node.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/index.js start
+Restart=always
+RestartSec=5s
+
+# The node holds keys in /var/lib/obsidian-node. It needs no other write access,
+# no devices and no privileges of any kind.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+# NOT set: MemoryDenyWriteExecute=true. Node.js compiles JavaScript to machine
+# code at run time (V8's JIT), which needs memory it can write and then execute;
+# under that option node fails to start. A hardening line that stops the service
+# from running is not hardening.
+ReadWritePaths=/var/lib/obsidian-node
+
+# Give a graceful shutdown (flush the chain, release the data-directory lock)
+# time to finish before systemd kills the process.
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

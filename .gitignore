@@ -1,0 +1,57 @@
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ── Build output ──────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+*.tsbuildinfo
+# generated browser bundles (rebuild with npm run build:web). The leading
+# `**/` matters: a pattern containing a slash is anchored to this file's
+# directory, so plain `public/js/` would only match a bundle at the repo root.
+**/public/js/
+# copied from obsidian-core/dist by scripts/sync-core.mjs
+obsidian-interface/web/core/
+obsidian-interface/dist/
+obsidian-interface/.data/
+
+# ── Node runtime state (never commit a chain or a keystore) ───────────────────
+data/
+*-data/
+*.keystore.json
+node-key.json
+*.pass
+peers.json
+*.log
+logs/
+tmp/
+
+# ── Secrets and local configuration ───────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Bootstrap validator PRIVATE keys (generated, never committed) ─────────────
+# Only the PUBLIC keys are protocol material; they are committed in
+# obsidian-core/src/genesis/bootstrap-keys.ts and hashed into the genesis id.
+# `node scripts/generate-bootstrap-keys.mjs` writes the private halves here.
+bootstrap-keys/*
+!bootstrap-keys/README.md
+
+# ── Release artefacts ────────────────────────────────────────────────────────
+# The released archives, digests and manifest ARE committed: the whole point of
+# this project's release story is that a reader can download the exact bytes and
+# verify them. Only the staging scratch space is ignored.
+releases/staging/
+
+# ── Editor / OS noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+coverage/
+.vitest/

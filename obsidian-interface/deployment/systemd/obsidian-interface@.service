@@ -1,0 +1,60 @@
+# Obsidian Interface as a systemd TEMPLATE: one instance per network.
+#
+#   sudo install -m 0644 obsidian-interface@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now obsidian-interface@devnet   # or testnet, staging, mainnet
+#
+# As with the node template, the text after the @ is the network and it is
+# passed as --network, so this interface refuses any node that follows another
+# network and cannot be started against the wrong one by a copy-paste mistake:
+#
+#   settings   /etc/obsidian/<network>/interface.env     (YOU create it)
+#   data       /var/lib/obsidian/<network>/interface     (accounts, sessions, the redeemed invitation)
+#   port       the network's own: mainnet 8788, testnet 18788, staging 28788, devnet 38788
+#              (override with OBSIDIAN_INTERFACE_PORT in the settings file)
+#
+# The code is the self-host archive extracted into /opt/obsidian (the interface is
+# /opt/obsidian/obsidian-interface, with the twelve site directories beside it).
+#
+# The interface listens on 127.0.0.1: put nginx in front of it (see
+# deployment/nginx/obsidian-interface.conf) and set OBSIDIAN_INTERFACE_TRUST_PROXY=true.
+[Unit]
+Description=Obsidian Interface (%i)
+Documentation=https://github.com/EmoluxLabs/Obsidian-Network
+After=network-online.target obsidian-node@%i.service
+Wants=network-online.target
+ConditionPathExists=/etc/obsidian/%i/interface.env
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+WorkingDirectory=/opt/obsidian/obsidian-interface
+EnvironmentFile=/etc/obsidian/%i/interface.env
+Environment=NODE_ENV=production
+StateDirectory=obsidian/%i
+StateDirectoryMode=0700
+ExecStart=/usr/bin/node dist/server/main.js --network %i --data-dir /var/lib/obsidian/%i/interface
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30
+# One file descriptor per open connection; the default (1024) is a low ceiling
+# for a public site.
+LimitNOFILE=65536
+
+# Hardening: the interface needs no privileges and no writable code path.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+# NOT set: MemoryDenyWriteExecute=true (it stops Node.js's JIT from running).
+
+[Install]
+WantedBy=multi-user.target

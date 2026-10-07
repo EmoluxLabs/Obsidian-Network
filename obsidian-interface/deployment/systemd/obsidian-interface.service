@@ -1,0 +1,47 @@
+# Self-hosted Obsidian Interface as a systemd service.
+#
+#   sudo install -m 0644 deployment/systemd/obsidian-interface.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now obsidian-interface
+#
+# Runs as the unprivileged `obsidian` user with a read-only view of the code and
+# a writable directory for the few accounts it remembers.
+[Unit]
+Description=Obsidian Interface (self-hosted reader for Obsidian Network nodes)
+Documentation=https://github.com/EmoluxLabs/Obsidian-Network
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+WorkingDirectory=/opt/obsidian/obsidian-interface
+EnvironmentFile=-/etc/obsidian/interface.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/server/main.js
+Restart=on-failure
+RestartSec=5s
+
+# Hardening: the interface needs no privileges and no writable code path.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+# NOT set: MemoryDenyWriteExecute=true. Node.js's JIT needs memory it can write
+# and then execute; under that option node fails to start.
+ReadWritePaths=/var/lib/obsidian-interface
+
+TimeoutStopSec=30
+# One file descriptor per open connection; the default (1024) is a low ceiling
+# for a public site.
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
