@@ -250,6 +250,9 @@ describe('the public surface tells the truth about bonds and slashing', () => {
     expect(slashing.submitter).toMatch(/any account may submit/i);
     expect(slashing.rule).toMatch(/offline|missed-slot jail/i);
     expect(slashing.count).toBe(0);
+    expect(slashing.shown).toBe(0);
+    // The ledger in consensus state is unbounded, the response is not: a reader
+    // gets a page and the exact total.
     expect(result.body.appliedSlashes).toEqual([]);
   });
 

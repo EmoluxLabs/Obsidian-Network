@@ -696,6 +696,46 @@ export class WorldState {
    * means a fresh registration and a full bond; the remainder is never a
    * discounted seat.
    */
+  /**
+   * The window of heights an offence can be charged to the bond that is held
+   * right now, for one validator.
+   *
+   * `null` means the current registration is not liable for anything: there is
+   * no validator record, or the record has already been slashed (one
+   * registration is slashed once).
+   *
+   * Otherwise the window is `[registeredAtHeight, unbondingStartHeight]`:
+   *
+   *   - an offence cannot predate the registration that committed it.
+   *     Re-registering is a new bond, a new key binding and a new liability, so
+   *     evidence about an earlier tenure can never charge the new one — which is
+   *     also what makes a claim-and-re-register cycle safe for everyone else;
+   *   - an offence cannot postdate the moment the registration left the active
+   *     set to unbond. While the bond is still escrowed (ACTIVE, JAILED, or
+   *     UNBONDING) it stays liable for what it did in that window, so
+   *     unregistering is not an exit from a penalty — it only starts the clock
+   *     on how long the evidence has to arrive.
+   *
+   * The window is read from consensus state only: no history, no block lookup,
+   * no local observation. A node replaying the chain from genesis derives the
+   * same window as the node that watched the offence happen.
+   */
+  slashTenure(address: string): { from: number; to?: number } | null {
+    const validator = this.s.accounts.get(address)?.validator;
+    if (!validator) return null;
+    if (validator.status === 'SLASHED') return null;
+    return { from: validator.registeredAtHeight, to: validator.unbondingStartHeight };
+  }
+
+  /** True when `offenceHeight` falls inside the current registration's tenure. */
+  offenceChargesToCurrentRegistration(address: string, offenceHeight: number): boolean {
+    const tenure = this.slashTenure(address);
+    if (!tenure) return false;
+    if (!Number.isSafeInteger(offenceHeight) || offenceHeight < tenure.from) return false;
+    if (tenure.to !== undefined && offenceHeight > tenure.to) return false;
+    return true;
+  }
+
   applyEquivocationSlash(
     slash: {
       evidenceId: string;
@@ -713,7 +753,15 @@ export class WorldState {
     const validator = account?.validator;
     if (!validator) reject(ErrCode.NOT_FOUND, 'the slashed validator no longer exists');
     if (this.s.slashes.has(slash.evidenceId)) reject(ErrCode.REPLAY, 'this evidence has already been applied');
-    if (validator.status !== 'ACTIVE') reject(ErrCode.UNAUTHORIZED, 'only an active validator can be slashed');
+    // The verifier has already decided this; the state transition re-derives it
+    // from its own record so the ledger can never hold a charge that the current
+    // registration is not liable for.
+    if (!this.offenceChargesToCurrentRegistration(slash.validator, slash.height)) {
+      reject(
+        ErrCode.UNAUTHORIZED,
+        'the offence falls outside the tenure of the registration that is bonded now',
+      );
+    }
     if (validator.bond !== slash.bondBefore || slash.amount + slash.remaining !== slash.bondBefore) {
       reject(ErrCode.MALFORMED, 'slash accounting does not add up against the validator bond');
     }

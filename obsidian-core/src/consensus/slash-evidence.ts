@@ -45,6 +45,28 @@
  *   another peer, after a restart — finds one of the two and is rejected. A
  *   second, genuinely different equivocation by the same validator at the same
  *   height is also rejected: one registration is slashed once.
+ *
+ * WHERE THE LIABILITY LIVES
+ *
+ *   The offence is charged to the registration, not to the address: an offence
+ *   must fall inside `[registeredAtHeight, unbondingStartHeight]` of the record
+ *   that holds the bond now (`WorldState.offenceChargesToCurrentRegistration`).
+ *   Two consequences, both deliberate:
+ *
+ *     - unregistering does not escape the penalty. `UNBONDING`, `JAILED` and
+ *       `ACTIVE` all still hold the escrowed bond, so the offence stays
+ *       chargeable for the whole unbonding window; the offending validator
+ *       cannot make the window run out, it can only start the clock;
+ *     - a fresh registration cannot be charged for an earlier tenure. Claiming
+ *       the remainder and registering again with a full bond is a new liability,
+ *       so evidence about the old one is refused rather than confiscating an
+ *       innocent bond that happens to reuse the same key.
+ *
+ *   Once the remainder has been claimed the registration is gone and the
+ *   evidence is refused with NOT_FOUND — deterministically, on every node. That
+ *   is the boundary of the mechanism: the window is the unbonding delay, and it
+ *   is the protocol's only guarantee about how long a proven offence can still
+ *   be charged (see the audit report, section I).
  */
 
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
@@ -152,14 +174,18 @@ export function verifyEquivocationEvidence(
     return reject(ErrCode.MALFORMED, 'slash evidence exceeds the protocol size limit');
   }
 
-  // The validator must exist, be in the active committee, and hold exactly the
-  // consensus bond. A slashed, unbonding or jailed validator has already left
-  // the committee and cannot be punished again on the same registration.
+  // The validator must exist, still hold an escrowed bond of exactly the
+  // consensus size, and be liable for *this* offence. Liability is a window,
+  // not a status: while the bond is escrowed — active, jail-waiting or
+  // unbonding — the registration answers for what it did between its
+  // registration and the moment it left the active set. A slashed registration
+  // is closed (one bond is slashed once), and a claimed one no longer exists,
+  // so an offending validator cannot make the evidence window run out by
+  // unregistering: it only starts the clock.
   const account = state.getAccount(evidence.validator);
   const validator = account?.validator;
   if (!validator) return reject(ErrCode.NOT_FOUND, 'the evidence names an address that is not a registered validator');
   if (validator.status === 'SLASHED') return reject(ErrCode.REPLAY, 'this validator has already been slashed; its registration is closed');
-  if (validator.status !== 'ACTIVE') return reject(ErrCode.UNAUTHORIZED, `a ${validator.status.toLowerCase()} validator cannot be slashed through this path`);
   const bond = validator.bond;
   if (bond !== CONSENSUS_PARAMS.consensus.validatorBond) {
     return reject(ErrCode.VALIDATOR_BOND_MISMATCH, 'the validator does not hold the exact consensus bond');
@@ -328,6 +354,16 @@ export function verifyEquivocationEvidence(
   if (height > atHeight) return reject(ErrCode.NOT_YET_VALID, 'the evidence names a height the chain has not reached');
   if (!Number.isSafeInteger(round) || round < 0) return reject(ErrCode.MALFORMED, 'the evidence round is not bounded');
   if (validator.slashedAtHeight !== undefined) return reject(ErrCode.REPLAY, 'this registration has already been slashed');
+  // The offence must belong to the registration that is bonded now. This is what
+  // stops an unregistration from escaping a penalty, and equally what stops
+  // evidence about an old tenure from charging a fresh, innocent registration
+  // that happens to reuse the same key.
+  if (!state.offenceChargesToCurrentRegistration(evidence.validator, height)) {
+    return reject(
+      ErrCode.UNAUTHORIZED,
+      'the offence falls outside the tenure of the registration that is bonded now, so it cannot be charged to this bond',
+    );
+  }
 
   const amount = slashAmountFor(bond);
   const remaining = bond - amount;

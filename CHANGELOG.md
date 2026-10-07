@@ -83,6 +83,16 @@ chain: this release is for an unstarted network. 1.5.x release archives and the
   offline is **not** slashable: missing slots is still a jail, not a penalty.
   The applied-slash ledger and the validator's status are consensus state, so a
   replay — another block, another peer, a restart — finds it and is refused.
+  Liability follows the **registration**, not the address: an offence is charged
+  to the bond that was held when it happened, so an `UNBONDING` or `JAILED`
+  validator is still liable for its whole tenure (unregistering starts the clock
+  on the evidence window instead of escaping the penalty — 20,160 blocks, the
+  unbonding delay, and the record closes when the remainder is claimed), while a
+  fresh registration answers only for its own tenure. Equivocation evidence is
+  refused at gossip unless its body decodes, so relaying undecodable evidence is
+  a peer fault instead of free work for every node, and `/validators` returns a
+  bounded page of the ledger (`slashing.count` / `slashing.shown`) rather than a
+  response that grows with every slash the chain ever applied.
 * **The 100 OBS node-runner registration bond is removed as a mechanism, not
   set to zero.** The protocol now has exactly one registration bond — the
   validator's 20,000 OBS — enforced in one place, with `registrationBond`

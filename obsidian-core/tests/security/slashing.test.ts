@@ -14,9 +14,12 @@
  *   6. replay — twice, ten times, from other submitters, after a restart
  *   7. reorgs — a losing slash never touches canonical state; a winning one
  *      applies exactly once and reverts with the block that carried it
- *   8. the after-life of a slashed registration
+ *   8. the after-life of a slashed registration, including the exact boundary of
+ *      the liability window: claim the remainder and the registration is closed
  *   9. accounting — nothing created, nothing destroyed, nothing to the treasury
  *  10. fuzz and property checks
+ *  11. spam, block poisoning and Sybil weight — what the penalty cannot be
+ *      abused for, and why one seat is one vote at one exact bond
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -25,10 +28,10 @@ import { ChainManager } from '../../src/blockchain/chain.js';
 import { applyBlock } from '../../src/blockchain/state-machine.js';
 import { blockHash, buildBlock, encodeSignedHeader } from '../../src/blockchain/block.js';
 import { proposerRound, scheduledProposer } from '../../src/consensus/proposer.js';
-import { finalityValidators, makeProposerEvidence, makeVoteEvidence, signFinalityVote, validatorSetHash } from '../../src/consensus/finality.js';
+import { finalityQuorum, finalityValidators, makeProposerEvidence, makeVoteEvidence, signFinalityVote, validatorSetHash } from '../../src/consensus/finality.js';
 import { genesisIdForState, slashAmountFor } from '../../src/consensus/slash-evidence.js';
 import { encodeSlashBody } from '../../src/transactions/executors/slash.js';
-import { ErrCode } from '../../src/protocol/errors.js';
+import { ErrCode, ProtocolError } from '../../src/protocol/errors.js';
 import { Writer } from '../../src/protocol/encoding.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { PARAMS_HASH } from '../../src/blockchain/state-root.js';
@@ -177,9 +180,17 @@ function proposerEquivocation(h: Harness, validator: TestWallet): { evidence: Pr
   throw new Error('could not build two same-round conflicting proposals');
 }
 
-/** Everything two finality votes need to be individually valid. */
+/**
+ * Everything two finality votes need to be individually valid.
+ *
+ * The anchor is the block one below the current tip, so the votes are cast in a
+ * round the accused validator could actually have taken part in: an offence
+ * before its registration is a different registration's liability and is
+ * deliberately refused (that is asserted on its own below).
+ */
 function voteTemplate(h: Harness, wallet: TestWallet) {
-  const anchorHash = h.chain.store.getCanonicalHashAtHeight(1);
+  const anchorHeight = Math.max(1, h.chain.height - 1);
+  const anchorHash = h.chain.store.getCanonicalHashAtHeight(anchorHeight);
   if (!anchorHash) throw new Error('no canonical anchor block');
   const genesisId = genesisIdForState(h.chain.world, h.net);
   if (!genesisId) throw new Error('this node cannot derive its own genesis identity');
@@ -190,9 +201,9 @@ function voteTemplate(h: Harness, wallet: TestWallet) {
     genesisId,
     paramsHash: PARAMS_HASH,
     type: 'POT_FINALITY' as const,
-    finalizedHeight: 1,
+    finalizedHeight: anchorHeight,
     finalizedHash: anchorHash,
-    height: 2,
+    height: anchorHeight + 1,
     round: 0,
     parentHash: anchorHash,
     validatorSetHash: validatorSetHash([{ address: wallet.address, publicKey: wallet.publicKey }]),
@@ -417,19 +428,27 @@ describe('proposer equivocation', () => {
     expect(h.chain.world.s.pool.balance).toBe(poolBefore);
     expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
 
-    // And a jailed validator is not slashable at all: its registration is
-    // already excluded from the committee, so equivocation evidence against it
-    // is refused rather than converted into a second punishment.
+    // Being offline is not slashable — but the jail does not shelter a signature
+    // conflict either. The bond is still escrowed, so a validator that signed
+    // two conflicting votes answers for them even while it is out of the
+    // committee for missing slots: the two rules are independent, and netting
+    // them would let a validator buy immunity with downtime.
     const { evidence } = voteEquivocation(h, validator);
     const outsider = makeWallet();
     const scheduled = h.chain.scheduledProposerNow()!;
-    const outcome = h.tryBlock(
-      [slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence })],
-      { producer: byAddress.get(scheduled)!, simulate: false },
-    );
-    expect(outcome.accepted).toBe(false);
-    expect(outcome.code).toBe(ErrCode.UNAUTHORIZED);
-    expect(h.chain.world.s.slashes.size).toBe(0);
+    const poolBeforeSlash = h.chain.world.s.pool.balance;
+    const supplyBeforeSlash = h.chain.world.s.metrics.totalSupply;
+    h.produce([slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence })], {
+      producer: byAddress.get(scheduled)!,
+      timestamp: h.chain.protocolTime,
+    });
+    expect(h.chain.world.s.slashes.get(evidence.id)).toMatchObject({ amount: SLASH, bondBefore: BOND });
+    expect(validatorOf(h, validator.address)).toMatchObject({ bond: SLASH, status: 'SLASHED' });
+    expect(h.chain.world.s.pool.balance - poolBeforeSlash).toBe(SLASH);
+    expect(h.chain.world.s.metrics.totalSupply).toBe(supplyBeforeSlash);
+    expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
+    // Still exactly one slash: the jail itself never became evidence.
+    expect(h.chain.world.s.metrics.totalSlashes).toBe(1);
   });
 });
 
@@ -456,8 +475,8 @@ describe('finality-vote equivocation', () => {
   it('refuses a pair that is not a conflict: one block voted twice', async () => {
     const { h, validator, outsider } = await slashHarness();
     const base = voteTemplate(h, validator);
-    const first = signFinalityVote({ ...base, height: 2, round: 0, blockHash: 'ab'.repeat(32) }, validator.privateKey);
-    const again = signFinalityVote({ ...base, height: 3, round: 0, blockHash: 'ab'.repeat(32) }, validator.privateKey);
+    const first = signFinalityVote({ ...base, height: base.height, round: 0, blockHash: 'ab'.repeat(32) }, validator.privateKey);
+    const again = signFinalityVote({ ...base, height: base.height + 1, round: 0, blockHash: 'ab'.repeat(32) }, validator.privateKey);
     const outcome = h.tryBlock(
       [slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence: makeVoteEvidence(first, again) })],
       { simulate: false },
@@ -468,17 +487,55 @@ describe('finality-vote equivocation', () => {
     expect(validatorOf(h, validator.address)!.bond).toBe(BOND);
   });
 
-  it('refuses evidence about a validator that has left the committee', async () => {
+  it('does not let an unregistration escape the penalty: an unbonding bond stays liable', async () => {
     const { h, validator, outsider } = await slashHarness();
     const { evidence } = voteEquivocation(h, validator);
     h.produce([
       h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.UNREGISTER, 0n, validator.publicKey), { gas: 0n }),
     ]);
     expect(validatorOf(h, validator.address)!.status).toBe('UNBONDING');
-    const outcome = h.tryBlock([slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence })], { simulate: false });
+    // Out of the rotation and out of the committee at once — but the bond is
+    // still escrowed, so the evidence window is still open. Unregistering starts
+    // the clock on how long the evidence has to arrive; it is not an exit.
+    expect(h.chain.world.activeValidators()).not.toContain(validator.address);
+
+    const poolBefore = h.chain.world.s.pool.balance;
+    const supplyBefore = h.chain.world.s.metrics.totalSupply;
+    h.produce([slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence })]);
+
+    expect(h.chain.world.s.slashes.get(evidence.id)).toMatchObject({
+      type: 'VOTE_EQUIVOCATION',
+      validator: validator.address,
+      amount: SLASH,
+      bondBefore: BOND,
+      bondAfter: SLASH,
+    });
+    expect(validatorOf(h, validator.address)).toMatchObject({ bond: SLASH, status: 'SLASHED' });
+    expect(h.chain.world.s.pool.balance - poolBefore).toBe(SLASH);
+    expect(h.chain.world.s.metrics.totalSupply).toBe(supplyBefore);
+    expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
+  });
+
+  it('refuses evidence that predates the registration it is charged to', async () => {
+    const { h, validator, outsider } = await slashHarness();
+    // Vote evidence for an anchor from before this validator registered: the
+    // registration that is bonded now was not the one that signed, so it is not
+    // liable. Without this bound, a fresh bond could be confiscated for an old
+    // tenure — the mirror image of the escape this window closes.
+    const registeredAt = validatorOf(h, validator.address)!.registeredAtHeight;
+    expect(registeredAt).toBeGreaterThan(1);
+    const base = voteTemplate(h, validator);
+    const stale = { ...base, finalizedHeight: 0, finalizedHash: '00'.repeat(32), height: 1, round: 0 };
+    const first = signFinalityVote({ ...stale, blockHash: '31'.repeat(32) }, validator.privateKey);
+    const second = signFinalityVote({ ...stale, blockHash: '32'.repeat(32) }, validator.privateKey);
+    const outcome = h.tryBlock(
+      [slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence: makeVoteEvidence(first, second) })],
+      { simulate: false },
+    );
     expect(outcome.accepted).toBe(false);
     expect(outcome.code).toBe(ErrCode.UNAUTHORIZED);
     expect(h.chain.world.s.slashes.size).toBe(0);
+    expect(validatorOf(h, validator.address)!.bond).toBe(BOND);
   });
 });
 
@@ -886,6 +943,90 @@ describe('the after-life of a slashed registration', () => {
     expect(reregistered.state.s.metrics.totalSupply).toBe(supplyBefore);
     expect(reregistered.state.verifySupplyInvariant().ok).toBe(true);
   });
+
+  it('is closed once the remainder is claimed: late evidence punishes nobody', async () => {
+    const { h, validator, outsider } = await slashHarness();
+    const { body } = proposerEquivocation(h, validator);
+    h.produce([slashTx(h, outsider, body)]);
+    expect(h.chain.world.s.slashes.size).toBe(1);
+
+    const claimHeight = h.chain.height + CONSENSUS_PARAMS.consensus.unbondingBlocks;
+    const claimTx = h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.CLAIM_UNBONDED, 0n, validator.publicKey), { gas: 0n });
+    const claimed = applyBlock(h.chain.world, atHeight(h, claimHeight, [claimTx]), { net: h.net, skipRootCheck: true });
+    expect(claimed.state.getAccount(validator.address)!.validator).toBeUndefined();
+    expect(claimed.state.getAccount(validator.address)!.balance).toBeGreaterThan(0n);
+
+    // A second, genuinely different offence from the same tenure, submitted
+    // after the bond was claimed. The registration it belonged to is gone, so
+    // there is nothing left to charge: every node refuses it with NOT_FOUND, the
+    // ledger keeps one entry and nobody is punished twice. This is the exact
+    // boundary of the window — the protocol's guarantee is that evidence has the
+    // whole unbonding delay to arrive, not that it can claw back a paid-out bond.
+    const late = voteEquivocation(h, validator);
+    const lateTx = h.sign(makeWallet(), TxType.SLASH, encodeSlashBody({ op: SlashOp.EQUIVOCATION, evidence: late.evidence }), { gas: 0n });
+    let rejected: unknown;
+    try {
+      applyBlock(claimed.state, atHeight(h, claimHeight + 1, [lateTx]), { net: h.net, skipRootCheck: true });
+    } catch (error) {
+      rejected = error;
+    }
+    expect(rejected).toBeInstanceOf(ProtocolError);
+    expect((rejected as ProtocolError).code).toBe(ErrCode.NOT_FOUND);
+    expect(claimed.state.s.slashes.size).toBe(1);
+    expect(claimed.state.s.metrics.totalSlashes).toBe(1);
+    expect(claimed.state.verifySupplyInvariant().ok).toBe(true);
+  });
+
+  it('a fresh registration with the same key answers only for its own tenure', async () => {
+    const { h, validator, outsider } = await slashHarness();
+    const first = proposerEquivocation(h, validator);
+    h.produce([slashTx(h, outsider, first.body)]);
+
+    const liveNonce = h.chain.world.getAccount(validator.address)!.nonce;
+    const claimHeight = h.chain.height + CONSENSUS_PARAMS.consensus.unbondingBlocks;
+    const claimTx = h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.CLAIM_UNBONDED, 0n, validator.publicKey), { gas: 0n });
+    const claimed = applyBlock(h.chain.world, atHeight(h, claimHeight, [claimTx]), { net: h.net, skipRootCheck: true });
+    const registerTx = h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, BOND, validator.publicKey), {
+      gas: expectedGas(BOND),
+      nonce: liveNonce + 1,
+    });
+    const reregistered = applyBlock(claimed.state, atHeight(h, claimHeight + 1, [registerTx]), { net: h.net, skipRootCheck: true });
+    const fresh = reregistered.state.getAccount(validator.address)!.validator!;
+    expect(fresh).toMatchObject({ bond: BOND, status: 'ACTIVE', registeredAtHeight: claimHeight + 1 });
+
+    // A different equivocation from the *old* tenure, with the same key. The new
+    // bond is a new liability and must not answer for it — otherwise an old
+    // offence could confiscate an innocent registration, and a griefer could
+    // punish an operator for a crime already paid for.
+    const stale = proposerEquivocation(h, validator);
+    const staleOutcome = (() => {
+      try {
+        applyBlock(reregistered.state, atHeight(h, claimHeight + 2, [slashTx(h, makeWallet(), stale.body)]), { net: h.net, skipRootCheck: true });
+        return null;
+      } catch (error) {
+        return error as ProtocolError;
+      }
+    })();
+    expect(staleOutcome).toBeInstanceOf(ProtocolError);
+    expect(staleOutcome!.code).toBe(ErrCode.UNAUTHORIZED);
+    expect(reregistered.state.s.slashes.size).toBe(1);
+    expect(reregistered.state.getAccount(validator.address)!.validator!.bond).toBe(BOND);
+
+    // And the new tenure *is* liable for its own behaviour: two conflicting
+    // votes signed inside it cost half of the fresh bond, exactly as for any
+    // other registration. Registering again buys a clean slate, not immunity.
+    const base = voteTemplate(h, validator);
+    const inTenure = { ...base, finalizedHeight: claimHeight + 2, finalizedHash: '41'.repeat(32), height: claimHeight + 3, round: 0 };
+    const firstVote = signFinalityVote({ ...inTenure, blockHash: '42'.repeat(32) }, validator.privateKey);
+    const secondVote = signFinalityVote({ ...inTenure, blockHash: '43'.repeat(32) }, validator.privateKey);
+    const charged = applyBlock(reregistered.state, atHeight(h, claimHeight + 3, [
+      slashTx(h, makeWallet(), { op: SlashOp.EQUIVOCATION, evidence: makeVoteEvidence(firstVote, secondVote) }),
+    ]), { net: h.net, skipRootCheck: true });
+    expect(charged.state.s.slashes.size).toBe(2);
+    expect(charged.state.s.metrics.totalSlashes).toBe(2);
+    expect(charged.state.getAccount(validator.address)!.validator).toMatchObject({ bond: SLASH, status: 'SLASHED' });
+    expect(charged.state.verifySupplyInvariant().ok).toBe(true);
+  });
 });
 
 describe('fuzz and property checks', () => {
@@ -920,6 +1061,88 @@ describe('fuzz and property checks', () => {
     }
     expect(h.chain.world.s.slashes.size).toBe(0);
     expect(validatorOf(h, validator.address)!.bond).toBe(BOND);
+  });
+});
+
+describe('the penalty cannot be used as a weapon: spam, poisoning and Sybil weight', () => {
+  it('refuses an undecodable slash body at gossip, where the relaying peer is answerable', async () => {
+    const { h, validator, outsider } = await slashHarness();
+    const { evidence, body } = proposerEquivocation(h, validator);
+    // A genuinely useful report is gossiped like any other transaction: the
+    // submitter pays no gas and gains nothing, and the peer that relays it is
+    // not penalised for carrying a well-formed body.
+    expect(h.chain.checkGossipedTransaction(slashTx(h, outsider, body)).ok).toBe(true);
+
+    // An undecodable body can never apply to any state, on any node, at any
+    // height. Relaying it is free work for the receiver, so it is refused before
+    // a pool: the peer that forwarded it is answerable for it (p2p penalties),
+    // and no producer ever re-executes it.
+    const garbage: Array<[string, Uint8Array]> = [
+      ['unknown-op', rawSlash(9, JSON.stringify(evidence), body.firstParentHeader, body.secondParentHeader)],
+      ['truncated', encodeSlashBody(body).slice(0, encodeSlashBody(body).length - 1)],
+      ['bad-json', rawSlash(SlashOp.EQUIVOCATION, '{', body.firstParentHeader, body.secondParentHeader)],
+      ['empty-body', new Uint8Array(0)],
+    ];
+    for (const [label, raw] of garbage) {
+      const verdict = h.chain.checkGossipedTransaction(h.sign(outsider, TxType.SLASH, raw, { gas: 0n }));
+      expect(verdict.ok, `${label} must be refused at gossip`).toBe(false);
+      if (!verdict.ok) {
+        expect([ErrCode.MALFORMED, ErrCode.UNKNOWN_TX_TYPE], label).toContain(verdict.code);
+      }
+    }
+  });
+
+  it('is dropped by a producer instead of poisoning a block, and never retried', async () => {
+    const { h, validator, outsider } = await slashHarness();
+    // Structurally valid, proves nothing: the same block voted twice for one
+    // anchor. It passes gossip (which reads no state) and lands in the pool, so
+    // the producer is the one that has to deal with it.
+    const base = voteTemplate(h, validator);
+    const first = signFinalityVote({ ...base, blockHash: '51'.repeat(32) }, validator.privateKey);
+    const again = signFinalityVote({ ...base, height: base.height + 1, blockHash: '51'.repeat(32) }, validator.privateKey);
+    const inapplicable = slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence: makeVoteEvidence(first, again) });
+    expect(h.chain.checkGossipedTransaction(inapplicable).ok).toBe(true);
+    expect(h.chain.mempool.add(inapplicable).accepted).toBe(true);
+
+    advance(1_000);
+    const block = h.chain.buildNextBlock(h.producer);
+    expect(block).not.toBeNull();
+    expect(block!.transactions.map((tx) => tx.id)).not.toContain(inapplicable.id);
+    // Removed, not parked: a transaction that cannot apply at this height must
+    // not make every later slot re-execute it.
+    expect(h.chain.mempool.has(inapplicable.id)).toBe(false);
+    expect(h.chain.addBlock(block!).accepted).toBe(true);
+    expect(h.chain.world.s.slashes.size).toBe(0);
+    expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
+  });
+
+  it('counts one seat as one vote: the quorum is a count and every seat costs the same bond', () => {
+    // Equal-membership finality: weight does not grow with capital, so the only
+    // way to buy influence is to buy whole seats at the exact bond, one wallet
+    // per seat. That is the Sybil cost, and it is state-visible and documented;
+    // what the penalty must never do is *add* a way to buy weight.
+    for (let count = 1; count <= 64; count += 1) {
+      expect(finalityQuorum(count)).toBe(Math.floor((2 * count) / 3) + 1);
+    }
+    expect(CONSENSUS_PARAMS.consensus.finality.quorumNumerator).toBe(2);
+    expect(CONSENSUS_PARAMS.consensus.finality.quorumDenominator).toBe(3);
+    expect(CONSENSUS_PARAMS.consensus.validatorBond).toBe(parseObs('20000'));
+  });
+
+  it('gives one account one seat: extra weight costs another wallet and another full bond', async () => {
+    const { h, validator, addValidator } = await slashHarness();
+    const second = await addValidator();
+    const producers = new Map([[validator.address, validator], [second.address, second]]);
+    const scheduled = producers.get(h.chain.scheduledProposerNow()!)!;
+
+    const twice = h.tryBlock(
+      [h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, BOND, validator.publicKey), { gas: expectedGas(BOND) })],
+      { producer: scheduled, simulate: false },
+    );
+    expect(twice.accepted).toBe(false);
+    expect(twice.code).toBe(ErrCode.REPLAY);
+    expect(h.chain.world.activeValidators()).toEqual([validator.address, second.address].sort());
+    expect(finalityValidators(h.chain.world)).toHaveLength(2);
   });
 });
 

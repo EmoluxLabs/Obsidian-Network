@@ -65,6 +65,14 @@ interface RateBucket {
 
 const MAX_BODY_BYTES = 512 * 1024;
 
+/**
+ * How many applied slashes `/validators` returns. The ledger in consensus state
+ * grows by one entry per applied slash and is never truncated — that is the
+ * audit trail — but an HTTP response must not grow with it, so the endpoint
+ * returns the most recent page and reports the exact total separately.
+ */
+const SLASH_LIST_LIMIT = 64;
+
 export class RpcServer {
   private server?: Server;
   private readonly buckets = new Map<string, RateBucket>();
@@ -637,7 +645,12 @@ export class RpcServer {
 
   private validators(response: ServerResponse): void {
     const state = this.options.chain.world;
+    // The ledger itself is consensus state and grows one entry per applied
+    // slash; the *response* must not. A reader gets the most recent page plus
+    // the exact total, so the size of an HTTP answer is bounded by the server and
+    // not by how many validators the chain has punished over its lifetime.
     const slashes = [...state.s.slashes.values()].sort((a, b) => (a.slashedAtHeight - b.slashedAtHeight || (a.evidenceId < b.evidenceId ? -1 : 1)));
+    const slashPage = slashes.slice(-SLASH_LIST_LIMIT);
     this.json(response, 200, {
       count: state.activeValidators().length,
       registered: [...state.s.validators].sort().map((address) => {
@@ -670,8 +683,9 @@ export class RpcServer {
         evidenceRequired: 'signatures by the validator’s own registered key, verified by every node',
         submitter: 'any account may submit a SLASH transaction; the evidence, the bond and the ratio decide the amount',
         count: slashes.length,
+        shown: slashPage.length,
       },
-      appliedSlashes: slashes.map((record) => ({
+      appliedSlashes: slashPage.map((record) => ({
         evidenceId: record.evidenceId,
         evidenceType: record.type,
         validator: maskAddress(record.validator),

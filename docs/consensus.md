@@ -310,6 +310,19 @@ The rule is enforced in the state transition, in a `SLASH` transaction
   `SLASHED` record are consensus state, committed in the state root, so a replay
   in another block, from another peer or after a restart finds the ledger and is
   refused;
+- the offence is charged to the **registration**, not to the address: it must fall
+  inside `[registeredAtHeight, unbondingStartHeight]` of the record that holds the
+  bond now. An `UNBONDING` or `JAILED` validator is still liable — unregistering
+  starts the clock on how long the evidence has to arrive, it does not close the
+  record — so a validator cannot buy immunity by leaving (or by stopping
+  producing) after it equivocated;
+- for the same reason a **fresh registration is never charged for an earlier
+  tenure**. Claiming the remainder and registering again with a full bond creates
+  a new liability, so a reused key cannot drag an old offence into a new bond;
+- the window ends when the remainder is claimed: the record is gone, and evidence
+  about it is refused deterministically on every node. The unbonding delay is
+  therefore the protocol's evidence window — 20,160 blocks, about 28 hours at
+  5-second blocks — and it is stated, not implied;
 - re-registering means claiming the remainder and registering again with a fresh
   full 20,000 OBS bond: the surviving half is never a discounted seat.
 

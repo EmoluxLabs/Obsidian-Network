@@ -27,6 +27,7 @@ import type {
   StateSnapshot,
   TxEnvelope,
 } from '../protocol/types.js';
+import { TxType } from '../protocol/types.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import { ErrCode, ProtocolError, reject } from '../protocol/errors.js';
@@ -65,6 +66,7 @@ import {
   scheduledProposer,
 } from '../consensus/proposer.js';
 import { validateTxStructure } from '../transactions/encode.js';
+import { decodeSlashBody } from '../transactions/executors/slash.js';
 import { buildGenesisBlock, createGenesisState, genesisId, normalizeBootstrapValidatorPublicKeys } from '../genesis/initialize.js';
 import { committedBootstrapValidatorKeys } from '../genesis/bootstrap-keys.js';
 import { assertNetworkSafety } from '../protocol/networks.js';
@@ -1390,6 +1392,14 @@ export class ChainManager extends EventEmitter {
         height: this.height + 1,
         addressHrp: this.options.net.addressHrp,
       });
+      // A SLASH transaction *is* the evidence, so its body has to decode into
+      // the shape the state transition will verify. An undecodable body can
+      // never apply to any state, and relaying it spends bandwidth, pool space
+      // and verification work for nothing — so it is refused at gossip, where
+      // the penalty falls on the peer that relayed it. Structural only: no state
+      // is read and no verdict about the offence is formed here, because that
+      // stays a consensus decision.
+      if (tx.type === TxType.SLASH) decodeSlashBody(tx.body);
       // Gas is the mempool's eviction priority. Refuse a peer's priority claim
       // unless the current state proves the sender can fund at least that much;
       // full type-specific validity is still decided at block execution.

@@ -24,7 +24,7 @@ Error shape is stable:
 | `GET /nodes`, `GET /peers` | known peers with height, genesis id, latency, direction |
 | `GET /network` | network name, chain id, address prefix, p2p magic, genesis id, params hash and versions. `domains` lists the official hostnames **of this network only** (mainnet: `obsmainnet.us.ci`, `api.obsmainnet.us.ci` and its sites; devnet: `devnet.obsmainnet.us.ci`; testnet and staging likewise), so a practice chain cannot vouch for the names people use to check a mainnet address. `trust` says whether this node answers pages on the official domain and by which patterns; see [trusted-domains.md](trusted-domains.md) |
 | `GET /oracle` | current median price, sources, submission ages |
-| `GET /validators` | validator records, bonds, commission, missed slots, and the slashing rule: `slashing` (the parameter, the derived amount, the Mining Pool destination, a `treasuryShareObs` of zero, who may submit) plus `appliedSlashes` — every slash this chain applied, with its canonical evidence id |
+| `GET /validators` | validator records, bonds, commission, missed slots, and the slashing rule: `slashing` (the parameter, the derived amount, the Mining Pool destination, a `treasuryShareObs` of zero, who may submit) plus `appliedSlashes` — the most recent page of slashes this chain applied, with canonical evidence ids, alongside `slashing.count` (the exact total) and `slashing.shown` (the page size). The ledger itself is unbounded consensus state; the HTTP answer is not |
 | `GET /blocks?limit=` | recent blocks (headers plus counts) |
 | `GET /block/<height\|hash>` | full block with its transactions |
 | `GET /tx/<txid>` | transaction description, masked addresses, inclusion height |
