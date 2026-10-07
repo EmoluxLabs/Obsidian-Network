@@ -21,6 +21,7 @@ import { serializeTransaction, maskAddress } from '../indexer/indexer.js';
 import { AmountError, formatObs, MAX_SUPPLY_SEALS, parseObs } from '../protocol/amount.js';
 import { ProtocolError } from '../protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
+import { slashAmountFor } from '../consensus/slash-evidence.js';
 import { evaluateMining } from '../mining/rules.js';
 import { scheduleView, dailyRewardForActiveMiners, claimRewardForActiveMiners } from '../mining/schedule.js';
 import { decodeSignedTxFromBytes, encodeSignedTx } from '../transactions/encode.js';
@@ -37,6 +38,7 @@ import { expectedGas, usdMicroToSeals } from '../transactions/helpers.js';
 import { decodeValidatorBody, encodeValidatorBody } from '../transactions/executors/validator.js';
 import { decodeTreasuryBody, encodeTreasuryBody } from '../transactions/executors/treasury.js';
 import { decodeNodeRegistryBody, encodeNodeRegistryBody } from '../transactions/executors/node-registry.js';
+import { decodeSlashBody, encodeSlashBody } from '../transactions/executors/slash.js';
 import { medianTimePast, potDifficulty, timeRate } from '../consensus/time.js';
 import { nodeRewardParams, rewardPeriodAt, rewardPeriodEnd, scoreNode } from '../economy/node-rewards.js';
 import { NOT_ONS_REVENUE } from '../economy/accounting.js';
@@ -635,6 +637,7 @@ export class RpcServer {
 
   private validators(response: ServerResponse): void {
     const state = this.options.chain.world;
+    const slashes = [...state.s.slashes.values()].sort((a, b) => (a.slashedAtHeight - b.slashedAtHeight || (a.evidenceId < b.evidenceId ? -1 : 1)));
     this.json(response, 200, {
       count: state.activeValidators().length,
       registered: [...state.s.validators].sort().map((address) => {
@@ -646,6 +649,7 @@ export class RpcServer {
           commissionBps: validator?.commissionBps ?? 0,
           registeredAtHeight: validator?.registeredAtHeight ?? 0,
           missedSlots: validator?.missedSlots ?? 0,
+          slashedAtHeight: validator?.slashedAtHeight ?? null,
         };
       }),
       rotation: 'proposer(height, round) = activeValidators[(height + round) mod count]',
@@ -653,6 +657,32 @@ export class RpcServer {
       liveness:
         'a validator that misses its slot costs the network one slot while the turn passes to the next ' +
         'active validator; rounds cycle inside the registered set and never open to an unbonded key',
+      slashing: {
+        rule:
+          'a validator is slashed only for objectively provable equivocation: two conflicting signed block ' +
+          'proposals for one height and round, or two conflicting finality votes for one anchor. Being ' +
+          'offline, missing a slot or failing to vote is never slashable — that is the missed-slot jail.',
+        slashBps: CONSENSUS_PARAMS.consensus.equivocationSlashBps,
+        slashObs: formatObs(slashAmountFor(CONSENSUS_PARAMS.consensus.validatorBond)),
+        bondObs: formatObs(CONSENSUS_PARAMS.consensus.validatorBond),
+        destination: 'MINING_POOL',
+        treasuryShareObs: '0',
+        evidenceRequired: 'signatures by the validator’s own registered key, verified by every node',
+        submitter: 'any account may submit a SLASH transaction; the evidence, the bond and the ratio decide the amount',
+        count: slashes.length,
+      },
+      appliedSlashes: slashes.map((record) => ({
+        evidenceId: record.evidenceId,
+        evidenceType: record.type,
+        validator: maskAddress(record.validator),
+        equivocationHeight: record.height,
+        round: record.round,
+        bondBeforeObs: formatObs(record.bondBefore),
+        slashedObs: formatObs(record.amount),
+        remainingBondObs: formatObs(record.bondAfter),
+        destination: 'MINING_POOL',
+        appliedAtHeight: record.slashedAtHeight,
+      })),
     });
   }
 
@@ -856,7 +886,6 @@ export class RpcServer {
         rewardWallet: node.rewardWallet,
         endpoint: node.endpoint || null,
         registeredAtHeight: node.registeredAtHeight,
-        bondObs: formatObs(node.bond),
         lifetimeRewardObs: formatObs(node.lifetimeReward),
         pendingWallet: node.pendingWallet ?? null,
         pendingWalletEffectivePeriod: node.pendingWalletEffectivePeriod ?? null,
@@ -894,7 +923,6 @@ export class RpcServer {
       },
       pool: {
         balanceObs: formatObs(pool.balance),
-        bondedObs: formatObs(pool.bondedSeals),
         lifetimeInflowObs: formatObs(pool.lifetimeInflow),
         lifetimeDistributedObs: formatObs(pool.lifetimeDistributed),
         unclaimedTreasuryRevenueObs: formatObs(pool.unclaimedRevenue),
@@ -974,7 +1002,6 @@ export class RpcServer {
       deregisteredAtHeight: node.deregisteredAtHeight ?? null,
       registeredAtHeight: node.registeredAtHeight,
       endpoint: node.endpoint || null,
-      bondObs: formatObs(node.bond),
       lifetimeRewardObs: formatObs(node.lifetimeReward),
       pendingWalletChange: node.pendingWallet
         ? { wallet: node.pendingWallet, effectivePeriod: node.pendingWalletEffectivePeriod ?? null }
@@ -1057,7 +1084,6 @@ export class RpcServer {
       accounts: {
         miningPoolObs: formatObs(state.s.pool.balance),
         nodeRunnerPoolObs: formatObs(pool.balance),
-        nodeBondsObs: formatObs(pool.bondedSeals),
         unclaimedTreasuryRevenueObs: formatObs(pool.unclaimedRevenue),
         treasuryWallet: state.s.genesis.treasuryWallet || null,
       },
@@ -1647,6 +1673,8 @@ export function encodeBodyFor(type: string, payload: Record<string, unknown>): U
       return encodeOracleBody(payload as never);
     case 'NODE_REGISTRY':
       return encodeNodeRegistryBody(payload as never);
+    case 'SLASH':
+      return encodeSlashBody(payload as never);
     default:
       throw new Error(type ? `unknown transaction type ${type}` : 'transaction type is required');
   }
@@ -1666,6 +1694,8 @@ export function decodeBodyFor(type: string, bytes: Uint8Array): unknown {
       return decodeTreasuryBody(bytes);
     case 'NODE_REGISTRY':
       return decodeNodeRegistryBody(bytes);
+    case 'SLASH':
+      return decodeSlashBody(bytes);
     case 'ORACLE':
       return decodeOracleBody(bytes);
     default:

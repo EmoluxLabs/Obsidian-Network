@@ -178,14 +178,6 @@ export const CONSENSUS_PARAMS = {
      * useless by the time an attacker can mine it into a block.
      */
     proofMaxValiditySeconds: 3_600,
-    /**
-     * Registration bond, in OBS, locked from the reward wallet when a node
-     * registers. It is the operator's own money, it is returned in full when the
-     * node deregisters (minus nothing), and it exists so that a Sybil farm must
-     * fund every node it creates. Set to 100 OBS: enough to make a farm
-     * expensive, small enough that a hobbyist operator can run a node.
-     */
-    registrationBond: parseObs('100'),
     /** Endpoint hint length limits (informational field, never an identity). */
     maxEndpointLength: 120,
   },
@@ -275,6 +267,19 @@ export const CONSENSUS_PARAMS = {
     validatorSlotsPerRotation: 1,
     /** Exact admission bond required from every validator: 20,000 OBS. */
     validatorBond: parseObs('20000'),
+    /**
+     * Share of the bond taken from a validator that is proven, with signatures
+     * every node can check, to have equivocated — two conflicting block
+     * proposals or two conflicting finality votes for one slot. 5,000 bps =
+     * exactly half of the 20,000 OBS bond, so a proven offence costs 10,000 OBS
+     * and leaves 10,000 OBS held by the validator.
+     *
+     * The penalty is a parameter and the amount is derived from the validator's
+     * own recorded bond, so no submitter can name an amount, and a change to the
+     * ratio is a visible, hash-committed protocol change rather than a number
+     * buried in an executor.
+     */
+    equivocationSlashBps: 5_000,
     /** Unbonding delay in blocks before bond funds return. */
     unbondingBlocks: 20_160, // ~28 hours at 5s blocks
     /** Missed slots tolerated in a 100-block window before jailing. */

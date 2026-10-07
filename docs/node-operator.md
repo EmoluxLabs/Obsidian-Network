@@ -231,8 +231,8 @@ participation, and it needs to know which wallet is yours.
 Run Obsidian Core           → it prints your node id (20 bytes of hex)
 Sync and peer               → a node that is behind or unreachable scores nothing
 Register a reward wallet    → NODE_REGISTRY / REGISTER, signed by BOTH the node
-                              identity key and the reward wallet, with a 100 OBS
-                              bond that is returned in full when you leave
+                              identity key and the reward wallet. It moves no
+                              funds: there is no registration deposit
 Heartbeat and attest        → once per period, plus attestations for the peers
                               you can actually see
 Get paid                    → settlement happens inside a block at the end of

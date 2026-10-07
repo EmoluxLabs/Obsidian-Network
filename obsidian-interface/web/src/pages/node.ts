@@ -95,15 +95,17 @@ layout({
         el('li', {}, el('strong', {}, 'Run Obsidian Core. '), 'It generates a node identity key on first start and prints the node id.'),
         el('li', {}, el('strong', {}, 'Sync and peer. '), 'A node that is behind or unreachable scores nothing, whatever it claims.'),
         el('li', {}, el('strong', {}, 'Register a reward wallet. '),
-          'Your node signs a registration statement; the reward wallet signs the transaction and posts the bond. ',
-          'That pair of signatures is what proves the operator controls both — nobody can point your wallet at their node, or their wallet at yours.'),
+          'Your node signs a registration statement and the reward wallet signs the transaction. It moves no funds: ',
+          'there is no registration deposit. That pair of signatures is what proves the operator controls both — ',
+          'nobody can point your wallet at their node, or their wallet at yours.'),
         el('li', {}, el('strong', {}, 'Stay up. '), 'Heartbeat each period, attest the peers you can see, and keep in sync.'),
         el('li', {}, el('strong', {}, 'Get paid. '),
           'At the end of each period the protocol settles inside a block — no service, no operator and no administrator has to run anything.'),
       ),
       el('p', { class: 'muted' },
-        'The bond is returned in full when you deregister. It exists so a Sybil fleet must fund every node it invents, ',
-        'which is what lets the network stay open without an approval list.'),
+        'Nothing is locked and nothing is charged to register. What keeps the registry honest is what a node cannot fake: ',
+        'an identity bound to a wallet by two signatures, one node per wallet, attestations that must come from other nodes, ',
+        'and a cap on any single node\u2019s share of a period. The protocol\u2019s only bond is the validator\u2019s 20,000 OBS.'),
     ),
   ],
 });
@@ -142,7 +144,6 @@ async function lookup(nodeId: string): Promise<void> {
         ['Registered', status.registered ? badge('yes', 'ok') : badge(`deregistered at height ${status.deregisteredAtHeight}`, 'warn')],
         ['Registered at height', String(status.registeredAtHeight)],
         ['Endpoint hint', status.endpoint ?? '— (an endpoint is a hint, never the identity)'],
-        ['Bond held', obs(status.bondObs)],
         ['Lifetime rewards', obs(status.lifetimeRewardObs)],
         [
           'Pending wallet change',
@@ -307,7 +308,7 @@ void (async () => {
       el('h2', {}, `Registered nodes (${response.registeredNodes})`),
       response.nodes.length
         ? table(
-            ['Node', 'Reward wallet', 'Heartbeats', 'Attesters', 'Blocks', 'Attested', 'Faults', 'Bond'],
+            ['Node', 'Reward wallet', 'Heartbeats', 'Attesters', 'Blocks', 'Attested', 'Faults'],
             response.nodes.map((node) => [
               el('span', { class: 'mono' }, node.nodeId),
               el('span', { class: 'mono' }, node.rewardWallet),
@@ -316,7 +317,6 @@ void (async () => {
               String(node.currentPeriod.blocksProduced),
               String(node.currentPeriod.attestationsMade),
               node.currentPeriod.faults > 0 ? badge(String(node.currentPeriod.faults), 'warn') : '0',
-              obs(node.bondObs),
             ]),
           )
         : el('p', { class: 'muted' }, 'No node runner has registered a reward wallet on this chain yet.'),

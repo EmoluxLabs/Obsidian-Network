@@ -27,6 +27,7 @@ import type {
   OnsRecord,
   OracleState,
   ProtocolEvent,
+  SlashRecord,
   StateSnapshot,
   ValidatorState,
 } from '../protocol/types.js';
@@ -79,7 +80,6 @@ export function emptyPoolState(): MiningPoolState {
 export function emptyNodeRewardPool(): NodeRewardPoolState {
   return {
     balance: 0n,
-    bondedSeals: 0n,
     lifetimeInflow: 0n,
     lifetimeDistributed: 0n,
     lastSettledPeriod: 0,
@@ -107,6 +107,8 @@ export function emptyMetrics(): Metrics {
     totalOnsRunnerShare: 0n,
     totalOnsTreasuryShare: 0n,
     totalNodeRewardsPaid: 0n,
+    totalSlashedToPool: 0n,
+    totalSlashes: 0,
     registeredNodes: 0,
     totalNamesRegistered: 0,
   };
@@ -133,7 +135,8 @@ export interface MutableState {
   nodeWallets: Map<string, string>;
   /** Node Runner Reward Pool plus platform-revenue accounting. */
   nodeRewards: NodeRewardPoolState;
-
+  /** Applied slashes, keyed by evidence id. Consensus state, committed in the root. */
+  slashes: Map<string, SlashRecord>;
 }
 
 export interface ApplyContext {
@@ -183,6 +186,7 @@ export class WorldState {
       nodeEvidence: new Map(),
       nodeWallets: new Map(),
       nodeRewards: emptyNodeRewardPool(),
+      slashes: new Map(),
     };
   }
 
@@ -218,7 +222,7 @@ export class WorldState {
         })),
         revenueBySource: this.s.nodeRewards.revenueBySource.map((entry: { source: string; total: bigint }) => ({ ...entry })),
       },
-
+      slashes: Object.fromEntries([...this.s.slashes.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([id, record]) => [id, { ...record }])),
     };
   }
 
@@ -238,7 +242,7 @@ export class WorldState {
     s.recentClaimIds = new Map(Object.entries(snapshot.recentClaimIds));
     s.validators = new Set(snapshot.validators);
     for (const [k, v] of Object.entries(snapshot.nodes ?? {})) {
-      s.nodes.set(k, { ...v, bond: BigInt(v.bond), lifetimeReward: BigInt(v.lifetimeReward), settledPeriods: [...(v.settledPeriods ?? [])] });
+      s.nodes.set(k, { ...v, lifetimeReward: BigInt(v.lifetimeReward), settledPeriods: [...(v.settledPeriods ?? [])] });
       s.nodeWallets.set(v.rewardWallet, k);
       if (v.pendingWallet) s.nodeWallets.set(v.pendingWallet, k);
     }
@@ -255,7 +259,6 @@ export class WorldState {
         ...snapshot.nodeRewards,
         unclaimedRevenue: BigInt(snapshot.nodeRewards.unclaimedRevenue),
         balance: BigInt(snapshot.nodeRewards.balance),
-        bondedSeals: BigInt(snapshot.nodeRewards.bondedSeals ?? 0n),
         lifetimeInflow: BigInt(snapshot.nodeRewards.lifetimeInflow),
         lifetimeDistributed: BigInt(snapshot.nodeRewards.lifetimeDistributed),
         recentSettlements: (snapshot.nodeRewards.recentSettlements ?? []).map((settlement: NodeRewardSettlement) => ({
@@ -267,6 +270,14 @@ export class WorldState {
           total: BigInt(entry.total),
         })),
       };
+    }
+    for (const [id, record] of Object.entries(snapshot.slashes ?? {})) {
+      s.slashes.set(id, {
+        ...record,
+        amount: BigInt(record.amount),
+        bondBefore: BigInt(record.bondBefore),
+        bondAfter: BigInt(record.bondAfter),
+      });
     }
     return new WorldState(s);
   }
@@ -458,6 +469,9 @@ export class WorldState {
       if (!v) continue;
       if (v.status === 'JAILED' && (v.jailedUntilHeight ?? 0) > this.s.height) continue;
       if (v.status === 'UNBONDING') continue;
+      // A slashed registration leaves the rotation the moment the block that
+      // carried the evidence is applied — not when the node restarts.
+      if (v.status === 'SLASHED') continue;
       out.push(address);
     }
     return out;
@@ -479,12 +493,12 @@ export class WorldState {
     for (const account of this.s.accounts.values()) {
       if (account.validator) sum += account.validator.bond;
     }
-    // The Node Runner Reward Pool and the registration bonds are both
-    // protocol-held value. They are not in anyone's liquid balance, so the
-    // invariant must count them explicitly or every node payout would look like
-    // a supply mismatch.
+    // The Node Runner Reward Pool is protocol-held value: not in anyone's liquid
+    // balance, so the invariant counts it explicitly or every node payout would
+    // look like a supply mismatch. Slashed value never appears as a new term —
+    // it moves from a validator's bond (counted above) into the Mining Pool
+    // (counted above), so a slash can neither create nor destroy a seal.
     sum += this.s.nodeRewards.balance;
-    sum += this.s.nodeRewards.bondedSeals;
     if (sum !== this.s.metrics.totalSupply) {
       return {
         ok: false,
@@ -652,28 +666,6 @@ export class WorldState {
     return { nodePool: split.nodeRunnerPool, treasury: split.treasury, unclaimed };
   }
 
-  /**
-   * Lock a node runner's registration bond. The seals move out of the wallet and
-   * are held by the protocol, counted by the supply invariant and returned in
-   * full at deregistration — never burned, never redistributed.
-   */
-  lockNodeBond(address: string, amount: bigint, ctx: ApplyContext, reason: string): void {
-    if (amount <= 0n) return;
-    this.debit(address, amount, ctx, reason);
-    this.s.nodeRewards.bondedSeals += amount;
-    this.delta('CREDIT', 'nodeRewards.bondedSeals', amount.toString(), reason);
-  }
-
-  releaseNodeBond(address: string, amount: bigint, ctx: ApplyContext, reason: string): void {
-    if (amount <= 0n) return;
-    if (this.s.nodeRewards.bondedSeals < amount) {
-      reject(ErrCode.INSUFFICIENT_FUNDS, 'node runner bonds do not cover this refund');
-    }
-    this.s.nodeRewards.bondedSeals -= amount;
-    this.credit(address, amount, ctx, reason);
-    this.delta('DEBIT', 'nodeRewards.bondedSeals', amount.toString(), reason);
-  }
-
   /** Pay node runner rewards out of the pool. Only the settlement routine calls this. */
   nodeRewardOutflow(amount: bigint, _ctx: ApplyContext, reason: string): void {
     if (amount <= 0n) return;
@@ -687,6 +679,85 @@ export class WorldState {
     this.s.nodeRewards.lifetimeDistributed += amount;
     this.s.metrics.totalNodeRewardsPaid += amount;
     this.delta('DEBIT', 'nodeRewards.balance', amount.toString(), reason);
+  }
+
+  /**
+   * Apply a verified, canonical equivocation slash.
+   *
+   * The value moves from the validator's bond into the Mining Pool in one
+   * integer step: `bond -= amount` and `poolInflow(amount)`. Both sides are
+   * counted by the supply invariant, so the total supply is unchanged by
+   * construction — no issuance, no burn, nothing routed through ONS revenue and
+   * nothing credited to the treasury.
+   *
+   * The validator's registration becomes SLASHED: it leaves the proposer
+   * rotation and the finality committee immediately, and whatever is left of
+   * the bond is claimable after the ordinary unbonding delay. Re-registering
+   * means a fresh registration and a full bond; the remainder is never a
+   * discounted seat.
+   */
+  applyEquivocationSlash(
+    slash: {
+      evidenceId: string;
+      type: SlashRecord['type'];
+      validator: string;
+      height: number;
+      round: number;
+      amount: bigint;
+      bondBefore: bigint;
+      remaining: bigint;
+    },
+    ctx: ApplyContext,
+  ): SlashRecord {
+    const account = this.s.accounts.get(slash.validator);
+    const validator = account?.validator;
+    if (!validator) reject(ErrCode.NOT_FOUND, 'the slashed validator no longer exists');
+    if (this.s.slashes.has(slash.evidenceId)) reject(ErrCode.REPLAY, 'this evidence has already been applied');
+    if (validator.status !== 'ACTIVE') reject(ErrCode.UNAUTHORIZED, 'only an active validator can be slashed');
+    if (validator.bond !== slash.bondBefore || slash.amount + slash.remaining !== slash.bondBefore) {
+      reject(ErrCode.MALFORMED, 'slash accounting does not add up against the validator bond');
+    }
+
+    validator.bond = slash.remaining;
+    validator.status = 'SLASHED';
+    validator.slashedAtHeight = ctx.height;
+    validator.slashEvidenceId = slash.evidenceId;
+    // The remainder follows the ordinary unbonding path: claimable after the
+    // protocol delay, returned in full, never confiscated.
+    validator.unbondingStartHeight = ctx.height;
+
+    this.poolInflow(slash.amount, `equivocation penalty: ${slash.amount} from validator ${slash.validator}`);
+    this.s.metrics.totalSlashedToPool += slash.amount;
+    this.s.metrics.totalSlashes += 1;
+
+    const record: SlashRecord = {
+      evidenceId: slash.evidenceId,
+      type: slash.type,
+      validator: slash.validator,
+      height: slash.height,
+      round: slash.round,
+      amount: slash.amount,
+      bondBefore: slash.bondBefore,
+      bondAfter: slash.remaining,
+      slashedAtHeight: ctx.height,
+    };
+    this.s.slashes.set(slash.evidenceId, record);
+    this.emit('VALIDATOR_SLASHED', {
+      validator: slash.validator,
+      evidenceId: slash.evidenceId,
+      evidenceType: slash.type,
+      equivocationHeight: slash.height,
+      round: slash.round,
+      bondBefore: slash.bondBefore.toString(),
+      slashed: slash.amount.toString(),
+      remaining: slash.remaining.toString(),
+      destination: 'MINING_POOL',
+    }, ctx);
+    return record;
+  }
+
+  slashRecord(evidenceId: string): SlashRecord | undefined {
+    return this.s.slashes.get(evidenceId);
   }
 
   /** Split revenue before the treasury exists, once a treasury is designated. */

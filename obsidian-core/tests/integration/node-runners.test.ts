@@ -74,7 +74,7 @@ function registerOnsRevenue(h: Harness, payer: ReturnType<typeof makeWallet>, na
 }
 
 describe('node registration and wallet ownership', () => {
-  it('registers a node, locks the bond and records the identity → wallet binding', async () => {
+  it('registers a node, moves no funds and records the identity → wallet binding', async () => {
     const { h, nodes } = await nodeHarness(1);
     const [node] = nodes;
     const before = h.chain.world.getAccount(node.wallet.address)!.balance;
@@ -84,12 +84,14 @@ describe('node registration and wallet ownership', () => {
     const record = h.chain.world.node(node.nodeId);
     expect(record).toBeDefined();
     expect(record!.rewardWallet).toBe(node.wallet.address);
-    expect(record!.bond).toBe(NR.registrationBond);
     expect(h.chain.world.nodeByRewardWallet(node.wallet.address)).toBe(node.nodeId);
-    // The bond left the wallet and is held by the protocol, not burned.
+    // Registration used to lock a 100 OBS bond. That mechanism is removed, so
+    // registering must not move a single seal — the validator bond (20,000 OBS)
+    // is the protocol's only bond.
     const after = h.chain.world.getAccount(node.wallet.address)!.balance;
-    expect(before - after).toBe(NR.registrationBond);
-    expect(h.chain.world.s.nodeRewards.bondedSeals).toBe(NR.registrationBond);
+    expect(after).toBe(before);
+    const recordFields = Object.keys(record!);
+    expect(recordFields).not.toContain('bond');
     expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
   });
 
@@ -236,11 +238,10 @@ describe('node registration and wallet ownership', () => {
     expect(outcome.code).toBe(ErrCode.NODE_ALREADY_REGISTERED);
   });
 
-  it('refuses a registration without the bond', async () => {
-    const { h, alice } = await nodeHarness(0);
-    const poor = makeWallet();
-    h.produce([signedPayment(h, alice, poor.address, parseObs('1'))]); // less than the bond
-    const node = makeNode(poor);
+  it('accepts a registration from a wallet with no OBS at all: there is no deposit to pay', async () => {
+    const { h } = await nodeHarness(0);
+    const penniless = makeWallet();
+    const node = makeNode(penniless);
     const issuedAt = h.chain.protocolTime;
     const expiresAt = issuedAt + 600;
     const endpoint = '203.0.113.5:8631';
@@ -248,25 +249,24 @@ describe('node registration and wallet ownership', () => {
       networkId: h.net.networkId,
       chainId: h.net.chainId,
       nodeId: node.nodeId,
-      rewardWallet: poor.address,
+      rewardWallet: penniless.address,
       endpoint,
       issuedAt,
       expiresAt,
     });
     const proof = nodeProof(DOMAIN.NODE_REGISTRATION, message, node.privateKey);
-    const outcome = h.tryBlock(
-      [
-        h.sign(
-          poor,
-          TxType.NODE_REGISTRY,
-          nodeRegistryBody({ op: NodeRegistryOp.REGISTER, node, proof, endpoint, issuedAt, expiresAt }),
-          { gas: 0n },
-        ),
-      ],
-      { simulate: false },
-    );
-    expect(outcome.accepted).toBe(false);
-    expect(outcome.code).toBe(ErrCode.NODE_BOND_REQUIRED);
+    // No payment was made to this wallet, and the transaction pays no gas.
+    h.produce([
+      h.sign(
+        penniless,
+        TxType.NODE_REGISTRY,
+        nodeRegistryBody({ op: NodeRegistryOp.REGISTER, node, proof, endpoint, issuedAt, expiresAt }),
+        { gas: 0n },
+      ),
+    ]);
+    expect(h.chain.world.node(node.nodeId)?.rewardWallet).toBe(penniless.address);
+    expect(h.chain.world.getAccount(penniless.address)!.balance).toBe(0n);
+    expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
   });
 
   it('refuses a proof that has expired, so a captured statement cannot be replayed', async () => {
@@ -545,11 +545,11 @@ describe('wallet changes and exit', () => {
     expect(outcome.code).toBe(ErrCode.UNAUTHORIZED);
   });
 
-  it('returns the bond in full on deregistration', async () => {
+  it('deregisters without touching any balance, because nothing was ever bonded', async () => {
     const { h, nodes } = await nodeHarness(1);
     const [node] = nodes;
     registerNode(h, node);
-    const bonded = h.chain.world.getAccount(node.wallet.address)!.balance;
+    const balance = h.chain.world.getAccount(node.wallet.address)!.balance;
 
     const message = deregistrationMessage({
       networkId: h.net.networkId,
@@ -567,8 +567,7 @@ describe('wallet changes and exit', () => {
 
     const record = h.chain.world.node(node.nodeId)!;
     expect(record.deregisteredAtHeight).toBeGreaterThan(0);
-    expect(h.chain.world.getAccount(node.wallet.address)!.balance - bonded).toBe(NR.registrationBond);
-    expect(h.chain.world.s.nodeRewards.bondedSeals).toBe(0n);
+    expect(h.chain.world.getAccount(node.wallet.address)!.balance).toBe(balance);
     expect(h.chain.world.registeredNodes()).toHaveLength(0);
     expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
   });

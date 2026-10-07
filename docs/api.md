@@ -24,7 +24,7 @@ Error shape is stable:
 | `GET /nodes`, `GET /peers` | known peers with height, genesis id, latency, direction |
 | `GET /network` | network name, chain id, address prefix, p2p magic, genesis id, params hash and versions. `domains` lists the official hostnames **of this network only** (mainnet: `obsmainnet.us.ci`, `api.obsmainnet.us.ci` and its sites; devnet: `devnet.obsmainnet.us.ci`; testnet and staging likewise), so a practice chain cannot vouch for the names people use to check a mainnet address. `trust` says whether this node answers pages on the official domain and by which patterns; see [trusted-domains.md](trusted-domains.md) |
 | `GET /oracle` | current median price, sources, submission ages |
-| `GET /validators` | validator records, bonds, commission, uptime |
+| `GET /validators` | validator records, bonds, commission, missed slots, and the slashing rule: `slashing` (the parameter, the derived amount, the Mining Pool destination, a `treasuryShareObs` of zero, who may submit) plus `appliedSlashes` — every slash this chain applied, with its canonical evidence id |
 | `GET /blocks?limit=` | recent blocks (headers plus counts) |
 | `GET /block/<height\|hash>` | full block with its transactions |
 | `GET /tx/<txid>` | transaction description, masked addresses, inclusion height |
@@ -65,6 +65,15 @@ operations are `REGISTER`, `CHANGE_WALLET`, `DEREGISTER`, `HEARTBEAT`, `ATTEST`
 and `REPORT_FAULT`. Each carries a signature made by the node identity key over
 a domain-separated message that names the network, the chain and the reward
 period; see [node-runner-rewards.md](node-runner-rewards.md).
+
+Equivocation evidence is submitted the same way, as a signed transaction of type
+`SLASH` (12) through `POST /tx/submit`, encoded with `POST /tx/encode` using
+`"type": "SLASH"`. Any account may submit one, it carries no value and pays no
+gas, and it is refused unless the evidence verifies against the chain's own
+identity on every node (`ERR_BAD_SIGNATURE`, `ERR_UNAUTHORIZED`,
+`ERR_WRONG_NETWORK`, `ERR_WRONG_CHAIN_ID`, `ERR_NOT_YET_VALID` for evidence about
+a height the chain has not reached, `ERR_REPLAY` for evidence already applied).
+See [consensus.md](consensus.md) §4.3.
 
 A node never accepts a transaction it cannot verify: signature, nonce, gas,
 balance, replay status, network id and protocol version are all checked before the

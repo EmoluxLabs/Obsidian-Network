@@ -10,6 +10,17 @@ export interface FinalityIdentity { networkId:string; chainId:number; genesisId:
 export interface PersistedFinalityState extends FinalityIdentity {
   version:1; finalizedHeight:number; finalizedHash:string; certificate:FinalityCertificate|null;
   votes:FinalityVote[]; evidence:EquivocationEvidence[];
+  /**
+   * The last (height, round) this node signed a block proposal for. A proposer
+   * signs at most ONE proposal per slot, so this lock is what stops a retry — or
+   * a restart — from producing the two conflicting headers an equivocation slash
+   * is made of. It is written before the signature exists, because the signature
+   * is the thing that cannot be taken back, and it is stored in the same
+   * crash-safe, identity-bound seal as the finality locks: on another network,
+   * another chain or another genesis the file is refused outright, so a lock can
+   * never be mistaken for one taken on a different chain.
+   */
+  lastProposal?:{height:number;round:number}|null;
 }
 interface Envelope { checksum:string; state:PersistedFinalityState }
 function bodyOf(state:PersistedFinalityState):string { return JSON.stringify(state); }

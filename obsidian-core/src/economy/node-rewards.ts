@@ -39,13 +39,14 @@
  *              is registered and its height was recent at period close; else 0.
  *
  * SYBIL RESISTANCE (no administrator, no allowlist)
- *   - One reward identity may be registered per reward wallet, and one wallet
- *     may fund only one bond: an operator that splits a machine into ten nodes
- *     must fund ten distinct registered reward wallets.
- *   - A registered node must bond OBS before it can earn (see
- *     nodeRewards.registrationBond in src/protocol/params.ts). The bond is the
- *     operator's own money at risk and it is returned in full at deregistration
- *     — the cost of a Sybil farm is the capital for the farm.
+ *   - One reward identity may be registered per reward wallet, and one identity
+ *     per reward wallet: an operator that splits a machine into ten nodes must
+ *     present ten distinct identities and ten distinct reward wallets, and the
+ *     protocol binds each to the other.
+ *   - Registration itself moves no funds. The protocol's capital requirement is
+ *     the validator bond (20,000 OBS, src/protocol/params.ts) — one bond, one
+ *     rule, enforced in one place — and node rewards are capped per node
+ *     (`maxNodeShareBps`) so no fleet can take a period.
  *   - Rewards are capped per node (`maxNodeShareBps`), so one operator's fleet
  *     cannot take a period.
  *   - Uptime requires attestations from *other* nodes, so ten nodes on one
@@ -62,7 +63,6 @@
  */
 
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
-import { formatObs } from '../protocol/amount.js';
 
 const NR = CONSENSUS_PARAMS.nodeRewards;
 
@@ -74,7 +74,6 @@ export interface NodeRewardParamsSummary {
   minScoreBps: number;
   maxNodeShareBps: number;
   minAttesters: number;
-  registrationBondObs: string;
   walletChangeDelayPeriods: number;
   evidenceWindowPeriods: number;
   scoreWeights: { uptimeBps: number; participationBps: number; reliabilityBps: number; responsivenessBps: number };
@@ -450,7 +449,6 @@ export interface NodeRewardStatusView {
   rewardWallet: string;
   registered: boolean;
   registeredAtHeight: number;
-  bondObs: string;
   period: number;
   score: NodeScore | null;
   paidObs: string;
@@ -480,7 +478,6 @@ export function nodeRewardParams(): NodeRewardParamsSummary {
     minScoreBps: NR.minScoreBps,
     maxNodeShareBps: NR.maxNodeShareBps,
     minAttesters: NR.minAttesters,
-    registrationBondObs: formatObs(NR.registrationBond),
     walletChangeDelayPeriods: NR.walletChangeDelayPeriods,
     evidenceWindowPeriods: NR.evidenceWindowPeriods,
     scoreWeights: { ...NR.scoreWeights },

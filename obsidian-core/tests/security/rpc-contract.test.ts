@@ -17,6 +17,7 @@ import { RpcServer, usdToMicro } from '../../src/rpc/server.js';
 import { DEFAULT_CONFIG, type NodeConfig } from '../../src/config/config.js';
 import { getNetwork } from '../../src/protocol/networks.js';
 import { PROTOCOL_VERSION } from '../../src/version.js';
+import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { genesisId as computeGenesisId } from '../../src/genesis/initialize.js';
 
 const NET = getNetwork('devnet');
@@ -231,5 +232,36 @@ describe('a node says only what is true of the network it follows', () => {
     expect(components).not.toContain('Google OAuth');
     expect(JSON.stringify(audit.body)).not.toMatch(/OAuth/);
     expect(audit.body.questions.every((q: { answer: string }) => q.answer === 'NO')).toBe(true);
+  });
+});
+
+describe('the public surface tells the truth about bonds and slashing', () => {
+  it('/validators publishes the slash rule, its destination and the applied ledger', async () => {
+    const result = await call('/validators');
+    expect(result.status).toBe(200);
+    const slashing = result.body.slashing;
+    expect(slashing.slashBps).toBe(CONSENSUS_PARAMS.consensus.equivocationSlashBps);
+    expect(slashing.bondObs).toBe('20000.000000000000000000');
+    expect(slashing.slashObs).toBe('10000.000000000000000000');
+    expect(slashing.destination).toBe('MINING_POOL');
+    expect(slashing.treasuryShareObs).toBe('0');
+    // A slash is a state transition, and the endpoint says who may start one.
+    // The API is not the enforcement point: it reports what consensus did.
+    expect(slashing.submitter).toMatch(/any account may submit/i);
+    expect(slashing.rule).toMatch(/offline|missed-slot jail/i);
+    expect(slashing.count).toBe(0);
+    expect(result.body.appliedSlashes).toEqual([]);
+  });
+
+  it('no endpoint publishes a node-runner registration bond, because none exists', async () => {
+    const params = await call('/params');
+    expect(params.status).toBe(200);
+    expect(JSON.stringify(params.body)).not.toMatch(/registrationBond/);
+    const rewards = await call('/nodes/rewards');
+    expect(rewards.status).toBe(200);
+    expect(JSON.stringify(rewards.body)).not.toMatch(/registrationBond|bondObs/);
+    const registry = await call('/nodes');
+    expect(registry.status).toBe(200);
+    expect(JSON.stringify(registry.body)).not.toMatch(/bondObs/);
   });
 });

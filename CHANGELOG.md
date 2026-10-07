@@ -7,16 +7,16 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.6.0 that is `2f95e359a447f9e55ba2dbd75e589361`.
+a node running it. For 1.6.0 that is `4a2883b210c4a7aeb873f9d669e2476f`.
 
 ---
 
 ## [1.6.0] — 2026-10-07
 
 **Consensus-breaking, new-genesis release for a pre-launch network.** Params hash
-is `2f95e359a447f9e55ba2dbd75e589361`; mainnet genesis id is
+is `4a2883b210c4a7aeb873f9d669e2476f`; mainnet genesis id is
 `3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c` and genesis block hash is
-`f79d1a1a1acab6c803b839b378aeb6c7f668bb8ebdd63ed55b189caae6a2677b`. A 1.6.0
+`cdae9adc8e17f662c689b185e804d8c77c237be27e0ec04e57e0a6214990a4e5`. A 1.6.0
 node rejects 1.5.x peers and data directories, and it does not migrate a 1.5
 chain: this release is for an unstarted network. 1.5.x release archives and the
 1.5 historical record in this changelog are untouched.
@@ -66,6 +66,29 @@ chain: this release is for an unstarted network. 1.5.x release archives and the
 * **The validator bond is exactly 20,000 OBS.** A registration offering any
   other amount is refused with `ERR_VALIDATOR_BOND_MISMATCH`; the parameter is
   published on `/params`.
+* **Equivocation is slashable, in the state transition, for every node to
+  check.** A validator proven to have signed two conflicting block proposals for
+  one height and round, or two conflicting finality votes for one anchor,
+  forfeits `consensus.equivocationSlashBps = 5000` of its own recorded bond —
+  10,000 of the 20,000 OBS — credited to the Mining Pool in the same transition.
+  The penalty is a parameter applied to a bond (`slashed + remaining == bond`,
+  integers only), never a hard-coded amount; the treasury's share is exactly
+  zero and total supply is unchanged to the seal. Submitting evidence is an
+  ordinary permissionless `SLASH` transaction (type 12) that costs no gas and
+  that any account may send; the evidence, the offender, the round and the
+  destination are all recomputed by every node, so no submitter names anything.
+  A slashed validator leaves the rotation and the finality committee in the
+  block that applied the evidence, the surviving half stays claimable after the
+  ordinary unbonding delay, and re-registering needs a fresh full bond. Being
+  offline is **not** slashable: missing slots is still a jail, not a penalty.
+  The applied-slash ledger and the validator's status are consensus state, so a
+  replay — another block, another peer, a restart — finds it and is refused.
+* **The 100 OBS node-runner registration bond is removed as a mechanism, not
+  set to zero.** The protocol now has exactly one registration bond — the
+  validator's 20,000 OBS — enforced in one place, with `registrationBond`
+  deleted from `nodeRewards`, from the node registry executor, from the state
+  root, from the RPC surface and from the documents. Registering a node runner
+  moves no funds at all.
 * Gas still funds the Mining Pool and is never counted as revenue. The genesis
   allocation is still exactly 100,000 OBS to the first protocol-valid mining
   claim, which also designates the treasury — no address is hard-coded and
@@ -121,8 +144,9 @@ chain: this release is for an unstarted network. 1.5.x release archives and the
   candidate. `.github/workflows/ci.yml` is the running record of what is checked
   and prints the counts itself, so they are not hard-coded here.
 * `scripts/check-invariants.mjs` asserts the 90/10 split (including the
-  remainder), the ONS-only revenue classification, the 20,000 OBS bond and the
-  fork-choice order.
+  remainder), the ONS-only revenue classification, the single 20,000 OBS bond,
+  the absence of any node registration bond, the 5,000 bps equivocation penalty
+  and the fork-choice order.
 
 ### Not in this release
 

@@ -65,6 +65,45 @@ export enum TxType {
    * every payout from the evidence it collects here (see src/economy/node-rewards.ts).
    */
   NODE_REGISTRY = 11,
+  /**
+   * Slashing. Carries self-contained cryptographic proof that a bonded
+   * validator signed two conflicting messages for one consensus slot. The
+   * submitter chooses nothing: the executor derives the penalty from the
+   * consensus slash ratio and the validator's own record, and a validator can
+   * only be slashed by evidence that every honest node verifies identically
+   * (src/consensus/slash-evidence.ts).
+   */
+  SLASH = 12,
+}
+
+/** Operations inside a SLASH transaction. */
+export enum SlashOp {
+  /** Two conflicting block proposals, or two conflicting finality votes. */
+  EQUIVOCATION = 1,
+}
+
+/**
+ * The evidence carried by a SLASH transaction.
+ *
+ * `evidence` is one of the two canonical `EquivocationEvidence` shapes the rest
+ * of the protocol already uses — the same objects the node detects locally and
+ * publishes at `/finality`. The evidence id is recomputed from the evidence
+ * itself during execution, so a submitter cannot rename or reshape it.
+ *
+ * Proposer evidence proves two signed headers at one height in one round, but a
+ * header does not carry its parent's timestamp, and the round is a function of
+ * it. The transaction therefore also carries both parent headers. They are
+ * bound to the children by `child.prevHash === blockHash(parent)`, so a parent
+ * cannot be fabricated to fake a round: finding a header that hashes to the
+ * committed prevHash is the same problem as breaking SHA-256.
+ */
+export interface SlashBody {
+  op: SlashOp;
+  evidence: EquivocationEvidence;
+  /** Parent header of `evidence.firstHeader`, hex of its signed encoding. */
+  firstParentHeader?: Hex;
+  /** Parent header of `evidence.secondHeader`, hex of its signed encoding. */
+  secondParentHeader?: Hex;
 }
 
 /** Operations inside a NODE_REGISTRY transaction. */
@@ -362,8 +401,40 @@ export interface ValidatorState {
   /** Set while jailed; jailed validators are skipped in the proposer rotation. */
   jailedUntilHeight?: number;
   missedSlots: number;
-  status: 'ACTIVE' | 'UNBONDING' | 'JAILED';
+  /**
+   * SLASHED is terminal for this registration: the validator is out of the
+   * proposer rotation and out of the finality committee the moment the block
+   * carrying the evidence is applied, and the remainder of the bond (never the
+   * slashed part) can be claimed after the ordinary unbonding delay. Returning
+   * as a validator means a fresh registration with a full bond.
+   */
+  status: 'ACTIVE' | 'UNBONDING' | 'JAILED' | 'SLASHED';
   unbondingStartHeight?: number;
+  /** Height of the block whose state transition applied the slash. */
+  slashedAtHeight?: number;
+  /** Id of the evidence that caused the slash; committed in the state root. */
+  slashEvidenceId?: Hex;
+}
+
+/**
+ * One applied slash. Keyed by evidence id, which is what makes slashing
+ * idempotent across replays, restarts and competing submitters: the second
+ * transaction carrying the same evidence finds the record and is rejected.
+ */
+export interface SlashRecord {
+  evidenceId: Hex;
+  type: 'PROPOSER_EQUIVOCATION' | 'VOTE_EQUIVOCATION';
+  validator: string;
+  /** Height of the equivocation (not of the block that punished it). */
+  height: number;
+  round: number;
+  /** Slashed amount, exactly `consensus.equivocationSlashBps` of the bond. */
+  amount: bigint;
+  /** Bond held by the validator before the slash. */
+  bondBefore: bigint;
+  /** Bond still held by the validator after the slash. */
+  bondAfter: bigint;
+  slashedAtHeight: number;
 }
 
 export interface GenesisState {
@@ -477,8 +548,6 @@ export interface NodeRecord {
   endpoint: string;
   registeredAtHeight: number;
   registeredAt: ProtocolTimeSeconds;
-  /** Bond locked from the reward wallet at registration, returned at exit. */
-  bond: bigint;
   /** Set when the node deregisters; it stops earning immediately. */
   deregisteredAtHeight?: number;
   /** Wallet change in flight: signed by the new wallet, effective at a period. */
@@ -526,8 +595,6 @@ export interface NodeEvidenceRecord {
 export interface NodeRewardPoolState {
   /** Seals held for node runners (the 90% ONS-revenue share). */
   balance: bigint;
-  /** Registration bonds held by the protocol. Returned in full at deregistration. */
-  bondedSeals: bigint;
   /** Reward period the block counter below belongs to (-1 = not started). */
   blockCountPeriod: number;
   /** Blocks counted inside `blockCountPeriod`, used to score participation. */
@@ -580,6 +647,10 @@ export interface Metrics {
   totalOnsTreasuryShare: bigint;
   /** Lifetime node runner rewards paid out of the pool. */
   totalNodeRewardsPaid: bigint;
+  /** Lifetime value moved from slashed validator bonds into the Mining Pool. */
+  totalSlashedToPool: bigint;
+  /** Number of applied slashes. */
+  totalSlashes: number;
   /** Registered (non-deregistered) node runners at this height. */
   registeredNodes: number;
   totalNamesRegistered: number;
@@ -627,6 +698,11 @@ export interface StateSnapshot {
   nodeRewards: NodeRewardPoolState;
   /** Registered validators in deterministic (address-sorted) order. */
   validators: string[];
+  /**
+   * Applied slashes, keyed by evidence id. Consensus state: it is what stops a
+   * replay of the same evidence from slashing the same bond twice.
+   */
+  slashes?: Record<string, SlashRecord>;
 }
 
 export interface ChainMeta {

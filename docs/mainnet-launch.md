@@ -13,9 +13,9 @@ before it has users than after.
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
 | Genesis id | `3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c` |
-| Genesis hash | `f79d1a1a1acab6c803b839b378aeb6c7f668bb8ebdd63ed55b189caae6a2677b` |
+| Genesis hash | `cdae9adc8e17f662c689b185e804d8c77c237be27e0ec04e57e0a6214990a4e5` |
 | Protocol version | `1.6.0` |
-| Params hash | `2f95e359a447f9e55ba2dbd75e589361` — published at `/params`; must be identical on every node |
+| Params hash | `4a2883b210c4a7aeb873f9d669e2476f` — published at `/params`; must be identical on every node |
 | Default RPC port | 8630 |
 | Default p2p port | 8631 |
 | Address prefix | `obs1` |

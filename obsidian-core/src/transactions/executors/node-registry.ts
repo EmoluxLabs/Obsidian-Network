@@ -32,11 +32,15 @@
  *      send fourteen heartbeats "for last week" or backdate an attestation: the
  *      block decides when the statement happened.
  *
- *   4. BONDED, CAPPED, REVERSIBLE.
- *      Registration locks the registration bond from the reward wallet. It is
- *      returned in full at deregistration. The bond is what makes a farm of fake
- *      nodes cost capital instead of nothing, and it is why the protocol needs no
- *      allowlist and no administrator to keep the registry honest.
+ *   4. NO REGISTRATION DEPOSIT.
+ *      Registering a node runner moves no funds: there was once a 100 OBS
+ *      registration bond, and it was removed as a mechanism rather than set to
+ *      zero. The protocol has exactly one bond — the validator bond — because
+ *      two bonds with one name is exactly how an economic rule ends up applied
+ *      in one place and not the other. What keeps the registry honest is the
+ *      things a node cannot fake: one reward wallet behind one node identity,
+ *      attestations that come from other nodes, and payouts computed only from
+ *      recorded, verified evidence.
  */
 
 import { Reader, Writer } from '../../protocol/encoding.js';
@@ -169,17 +173,6 @@ export function executeNodeRegistry(
         reject(ErrCode.BAD_SIGNATURE, 'the node identity did not consent to this registration (proof invalid)');
       }
 
-      const bond = NR.registrationBond;
-      const account = state.getAccount(tx.sender);
-      if (bond > 0n && (!account || account.balance < bond + gas)) {
-        reject(ErrCode.NODE_BOND_REQUIRED, `registration requires a bond of ${bond} seals plus gas in the reward wallet`, {
-          required: (bond + gas).toString(),
-          available: (account?.balance ?? 0n).toString(),
-        });
-      }
-      if (bond > 0n) {
-        state.lockNodeBond(tx.sender, bond, apply, 'node runner registration bond');
-      }
       const record: NodeRecord = {
         nodeId,
         rewardWallet: body.rewardWallet,
@@ -187,7 +180,6 @@ export function executeNodeRegistry(
         endpoint,
         registeredAtHeight: apply.height,
         registeredAt: apply.timestamp,
-        bond,
         lifetimeReward: existing?.lifetimeReward ?? 0n,
         settledPeriods: [],
       };
@@ -196,10 +188,9 @@ export function executeNodeRegistry(
         nodeId,
         rewardWallet: body.rewardWallet,
         endpoint,
-        bond: bond.toString(),
         period: rewardPeriodAt(apply.timestamp),
       }, apply);
-      return { gasBase: 0n, detail: { op: 'REGISTER', nodeId, rewardWallet: body.rewardWallet, bond: bond.toString() } };
+      return { gasBase: 0n, detail: { op: 'REGISTER', nodeId, rewardWallet: body.rewardWallet } };
     }
 
     // ── HEARTBEAT ────────────────────────────────────────────────────────────
@@ -420,15 +411,11 @@ export function executeNodeRegistry(
       node.deregisteredAtHeight = apply.height;
       node.pendingWallet = undefined;
       node.pendingWalletEffectivePeriod = undefined;
-      if (node.bond > 0n) {
-        state.releaseNodeBond(node.rewardWallet, node.bond, apply, 'node runner bond returned on deregistration');
-        node.bond = 0n;
-      }
       state.putNode(node);
       state.emit('NODE_DEREGISTERED', {
         nodeId: node.nodeId,
         rewardWallet: node.rewardWallet,
-        note: 'the bond is returned in full and already settled rewards are untouched; the period in progress is forfeited because a node that leaves cannot be attested for it',
+        note: 'nothing is locked and nothing is confiscated: already settled rewards are untouched, and the period in progress is forfeited because a node that leaves cannot be attested for it',
       }, apply);
       return { gasBase: 0n, detail: { op: 'DEREGISTER', nodeId: node.nodeId } };
     }

@@ -174,6 +174,17 @@ async function bootNode(options: StartOptions, lock: DataDirLock): Promise<NodeR
     }
   });
 
+  // The double-sign lock closed a slot this validator had already signed. It is
+  // the safe outcome — signing twice in one slot is the equivocation the
+  // protocol punishes — but an operator watching a node that stopped proposing
+  // deserves to see why.
+  chain.on('proposal-lock', (info: { height: number; round: number }) => {
+    logger.warn('proposal slot already signed by this validator; waiting for the next round', {
+      height: info.height,
+      round: info.round,
+    });
+  });
+
   // ── RPC ──────────────────────────────────────────────────────────────────
   let rpc: RpcServer | undefined;
   if (config.rpcEnabled) {

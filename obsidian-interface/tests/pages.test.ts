@@ -662,7 +662,6 @@ const REGISTRY_FIXTURE = {
       rewardWallet: 'dobs1aaaaa…zzzzzz',
       endpoint: '203.0.113.10:8631',
       registeredAtHeight: 5,
-      bondObs: '20000.000000000000000000',
       lifetimeRewardObs: '0.000000000000000000',
       pendingWallet: null,
       pendingWalletEffectivePeriod: null,

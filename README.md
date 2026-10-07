@@ -174,7 +174,8 @@ ONS revenue ──┬── 90% → Node Runner Reward Pool
 A node earns from uptime, participation, reliability and responsiveness that
 **other nodes attested** — there is no field in which a node can report its own
 performance. Registration binds a node identity to a reward wallet with
-signatures from both, plus a 100 OBS bond that is returned in full on exit.
+signatures from both, and moves no funds: the protocol has exactly one bond, the
+20,000 OBS validator bond, so nobody can be priced out of running a node.
 Settlement runs inside a block, so payouts happen with nobody online.
 Gas still goes to the Mining Pool and is never counted as revenue.
 

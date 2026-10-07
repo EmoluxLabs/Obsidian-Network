@@ -83,11 +83,19 @@ export function executeValidator(
         // still held by the old one was erased without ever being credited
         // back — destroying it, breaking the supply invariant, and throwing
         // out of finalizeBlock. The unbonded stake has to be claimed first.
+        //
+        // A SLASHED record follows the same rule for the same reason, and it is
+        // also what stops a slashed validator from turning the 10,000 OBS that
+        // survived into a discounted seat: it must claim the remainder and
+        // register again with a full 20,000 OBS bond.
+        const status = account.validator.status;
         reject(
           ErrCode.REPLAY,
-          account.validator.status === 'UNBONDING'
+          status === 'UNBONDING'
             ? 'this account is unbonding: claim the stake (VALIDATOR CLAIM_UNBONDED) before registering again'
-            : 'this account is already a registered validator',
+            : status === 'SLASHED'
+              ? 'this registration was slashed: claim the remaining bond (VALIDATOR CLAIM_UNBONDED) after the unbonding delay, then register again with a full bond'
+              : 'this account is already a registered validator',
         );
       }
       assertGas(tx.gas, body.bond);
@@ -135,7 +143,11 @@ export function executeValidator(
       const account = state.getAccount(tx.sender);
       if (!account?.validator) reject(ErrCode.NOT_FOUND, 'this account is not a validator');
       const validator = account.validator;
-      if (validator.status !== 'UNBONDING' || validator.unbondingStartHeight === undefined) {
+      // A slashed registration exits on the same terms as a voluntary one: the
+      // remainder of the bond is the validator's own money and is returned in
+      // full once the unbonding delay has passed. Only the slashed half is gone.
+      const exiting = validator.status === 'UNBONDING' || validator.status === 'SLASHED';
+      if (!exiting || validator.unbondingStartHeight === undefined) {
         reject(ErrCode.UNAUTHORIZED, 'there is no unbonding balance to claim');
       }
       const readyAt = validator.unbondingStartHeight + CONSENSUS_PARAMS.consensus.unbondingBlocks;
@@ -144,10 +156,11 @@ export function executeValidator(
       }
       assertGas(tx.gas, 0n);
       const bond = validator.bond;
+      const wasSlashed = validator.status === 'SLASHED';
       state.removeValidator(tx.sender);
-      state.credit(tx.sender, bond, apply, 'validator bond returned after unbonding');
-      state.emit('VALIDATOR_UNBONDED', { validator: tx.sender, bond: bond.toString() }, apply);
-      return { gasBase: 0n, detail: { bond: bond.toString() } };
+      state.credit(tx.sender, bond, apply, wasSlashed ? 'remaining validator bond returned after a slash and the unbonding delay' : 'validator bond returned after unbonding');
+      state.emit('VALIDATOR_UNBONDED', { validator: tx.sender, bond: bond.toString(), afterSlash: wasSlashed }, apply);
+      return { gasBase: 0n, detail: { bond: bond.toString(), afterSlash: wasSlashed } };
     }
 
     default:

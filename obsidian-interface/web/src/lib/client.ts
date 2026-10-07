@@ -211,7 +211,6 @@ export interface NodeRunnerRecord {
   rewardWallet: string;
   endpoint: string | null;
   registeredAtHeight: number;
-  bondObs: string;
   lifetimeRewardObs: string;
   pendingWallet: string | null;
   pendingWalletEffectivePeriod: number | null;
@@ -279,7 +278,6 @@ export interface NodeStatusResponse {
   deregisteredAtHeight: number | null;
   registeredAtHeight: number;
   endpoint: string | null;
-  bondObs: string;
   lifetimeRewardObs: string;
   pendingWalletChange: { wallet: string; effectivePeriod: number | null } | null;
   currentPeriod: number;

@@ -117,6 +117,10 @@ function encodeAccount(w: Writer, address: string, a: Account): void {
     w.u32(v.missedSlots);
     w.string(v.status);
     w.u32(v.unbondingStartHeight ?? 0);
+    // The facts behind a slash are consensus state: two nodes that disagree
+    // about which evidence was applied disagree about the bond.
+    w.u32(v.slashedAtHeight ?? 0);
+    w.string(v.slashEvidenceId ?? '');
   }
 }
 
@@ -191,6 +195,8 @@ function encodeMetrics(w: Writer, m: Metrics): void {
   w.u128(m.totalOnsRunnerShare);
   w.u128(m.totalOnsTreasuryShare);
   w.u128(m.totalNodeRewardsPaid);
+  w.u128(m.totalSlashedToPool);
+  w.u32(m.totalSlashes);
   w.u32(m.registeredNodes);
   w.u32(m.totalNamesRegistered);
 }
@@ -202,7 +208,6 @@ function encodeNode(w: Writer, n: NodeRecord): void {
   w.string(n.endpoint);
   w.u32(n.registeredAtHeight);
   w.u64(BigInt(Math.trunc(n.registeredAt)));
-  w.u128(n.bond);
   w.u32(n.deregisteredAtHeight ?? 0);
   w.string(n.pendingWallet ?? '');
   w.i128(BigInt(n.pendingWalletEffectivePeriod ?? -1));
@@ -231,7 +236,6 @@ function encodeNodeEvidence(w: Writer, e: NodeEvidenceRecord): void {
 
 function encodeNodeRewards(w: Writer, p: NodeRewardPoolState): void {
   w.u128(p.balance);
-  w.u128(p.bondedSeals);
   w.u128(p.lifetimeInflow);
   w.u128(p.lifetimeDistributed);
   w.i128(BigInt(p.lastSettledPeriod));
@@ -309,6 +313,24 @@ export function encodeState(state: MutableState): Uint8Array {
   }
 
   encodeNodeRewards(w, state.nodeRewards);
+
+  // Applied slashes. Consensus state: this ledger is what makes a replayed
+  // slash transaction a no-op rather than a second penalty, so omitting it from
+  // the root would let two nodes disagree about a validator's bond.
+  const slashIds = [...state.slashes.keys()].sort();
+  w.u32(slashIds.length);
+  for (const id of slashIds) {
+    const record = state.slashes.get(id)!;
+    w.string(id);
+    w.string(record.type);
+    w.string(record.validator);
+    w.u32(record.height);
+    w.u32(record.round);
+    w.u128(record.amount);
+    w.u128(record.bondBefore);
+    w.u128(record.bondAfter);
+    w.u32(record.slashedAtHeight);
+  }
 
   const paramsHash = PARAMS_HASH;
   w.string(paramsHash);

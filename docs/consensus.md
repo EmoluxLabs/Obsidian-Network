@@ -203,10 +203,9 @@ carrying:
 | commissionBps | 0–10,000 (basis points; purely declarative) |
 
 Bonded OBS leaves the spendable balance and is counted by the supply invariant
-while bonded — it is still the validator's property, not protocol revenue.
-There is no slashing: the worst a validator loses by being jailed is the rewards
-it did not earn while jailed, and the bond itself is returned in full after
-unbonding.
+while bonded — it is still the validator's property, not protocol revenue. A
+validator that is *proven* to have equivocated forfeits half of it; everything
+else about the bond is returned in full after unbonding (see §4.3).
 
 **Proposer selection.** The proposer of a height is deterministic:
 
@@ -268,6 +267,57 @@ Jailing is height-driven and automatic: no dashboard action, no administrator
 and no vote. A jailed validator simply produces no blocks — and earns nothing
 from the node runner reward pool for the periods it was offline.
 
+### Equivocation slashing
+
+A validator loses **half its bond** — `equivocationSlashBps = 5,000` applied to
+its own recorded bond, so 10,000 of the 20,000 OBS — if, and only if, it is
+proven with signatures every node can check to have made two **conflicting**
+claims in the same protocol context:
+
+| Offence | What must be proven |
+| --- | --- |
+| Proposer equivocation | one validator signed two *different* block headers for the same height **and the same round**, both descending from their committed parent headers |
+| Finality-vote equivocation | one validator signed two conflicting `POT_FINALITY` votes for the same finalized anchor — the exact conflict rule the node's own finality admission already uses |
+
+Everything else is explicitly **not** slashable: being offline, missing a slot,
+failing to vote, restarting, losing connectivity, or voting twice for the *same*
+block. Liveness costs time (the jail), never capital.
+
+The rule is enforced in the state transition, in a `SLASH` transaction
+(id 12) that **any** account may submit and that pays no gas:
+
+- the evidence is self-contained: both signatures, both the network/chain/genesis
+  identity and the parameters hash are recomputed and compared by every node, and
+  the offender, the amount and the destination are all derived — a submitter
+  names nothing and gains nothing;
+- a block header does not carry its parent's timestamp, and the round is a
+  function of those timestamps, so proposer evidence also carries both parent
+  headers. They are bound to the children by `child.prevHash === blockHash(parent)`,
+  so a parent cannot be invented to manufacture a round;
+- the slashed seals move to the **Mining Pool** in the same transition. They are
+  not revenue, not burned and not paid to the submitter; the treasury's share is
+  exactly zero and total supply is unchanged to the seal;
+- the validator becomes `SLASHED`: it leaves the proposer rotation and the
+  finality committee in the block that applied the evidence, with no restart and
+  no administrator.
+- nothing a node does by itself can produce a slashable pair: a proposer signs at
+  most one proposal per slot (the slot is written to a crash-safe local safety
+  lock **before** the signature exists, so a rejected block, a crash or a restart
+  leaves the slot closed and the node waits for the next round), and a validator
+  never signs a second vote for an anchor it has already voted on. The remaining half stays its own money, claimable through
+  `CLAIM_UNBONDED` after the ordinary unbonding delay;
+- one registration is slashed **once**. The canonical evidence id and the
+  `SLASHED` record are consensus state, committed in the state root, so a replay
+  in another block, from another peer or after a restart finds the ledger and is
+  refused;
+- re-registering means claiming the remainder and registering again with a fresh
+  full 20,000 OBS bond: the surviving half is never a discounted seat.
+
+Slashing is not a vote-weighting change and does not alter the finality quorum,
+which stays equal-membership (`floor(2n/3) + 1`). See
+[security-model.md](security-model.md) for what this does — and does not — do
+about a Sybil fleet.
+
 ---
 
 ## 5. Transactions in consensus
@@ -282,6 +332,7 @@ unknown type is a hard rejection — never a silent no-op:
 | 6 | `ORACLE` | 9 | `TREASURY` |
 |   |   | 10 | `GOVERNANCE` |
 |   |   | 11 | `NODE_REGISTRY` |
+|   |   | 12 | `SLASH` |
 
 Ids 3, 4 and 5 belonged to the discontinued Circle (land), Social and Time
 Capsule transactions. They are retired: no executor exists for them, and the

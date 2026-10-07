@@ -294,7 +294,7 @@ export class ChainManager extends EventEmitter {
   }
 
   private finalityIdentity(genesisIdentifier:string):FinalityIdentity { return {networkId:this.options.net.networkId,chainId:this.options.net.chainId,genesisId:genesisIdentifier,protocolVersion:PROTOCOL_VERSION,paramsHash:PARAMS_HASH}; }
-  private initializeFinality(genesisHash:string,genesisIdentifier:string):void { this.finality={version:1,...this.finalityIdentity(genesisIdentifier),finalizedHeight:0,finalizedHash:genesisHash,certificate:null,votes:[],evidence:[]}; this.finalityStore.save(this.finality); }
+  private initializeFinality(genesisHash:string,genesisIdentifier:string):void { this.finality={version:1,...this.finalityIdentity(genesisIdentifier),finalizedHeight:0,finalizedHash:genesisHash,certificate:null,votes:[],evidence:[],lastProposal:null}; this.finalityStore.save(this.finality); }
   private recoverFinality(genesisHash:string,genesisIdentifier:string):void {
     const loaded=this.finalityStore.load();
     if (!loaded) {
@@ -310,13 +310,13 @@ export class ChainManager extends EventEmitter {
     }
     const identity=this.finalityIdentity(genesisIdentifier);
     for (const key of ['networkId','chainId','genesisId','protocolVersion','paramsHash'] as const) if (loaded[key]!==identity[key]) throw new Error(`finality state ${key} mismatch`);
-    if (loaded.version!==1 || !Number.isSafeInteger(loaded.finalizedHeight) || loaded.finalizedHeight<0 || !/^[0-9a-f]{64}$/.test(loaded.finalizedHash) || !Array.isArray(loaded.votes) || loaded.votes.length>CONSENSUS_PARAMS.consensus.finality.maxValidators || !Array.isArray(loaded.evidence) || loaded.evidence.length>CONSENSUS_PARAMS.consensus.finality.maxEvidenceRecords) throw new Error('finality state is structurally invalid');
+    if (loaded.version!==1 || !Number.isSafeInteger(loaded.finalizedHeight) || loaded.finalizedHeight<0 || !/^[0-9a-f]{64}$/.test(loaded.finalizedHash) || !Array.isArray(loaded.votes) || loaded.votes.length>CONSENSUS_PARAMS.consensus.finality.maxValidators || !Array.isArray(loaded.evidence) || loaded.evidence.length>CONSENSUS_PARAMS.consensus.finality.maxEvidenceRecords || (loaded.lastProposal!=null && (!Number.isSafeInteger(loaded.lastProposal.height) || loaded.lastProposal.height<0 || !Number.isSafeInteger(loaded.lastProposal.round) || loaded.lastProposal.round<0))) throw new Error('finality state is structurally invalid');
     if (loaded.finalizedHeight===0) {
       if (loaded.finalizedHash!==genesisHash || loaded.certificate!==null) throw new Error('genesis finality lock does not match chain');
       this.finality=loaded; this.validateRecoveredVotes(); this.validateRecoveredEvidence(); return;
     }
     if (!loaded.certificate || loaded.certificate.height!==loaded.finalizedHeight || loaded.certificate.blockHash!==loaded.finalizedHash) throw new Error('finality state is missing checkpoint certificate');
-    this.finality={version:1,...identity,finalizedHeight:0,finalizedHash:genesisHash,certificate:null,votes:[],evidence:loaded.evidence};
+    this.finality={version:1,...identity,finalizedHeight:0,finalizedHash:genesisHash,certificate:null,votes:[],evidence:loaded.evidence,lastProposal:loaded.lastProposal??null};
     const verdict=this.validateFinalityCertificate(loaded.certificate); if (!verdict.ok) throw new Error(`stored finality certificate invalid: ${verdict.message}`);
     this.finality=loaded;
     if (this.store.getCanonicalHashAtHeight(loaded.finalizedHeight)!==loaded.finalizedHash) this.reorganise(loaded.finalizedHash,true);
@@ -1252,6 +1252,25 @@ export class ChainManager extends EventEmitter {
     // Same round the verifiers will recompute from the finished header.
     const round = proposerRound(head.timestamp, timestamp);
     if (!isProposerAllowed(this.state, producer.address, height, round)) return null;
+
+    // ── The double-sign lock ────────────────────────────────────────────────
+    // A proposer signs at most ONE proposal for a given (height, round). Two
+    // different signed headers for one slot are exactly what the equivocation
+    // penalty is for, so a slot this node has already signed is never signed
+    // again: not after a locally rejected block, not after a restart. The lock
+    // is armed and PERSISTED before the header is built, because the signature
+    // is the irreversible act — a crash between the two leaves the slot closed,
+    // which costs one turn instead of the bond. A later round of the same height
+    // is a different slot and stays available, so the liveness backstop
+    // (anyone may produce once every validator's slot has lapsed) still works.
+    const signed = this.finality.lastProposal ?? null;
+    if (signed && signed.height === height && signed.round === round) {
+      this.emit('proposal-lock', { height, round });
+      return null;
+    }
+    this.finality = { ...this.finality, lastProposal: { height, round } };
+    this.finalityStore.save(this.finality);
+
     const ctx: BlockContext = {
       height,
       timestamp,

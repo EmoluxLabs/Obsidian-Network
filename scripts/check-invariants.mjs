@@ -94,7 +94,9 @@ check('integer split preserves all seals for adversarial fee amounts', 'true', S
   return split.nodeRunnerPool === (amount * 9_000n) / 10_000n && split.treasury === amount - split.nodeRunnerPool && split.nodeRunnerPool + split.treasury === amount;
 })));
 check('no node may take more than 5% of a period', 500, P.nodeRewards.maxNodeShareBps);
-check('the registration bond is 100 OBS', (100n * OBS).toString(), String(P.nodeRewards.registrationBond));
+check('node registration funds nothing', 'undefined', String(typeof P.nodeRewards.registrationBond));
+check('the only bond is the validator bond', (20000n * OBS).toString(), String(P.consensus.validatorBond));
+check('a proven equivocation costs half the bond', '5000', String(P.consensus.equivocationSlashBps));
 check('a reward period is 24 hours', 86_400, P.nodeRewards.periodSeconds);
 check('scoring weights total 100%',
   10_000,

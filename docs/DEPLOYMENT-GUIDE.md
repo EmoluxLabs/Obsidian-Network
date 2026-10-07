@@ -344,7 +344,7 @@ curl -s localhost:38630/status
 `curl` fetches a web address and prints the result. Expect to see:
 
 - `"protocolVersion":"1.6.0"`
-- `"paramsHash":"2f95e359a447f9e55ba2dbd75e589361"`
+- `"paramsHash":"4a2883b210c4a7aeb873f9d669e2476f"`
 
 Stop the node with **Ctrl+C** in the first terminal.
 
@@ -362,7 +362,7 @@ This prints a JSON document. Deterministically, every time, it contains:
 
 ```json
 "genesisId": "3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c",
-"genesisHash": "f79d1a1a1acab6c803b839b378aeb6c7f668bb8ebdd63ed55b189caae6a2677b"
+"genesisHash": "cdae9adc8e17f662c689b185e804d8c77c237be27e0ec04e57e0a6214990a4e5"
 ```
 
 To see just those two lines:
@@ -832,7 +832,7 @@ for p in 38630 38640 38650; do
 done
 ```
 
-All three must print `2f95e359a447f9e55ba2dbd75e589361`.
+All three must print `4a2883b210c4a7aeb873f9d669e2476f`.
 
 ### C9. Create a wallet
 
@@ -913,9 +913,9 @@ curl -s localhost:38630/nodes/status/<nodeId>
 curl -s localhost:38630/revenue
 ```
 
-Registering requires a 100 OBS bond and a signed transaction — see §I and
-`docs/node-runner-rewards.md`. On a fresh devnet nobody has 100 OBS yet, so
-this is testable only after mining or after the genesis allocation.
+Registering requires a signed transaction from the node identity and the reward
+wallet, and no funds at all — see §I and `docs/node-runner-rewards.md`. It is
+therefore testable immediately on a fresh devnet.
 
 ### C14. Start the interface and test frontends
 
@@ -1273,9 +1273,9 @@ of this. What follows is the same sequence with more explanation for a beginner.
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
 | Genesis id | `3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c` |
-| Genesis hash | `f79d1a1a1acab6c803b839b378aeb6c7f668bb8ebdd63ed55b189caae6a2677b` |
+| Genesis hash | `cdae9adc8e17f662c689b185e804d8c77c237be27e0ec04e57e0a6214990a4e5` |
 | Protocol version | `1.6.0` |
-| PARAMS_HASH | `2f95e359a447f9e55ba2dbd75e589361` |
+| PARAMS_HASH | `4a2883b210c4a7aeb873f9d669e2476f` |
 | RPC / P2P port | 8630 / 8631 |
 | Address prefix | `obs1` |
 | Max supply | 21,000,000 OBS |
@@ -1874,8 +1874,8 @@ Follow `docs/node-operator.md`; this is the short version.
 
 From `docs/node-runner-rewards.md`:
 
-- **Register** with a `NODE_REGISTRY` transaction and a **100 OBS bond**,
-  returned in full on deregistration.
+- **Register** with a `NODE_REGISTRY` transaction: a signed identity, a reward
+  wallet and no deposit. The only bond in the protocol is the validator's.
 - **Heartbeats** prove you are alive; **attestations** from at least 2 other
   nodes prove it independently — uptime is never self-reported.
 - **Fault reports** penalise misbehaviour (2000 bps).
@@ -2176,8 +2176,28 @@ before assuming key loss. **Never paste a private key into a support channel.**
 curl -s localhost:8630/nodes/status/<nodeId>
 ```
 **Cause:** score below the 1000 bps minimum, uptime under 5000 bps, fewer than 2
-attesters, an unreturned bond, or a wallet change that takes effect next period.
+attesters, a registration that has been deregistered, or a wallet change that
+takes effect next period.
 **Fix:** check the score breakdown on `/node/` and fix the weakest component.
+
+### A validator was slashed
+
+```bash
+curl -s localhost:8630/validators | jq .slashing, .appliedSlashes
+```
+
+**Cause:** this is not a fault of your node's connectivity. A slash requires
+evidence that the validator key signed two conflicting block proposals for one
+height and round, or two conflicting finality votes for one anchor. Being
+offline, restarting or losing the network **cannot** produce a slash — that is
+the missed-slot jail, which costs turns and pays nothing.
+**Effect:** the validator left the rotation and the finality committee at the
+height the evidence was applied, half the bond (10,000 of 20,000 OBS) is in the
+Mining Pool, and the remaining half is claimable after the ordinary unbonding
+delay. Re-registering needs a fresh full 20,000 OBS bond.
+**Fix:** secure the validator key — the same key has signed conflicting
+statements, so either the operator ran two nodes with one key or the key is
+compromised. Claim the remainder after unbonding and re-register with new keys.
 
 ### State corruption
 
@@ -2578,7 +2598,7 @@ curl -s https://rpc1.example.org/status
 
 **Protocol**
 - [ ] `/status` reports `protocolVersion: 1.6.0`
-- [ ] PARAMS_HASH `2f95e359a447f9e55ba2dbd75e589361` on **every** node
+- [ ] PARAMS_HASH `4a2883b210c4a7aeb873f9d669e2476f` on **every** node
 - [ ] `genesis init` deterministic across two machines
 - [ ] Mainnet genesis id `3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c`
 - [ ] Height 0 supply is 0; `invariantOk: true`

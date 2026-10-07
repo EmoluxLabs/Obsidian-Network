@@ -285,7 +285,7 @@ devnet is **38788**; all nine sites are paths on it (`/`, `/app/`, `/mine/`, `/w
 
 ```bash
 curl -s localhost:38630/status            # networkId obsidian-devnet-1, chainId 7780, height climbing
-curl -s localhost:38630/health            # paramsHash 2f95e359a447f9e55ba2dbd75e589361
+curl -s localhost:38630/health            # paramsHash 4a2883b210c4a7aeb873f9d669e2476f
 curl -s localhost:38788/api/health         # the interface answers
 curl -s localhost:38788/api/auth/config    # genesisInvite: configured true, redeemed false
 ```
@@ -360,7 +360,7 @@ Open **http://127.0.0.1:18788**. The interface port for testnet is **18788**.
 
 ```bash
 curl -s localhost:18630/status            # networkId obsidian-testnet-1, chainId 7778, height climbing
-curl -s localhost:18630/health            # paramsHash 2f95e359a447f9e55ba2dbd75e589361
+curl -s localhost:18630/health            # paramsHash 4a2883b210c4a7aeb873f9d669e2476f
 curl -s localhost:18788/api/health         # the interface answers
 curl -s localhost:18788/api/auth/config    # genesisInvite: configured true, redeemed false
 ```
@@ -430,7 +430,7 @@ Open **http://127.0.0.1:28788**. The interface port for staging is **28788**.
 
 ```bash
 curl -s localhost:28630/status            # networkId obsidian-staging-1, chainId 7779, height climbing
-curl -s localhost:28630/health            # paramsHash 2f95e359a447f9e55ba2dbd75e589361
+curl -s localhost:28630/health            # paramsHash 4a2883b210c4a7aeb873f9d669e2476f
 curl -s localhost:28788/api/health         # the interface answers
 curl -s localhost:28788/api/auth/config    # genesisInvite: configured true, redeemed false
 ```
@@ -530,7 +530,7 @@ Open **http://127.0.0.1:8788**. The interface port for mainnet is **8788**.
 
 ```bash
 curl -s localhost:8630/status            # networkId obsidian-mainnet-1, chainId 7777, height climbing
-curl -s localhost:8630/health            # paramsHash 2f95e359a447f9e55ba2dbd75e589361
+curl -s localhost:8630/health            # paramsHash 4a2883b210c4a7aeb873f9d669e2476f
 curl -s localhost:8630/supply            # "invariantOk":true and maxSupplyObs 21000000
 curl -s localhost:8788/api/health         # the interface answers
 curl -s localhost:8788/api/auth/config    # genesisInvite: configured true, redeemed false

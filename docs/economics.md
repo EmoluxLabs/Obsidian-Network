@@ -63,12 +63,33 @@ exchange rate.
 | `.obs` name registration | 0.05 OBS | ONS revenue, split 90/10 |
 | `.obs` name renewal | 0.05 OBS | ONS revenue, split 90/10 |
 | Validator bond | exactly 20,000 OBS (returned in full at unbonding) | locked, not spent |
-| Node runner registration bond | 100 OBS (returned in full at deregistration) | locked, not spent |
+| Node runner registration | nothing | no transfer exists |
 
-Gas is **never** ONS revenue: it goes to the Mining Pool. Validator and node
-runner bonds are not revenue either — they stay attributable to their owner and
-are returned in full, so the supply invariant counts them as locked value rather
-than income.
+Gas is **never** ONS revenue: it goes to the Mining Pool. The validator bond is
+not revenue either — it stays attributable to its owner and is returned in full,
+so the supply invariant counts it as locked value rather than income.
+
+### The equivocation penalty
+
+A validator that is proven, with signatures every node can check, to have signed
+two conflicting block proposals for one height and round, or two conflicting
+finality votes for one anchor, forfeits **half its bond** —
+`consensus.equivocationSlashBps = 5000` applied to the validator's own recorded
+bond, which is 10,000 of the 20,000 OBS. The penalty is not a number in the
+code: it is a consensus parameter applied to a bond, so `slashed + remaining`
+always equals the bond exactly, in integers, with nothing rounded and nothing
+created.
+
+The slashed seals are credited to the **Mining Pool** in the same state
+transition. They are not revenue, they are not burned, they do not go to the
+treasury (its share of a slash is exactly zero) and they do not go to the
+submitter — total supply is unchanged by a slash, to the seal. The remaining
+half stays the validator's own money and is claimable after the ordinary
+unbonding delay.
+
+Being offline is **not** slashable. Missing a slot, failing to vote, restarting
+or losing the network costs a validator its turns (the missed-slot jail), never
+its capital.
 
 Other enforceable limits: maximum 16 KiB per signed transaction, 256-byte memo,
 64 out-events per transaction, 240-block expiry window, and a minimum transfer of

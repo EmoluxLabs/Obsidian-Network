@@ -72,7 +72,7 @@ by tests:
 | Mining rewards | Issued by the protocol schedule, never paid in by a user |
 | Transaction gas | Gas funds the Mining Pool — see §3 |
 | Validator bonds | The bond stays the validator's own money and returns at unbonding |
-| Node registration bonds | Returned in full at deregistration |
+| Node registration | Moves no funds at all — there is no registration bond |
 | Treasury spending | It pays out credited revenue; it is not new income |
 | Escrowed balances | Held by the protocol for their owner, not the protocol's money |
 
@@ -126,7 +126,7 @@ Node signs a registration statement with the NODE key
       ↓  domain: OBSIDIAN:NODE_REGISTRATION:v1
       ↓  contains: networkId, chainId, nodeId, rewardWallet, endpoint,
       ↓            issuedAt, expiresAt
-Reward wallet signs and pays for the transaction, and posts the bond
+Reward wallet signs and pays for the transaction (nothing is locked)
       ↓
 Protocol verifies BOTH signatures, binds nodeId → rewardWallet
       ↓
@@ -149,16 +149,19 @@ Registration proofs carry `issuedAt`/`expiresAt`, validated against protocol
 time and capped at one hour, so a captured statement is worthless by the time an
 attacker could get it mined.
 
-### The bond
+### No registration deposit
 
-`nodeRewards.registrationBond` = **100 OBS**, locked from the reward wallet at
-registration and **returned in full** at deregistration. It is not a fee, it is
-not burned and it is not redistributed; it is counted by the supply invariant
-while held.
+Registering a node runner **moves no funds**. There was once a 100 OBS
+registration bond, and it was removed as a mechanism rather than set to zero:
+two bonds with one name is exactly how an economic rule ends up enforced in one
+place and not another. The protocol has exactly one bond — the validator's
+20,000 OBS — and it is enforced in one place.
 
-It exists for one reason: to make a Sybil fleet cost capital. Ten fake nodes
-require ten funded wallets and 1,000 OBS at rest. That is what lets the network
-stay permissionless — no administrator has to approve anyone.
+What keeps the registry honest is what a node cannot fake: an identity bound to
+a reward wallet by signatures from both, one node per wallet, attestations that
+must come from *other* nodes, and a per-node cap on any period's payout. A Sybil
+fleet therefore needs ten distinct funded identities and cannot attest itself
+into an uptime it does not have.
 
 ---
 
@@ -296,8 +299,8 @@ stolen node key cannot sweep a period that is in flight.
 ## 10. Deregistration
 
 `NODE_REGISTRY / DEREGISTER`, signed by the node key and submitted by the reward
-wallet. The bond returns in full, the node stops being scored immediately, and
-every already-settled payout stays where it was paid. The period in progress is
+wallet. Nothing is returned because nothing was locked, the node stops being
+scored immediately, and every already-settled payout stays where it was paid. The period in progress is
 forfeited, because a node that has left cannot be attested for it.
 
 ---
@@ -307,7 +310,7 @@ forfeited, because a node that has left cannot be attested for it.
 | Attack | What stops it |
 |---|---|
 | One machine, ten node identities, one wallet | One wallet may back only one node (`ERR_NODE_WALLET_IN_USE`) |
-| One machine, ten identities, ten wallets | Each needs its own 100 OBS bond — a farm costs capital |
+| One machine, ten identities, ten wallets | Each needs its own identity and reward wallet, proven by both signatures, and the fleet still cannot attest itself into uptime |
 | A fleet attesting itself | A node cannot attest itself; a fleet that is one point of failure earns like one node's worth of corroboration |
 | One operator taking a whole period | `maxNodeShareBps` caps any single node at 5% of a period |
 | Fabricated uptime | There is no field for it; uptime requires peers' signed attestations |
@@ -351,7 +354,7 @@ Compile-time constants of the protocol version, part of `PARAMS_HASH`:
 |---|---|
 | `nodePoolShareBps` / `treasuryShareBps` | 9 000 / 1 000 (90% / 10%) |
 | `periodSeconds` | 86 400 |
-| `registrationBond` | 100 OBS |
+| `equivocationSlashBps` (validator slashing) | 5 000 (half the validator bond) |
 | `minUptimeBps` | 5 000 |
 | `minScoreBps` | 1 000 |
 | `maxNodeShareBps` | 500 |
@@ -380,6 +383,6 @@ npx vitest run tests/integration/node-runners.test.ts # the chain behaviour
 The integration suite registers real nodes with real signatures and asserts,
 among other things: a forged proof is rejected, a foreign wallet cannot be
 registered, a duplicate wallet is refused, a heartbeat cannot be replayed, a
-node cannot attest itself, the bond returns in full, a period cannot settle
+node cannot attest itself, nothing is locked at registration, a period cannot settle
 twice, and two independent nodes replaying the same blocks reach the identical
 state root — which is what proves the reward state is consensus, not bookkeeping.
