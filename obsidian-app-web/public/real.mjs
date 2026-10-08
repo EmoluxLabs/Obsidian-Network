@@ -40,6 +40,7 @@ import {
   sealsToObs,
   formatDuration,
 } from './data.mjs';
+import * as notify from './notify.mjs';
 
 /** Live protocol state, refreshed rather than derived from this browser's clock. */
 const live = {
@@ -91,6 +92,7 @@ async function refresh() {
     live.account = null;
   }
   if (live.account?.walletAddress) {
+    notify.resume(live.account.walletAddress);
     try {
       live.eligibility = await getMiningStatus(live.account.walletAddress);
     } catch {
@@ -245,6 +247,27 @@ function install() {
       : `<span class="pill">LIVE</span>`;
     return originalHeader(title).replace(/<span class="pill">LIVE<\/span>/, pill);
   };
+
+  // ── claim notifications ──────────────────────────────────────────────────
+  // Exposed for the UI to call. It asks the protocol whether a claim is due; it
+  // never decides that from this browser's clock, which is the mistake the design
+  // file's session timer made.
+  g.ObsidianNotify = notify;
+  g.ObsidianNotifyEnable = async () => {
+    const address = live.account?.walletAddress;
+    if (!address) return er('Link a wallet address before turning on claim alerts.');
+    const result = await notify.enable(address);
+    if (result !== 'granted') {
+      return er(result === 'denied'
+        ? 'Notifications are blocked for this site. Allow them in your browser settings.'
+        : 'Notifications are not available in this browser.');
+    }
+    // Say the limit out loud rather than letting it look like a background service.
+    er('Claim alerts are on while this tab is open. Closing the tab stops them — ' +
+      'a web page cannot promise to wake you after it is closed.');
+  };
+  g.ObsidianNotifyDisable = () => notify.disable();
+  notify.resume(live.account?.walletAddress);
 
   refresh();
   // Keep the head height honest without inventing movement: poll, never extrapolate.
