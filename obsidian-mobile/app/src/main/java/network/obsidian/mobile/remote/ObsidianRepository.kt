@@ -39,9 +39,27 @@ sealed interface ChainLink {
 class ObsidianRepository(
     private val scope: CoroutineScope,
     private val apiFactory: (String) -> ObsidianApi = { ObsidianApi(it) },
+    private val platformFactory: (String) -> PlatformApi = { PlatformApi(it) },
 ) {
     private val _nodeUrl = MutableStateFlow(DEFAULT_NODE_URL)
     val nodeUrl: StateFlow<String> = _nodeUrl.asStateFlow()
+
+    /**
+     * The Obsidian Web platform, which is the app's one API surface.
+     *
+     * Accounts, invitations, MFA, recovery and wallet linking live here, and so does
+     * the node's RPC behind `/api/rpc`. The node URL below is kept because the
+     * platform's own REST views (`/health`, `/status`, `/supply`) are read straight
+     * from the node it points at; both are settable so a self-hosted deployment can
+     * be reached without rebuilding.
+     */
+    private val _platformUrl = MutableStateFlow(DEFAULT_PLATFORM_URL)
+    val platformUrl: StateFlow<String> = _platformUrl.asStateFlow()
+
+    private var platformClient: PlatformApi = platformFactory(_platformUrl.value)
+
+    /** The platform client for the configured origin. One origin, one cookie jar. */
+    val platform: PlatformApi get() = platformClient
 
     private val _link = MutableStateFlow<ChainLink>(ChainLink.Offline)
     val link: StateFlow<ChainLink> = _link.asStateFlow()
@@ -49,6 +67,15 @@ class ObsidianRepository(
     private var pollJob: Job? = null
 
     val api: ObsidianApi get() = apiFactory(_nodeUrl.value)
+
+    /** Points the app at a different platform origin. Rebuilds the client so the
+     *  old session cookie is not carried across origins. */
+    fun setPlatformUrl(url: String) {
+        val trimmed = url.trim().ifEmpty { DEFAULT_PLATFORM_URL }
+        if (trimmed == _platformUrl.value) return
+        _platformUrl.value = trimmed
+        platformClient = platformFactory(trimmed)
+    }
 
     fun setNodeUrl(url: String) {
         val trimmed = url.trim().ifEmpty { DEFAULT_NODE_URL }
@@ -118,6 +145,11 @@ class ObsidianRepository(
     companion object {
         /** A node on the device's own network by default; changeable in Settings. */
         const val DEFAULT_NODE_URL = "http://127.0.0.1:8630"
+
+        /** The Obsidian Web platform. Overridden in settings for a self-hosted
+         *  deployment; there is no public hosted origin to default to, so this is
+         *  the local interface server. */
+        const val DEFAULT_PLATFORM_URL = "http://127.0.0.1:8787"
 
         /** 20s. Long enough to be kind to a phone battery, short enough that the
          *  height on screen is not a lie for long. */
