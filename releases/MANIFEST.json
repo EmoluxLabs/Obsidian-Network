@@ -1,0 +1,107 @@
+{
+  "product": "Obsidian Network",
+  "version": "1.6.1",
+  "commit": "1a9e33fb28d21bdb1eed41be22ba48f7a240fc71",
+  "builtAt": "2026-10-08T01:07:23Z",
+  "protocolVersion": "1.6.1",
+  "paramsHash": "2dd76ca2b2305d725f3a975bfca04eb5",
+  "forkChoice": "FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH",
+  "finality": {
+    "voteType": "POT_FINALITY",
+    "quorumNumerator": 2,
+    "quorumDenominator": 3,
+    "maxValidators": 256,
+    "maxPendingVotes": 512,
+    "maxCandidatesPerHeight": 8,
+    "maxEvidenceRecords": 256,
+    "maxEvidenceBytes": 16384,
+    "bootstrapSetStabilityBlocks": 64
+  },
+  "networks": {
+    "mainnet": {
+      "networkId": "obsidian-mainnet-1",
+      "chainId": 7777,
+      "addressPrefix": "obs",
+      "rpcPort": 8630,
+      "p2pPort": 8631,
+      "genesisId": "56ec455d8afac5ef4f7d636ac03ef9e39bd5788f",
+      "genesisBlockHash": "74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3"
+    },
+    "testnet": {
+      "networkId": "obsidian-testnet-1",
+      "chainId": 7778,
+      "addressPrefix": "tobs",
+      "rpcPort": 18630,
+      "p2pPort": 18631,
+      "genesisId": "8f72479240845c55c7d21c07cbdcad5546af77a2",
+      "genesisBlockHash": "729ed6ec3c943fd2c5174f2f1739f470cb9d28a75df9201ba68489e9068e019c"
+    },
+    "staging": {
+      "networkId": "obsidian-staging-1",
+      "chainId": 7779,
+      "addressPrefix": "sobs",
+      "rpcPort": 28630,
+      "p2pPort": 28631,
+      "genesisId": "a52dd49ccb7fc259b7a0939a9c576d137ffd2e66",
+      "genesisBlockHash": "6a7873c339dcbbd2a15e2eeeee839ff6d61d2b63c5963c5f1e0f5ce09712affa"
+    },
+    "devnet": {
+      "networkId": "obsidian-devnet-1",
+      "chainId": 7780,
+      "addressPrefix": "dobs",
+      "rpcPort": 38630,
+      "p2pPort": 38631,
+      "genesisId": "1e7ca102f6720a7682e9a396958f2a17330dc001",
+      "genesisBlockHash": "47c21794f94217d415e4809cd2804b8d97892b891f11eea18e3ce1dc5316d247"
+    }
+  },
+  "maximumSupplyObs": "21000000",
+  "genesisAllocationObs": "100000",
+  "assets": [
+    {
+      "name": "obsidian-cloudflare-1.6.1.tar.gz",
+      "bytes": 165415
+    },
+    {
+      "name": "obsidian-cloudflare-1.6.1.zip",
+      "bytes": 192918
+    },
+    {
+      "name": "obsidian-core-1.6.1.tar.gz",
+      "bytes": 739103
+    },
+    {
+      "name": "obsidian-core-1.6.1.zip",
+      "bytes": 948041
+    },
+    {
+      "name": "obsidian-interface-1.6.1.tar.gz",
+      "bytes": 1541405
+    },
+    {
+      "name": "obsidian-interface-1.6.1.zip",
+      "bytes": 1716597
+    },
+    {
+      "name": "obsidian-interface-selfhost-1.6.1.tar.gz",
+      "bytes": 1387782
+    },
+    {
+      "name": "obsidian-interface-selfhost-1.6.1.zip",
+      "bytes": 1525073
+    },
+    {
+      "name": "obsidian-network-source-1.6.1.tar.gz",
+      "bytes": 1121530
+    },
+    {
+      "name": "obsidian-node-operator-1.6.1.tar.gz",
+      "bytes": 563755
+    },
+    {
+      "name": "obsidian-node-operator-1.6.1.zip",
+      "bytes": 728903
+    }
+  ],
+  "verification": "sha256sum -c SHA256SUMS, then compare the digests with the published release notes"
+}
