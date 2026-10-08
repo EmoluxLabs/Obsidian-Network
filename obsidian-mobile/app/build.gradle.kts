@@ -48,6 +48,23 @@ android {
         }
     }
 
+    lint {
+        // Machine-readable reports at pinned paths.
+        //
+        // AGP's default is an HTML report only, which is why a CI step looking for
+        // lint-results-debug.xml silently found nothing and the run could report
+        // "Lint found errors" without naming a single one. Text and XML give the
+        // rule id, file and line, which is what a fix needs.
+        //
+        // abortOnError stays true: lint is a gate, not a suggestion, and the errors
+        // are fixed rather than baselined.
+        xmlReport = true
+        xmlOutput = file("${projectDir}/build/reports/lint/lint-results.xml")
+        textReport = true
+        textOutput = file("${projectDir}/build/reports/lint/lint-results.txt")
+        abortOnError = true
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"

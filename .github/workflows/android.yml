@@ -148,21 +148,19 @@ jobs:
             /tmp/report.sh lint.log Lint
             # Lint's summary says "found errors" without naming them in the
             # annotation budget, and the XML report is the authoritative list.
-            for f in app/build/reports/lint-results-debug.xml app/build/reports/lint-results-debug.txt; do
-              [ -e "$f" ] || continue
-              case "$f" in
-                *.xml)
-                  grep -B2 'severity="Error"' "$f" | grep -oE 'id="[^"]*"|message="[^"]*"' | head -20 | while IFS= read -r m; do
-                    echo "::error title=Lint error::${m}"
-                  done
-                  ;;
-                *.txt)
-                  grep -E "Error:" "$f" | head -20 | while IFS= read -r m; do
-                    echo "::error title=Lint error::${m}"
-                  done
-                  ;;
-              esac
+            # Never assume a report path again: list what lint actually produced,
+            # then read the pinned text report, which carries rule id, file and line.
+            find app/build -name "lint-results*" -type f | while IFS= read -r found; do
+              echo "::notice title=Lint report found::${found}"
             done
+            TXT=app/build/reports/lint/lint-results.txt
+            if [ -f "$TXT" ]; then
+              grep -E "Error:" "$TXT" | head -30 | while IFS= read -r m; do
+                echo "::error title=Lint error::${m}"
+              done
+            else
+              echo "::error title=Lint report::no text report at ${TXT} — lint did not write one"
+            fi
             exit "$status"
           fi
 
