@@ -269,6 +269,30 @@ function install() {
   g.ObsidianNotifyDisable = () => notify.disable();
   notify.resume(live.account?.walletAddress);
 
+  // ── Edge Node removal ──────────────────────────────────────────────────────
+  // The product decision is that there is no Edge Node. The screen, its state and
+  // every entry point to it are removed here rather than by editing the design
+  // file's 230 KB inline script, which cannot be tested in a browser from this
+  // environment. The behaviour is gone and unreachable either way.
+  delete g.V.node;
+  delete g.S?.node;
+
+  // The two places the design offers it: the landing drawer and the menu. Both are
+  // rebuilt without the NODE row, and the drawer's SIGN UP / SIGN IN entry stays.
+  const stripNode = (html) => html
+    .replace(/<div class="row"[^>]*onclick="[^"]*go\('node'\)[^"]*"[^>]*>NODE<span>›<\/span><\/div>/, '')
+    .replace(/<div class="big" onclick="go\('node'\)">NODE<span>›<\/span><\/div>/, '');
+
+  const originalLanding = g.V.landing;
+  g.V.landing = () => stripNode(originalLanding());
+  const originalMenu2 = g.V.menu;
+  g.V.menu = () => stripNode(originalMenu2());
+
+  // A route to a screen that no longer exists must not render a blank page. The
+  // design's go() sets cur and re-renders; redirect it to the menu instead.
+  const originalGo = g.go;
+  g.go = (target) => originalGo(g.V[target] ? target : 'menu');
+
   refresh();
   // Keep the head height honest without inventing movement: poll, never extrapolate.
   setInterval(refresh, 15000);
