@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- User-facing application name. Internal project name: Obsidian Mobile. -->
+    <string name="app_name">OBSIDIAN</string>
+    <string name="app_subtitle">The Proof of Time Blockchain</string>
+    <string name="brand_network">NETWORK</string>
+
+    <!-- Edge Node: always distinguished from a Node Runner. It verifies and
+         relays; it never votes, never produces and never earns. -->
+    <string name="edge_node_name">Obsidian Edge Node</string>
+    <string name="edge_node_subtitle">Verify and relay only</string>
+    <string name="edge_node_zero_rewards">0 OBS rewards</string>
+    <string name="edge_node_zero_votes">0 voting power</string>
+    <string name="node_runner_name">Node Runner</string>
+    <string name="edge_node_not_node_runner">An Edge Node is not a Node Runner</string>
+
+    <!-- System states. Every major screen uses these words, so an offline chain
+         never reads as a success. -->
+    <string name="state_loading">Loading…</string>
+    <string name="state_offline">You are offline</string>
+    <string name="state_offline_body">No connection to an Obsidian node. Data shown may be stale.</string>
+    <string name="state_error">Something went wrong</string>
+    <string name="state_retry">Retry</string>
+    <string name="state_empty">Nothing here yet</string>
+    <string name="state_unconfirmed">Pending confirmation</string>
+    <string name="state_failed">Failed</string>
+
+    <!-- Landing (artboard 01). Copy is the design's own; the block height shown
+         on this screen is never, because it comes from the node. -->
+    <string name="hero_headline">THE PROOF OF TIME BLOCKCHAIN</string>
+    <string name="hero_body">Obsidian is a blockchain built around time, open participation and transparent verification. Mine from your phone, hold your own wallet, and inspect every block.</string>
+    <string name="feature_mine">Start a session, keep it active and earn OBS for the time you contribute.</string>
+    <string name="feature_secure">Your keys stay with you. Every transaction is verified on-chain.</string>
+    <string name="feature_explore">Browse blocks, transactions and addresses in a transparent public ledger.</string>
+</resources>

@@ -1,0 +1,120 @@
+name: Android
+
+# Builds OBSIDIAN.apk — the native Android client in obsidian-mobile/.
+#
+# This is the only place in the project where an APK is produced, and it is
+# produced from a real Android SDK on a real toolchain. Nothing about the
+# blockchain jobs in ci.yml changes when this file runs: the two workflows do not
+# share a job, a cache key or a build directory, and this one is filtered to the
+# Android tree so an unrelated core commit does not spend an hour on Gradle.
+#
+# Two artefacts come out, and they are labelled differently on purpose:
+#   OBSIDIAN-debug.apk     installable, signed with the throwaway debug key.
+#                          This is what a tester installs.
+#   OBSIDIAN-release.apk   minified, and UNSIGNED unless the operator supplied a
+#                          keystore through repository secrets. An unsigned
+#                          release build is not a claim that the app is signed;
+#                          publishing a debug key as a production signature would
+#                          be exactly the fake signature this project refuses to
+#                          invent anywhere else.
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'obsidian-mobile/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'obsidian-mobile/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '17'
+  GRADLE_VERSION: '8.7'
+
+jobs:
+  build:
+    name: Obsidian Mobile (build, unit tests, lint, APK)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: obsidian-mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install the SDK packages the build names
+        run: |
+          # Named explicitly rather than trusting whatever the runner image
+          # happens to carry: a silent platform bump would otherwise change the
+          # compileSdk the APK was built against.
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Generate the wrapper for this run
+        # The wrapper JAR is a binary and is not committed from a machine that
+        # cannot download it; CI materialises it so the build uses a pinned
+        # Gradle version rather than the runner's.
+        run: gradle wrapper --gradle-version "${GRADLE_VERSION}" --no-daemon
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Lint
+        run: ./gradlew lintDebug --stacktrace --no-daemon
+
+      - name: Assemble debug and release
+        run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon
+        env:
+          # Present only when the operator configured release signing secrets.
+          OBSIDIAN_KEYSTORE: ${{ secrets.OBSIDIAN_KEYSTORE_PATH || '' }}
+          OBSIDIAN_KEYSTORE_PASSWORD: ${{ secrets.OBSIDIAN_KEYSTORE_PASSWORD }}
+          OBSIDIAN_KEY_ALIAS: ${{ secrets.OBSIDIAN_KEY_ALIAS }}
+          OBSIDIAN_KEY_PASSWORD: ${{ secrets.OBSIDIAN_KEY_PASSWORD }}
+
+      - name: Collect the artefacts
+        run: |
+          mkdir -p ../artifacts
+          cp app/build/outputs/apk/debug/app-debug.apk ../artifacts/OBSIDIAN-debug.apk
+          # A release build without a keystore is emitted unsigned; take
+          # whichever exists so the artefact list is honest about it.
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk ../artifacts/OBSIDIAN-release.apk
+          elif [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            cp app/build/outputs/apk/release/app-release-unsigned.apk ../artifacts/OBSIDIAN-release-unsigned.apk
+          fi
+          (cd ../artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Upload APK artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OBSIDIAN-apk
+          path: artifacts/
+          if-no-files-found: error
+
+      - name: Publish to a GitHub Release on an android-v* tag
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

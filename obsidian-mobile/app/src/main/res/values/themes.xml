@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A thin platform theme: the real design system is Compose, in
+         ui/theme/ObsidianTheme.kt. This exists so the window background and
+         splash match the artboard canvas instead of flashing white. -->
+    <style name="Theme.Obsidian" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/obsidian_canvas</item>
+        <item name="android:statusBarColor">@color/obsidian_canvas</item>
+        <item name="android:navigationBarColor">@color/obsidian_canvas</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
