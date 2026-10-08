@@ -201,7 +201,10 @@ class PlatformApi(
                 put("jsonrpc", "2.0")
                 put("id", 1)
                 put("method", method)
-                put("params", json.encodeToJsonElement(params))
+                // Built rather than serialised: the values are already JsonElements
+                // the caller produced, so re-encoding them would need a serializer
+                // for a map type that carries no schema of its own.
+                put("params", buildJsonObject { params.forEach { (k, v) -> put(k, v) } })
             }
             json.parseToJsonElement(execute(postRequest("/api/rpc", payload.toString())))
         }
