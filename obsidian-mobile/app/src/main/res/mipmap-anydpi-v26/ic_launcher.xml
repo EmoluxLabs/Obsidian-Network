@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Adaptive icon built from the supplied Obsidian mark on the design's ink
-     colour. The logo itself is the shipped asset, unmodified. -->
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/obsidian_ink" />
-    <foreground android:drawable="@drawable/obsidian_logo" />
-</adaptive-icon>
