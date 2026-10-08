@@ -32,6 +32,13 @@ on:
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
+# The release step publishes an asset with the workflow's own token, which is
+# read-only by default — hence "Resource not accessible by integration" on the first
+# attempt. contents: write is the minimum that lets it create the release; nothing
+# else about the repository is writable from this job.
+permissions:
+  contents: write
+
 concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
