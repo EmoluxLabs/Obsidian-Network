@@ -56,16 +56,6 @@ class EdgeNodeSecurityTest {
         }
     }
 
-    private fun validHead(height: Long = 1_284_906) = HeadReport(
-        height = height,
-        headHash = "74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3",
-        genesisId = "56ec455d8afac5ef4f7d636ac03ef9e39bd5788f",
-        peers = 4,
-        syncing = false,
-        protocolVersion = "1.6.1",
-        network = "mainnet",
-    )
-
     /** A controller that publishes nowhere, so tests do not touch process state. */
     private fun controller(link: EdgeNodeLink) = EdgeNodeController(link, publish = {})
 
@@ -302,3 +292,23 @@ class EdgeNodeSecurityTest {
         assertTrue(EdgeNodeController.verify(good.copy(peers = -3))!!.contains("peer"))
     }
 }
+
+/**
+ * A head the node could plausibly report.
+ *
+ * File-level rather than a test-class member: [EdgeNodeSecurityTest.FakeLink]
+ * uses it as a constructor default, and a nested class cannot reach an outer
+ * instance's members from a default argument.
+ *
+ * The hash and genesis id are the real mainnet values from the protocol's genesis
+ * document, so the fixture is shaped like the chain rather than like this test.
+ */
+private fun validHead(height: Long = 1_284_906) = HeadReport(
+    height = height,
+    headHash = "74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3",
+    genesisId = "56ec455d8afac5ef4f7d636ac03ef9e39bd5788f",
+    peers = 4,
+    syncing = false,
+    protocolVersion = "1.6.1",
+    network = "mainnet",
+)
