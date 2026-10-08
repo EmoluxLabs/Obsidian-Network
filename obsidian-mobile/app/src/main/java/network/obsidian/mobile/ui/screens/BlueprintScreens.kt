@@ -629,7 +629,7 @@ fun HomeScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
                     onRetry = { failed = false; loading = true; scope.launch { readBalance(repository, profile.address) { balance = it; loading = false; failed = it == null } } },
                 )
                 else -> {
-                    Text("${ChainValues.obs(balance?.balanceObs)} OBS", style = ObsidianType.MonoLarge, color = ObsidianColors.Ink)
+                    Text("${ChainValues.obs(balance?.balanceObs)} OBS", style = ObsidianType.Balance, color = ObsidianColors.Ink)
                     Spacer(Modifier.height(ObsidianSpace.XS))
                     ObsidianRow("Nonce", (balance?.nonce ?: 0).toString(), mono = true, divider = false)
                 }
@@ -811,7 +811,7 @@ fun WalletScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate
                 SecondaryButton("CREATE ACCOUNT", showArrow = false, onClick = { onNavigate(R_SIGNUP) })
                 return@ObsidianCard
             }
-            Text("${ChainValues.obs(balance?.balanceObs)} OBS", style = ObsidianType.MonoLarge, color = ObsidianColors.Ink)
+            Text("${ChainValues.obs(balance?.balanceObs)} OBS", style = ObsidianType.Balance, color = ObsidianColors.Ink)
             Spacer(Modifier.height(ObsidianSpace.S))
             ObsidianRow("Nonce", (balance?.nonce ?: 0).toString(), mono = true)
             ObsidianRow("Bonded", ChainValues.obs(balance?.bondedObs), mono = true, divider = false)

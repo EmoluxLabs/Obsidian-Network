@@ -84,8 +84,8 @@ fun ObsidianDarkCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(ObsidianColors.Ink, RoundedCornerShape(24.dp))
-            .padding(horizontal = 22.dp, vertical = 26.dp),
+            .background(ObsidianColors.Ink, RoundedCornerShape(ObsidianRadius.Footer))
+            .padding(ObsidianSpace.XL),
         content = content,
     )
 }

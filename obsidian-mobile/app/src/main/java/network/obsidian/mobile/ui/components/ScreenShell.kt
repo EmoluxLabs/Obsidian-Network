@@ -50,7 +50,7 @@ fun ScreenShell(
     kicker: String? = null,
     onBack: (() -> Unit)? = null,
     headerTrailing: (@Composable () -> Unit)? = null,
-    contentPadding: PaddingValues(bottom = ObsidianSpace.NavClearance),
+    contentPadding: PaddingValues = PaddingValues(bottom = ObsidianSpace.NavClearance),
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
     Column(
