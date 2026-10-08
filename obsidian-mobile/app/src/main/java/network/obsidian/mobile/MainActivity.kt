@@ -8,10 +8,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import network.obsidian.mobile.ui.screens.EdgeNodeScreen
 import network.obsidian.mobile.ui.screens.LandingScreen
 import network.obsidian.mobile.ui.theme.ObsidianTheme
 
@@ -48,8 +51,13 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     val nav = rememberNavController()
+                    val repository = (application as ObsidianApp).repository
+                    val nodeUrl by repository.nodeUrl.collectAsState()
                     NavHost(navController = nav, startDestination = Routes.LANDING) {
                         composable(Routes.LANDING) { LandingScreen(navController = nav) }
+                        composable(Routes.EDGE_NODE) {
+                            EdgeNodeScreen(nodeUrl = nodeUrl, onBack = { nav.popBackStack() })
+                        }
                     }
                 }
             }

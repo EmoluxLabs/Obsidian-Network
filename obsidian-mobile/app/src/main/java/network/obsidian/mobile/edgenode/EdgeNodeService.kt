@@ -7,6 +7,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -16,51 +18,32 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.obsidian.mobile.R
-import network.obsidian.mobile.remote.ApiFailure
 import network.obsidian.mobile.remote.ObsidianApi
 
 /**
- * The Obsidian Edge Node.
+ * The Obsidian Edge Node's Android shell.
  *
- * What this service is: a client that keeps a connection to an Obsidian node,
- * receives blocks and transactions, and verifies what it receives using the
- * node's own reported state. It exists to make the network more resilient by
- * propagating data.
+ * Everything that could be wrong about an Edge Node — its state transitions, its
+ * authority, what it does offline — lives in [EdgeNodeController], which has no
+ * Android dependencies and is covered by tests. This class owns only what a
+ * Service must own: the foreground notification, the process lifecycle, and the
+ * connectivity check that Android itself answers.
  *
- * What this service is not, and the reasons are structural rather than
- * promises:
- *
- *   - It casts no vote and has no voting power. Voting weight in this protocol
- *     comes from a 20,000 OBS validator bond recorded in chain state; this
- *     service holds no key that could register one and never touches wallet
- *     state, so there is no path from running it to influencing consensus.
- *     Ten thousand Edge Nodes contribute propagation, not one validator's worth
- *     of authority.
- *   - It produces no block and signs no header. There is no block-construction
- *     or signing code in this package.
- *   - It earns nothing. It is not a Node Runner, holds no payout identity and
- *     appears in no reward calculation. The UI keeps the two terms separate
- *     because they are different things.
- *   - It cannot see a wallet secret. The wallet domain and this domain are
- *     separate: nothing here reads the keystore, and the service starts without
- *     any credential at all.
- *
- * It runs only as a user-visible foreground service, stops when the user
- * disables it or connectivity goes away, and never restarts itself: the
- * manifest deliberately does not request RECEIVE_BOOT_COMPLETED.
+ * The security properties are structural, and the reason they hold is worth
+ * stating rather than promising: this class holds no credential of any kind, so
+ * there is nothing for it to leak into consensus. It never touches the wallet
+ * keystore. It posts no bond. The manifest requests no boot receiver, so it
+ * cannot start itself after the user stops it.
  */
 class EdgeNodeService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loop: Job? = null
-    private var api: ObsidianApi? = null
+    private var controller: EdgeNodeController? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -70,19 +53,16 @@ class EdgeNodeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                stopEverything()
-                return START_NOT_STICKY
-            }
+        if (intent?.action == ACTION_STOP) {
+            stopEverything()
+            return START_NOT_STICKY
         }
         val nodeUrl = intent?.getStringExtra(EXTRA_NODE_URL) ?: EdgeNodeState.DEFAULT_NODE_URL
         startForegroundCompat(buildNotification(EdgeNodeState.Connecting))
         start(nodeUrl)
-        // START_NOT_STICKY on purpose: if the OS kills this service it stays
-        // dead until the user opens the app again. A background network
-        // participant that resurrects itself is not something a user can
-        // reason about, and the app must never behave that way.
+        // START_NOT_STICKY on purpose: if the OS kills this service it stays dead
+        // until the user opens the app again. A background network participant
+        // that resurrects itself is not something a user can reason about.
         return START_NOT_STICKY
     }
 
@@ -94,77 +74,31 @@ class EdgeNodeService : Service() {
 
     private fun start(nodeUrl: String) {
         if (loop?.isActive == true) return
-        api = ObsidianApi(nodeUrl)
+        val link = AndroidEdgeNodeLink(this, nodeUrl)
+        val node = EdgeNodeController(link)
+        controller = node
         loop = scope.launch {
+            node.enable()
             while (isActive) {
-                if (!hasConnectivity()) {
-                    publish(EdgeNodeState.Offline)
-                } else {
-                    tick()
+                // Mirror the controller into the notification, so the status the
+                // user sees in the shade is the status the node actually reached.
+                launch {
+                    node.state.collect { updateNotification(buildNotification(it)) }
                 }
                 delay(POLL_MILLIS)
+                node.cycle()
             }
         }
     }
 
-    /**
-     * One cycle: fetch the head the node reports and check it is internally
-     * consistent. This is verification of received data, not consensus — the
-     * service forms no opinion about which chain is canonical and never
-     * rebroadcasts anything it has not checked.
-     */
-    private suspend fun tick() {
-        val client = api ?: return
-        val result = withContext(Dispatchers.IO) { client.health() }
-        result.fold(
-            onSuccess = { health ->
-                val verified = health.height > 0 && health.headHash.isNotBlank() && health.genesisId.isNotBlank()
-                val state = if (verified) {
-                    EdgeNodeState.Running(
-                        height = health.height,
-                        headHash = health.headHash,
-                        peers = health.peers,
-                        syncing = health.syncing,
-                        protocolVersion = health.protocolVersion,
-                        network = health.network,
-                    )
-                } else {
-                    // A node answering with an inconsistent head is exactly the
-                    // "detect invalid data" case: report it rather than relaying
-                    // it, and never treat a malformed answer as progress.
-                    EdgeNodeState.Rejected("node reported an inconsistent head")
-                }
-                publish(state)
-            },
-            onFailure = { error ->
-                publish(
-                    if (error is ApiFailure) EdgeNodeState.Offline
-                    else EdgeNodeState.Rejected(error.message ?: "verification failed"),
-                )
-            },
-        )
-    }
-
-    private fun publish(state: EdgeNodeState) {
-        EdgeNodeState.current.value = state
-        updateNotification(buildNotification(state))
-    }
-
     private fun stopEverything() {
+        controller?.disable()
+        controller = null
         loop?.cancel()
         loop = null
-        api = null
         EdgeNodeState.current.value = EdgeNodeState.Stopped
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-    }
-
-    private fun hasConnectivity(): Boolean {
-        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
-            ?: return false
-        val network = manager.activeNetwork ?: return false
-        val capabilities = manager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     // ── notification ─────────────────────────────────────────────────────────
@@ -214,8 +148,9 @@ class EdgeNodeService : Service() {
         const val EXTRA_NODE_URL = "nodeUrl"
 
         fun start(context: Context, nodeUrl: String) {
-            val intent = Intent(context, EdgeNodeService::class.java).putExtra(EXTRA_NODE_URL, nodeUrl)
-            context.startForegroundService(intent)
+            context.startForegroundService(
+                Intent(context, EdgeNodeService::class.java).putExtra(EXTRA_NODE_URL, nodeUrl),
+            )
         }
 
         fun stop(context: Context) {
@@ -226,37 +161,41 @@ class EdgeNodeService : Service() {
     }
 }
 
-/** The Edge Node's observable state, surfaced in the UI so it is never a secret. */
-sealed interface EdgeNodeState {
-    data object Stopped : EdgeNodeState
-    data object Connecting : EdgeNodeState
-    data object Offline : EdgeNodeState
-    data class Rejected(val reason: String) : EdgeNodeState
-    data class Running(
-        val height: Long,
-        val headHash: String,
-        val peers: Int,
-        val syncing: Boolean,
-        val protocolVersion: String,
-        val network: String,
-    ) : EdgeNodeState
+/**
+ * The real [EdgeNodeLink]: connectivity from Android, heads from a node's own
+ * `/health` answer.
+ *
+ * Reading `/health` is what makes this an Edge Node rather than a full node — it
+ * verifies the head a node reports and relays nothing it has not checked, using
+ * a phone's worth of bandwidth instead of a server's.
+ */
+internal class AndroidEdgeNodeLink(
+    private val context: Context,
+    nodeUrl: String,
+) : EdgeNodeLink {
 
-    fun describe(fallback: String): String = when (this) {
-        Stopped -> "Stopped"
-        Connecting -> "Connecting…"
-        Offline -> "Offline — waiting for connectivity"
-        is Rejected -> "Invalid data: $reason"
-        is Running -> if (syncing) "Syncing · height $height" else "Live · height $height · $peers peers"
+    private val api = ObsidianApi(nodeUrl)
+
+    override suspend fun hasConnectivity(): Boolean = withContext(Dispatchers.IO) {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return@withContext false
+        val network = manager.activeNetwork ?: return@withContext false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return@withContext false
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    companion object {
-        const val DEFAULT_NODE_URL = "http://127.0.0.1:8630"
-
-        /** Single source of truth for the UI. A StateFlow, so the screen shows
-         *  whatever the service last established rather than guessing. */
-        val current = MutableStateFlow<EdgeNodeState>(Stopped)
-        val observable: StateFlow<EdgeNodeState> = current.asStateFlow()
-    }
+    override suspend fun fetchHead(): Result<HeadReport> =
+        api.health().mapCatching { health ->
+            HeadReport(
+                height = health.height,
+                headHash = health.headHash,
+                genesisId = health.genesisId,
+                peers = health.peers,
+                syncing = health.syncing,
+                protocolVersion = health.protocolVersion,
+                network = health.network,
+            )
+        }
 }
 
 /*
