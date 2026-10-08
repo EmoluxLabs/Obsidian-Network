@@ -18,6 +18,7 @@ import network.obsidian.mobile.ui.screens.MiningScreen
 import network.obsidian.mobile.ui.screens.OnsScreen
 import network.obsidian.mobile.ui.screens.RecoverWalletScreen
 import network.obsidian.mobile.ui.screens.SettingsScreen
+import network.obsidian.mobile.ui.screens.SplashScreen
 import network.obsidian.mobile.ui.screens.SignInScreen
 import network.obsidian.mobile.ui.screens.SignUpScreen
 import network.obsidian.mobile.ui.screens.TwoFactorScreen
@@ -44,6 +45,17 @@ data class RouteEntry(
 object AppGraph {
 
     val entries: List<RouteEntry> = listOf(
+        RouteEntry(Routes.SPLASH, "Splash") { nav, _, _ ->
+            SplashScreen(
+                onFinished = {
+                    // replace, not navigate: back from the Landing must exit the
+                    // app, not return to a splash the user has already left.
+                    nav.navigate(Routes.LANDING) {
+                        popUpTo(Routes.SPLASH) { inclusive = true }
+                    }
+                },
+            )
+        },
         RouteEntry(Routes.LANDING, "Landing") { nav, _, _ -> LandingScreen(navController = nav) },
         RouteEntry(Routes.MENU, "Menu") { nav, repo, _ ->
             MenuScreen(repository = repo, onNavigate = { nav.navigate(it) }, onBack = { nav.popBackStack() })

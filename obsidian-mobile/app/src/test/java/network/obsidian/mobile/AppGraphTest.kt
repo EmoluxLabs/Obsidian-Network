@@ -29,10 +29,12 @@ class AppGraphTest {
     private val registered = AppGraph.entries.map { it.route }
 
     @Test
-    fun `the app declares exactly the sixteen routes it is specified to have`() {
+    fun `the app declares exactly the routes it is specified to have`() {
+        // Seventeen: the sixteen product screens plus the launch splash, which is
+        // a real destination with a real composable, not a theme.
         assertEquals(
             "route list changed; update the graph and this expectation together",
-            16,
+            17,
             declaredRoutes.size,
         )
     }

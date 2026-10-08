@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The window background shown from the instant the process starts, before Compose
+  has drawn a frame. Without it a cold launch flashes the theme's default white
+  before the splash appears — the "unintended default Android screen" the design
+  must not show.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/obsidian_canvas" />
+    <item android:gravity="center" android:width="112dp" android:height="112dp">
+        <bitmap android:src="@drawable/obsidian_logo" android:gravity="center" />
+    </item>
+</layer-list>

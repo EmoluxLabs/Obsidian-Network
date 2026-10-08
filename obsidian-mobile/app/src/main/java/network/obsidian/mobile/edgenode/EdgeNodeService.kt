@@ -131,7 +131,7 @@ class EdgeNodeService : Service() {
 
     private fun buildNotification(state: EdgeNodeState): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setSmallIcon(R.drawable.ic_stat_obsidian)
             .setContentTitle(getString(R.string.edge_node_name))
             .setContentText(state.describe(getString(R.string.edge_node_subtitle)))
             .setOngoing(true)

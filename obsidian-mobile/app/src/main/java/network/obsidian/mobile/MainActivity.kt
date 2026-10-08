@@ -17,6 +17,7 @@ import network.obsidian.mobile.ui.theme.ObsidianTheme
 
 /** The app's screen routes. One place, so navigation cannot drift per screen. */
 object Routes {
+    const val SPLASH = "splash"
     const val LANDING = "landing"
     const val MENU = "menu"
     const val SIGN_UP = "sign-up"
@@ -50,7 +51,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     val nav = rememberNavController()
-                    NavHost(navController = nav, startDestination = Routes.LANDING) {
+                    NavHost(navController = nav, startDestination = Routes.SPLASH) {
                         // Registered from the graph, not listed here: a route that
                         // is missing from AppGraph is missing from the app, and a
                         // test says so.
