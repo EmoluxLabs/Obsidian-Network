@@ -1,10 +1,12 @@
 package network.obsidian.mobile.ui.screens
 
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -21,10 +23,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import network.obsidian.mobile.R
 import network.obsidian.mobile.ui.theme.ObsidianColors
@@ -46,12 +54,20 @@ import network.obsidian.mobile.ui.theme.ObsidianType
  */
 @Composable
 fun SplashScreen(onFinished: () -> Unit) {
+    // animation: sp 2.4s linear infinite — one full turn every 2.4 seconds.
     val transition = rememberInfiniteTransition(label = "splash")
-    val breathe by transition.animateFloat(
-        initialValue = 0.86f,
+    val sweep by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
+        label = "ring",
+    )
+    // animation: fd .8s .6s both — the wordmark fades up after 0.6s.
+    val fade by transition.animateFloat(
+        initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1600), RepeatMode.Reverse),
-        label = "breathe",
+        animationSpec = tween(800, delayMillis = 600),
+        label = "fade",
     )
 
     LaunchedEffect(Unit) {
@@ -59,6 +75,10 @@ fun SplashScreen(onFinished: () -> Unit) {
         onFinished()
     }
 
+    // The blueprint's splash: a 240px ring that rotates once every 2.4s, its gold
+    // arc 150 of 704 units long on a #E4E7EB track, with the 150px mark centred
+    // inside it and the wordmark fading in after 0.6s. Reproduced as a drawn arc
+    // rather than a bitmap so the rotation stays smooth at any density.
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -66,31 +86,39 @@ fun SplashScreen(onFinished: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(
-                painter = painterResource(R.drawable.obsidian_logo),
-                contentDescription = "Obsidian",
-                modifier = Modifier
-                    .size(112.dp)
-                    .alpha(breathe),
-                contentScale = ContentScale.Fit,
-            )
-            Spacer(Modifier.height(22.dp))
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(240.dp)) {
+                Canvas(Modifier.size(240.dp).rotate(sweep)) {
+                    val stroke = 5.dp.toPx()
+                    val inset = stroke / 2
+                    val arc = Size(size.width - stroke, size.height - stroke)
+                    val topLeft = Offset(inset, inset)
+                    // Track, then the gold arc: 150/704 of the circumference,
+                    // matching stroke-dasharray="150 554" in the reference.
+                    drawArc(
+                        color = ObsidianColors.Border,
+                        startAngle = 0f, sweepAngle = 360f, useCenter = false,
+                        topLeft = topLeft, size = arc, style = Stroke(width = stroke),
+                    )
+                    drawArc(
+                        color = ObsidianColors.Gold,
+                        startAngle = -90f, sweepAngle = 360f * 150f / 704f, useCenter = false,
+                        topLeft = topLeft, size = arc,
+                        style = Stroke(width = stroke, cap = StrokeCap.Round),
+                    )
+                }
+                Image(
+                    painter = painterResource(R.drawable.obsidian_logo),
+                    contentDescription = "Obsidian",
+                    modifier = Modifier.size(150.dp).alpha(fade),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+            Spacer(Modifier.height(34.dp))
             Text(
                 "OBSIDIAN NETWORK",
-                style = ObsidianType.Statement,
+                style = ObsidianType.Wordmark.copy(letterSpacing = 5.76.sp),
                 color = ObsidianColors.Ink,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "THE PROOF OF TIME BLOCKCHAIN",
-                style = ObsidianType.Kicker,
-                color = ObsidianColors.GoldText,
-            )
-            Spacer(Modifier.height(14.dp))
-            Text(
-                "Build. Validate. Decentralize.",
-                style = ObsidianType.Support,
-                color = ObsidianColors.Muted,
+                modifier = Modifier.alpha(fade),
             )
         }
     }
