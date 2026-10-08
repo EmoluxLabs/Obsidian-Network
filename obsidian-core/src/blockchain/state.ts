@@ -127,6 +127,15 @@ export interface MutableState {
   metrics: Metrics;
   recentClaimIds: Map<string, number>;
   validators: Set<string>;
+  /**
+   * Has this chain ever accepted a valid validator registration?
+   *
+   * Consensus state, committed in the state root. False only before the first
+   * successful VALIDATOR_REGISTER (bootstrap mode, where any node may propose so
+   * that a first validator can arrive); true for ever after it, so an empty
+   * active set means the chain halts rather than opening production to any key.
+   */
+  validatorModeEstablished: boolean;
   /** Registered node runners, keyed by nodeId (lexicographic iteration). */
   nodes: Map<string, NodeRecord>;
   /** Per-period evidence, keyed `${period}:${nodeId}`. */
@@ -152,6 +161,33 @@ export interface StateDelta {
   path: string;
   value?: string | number | boolean | null;
   reason: string;
+}
+
+/**
+ * Protocol time at which a validator's jail ends, or null when it is not jailed.
+ *
+ * A JAILED record with no term returns null and is treated as jailed for ever:
+ * the term is what makes a jail end, and guessing a default would let a
+ * malformed record free a validator that the chain had removed.
+ */
+export function jailEndsAt(validator: { status: string; jailedUntilTime?: number }): number | null {
+  if (validator.status !== 'JAILED') return null;
+  const until = validator.jailedUntilTime;
+  if (typeof until !== 'number' || !Number.isFinite(until)) return null;
+  return until;
+}
+
+/**
+ * Whether a jail has lapsed at `atTimestamp`.
+ *
+ * Deliberately a pure function of committed state and a protocol timestamp: the
+ * same question asked about the same block gets the same answer on every node,
+ * and it keeps working on a chain that has stopped producing blocks — which is
+ * exactly the chain a jail can cause once it empties the active set.
+ */
+export function jailIsOver(validator: { status: string; jailedUntilTime?: number }, atTimestamp: number): boolean {
+  const until = jailEndsAt(validator);
+  return until !== null && atTimestamp >= until;
 }
 
 export class WorldState {
@@ -182,6 +218,7 @@ export class WorldState {
       metrics: emptyMetrics(),
       recentClaimIds: new Map(),
       validators: new Set(),
+      validatorModeEstablished: false,
       nodes: new Map(),
       nodeEvidence: new Map(),
       nodeWallets: new Map(),
@@ -212,6 +249,7 @@ export class WorldState {
       metrics: { ...this.s.metrics },
       recentClaimIds: { ...Object.fromEntries(this.s.recentClaimIds) },
       validators: [...this.s.validators].sort(),
+      validatorModeEstablished: this.s.validatorModeEstablished,
       nodes: Object.fromEntries([...this.s.nodes.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
       nodeEvidence: Object.fromEntries([...this.s.nodeEvidence.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
       nodeRewards: {
@@ -241,6 +279,18 @@ export class WorldState {
     s.metrics = { ...snapshot.metrics };
     s.recentClaimIds = new Map(Object.entries(snapshot.recentClaimIds));
     s.validators = new Set(snapshot.validators);
+    // Fail closed. A snapshot that does not say which mode the chain is in is
+    // from a build that predates the indicator, and reading it as "bootstrap"
+    // would hand an established chain back to permissionless production. The
+    // snapshot version check in storage already refuses it; this makes the
+    // state itself refuse it too, so no code path can bypass that check.
+    if (typeof snapshot.validatorModeEstablished !== 'boolean') {
+      throw new Error(
+        `state snapshot is missing validatorModeEstablished (format ${snapshot.snapshotVersion ?? 'unknown'}); ` +
+          `this build requires snapshot format ${STATE_SNAPSHOT_VERSION}`,
+      );
+    }
+    s.validatorModeEstablished = snapshot.validatorModeEstablished;
     for (const [k, v] of Object.entries(snapshot.nodes ?? {})) {
       s.nodes.set(k, { ...v, lifetimeReward: BigInt(v.lifetimeReward), settledPeriods: [...(v.settledPeriods ?? [])] });
       s.nodeWallets.set(v.rewardWallet, k);
@@ -455,19 +505,42 @@ export class WorldState {
     this.s.validators.add(address);
   }
 
+  /**
+   * Close validator-open block production for ever.
+   *
+   * Called by the state transition of the FIRST successful validator
+   * registration, so the change is part of the block that caused it: it is
+   * committed in that block's state root, it is restored by a snapshot, and
+   * every node that applies the block reaches it. Idempotent by construction —
+   * a later registration does not touch it, and nothing clears it.
+   */
+  establishValidatorMode(): void {
+    this.s.validatorModeEstablished = true;
+  }
+
   removeValidator(address: string): void {
     const account = this.s.accounts.get(address);
     if (account) delete account.validator;
     this.s.validators.delete(address);
   }
 
-  /** Validators that can currently propose, in deterministic address order. */
-  activeValidators(): string[] {
+  /**
+   * Validators that may propose, in deterministic address order.
+   *
+   * `atTimestamp` is the protocol time the question is being asked about — the
+   * candidate block's timestamp when the schedule for that block is derived,
+   * which is what every validating node uses. Defaulting to this state's own
+   * timestamp keeps the old call sites correct. A jail is a duration of protocol
+   * time, so the answer for one instant can differ from the answer for another;
+   * both are derived from committed state and neither consults a clock that
+   * another node cannot see.
+   */
+  activeValidators(atTimestamp: number = this.s.timestamp): string[] {
     const out: string[] = [];
     for (const address of [...this.s.validators].sort()) {
       const v = this.s.accounts.get(address)?.validator;
       if (!v) continue;
-      if (v.status === 'JAILED' && (v.jailedUntilHeight ?? 0) > this.s.height) continue;
+      if (v.status === 'JAILED' && !jailIsOver(v, atTimestamp)) continue;
       if (v.status === 'UNBONDING') continue;
       // A slashed registration leaves the rotation the moment the block that
       // carried the evidence is applied — not when the node restarts.

@@ -33,7 +33,7 @@ import { genesisIdForState, slashAmountFor } from '../../src/consensus/slash-evi
 import { encodeSlashBody } from '../../src/transactions/executors/slash.js';
 import { ErrCode, ProtocolError } from '../../src/protocol/errors.js';
 import { Writer } from '../../src/protocol/encoding.js';
-import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
+import { CONSENSUS_PARAMS, VALIDATOR_JAIL_SECONDS } from '../../src/protocol/params.js';
 import { PARAMS_HASH } from '../../src/blockchain/state-root.js';
 import { PROTOCOL_VERSION } from '../../src/version.js';
 import { formatObs, parseObs } from '../../src/protocol/amount.js';
@@ -90,11 +90,19 @@ function validatorOf(h: Harness, address: string): ValidatorState | undefined {
  * (100,000 OBS from the first mining claim), the only way a wallet can afford a
  * 20,000 OBS bond on a fresh chain — exactly the documented launch sequence.
  */
-async function slashHarness(): Promise<{
+async function slashHarness(options: { backup?: boolean } = {}): Promise<{
   h: Harness;
   validator: TestWallet;
   outsider: TestWallet;
+  byAddress: Map<string, TestWallet>;
   addValidator: () => Promise<TestWallet>;
+  produceScheduled: (txs?: TxEnvelope[]) => void;
+  tryScheduled: (
+    txs: TxEnvelope[],
+    options?: { simulate?: boolean },
+  ) => { accepted: boolean; code?: ErrCode; message?: string };
+  /** The wallet the rotation schedules for a block on ANOTHER chain instance. */
+  scheduledOn: (chain: ChainManager) => TestWallet;
 }> {
   const validator = makeWallet();
   const h = await createHarness({ producer: validator, bootstrapValidatorPublicKeys: [validator.publicKey] });
@@ -113,13 +121,66 @@ async function slashHarness(): Promise<{
    * Produce with whichever wallet the rotation schedules — the tests must never
    * assume an ordering of randomly generated addresses, and a block from the
    * wrong validator is refused by consensus (which is the point of the rule).
+   *
+   * There is NO FALLBACK PRODUCER. Once this chain has accepted a registration
+   * the rotation is closed for ever, so an empty active set means the chain is
+   * halted and no key may produce: a test that runs into that must fail loudly
+   * rather than quietly produce a block consensus would reject.
    */
+  const scheduledWallet = (height: number, timestamp: number): TestWallet => {
+    const scheduled = scheduledProposer(h.chain.world, height, 0, timestamp);
+    const producer = byAddress.get(scheduled ?? '');
+    if (!producer) {
+      throw new Error(
+        `the chain is halted for want of validators at height ${height}: ` +
+          'bond another validator (slashHarness({ backup: true })) to keep producing',
+      );
+    }
+    return producer;
+  };
+
+  /** Next-block timestamp that keeps the fake clock inside the drift rule. */
+  const nextSlot = (): { height: number; timestamp: number } => {
+    const head = h.chain.tip!;
+    const timestamp = head.timestamp + CONSENSUS_PARAMS.block.targetBlockSeconds + 1;
+    const clock = Math.floor(Date.now() / 1000);
+    if (timestamp + 2 > clock) advance((timestamp + 2 - clock) * 1_000);
+    return { height: head.height + 1, timestamp };
+  };
+
+  /**
+   * The wallet scheduled on a restored chain instance: after a restart the
+   * schedule comes from the restored state, and a block must still be authored
+   * by whoever that schedule names — the submitter of a slash report is a
+   * different role from the producer of the block that carries it.
+   */
+  const scheduledOn = (chain: ChainManager): TestWallet => {
+    const head = chain.tip!;
+    const timestamp = Math.max(chain.protocolTime, head.timestamp + 1);
+    const scheduled = scheduledProposer(chain.world, head.height + 1, 0, timestamp);
+    const producer = byAddress.get(scheduled ?? '');
+    if (!producer) throw new Error('the restored chain is halted for want of validators');
+    return producer;
+  };
+
   const produceScheduled = (txs: TxEnvelope[] = []): void => {
-    const scheduled = h.chain.scheduledProposerNow();
-    // With no active validator the protocol is in genesis-open mode and any
-    // producer is accepted, so falling back to the harvester is correct there.
-    const producer = byAddress.get(scheduled ?? '') ?? validator;
-    h.produce(txs, { producer });
+    const { height, timestamp } = nextSlot();
+    h.produce(txs, { producer: scheduledWallet(height, timestamp), timestamp });
+  };
+
+  /** Same block, but the verdict is returned instead of thrown. */
+  const tryScheduled = (txs: TxEnvelope[], trial: { simulate?: boolean } = {}) => {
+    const { height, timestamp } = nextSlot();
+    const outcome = h.tryBlock(txs, {
+      producer: scheduledWallet(height, timestamp),
+      timestamp,
+      simulate: trial.simulate,
+    });
+    return {
+      accepted: outcome.accepted,
+      code: outcome.code as ErrCode | undefined,
+      message: outcome.message,
+    };
   };
 
   const addValidator = async (): Promise<TestWallet> => {
@@ -133,7 +194,21 @@ async function slashHarness(): Promise<{
     ]);
     return added;
   };
-  return { h, validator, outsider, addValidator };
+  // A second seat, so a test that removes the accused from the rotation still
+  // has a chain to run on. Slashing the only validator leaves an established
+  // chain with no active validator, which halts by design — that behaviour is
+  // asserted on its own, and it must not be what these tests are really about.
+  if (options.backup) await addValidator();
+  return {
+    h,
+    validator,
+    outsider,
+    byAddress,
+    addValidator,
+    produceScheduled,
+    tryScheduled,
+    scheduledOn,
+  };
 }
 
 const slashTx = (h: Harness, submitter: TestWallet, body: SlashBody): TxEnvelope =>
@@ -194,6 +269,11 @@ function voteTemplate(h: Harness, wallet: TestWallet) {
   if (!anchorHash) throw new Error('no canonical anchor block');
   const genesisId = genesisIdForState(h.chain.world, h.net);
   if (!genesisId) throw new Error('this node cannot derive its own genesis identity');
+  // The set hash a vote commits to is the committee AS IT STOOD AT THE ANCHOR,
+  // read from the historical state — not the committee this node happens to hold
+  // now. A vote naming a set that was never in force proves nothing about one
+  // that was, so the protocol refuses it (and so does this helper's caller).
+  const anchorState = h.chain.stateAtHeight(anchorHeight, anchorHash);
   return {
     protocolVersion: PROTOCOL_VERSION,
     networkId: h.net.networkId,
@@ -206,7 +286,7 @@ function voteTemplate(h: Harness, wallet: TestWallet) {
     height: anchorHeight + 1,
     round: 0,
     parentHash: anchorHash,
-    validatorSetHash: validatorSetHash([{ address: wallet.address, publicKey: wallet.publicKey }]),
+    validatorSetHash: validatorSetHash(finalityValidators(anchorState)),
     validator: wallet.address,
     publicKey: wallet.publicKey,
   };
@@ -420,7 +500,11 @@ describe('proposer equivocation', () => {
     const blamed = validatorOf(h, validator.address)!;
     expect(blamed.status).toBe('JAILED');
     expect(blamed.bond).toBe(BOND);
-    expect(blamed.jailedUntilHeight).toBeGreaterThan(h.chain.height);
+    // A jail is a term of PROTOCOL TIME, not a number of blocks: it has to be
+    // able to expire on a chain that has stopped producing, which is exactly the
+    // chain a jail can cause once it empties the active set.
+    expect(blamed.jailedUntilTime).toBe(h.chain.tip!.timestamp + VALIDATOR_JAIL_SECONDS);
+    expect(blamed.jailedUntilTime).toBeGreaterThan(h.chain.tip!.timestamp);
     expect(h.chain.world.getAccount(validator.address)!.balance).toBeGreaterThan(0n);
     expect(h.chain.world.s.slashes.size).toBe(0);
     expect(h.chain.world.s.metrics.totalSlashes).toBe(0);
@@ -488,9 +572,12 @@ describe('finality-vote equivocation', () => {
   });
 
   it('does not let an unregistration escape the penalty: an unbonding bond stays liable', async () => {
-    const { h, validator, outsider } = await slashHarness();
+    // A second seat, so the chain still has a proposer once this validator
+    // leaves the rotation: an established chain with no active validator halts,
+    // which is asserted elsewhere and would only obscure what is under test here.
+    const { h, validator, outsider, produceScheduled } = await slashHarness({ backup: true });
     const { evidence } = voteEquivocation(h, validator);
-    h.produce([
+    produceScheduled([
       h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.UNREGISTER, 0n, validator.publicKey), { gas: 0n }),
     ]);
     expect(validatorOf(h, validator.address)!.status).toBe('UNBONDING');
@@ -501,7 +588,7 @@ describe('finality-vote equivocation', () => {
 
     const poolBefore = h.chain.world.s.pool.balance;
     const supplyBefore = h.chain.world.s.metrics.totalSupply;
-    h.produce([slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence })]);
+    produceScheduled([slashTx(h, outsider, { op: SlashOp.EQUIVOCATION, evidence })]);
 
     expect(h.chain.world.s.slashes.get(evidence.id)).toMatchObject({
       type: 'VOTE_EQUIVOCATION',
@@ -737,17 +824,19 @@ describe('forged and altered evidence cannot slash anyone', () => {
 
 describe('slashing is idempotent', () => {
   it('slashes once for twelve submissions of the same evidence from ten submitters', async () => {
-    const { h, validator, outsider } = await slashHarness();
+    const { h, validator, outsider, produceScheduled, tryScheduled } = await slashHarness({ backup: true });
     const { evidence, body } = proposerEquivocation(h, validator);
     const submitters = [outsider, ...Array.from({ length: 9 }, () => makeWallet())];
 
-    h.produce([slashTx(h, outsider, body)]);
+    produceScheduled([slashTx(h, outsider, body)]);
     const poolAfterFirst = h.chain.world.s.pool.balance;
     expect(h.chain.world.s.metrics.totalSlashes).toBe(1);
 
     for (let index = 0; index < 11; index += 1) {
       const submitter = submitters[index % submitters.length]!;
-      const outcome = h.tryBlock([slashTx(h, submitter, body)], { simulate: false });
+      // Anyone may REPORT a slash — submission stays permissionless. What the
+      // canonical state decides is whether it slashes again, and it says no.
+      const outcome = tryScheduled([slashTx(h, submitter, body)], { simulate: false });
       expect(outcome.accepted).toBe(false);
       expect(outcome.code).toBe(ErrCode.REPLAY);
     }
@@ -758,14 +847,14 @@ describe('slashing is idempotent', () => {
   });
 
   it('refuses a second, genuinely different equivocation by a closed registration', async () => {
-    const { h, validator, outsider } = await slashHarness();
+    const { h, validator, outsider, produceScheduled, tryScheduled } = await slashHarness({ backup: true });
     const first = proposerEquivocation(h, validator);
-    h.produce([slashTx(h, outsider, first.body)]);
+    produceScheduled([slashTx(h, outsider, first.body)]);
     advance(5_000);
     const second = proposerEquivocation(h, validator);
     expect(second.evidence.id).not.toBe(first.evidence.id);
 
-    const outcome = h.tryBlock([slashTx(h, outsider, second.body)], { simulate: false });
+    const outcome = tryScheduled([slashTx(h, outsider, second.body)], { simulate: false });
     expect(outcome.accepted).toBe(false);
     expect([ErrCode.REPLAY, ErrCode.VALIDATOR_BOND_MISMATCH]).toContain(outcome.code);
     expect(h.chain.world.s.metrics.totalSlashes).toBe(1);
@@ -773,9 +862,11 @@ describe('slashing is idempotent', () => {
   });
 
   it('remembers the slash across a restart and still refuses the replay', async () => {
-    const { h, validator, outsider } = await slashHarness();
+    const { h, validator, outsider, byAddress, produceScheduled, scheduledOn } = await slashHarness({
+      backup: true,
+    });
     const { evidence, body } = proposerEquivocation(h, validator);
-    h.produce([slashTx(h, outsider, body)]);
+    produceScheduled([slashTx(h, outsider, body)]);
     const poolAfter = h.chain.world.s.pool.balance;
     const supplyAfter = h.chain.world.s.metrics.totalSupply;
 
@@ -803,12 +894,22 @@ describe('slashing is idempotent', () => {
     expect(restored.world.s.metrics.totalSlashes).toBe(1);
     expect(restored.world.verifySupplyInvariant().ok).toBe(true);
     // Still out of the committee, with no restart required and none available.
-    expect(restored.world.activeValidators()).toEqual([]);
+    // The surviving seat is what the restored chain has left, and the schedule
+    // comes from the restored state — not from anything the old process held.
+    const survivor = restored.world.activeValidators();
+    expect(survivor).not.toContain(validator.address);
+    expect(survivor.length).toBe(1);
+    expect(restored.world.s.validatorModeEstablished).toBe(true);
 
-    // Another peer replays the evidence against the restarted node.
+    // Another peer replays the evidence against the restarted node. The report
+    // is signed by a wallet that holds nothing at all: reporting stays
+    // permissionless. The BLOCK still has to be authored by the validator the
+    // restored schedule names.
     const replaySubmitter = makeWallet();
     const replayTx = slashTx(h, replaySubmitter, body);
-    const replayed = restored.addBlock(blockOn(h.net.chainId, restored, replaySubmitter, [replayTx]));
+    const producer = scheduledOn(restored);
+    expect(byAddress.get(producer.address)).toBe(producer);
+    const replayed = restored.addBlock(blockOn(h.net.chainId, restored, producer, [replayTx]));
     expect(replayed.accepted).toBe(false);
     expect(replayed.code).toBe(ErrCode.REPLAY);
     expect(restored.world.s.metrics.totalSlashes).toBe(1);
@@ -893,19 +994,19 @@ describe('slashes reorg with the blocks that carry them', () => {
 
 describe('the after-life of a slashed registration', () => {
   it('cannot re-register cheaply, cannot claim early, and gets the remainder back in full', async () => {
-    const { h, validator, outsider } = await slashHarness();
+    const { h, validator, outsider, produceScheduled, tryScheduled } = await slashHarness({ backup: true });
     const { body } = proposerEquivocation(h, validator);
-    h.produce([slashTx(h, outsider, body)]);
+    produceScheduled([slashTx(h, outsider, body)]);
 
     // The surviving half must never discount a new 20,000 OBS seat.
-    const reregister = h.tryBlock(
+    const reregister = tryScheduled(
       [h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, BOND, validator.publicKey), { gas: expectedGas(BOND) })],
       { simulate: false },
     );
     expect(reregister.accepted).toBe(false);
     expect(reregister.code).toBe(ErrCode.REPLAY);
 
-    const early = h.tryBlock(
+    const early = tryScheduled(
       [h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.CLAIM_UNBONDED, 0n, validator.publicKey), { gas: 0n })],
       { simulate: false },
     );

@@ -39,8 +39,32 @@ export const CONSENSUS_PARAMS = {
    * bootstrap set; removes discontinued application transactions; fixes
    * deterministic PoT fork choice; requires an exact 20,000 OBS validator bond;
    * and routes ONS revenue 90% to node runners / 10% to treasury.
+   *
+   * 1.6.1 is a consensus-rule change with no economic change. Four rules move:
+   *
+   *   - VALIDATOR ADMISSION MODE is an explicit, state-committed indicator
+   *     (`validatorSetNeverReopens`). A chain that has never accepted a valid
+   *     registration is in bootstrap mode, where any node may propose so the
+   *     first validator can arrive; from the first successful registration the
+   *     rotation is closed for ever. A zero-validator chain after that point
+   *     HALTS. It never reopens to permissionless production, because
+   *     "no validators are registered" is not distinguishable, on the chain
+   *     alone, from "every validator left".
+   *   - JAILING IS MEASURED IN PROTOCOL TIME (`jailSlots` × target interval),
+   *     not in blocks. A jail measured in blocks cannot expire on a chain that
+   *     stopped producing, and stopping is exactly what a jail can cause.
+   *   - SLASH LIABILITY FOLLOWS THE REGISTRATION
+   *     (`slashLiabilityFollowsRegistration`): evidence about a tenure is
+   *     chargeable to that tenure's bond while it is escrowed, including after
+   *     the validator unregisters, and it names that exact tenure.
+   *   - EQUIVOCATION EVIDENCE HAS A PER-BLOCK BUDGET (`slashing`), so a peer
+   *     cannot make a block cost unbounded signature verification.
+   *
+   * These are rule changes, so the protocol version moves to 1.6.1 and the
+   * parameter hash changes with them: two nodes cannot share a protocol
+   * identity and disagree about the rules.
    */
-  protocolVersion: '1.6.0',
+  protocolVersion: '1.6.1',
 
   // ── Proof of Time (PoT) ───────────────────────────────────────────────────
   /**
@@ -282,10 +306,48 @@ export const CONSENSUS_PARAMS = {
     equivocationSlashBps: 5_000,
     /** Unbonding delay in blocks before bond funds return. */
     unbondingBlocks: 20_160, // ~28 hours at 5s blocks
-    /** Missed slots tolerated in a 100-block window before jailing. */
+    /**
+     * Net missed slots tolerated before jailing. The counter is leaky: a
+     * recorded miss adds one, a block the validator actually produced subtracts
+     * one, so an absent validator's count only rises.
+     */
     maxMissedSlotsPerWindow: 40,
-    /** Jailing period in blocks. */
-    jailBlocks: 10_080,
+    /**
+     * Jail term, expressed in SLOTS (see VALIDATOR_JAIL_SECONDS below):
+     * 10,080 × 5 s = 50,400 s = 14 hours of protocol time.
+     *
+     * A jail measured in BLOCKS cannot end on a chain that has stopped
+     * producing blocks, and stopping is precisely what a jail can cause once it
+     * empties the active set — the chain would then be halted for as long as
+     * nobody could produce the blocks that count the jail down. Measuring the
+     * term in protocol time keeps it honest on a halted chain: it lapses
+     * whether or not anyone produces, and the validator returns in the first
+     * block that reaches the instant.
+     */
+    jailSlots: 10_080,
+    /**
+     * THE VALIDATOR SET NEVER REOPENS (1.6.1 consensus rule).
+     *
+     * The first VALIDATOR_REGISTER that succeeds sets a committed indicator,
+     * and from then on block production is a privilege of the active set alone.
+     * An established chain with no active validator halts instead of accepting
+     * a block from any key that happens to sign one. The indicator is consensus
+     * state: it is committed in the state root, restored on restart, and set
+     * only by a state transition — never inferred from how many validators a
+     * node currently sees, and never cleared.
+     */
+    validatorSetNeverReopens: true,
+    /**
+     * SLASH LIABILITY FOLLOWS THE REGISTRATION (1.6.1 consensus rule).
+     *
+     * Equivocation evidence is about a tenure: the key, the bond and the
+     * validator set that were in force when the offence happened. The bond
+     * stays answerable for that tenure for as long as it is still escrowed, so
+     * unregistering after an offence does not move the penalty to the next
+     * registration, and a later registration is not answerable for an offence
+     * committed by an earlier one.
+     */
+    slashLiabilityFollowsRegistration: true,
     /**
      * A branch must contain finalized history. Compare fixed PoT weight, then
      * height, then the lexicographically lowest canonical block hash.
@@ -305,6 +367,21 @@ export const CONSENSUS_PARAMS = {
       maxEvidenceBytes: 16 * 1024,
       /** Bootstrap committee must remain active for this many parent blocks. */
       bootstrapSetStabilityBlocks: 64,
+    },
+    /**
+     * Equivocation-evidence budget for ONE block — a consensus limit, so every
+     * node accepts exactly the same blocks and no block can be made to cost an
+     * unbounded amount of signature verification.
+     *
+     * A report that does not fit stays in the mempool for a later slot; it is
+     * never rejected. SLASH remains permissionlessly submittable: these limits
+     * bound what one block carries, not who may report.
+     */
+    slashing: {
+      /** Maximum equivocation reports in a single block. */
+      maxEvidencePerBlock: 8,
+      /** Maximum canonical evidence bytes in a single block. */
+      maxEvidenceBytesPerBlock: 65_536,
     },
   },
 
@@ -398,3 +475,14 @@ export const CONSENSUS_PARAMS = {
 
 /** Convenience: reward floor per claim derived from the daily floor. */
 export const MIN_CLAIM_REWARD = CONSENSUS_PARAMS.mining.dailyRewardFloor;
+
+/**
+ * Jail term in seconds of protocol time, derived from `consensus.jailSlots`.
+ *
+ * Derived rather than declared: two nodes that disagreed about the length of a
+ * jail would disagree about the first block a jailed validator may propose
+ * again, which is a consensus split. Keeping one source of truth makes that
+ * impossible, and `computeParamsHash` commits the slot count to the state root.
+ */
+export const VALIDATOR_JAIL_SECONDS =
+  CONSENSUS_PARAMS.consensus.jailSlots * CONSENSUS_PARAMS.block.targetBlockSeconds;

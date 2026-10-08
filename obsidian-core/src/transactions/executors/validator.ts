@@ -12,7 +12,8 @@
  */
 
 import { Reader, Writer } from '../../protocol/encoding.js';
-import { CONSENSUS_PARAMS } from '../../protocol/params.js';
+import { CONSENSUS_PARAMS, VALIDATOR_JAIL_SECONDS } from '../../protocol/params.js';
+import { jailIsOver } from '../../blockchain/state.js';
 import { ErrCode, reject } from '../../protocol/errors.js';
 import { ValidatorOp, type TxEnvelope, type ValidatorBody } from '../../protocol/types.js';
 import { assertAmount, assertGas } from '../helpers.js';
@@ -116,11 +117,20 @@ export function executeValidator(
         },
         apply,
       );
+      // The first registration this chain ever accepts closes permissionless
+      // block production for good. It happens inside the state transition, so
+      // the change is committed in this block's state root, survives a restart,
+      // and is reached by every node that applies the block — it is never a
+      // node-local opinion about how many validators it can see. Idempotent:
+      // later registrations leave an already-true indicator alone, and nothing
+      // in the protocol ever clears it.
+      state.establishValidatorMode();
       state.emit('VALIDATOR_REGISTERED', {
         validator: tx.sender,
         bond: body.bond.toString(),
         commissionBps: commission,
         height: apply.height,
+        validatorModeEstablished: true,
       }, apply);
       return { gasBase: body.bond, detail: { validator: tx.sender, bond: body.bond.toString() } };
     }
@@ -170,8 +180,9 @@ export function executeValidator(
 
 /**
  * Per-block validator bookkeeping: jail validators that keep missing their slot
- * and release jails whose term has ended. Deterministic and height-driven — no
- * administrator, no dashboard action.
+ * and release jails whose term has ended. Deterministic and driven by committed
+ * state plus the block's own protocol timestamp — no administrator, no
+ * dashboard action, no local clock.
  *
  * The counter is a LEAKY one:
  *   - a slot the chain records as missed adds 1;
@@ -191,11 +202,17 @@ export function processValidatorBookkeeping(ctx: ExecutorContext, missedBy: stri
     const validator = state.s.accounts.get(address)?.validator;
     if (!validator) continue;
     if (validator.status === 'JAILED') {
-      if ((validator.jailedUntilHeight ?? 0) <= apply.height) {
+      // The term is a duration of PROTOCOL TIME, so it lapses even on a chain
+      // that is producing no blocks at all — which is precisely the chain a jail
+      // can cause once it empties the active set. The validator is restored in
+      // the first block whose timestamp reaches the term, and that block may be
+      // produced by this very validator: the schedule is evaluated against the
+      // same committed term, so both answers agree by construction.
+      if (jailIsOver(validator, apply.timestamp)) {
         validator.status = 'ACTIVE';
         validator.missedSlots = 0;
-        delete validator.jailedUntilHeight;
-        state.emit('VALIDATOR_UNJAILED', { validator: address }, apply);
+        delete validator.jailedUntilTime;
+        state.emit('VALIDATOR_UNJAILED', { validator: address, untilTime: apply.timestamp }, apply);
       }
       continue;
     }
@@ -204,11 +221,11 @@ export function processValidatorBookkeeping(ctx: ExecutorContext, missedBy: stri
       validator.missedSlots += 1;
       if (validator.missedSlots > CONSENSUS_PARAMS.consensus.maxMissedSlotsPerWindow) {
         validator.status = 'JAILED';
-        validator.jailedUntilHeight = apply.height + CONSENSUS_PARAMS.consensus.jailBlocks;
+        validator.jailedUntilTime = apply.timestamp + VALIDATOR_JAIL_SECONDS;
         validator.missedSlots = 0;
         state.emit('VALIDATOR_JAILED', {
           validator: address,
-          untilHeight: validator.jailedUntilHeight,
+          untilTime: apply.timestamp + VALIDATOR_JAIL_SECONDS,
           reason: 'missed slot budget exceeded',
         }, apply);
       }

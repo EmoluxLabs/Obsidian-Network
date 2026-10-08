@@ -121,9 +121,16 @@ describe('committed bootstrap committees', () => {
     const two = genesisId(genesisDocumentFor(devnet, [beta]), devnet);
     expect(one).not.toBe(two);
     expect(genesisId(genesisDocumentFor(devnet, []), devnet)).not.toBe(one);
-    // Published identity: changing the committee is a new network. This
-    // assertion makes that a deliberate act instead of an edit that slips by.
-    expect(shipped).toBe('3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c');
+    // Published identity: changing the committee is a new network, and so is
+    // changing the protocol version the document is stamped with — the id is
+    // derived from the document, never written down by hand. This assertion
+    // makes either change a deliberate act instead of an edit that slips by.
+    //   1.6.0: 3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c
+    //   1.6.1: the value below, moved by PROTOCOL_VERSION alone (the committee,
+    //          the genesis instant and the note are untouched).
+    expect(shipped).toBe('56ec455d8afac5ef4f7d636ac03ef9e39bd5788f');
+    expect(genesisId({ ...genesisDocumentFor(mainnet), protocolVersion: '1.6.0' }, mainnet))
+      .toBe('3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c');
   });
 
   it('refuses to start a committed network with a different committee', async () => {

@@ -4,7 +4,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ChainManager } from '../../src/blockchain/chain.js';
 import { blockHash } from '../../src/blockchain/block.js';
-import { proposerRound } from '../../src/consensus/proposer.js';
+import { chainIsHaltedForWantOfValidators, proposerRound, validatorRotationIsOpen } from '../../src/consensus/proposer.js';
 import { signFinalityVote } from '../../src/consensus/finality.js';
 import { ErrCode } from '../../src/protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
@@ -135,7 +135,14 @@ describe('PoT checkpoint finality',()=>{
     const transitionVote=h.chain.createFinalityVote(identity(validator));
     expect(transitionVote?.height).toBe(transition.header.height);
     expect(h.chain.addFinalityVote(transitionVote!).finalized).toBe(true);
-    h.produce();
+
+    // The only validator has left. The chain has accepted a registration, so the
+    // rotation is closed for ever and an empty active set HALTS the chain: no
+    // key — not the one that left, not a stranger — may produce the next block.
+    // Before 1.6.1 this exact chain fell through to permissionless production.
+    expect(validatorRotationIsOpen(h.chain.world)).toBe(false);
+    expect(chainIsHaltedForWantOfValidators(h.chain.world)).toBe(true);
+    expect(()=>h.produce()).toThrow(/halted for want of validators/);
     expect(h.chain.createFinalityVote(identity(validator))).toBeNull();
     expect(h.chain.finalityStatus()).toMatchObject({validatorCount:0,quorum:0});
   });

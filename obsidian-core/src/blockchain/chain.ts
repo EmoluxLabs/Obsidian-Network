@@ -60,6 +60,7 @@ import {
   checkBlockTimestamp,
   compareTips,
   isProposerAllowed,
+  proposerDecision,
   medianTimePast,
   missedProposersFor,
   proposerRound,
@@ -916,14 +917,30 @@ export class ChainManager extends EventEmitter {
     // a block produced after the scheduled validator let its slot lapse is
     // accepted from whoever the rotation hands the turn to next.
     const round = proposerRound(parentEntry.timestamp, header.timestamp);
-    if (
-      this.options.enforceProposerRotation !== false &&
-      !isProposerAllowed(parentState, header.producer, header.height, round)
-    ) {
-      reject(
-        ErrCode.NOT_PRODUCER_TURN,
-        `proposer ${header.producer} is not scheduled for height ${header.height} round ${round}`,
-      );
+    if (this.options.enforceProposerRotation !== false) {
+      // One decision function, so a validating node and a producing node answer
+      // the same question the same way. It is read against the PARENT state at
+      // the BLOCK's own protocol time: a jail is a duration of time, so the set
+      // that names the proposer for this height is the set as it stands at this
+      // timestamp — which is what lets a validator whose term lapses exactly at
+      // this block be the one that produces it.
+      const decision = proposerDecision(parentState, header.height, round, header.timestamp);
+      if (decision.kind === 'HALTED') {
+        // Not "expecting somebody else": expecting NOBODY. An established chain
+        // with no active validator stops instead of accepting a block from any
+        // key that can sign one, because "no validators registered" is not
+        // distinguishable on-chain from "every validator left".
+        reject(
+          ErrCode.NOT_PRODUCER_TURN,
+          `the chain is halted for want of validators at height ${header.height}: ${decision.reason}`,
+        );
+      }
+      if (decision.kind === 'SCHEDULED' && decision.proposer !== header.producer) {
+        reject(
+          ErrCode.NOT_PRODUCER_TURN,
+          `proposer ${header.producer} is not scheduled for height ${header.height} round ${round}`,
+        );
+      }
     }
 
     const applied = applyBlock(parentState, block, { net: this.options.net });

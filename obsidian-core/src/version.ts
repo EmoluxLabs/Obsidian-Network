@@ -9,13 +9,21 @@
 import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
-export const CORE_VERSION = '1.6.0';
+export const CORE_VERSION = '1.6.1';
 
 /** Consensus protocol version implemented by this build. */
-export const PROTOCOL_VERSION = '1.6.0';
+export const PROTOCOL_VERSION = '1.6.1';
 
-/** Current lossless consensus-state snapshot format. */
-export const STATE_SNAPSHOT_VERSION = 2;
+/**
+ * Current lossless consensus-state snapshot format.
+ *
+ * 3 adds the committed validator-mode indicator (`validatorModeEstablished`) and
+ * the time-based jail term (`jailedUntilTime`). A snapshot written by 1.6.0 has
+ * neither, so it is refused rather than silently read as "not established" —
+ * reading an old snapshot as a new one would hand a bootstrapped chain back to
+ * permissionless production.
+ */
+export const STATE_SNAPSHOT_VERSION = 3;
 
 /** Wire/peer protocol version. */
 export const WIRE_PROTOCOL_VERSION = 1;
@@ -23,8 +31,12 @@ export const WIRE_PROTOCOL_VERSION = 1;
 /**
  * Minimum Obsidian Core version permitted to peer with this build.
  * Peers below this version are rejected during handshake (hard fork guard).
+ *
+ * 1.6.1 changes consensus rules (validator admission mode, time-based jailing,
+ * slash liability window, evidence budgets), so a 1.6.0 peer is rejected: two
+ * nodes that share a protocol id but not a rule set cannot agree on a chain.
  */
-export const MIN_CORE_VERSION = '1.6.0';
+export const MIN_CORE_VERSION = '1.6.1';
 
 /**
  * Build identifier — deterministic hash of the release identity triple.

@@ -398,8 +398,16 @@ export interface ValidatorState {
   bond: bigint;
   commissionBps: number;
   registeredAtHeight: number;
-  /** Set while jailed; jailed validators are skipped in the proposer rotation. */
-  jailedUntilHeight?: number;
+  /**
+   * Protocol time at which the jail ends, set while jailed.
+   *
+   * A DURATION OF PROTOCOL TIME, not a height: on a chain that has stopped
+   * producing — which is what a jail can cause once it empties the active set —
+   * a height-denominated term would never be reached. Absent means "not
+   * jailed"; a JAILED validator with no term is treated as jailed for ever
+   * (fail closed) rather than as free.
+   */
+  jailedUntilTime?: ProtocolTimeSeconds;
   missedSlots: number;
   /**
    * SLASHED is terminal for this registration: the validator is out of the
@@ -699,10 +707,62 @@ export interface StateSnapshot {
   /** Registered validators in deterministic (address-sorted) order. */
   validators: string[];
   /**
+   * Whether this chain has ever accepted a valid validator registration.
+   *
+   * CONSENSUS STATE, committed in the state root and required in format 3:
+   *   - false — bootstrap mode. No validator has ever registered, so any node
+   *     may propose; this is how the first validator arrives at all.
+   *   - true  — the rotation is closed for ever. Block production belongs to
+   *     the active set, and an empty active set halts the chain instead of
+   *     letting any key produce.
+   *
+   * It is set only by the state transition of the first successful
+   * VALIDATOR_REGISTER, it is never cleared, and it is never inferred from the
+   * number of validators a node currently sees — "no validators" is not
+   * distinguishable on-chain from "every validator left".
+   */
+  validatorModeEstablished: boolean;
+  /**
    * Applied slashes, keyed by evidence id. Consensus state: it is what stops a
    * replay of the same evidence from slashing the same bond twice.
    */
   slashes?: Record<string, SlashRecord>;
+}
+
+/**
+ * The historical lookups a consensus-critical validation may perform.
+ *
+ * A finality vote, a certificate and slash evidence must be judged against
+ * HISTORY — the committee and the anchor as they were when the message was
+ * produced — never against whatever the validating node happens to hold now.
+ * Every caller supplies this same interface, which is what lets ONE predicate
+ * serve P2P admission, block execution, certificate verification, vote
+ * restoration and evidence verification without a second implementation to
+ * drift out of step with the first.
+ *
+ * A lookup returns null when this node does not have the data. The predicate
+ * then reports that explicitly and the CALLER decides: consensus paths fail
+ * closed, an admission path may treat it as "unknown, do not relay". No
+ * predicate may substitute current state for a missing historical answer.
+ */
+export interface ConsensusEvidenceContext {
+  /** This node's chain identity: a message for another chain is not one here. */
+  readonly networkId: string;
+  readonly chainId: number;
+  readonly genesisId: string;
+  readonly paramsHash: string;
+  /** Height and protocol time of a block this node holds, or null. */
+  anchorFor(hash: string): { height: number; timestamp: number } | null;
+  /** A block this node holds, or null. */
+  blockByHash(hash: string): Block | null;
+  /**
+   * Finality committee in force for the anchor's parent — address mapped to the
+   * key that validator registered with — or null when the anchor state is not
+   * available on this node.
+   */
+  committeeFor(parentHash: string, finalizedHeight: number): ReadonlyMap<string, string> | null;
+  /** Whether `block` qualifies as a bootstrap finality target. */
+  isBootstrapTarget(block: Block): boolean;
 }
 
 export interface ChainMeta {

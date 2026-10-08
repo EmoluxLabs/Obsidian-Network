@@ -113,7 +113,9 @@ function encodeAccount(w: Writer, address: string, a: Account): void {
     w.u128(v.bond);
     w.u32(v.commissionBps);
     w.u32(v.registeredAtHeight);
-    w.u32(v.jailedUntilHeight ?? 0);
+    // Protocol time, not height: see ValidatorState.jailedUntilTime. u64 so no
+    // reachable timestamp can wrap, and 0 for "not jailed".
+    w.u64(BigInt(Math.trunc(v.jailedUntilTime ?? 0)));
     w.u32(v.missedSlots);
     w.string(v.status);
     w.u32(v.unbondingStartHeight ?? 0);
@@ -294,6 +296,10 @@ export function encodeState(state: MutableState): Uint8Array {
   w.u32(claimIds.length);
   for (const id of claimIds) w.string(id);
 
+  // Committed BEFORE the list it qualifies, so the root of a chain that has
+  // never had a validator differs from the root of one where every validator
+  // has left — both have an empty list, and only this bit tells them apart.
+  w.boolean(state.validatorModeEstablished);
   const validators = [...state.validators].sort();
   w.u32(validators.length);
   for (const address of validators) w.string(address);
