@@ -38,7 +38,7 @@ object Addresses {
         val separator = value.lastIndexOf('1')
         if (separator < 1) return "Missing the '1' separator"
         val hrp = value.substring(0, separator)
-        if (hrp != HRP) return "Expected an address starting '$HRP1'"
+        if (hrp != HRP) return "Expected an address starting '${HRP}1'"
         val dataPart = value.substring(separator + 1)
         if (dataPart.length < 6) return "Address is too short"
         val values = IntArray(dataPart.length)
