@@ -95,6 +95,24 @@ jobs:
       # annotation, so the diagnosis is readable from the run summary itself
       # rather than only from the raw log. Without this, a failure here says
       # "exit code 1" and nothing else.
+      - name: Install the failure reporter
+        run: |
+          cat > /tmp/report.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          # Echo the parts of a Gradle log that actually explain a failure, as
+          # check-run annotations. The task-progress lines are noise; what matters
+          # is the compiler's own `e:` lines and Gradle's "What went wrong" block.
+          log="$1"; title="$2"
+          {
+            grep -E "^e: " "$log" | head -50
+            sed -n '/What went wrong/,/^\* Try/p' "$log" | head -50
+            grep -E "Could not resolve|Could not find|Unresolved reference|There were failing tests" "$log" | head -25
+          } | while IFS= read -r line; do
+            [ -n "$line" ] && printf '::error title=%s::%s\n' "$title" "$line"
+          done
+          SCRIPT
+          chmod +x /tmp/report.sh
+
       - name: Unit tests
         run: |
           set -o pipefail
@@ -103,8 +121,7 @@ jobs:
           # would abort before the error lines could be reported.
           ./gradlew testDebugUnitTest --no-daemon 2>&1 | tee unit-tests.log || status=$?
           if [ "$status" -ne 0 ]; then
-            grep -E "^e: |error:|FAILURE:|Could not resolve|Could not find|Unresolved reference|What went wrong|> " unit-tests.log \
-              | head -80 | while IFS= read -r line; do echo "::error title=Kotlin::${line}"; done
+            /tmp/report.sh unit-tests.log Kotlin
             exit "$status"
           fi
 
@@ -116,7 +133,7 @@ jobs:
           # would abort before the error lines could be reported.
           ./gradlew lintDebug --no-daemon 2>&1 | tee lint.log || status=$?
           if [ "$status" -ne 0 ]; then
-            grep -E "Error:|error:|FAILURE:|What went wrong" lint.log | head -40 | while IFS= read -r line; do echo "::error title=Lint::${line}"; done
+            /tmp/report.sh lint.log Lint
             exit "$status"
           fi
 
@@ -128,8 +145,7 @@ jobs:
           # would abort before the error lines could be reported.
           ./gradlew assembleDebug assembleRelease --no-daemon 2>&1 | tee assemble.log || status=$?
           if [ "$status" -ne 0 ]; then
-            grep -E "^e: |error:|FAILURE:|Could not resolve|Unresolved reference|What went wrong" assemble.log \
-              | head -60 | while IFS= read -r line; do echo "::error title=Build::${line}"; done
+            /tmp/report.sh assemble.log Build
             exit "$status"
           fi
         env:
