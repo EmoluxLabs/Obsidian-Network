@@ -202,6 +202,10 @@ async function bootNode(options: StartOptions, lock: DataDirLock): Promise<NodeR
 
   // ── Loops ────────────────────────────────────────────────────────────────
   const timers: NodeJS.Timeout[] = [];
+  // Set while the chain is halted for want of validators, so the halt is
+  // reported once rather than on every production tick. Cleared the moment the
+  // chain is producing again, so a later halt is reported too.
+  let productionHalted = false;
 
   // Sync loop: ask the best peer for blocks whenever it holds a better chain.
   timers.push(
@@ -219,14 +223,33 @@ async function bootNode(options: StartOptions, lock: DataDirLock): Promise<NodeR
       // Still catching up: building on a stale head only mints a block nobody
       // will accept. Wait until we are level with the best peer.
       if (p2p.behindBy() > 1) return;
-      // null means "anyone may produce": either no validator is registered, or
-      // every validator has let this height's slot lapse (the liveness
-      // backstop in consensus/proposer.ts).
-      const scheduled = chain.scheduledProposerNow();
-      if (scheduled !== null && scheduled !== identity.address) {
-        logger.debug('not this node’s slot', { height: chain.height + 1, scheduled });
+      // Three distinct states, and only one of them is permissionless. The
+      // canonical decision reads them from committed state; the old
+      // `scheduledProposerNow() === null` test could not tell bootstrap mode
+      // from a halt, because both read as null.
+      const decision = chain.productionDecisionNow();
+      if (decision.kind === 'HALTED') {
+        // The rotation is closed and no validator is active: nobody may propose,
+        // in any round, and consensus refuses every candidate. Do not build, do
+        // not sign, do not broadcast — stay idle until the validator state
+        // changes (a jail term lapsing, or a new registration). One line per
+        // halt, not one per tick: the chain may sit here for hours.
+        if (!productionHalted) {
+          logger.warn('block production halted: no active validator', {
+            height: chain.height + 1,
+            reason: decision.reason,
+          });
+          productionHalted = true;
+        }
         return;
       }
+      productionHalted = false;
+      if (decision.kind === 'SCHEDULED' && decision.proposer !== identity.address) {
+        logger.debug('not this node’s slot', { height: chain.height + 1, scheduled: decision.proposer });
+        return;
+      }
+      // OPEN falls through: no validator has ever registered, so the existing
+      // bootstrap production behaviour is unchanged.
       try {
         const block = chain.buildNextBlock({
           address: identity.address,

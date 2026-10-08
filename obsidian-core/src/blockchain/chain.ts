@@ -62,6 +62,7 @@ import {
   compareTips,
   isProposerAllowed,
   proposerDecision,
+  type ProposerDecision,
   medianTimePast,
   missedProposersFor,
   proposerRound,
@@ -1349,6 +1350,30 @@ export class ChainManager extends EventEmitter {
     const head = this.store.head;
     if (!head) return null;
     return scheduledProposer(this.state, head.height + 1, proposerRound(head.timestamp, this.protocolTime));
+  }
+
+  /**
+   * Which of the three production states this chain is in, for the height this
+   * node would build next: OPEN, SCHEDULED or HALTED.
+   *
+   * `scheduledProposerNow() === null` is ambiguous by design — it means either
+   * bootstrap mode (no validator has ever registered, so any node may propose)
+   * or a halt (the rotation is closed and the active set is empty, so nobody
+   * may, in any round). A production loop that reads that null as "anyone may
+   * produce" keeps constructing, signing and broadcasting blocks that consensus
+   * refuses, every tick, for as long as the chain is halted.
+   *
+   * This adds no rule and no state: it is the canonical `proposerDecision` —
+   * the same function block validation calls — evaluated on the same head,
+   * height, round and protocol time that `scheduledProposerNow` and
+   * `buildNextBlock` use, so the loop and the builder cannot disagree. With no
+   * head there is nothing to build on; this reports OPEN and the builder returns
+   * null exactly as it did before.
+   */
+  productionDecisionNow(): ProposerDecision {
+    const head = this.store.head;
+    if (!head) return { kind: 'OPEN' };
+    return proposerDecision(this.state, head.height + 1, proposerRound(head.timestamp, this.protocolTime));
   }
 
   /**
