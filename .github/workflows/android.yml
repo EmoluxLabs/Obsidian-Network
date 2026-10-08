@@ -142,24 +142,26 @@ jobs:
           set -o pipefail
           status=0
           # Guarded with ||: the shell runs with -e, so a bare failing pipeline
-          # would abort before the error lines could be reported.
+          # would abort the step before any diagnostics could be reported.
           ./gradlew lintDebug --no-daemon 2>&1 | tee lint.log || status=$?
           if [ "$status" -ne 0 ]; then
-            /tmp/report.sh lint.log Lint
-            # Lint's summary says "found errors" without naming them in the
-            # annotation budget, and the XML report is the authoritative list.
-            # Never assume a report path again: list what lint actually produced,
-            # then read the pinned text report, which carries rule id, file and line.
-            find app/build -name "lint-results*" -type f | while IFS= read -r found; do
-              echo "::notice title=Lint report found::${found}"
-            done
+            # The pinned text report carries rule id, file and line. It is emitted
+            # BEFORE the generic reporter, because annotations late in a step have
+            # repeatedly failed to surface once the budget is spent on lint's own
+            # summary boilerplate.
             TXT=app/build/reports/lint/lint-results.txt
             if [ -f "$TXT" ]; then
-              grep -E "Error:" "$TXT" | head -30 | while IFS= read -r m; do
+              grep -cE "Error:" "$TXT" | while IFS= read -r n; do
+                echo "::error title=Lint error count::${n} errors"
+              done
+              grep -E "Error:" "$TXT" | head -25 | while IFS= read -r m; do
                 echo "::error title=Lint error::${m}"
               done
             else
-              echo "::error title=Lint report::no text report at ${TXT} — lint did not write one"
+              echo "::error title=Lint report::no text report at ${TXT}"
+              find app/build -name "lint-results*" -type f | while IFS= read -r f; do
+                echo "::error title=Lint report found::${f}"
+              done
             fi
             exit "$status"
           fi
