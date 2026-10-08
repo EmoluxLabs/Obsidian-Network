@@ -1,6 +1,7 @@
 package network.obsidian.mobile.ui.screens
 
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -63,12 +64,15 @@ fun SplashScreen(onFinished: () -> Unit) {
         label = "ring",
     )
     // animation: fd .8s .6s both — the wordmark fades up after 0.6s.
-    val fade by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = tween(800, delayMillis = 600),
-        label = "fade",
-    )
+    //
+    // An Animatable rather than the infinite transition above: this one runs once
+    // and holds, and animateFloat on an InfiniteTransition only accepts a
+    // repeating spec.
+    val fade = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        delay(600)
+        fade.animateTo(1f, tween(800))
+    }
 
     LaunchedEffect(Unit) {
         delay(SPLASH_MILLIS)
@@ -109,7 +113,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                 Image(
                     painter = painterResource(R.drawable.obsidian_logo),
                     contentDescription = "Obsidian",
-                    modifier = Modifier.size(150.dp).alpha(fade),
+                    modifier = Modifier.size(150.dp).alpha(fade.value),
                     contentScale = ContentScale.Fit,
                 )
             }
@@ -118,7 +122,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                 "OBSIDIAN NETWORK",
                 style = ObsidianType.Wordmark.copy(letterSpacing = 5.76.sp),
                 color = ObsidianColors.Ink,
-                modifier = Modifier.alpha(fade),
+                modifier = Modifier.alpha(fade.value),
             )
         }
     }
