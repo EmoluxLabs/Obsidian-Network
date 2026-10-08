@@ -42,6 +42,8 @@ export enum ErrCode {
   MINING_NOT_ELIGIBLE = 'ERR_MINING_NOT_ELIGIBLE',
   MINING_TOO_SOON = 'ERR_MINING_TOO_SOON',
   MINING_CYCLE_LIMIT = 'ERR_MINING_CYCLE_LIMIT',
+  /** A block carries more equivocation evidence than the per-block budget. */
+  EVIDENCE_LIMIT = 'ERR_EVIDENCE_LIMIT',
   MINING_BAD_PROOF = 'ERR_MINING_BAD_PROOF',
   MINING_CLAIM_REPLAY = 'ERR_MINING_CLAIM_REPLAY',
 
@@ -145,6 +147,7 @@ export const ERR_MESSAGES: Record<ErrCode, string> = {
   [ErrCode.MINING_NOT_ELIGIBLE]: 'Wallet is not an eligible miner.',
   [ErrCode.MINING_TOO_SOON]: 'The protocol mining interval has not elapsed yet.',
   [ErrCode.MINING_CYCLE_LIMIT]: 'The maximum number of claims for this 24-hour cycle is reached.',
+  [ErrCode.EVIDENCE_LIMIT]: 'This block carries more equivocation evidence than one block may hold; the report stays pending for a later block.',
   [ErrCode.MINING_BAD_PROOF]: 'Mining claim proof failed verification.',
   [ErrCode.MINING_CLAIM_REPLAY]: 'This mining claim has already been accepted.',
   [ErrCode.GENESIS_ALREADY_CLAIMED]: 'The Genesis Allocation has already been claimed by another wallet.',

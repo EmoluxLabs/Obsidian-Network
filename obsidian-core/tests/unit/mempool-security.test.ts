@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { Mempool } from '../../src/blockchain/mempool.js';
+import { DEFAULT_MEMPOOL_OPTIONS, Mempool } from '../../src/blockchain/mempool.js';
 import { TxType } from '../../src/protocol/types.js';
 import { encodeSignedTx } from '../../src/transactions/encode.js';
 import { createHarness, makeWallet, type Harness } from '../helpers/harness.js';
@@ -25,7 +25,7 @@ async function transactions(gases: bigint[]) {
 describe('mempool displacement resistance', () => {
   it('does not let lower or equal gas arrivals displace paid first-seen work', async () => {
     const [paid, free, equal] = await transactions([10n, 0n, 10n]);
-    const pool = new Mempool({ maxTransactions: 1, maxBytes: 1_000_000, maxPerSender: 4 });
+    const pool = new Mempool({ ...DEFAULT_MEMPOOL_OPTIONS, maxTransactions: 1, maxBytes: 1_000_000, maxPerSender: 4 });
     expect(pool.add(paid).accepted).toBe(true);
     expect(pool.add(free).accepted).toBe(false);
     expect(pool.add(equal).accepted).toBe(false);
@@ -35,7 +35,7 @@ describe('mempool displacement resistance', () => {
 
   it('allows strictly higher-priority work to replace lower-priority work', async () => {
     const [low, high] = await transactions([1n, 2n]);
-    const pool = new Mempool({ maxTransactions: 1, maxBytes: 1_000_000, maxPerSender: 4 });
+    const pool = new Mempool({ ...DEFAULT_MEMPOOL_OPTIONS, maxTransactions: 1, maxBytes: 1_000_000, maxPerSender: 4 });
     expect(pool.add(low).accepted).toBe(true);
     expect(pool.add(high).accepted).toBe(true);
     expect(pool.has(low.id)).toBe(false);
@@ -54,7 +54,7 @@ describe('mempool displacement resistance', () => {
     const budget = encodeSignedTx(low).length + encodeSignedTx(protectedTx).length;
     expect(encodeSignedTx(incoming).length).toBeLessThan(budget);
 
-    const pool = new Mempool({ maxTransactions: 3, maxBytes: budget, maxPerSender: 4 });
+    const pool = new Mempool({ ...DEFAULT_MEMPOOL_OPTIONS, maxTransactions: 3, maxBytes: budget, maxPerSender: 4 });
     expect(pool.add(low).accepted).toBe(true);
     expect(pool.add(protectedTx).accepted).toBe(true);
     expect(pool.add(incoming).accepted).toBe(false);

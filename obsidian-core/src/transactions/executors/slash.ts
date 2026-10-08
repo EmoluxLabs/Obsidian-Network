@@ -73,6 +73,28 @@ export function decodeSlashBody(body: Uint8Array): SlashBody {
   };
 }
 
+/**
+ * The canonical size, in bytes, of the evidence a SLASH body carries — or null
+ * when the body does not decode.
+ *
+ * One ruler for every budget in the protocol (per-block count and bytes,
+ * mempool reservation, producer throttle), so no two limits can disagree about
+ * how big the same report is. A body that does not decode measures as null and
+ * is left to the decoder's own canonical MALFORMED a few lines later: nothing is
+ * hidden here, and a report that cannot be measured is never counted against a
+ * budget it was refused for other reasons anyway.
+ */
+export function slashEvidenceBytes(body: Uint8Array): number | null {
+  try {
+    const r = new Reader(body);
+    const op = r.u8();
+    if (op !== SlashOp.EQUIVOCATION) return null;
+    return Buffer.byteLength(r.string(), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 export function encodeSlashBody(body: SlashBody): Uint8Array {
   const w = new Writer();
   w.u8(body.op);

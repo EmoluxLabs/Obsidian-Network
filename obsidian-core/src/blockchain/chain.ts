@@ -56,7 +56,7 @@ import {
   verifyBlockSignature,
 } from './block.js';
 import { BlockStore, CHECKPOINT_INTERVAL_BLOCKS, type IndexEntry } from '../storage/blockstore.js';
-import { Mempool } from './mempool.js';
+import { DEFAULT_MEMPOOL_OPTIONS, Mempool } from './mempool.js';
 import {
   checkBlockTimestamp,
   compareTips,
@@ -67,7 +67,7 @@ import {
   proposerRound,
   scheduledProposer,
 } from '../consensus/proposer.js';
-import { validateTxStructure } from '../transactions/encode.js';
+import { encodeSignedTx, validateTxStructure } from '../transactions/encode.js';
 import { decodeSlashBody } from '../transactions/executors/slash.js';
 import { buildGenesisBlock, createGenesisState, genesisId, normalizeBootstrapValidatorPublicKeys } from '../genesis/initialize.js';
 import { committedBootstrapValidatorKeys } from '../genesis/bootstrap-keys.js';
@@ -96,6 +96,20 @@ export interface ChainManagerOptions {
   stateHistoryDepth?: number;
   mempoolSize?: number;
 }
+
+/**
+ * Producer policy: how much equivocation evidence ONE block attempt will verify.
+ *
+ * Node policy, never consensus. A producer that leaves a report out loses
+ * nothing — the report stays in the pool for the next slot — while a producer
+ * that verified every evidence-carrying transaction an attacker could pool would
+ * do unbounded public-key work per slot. The consensus per-block budget
+ * (CONSENSUS_PARAMS.consensus.slashing) is deliberately SMALLER than this, so
+ * the policy throttle can never be the reason a block cannot carry its full
+ * allowance: it is a ceiling on VERIFICATION, not on inclusion.
+ */
+const MAX_SLASH_VERIFICATIONS_PER_BLOCK = 32;
+const MAX_SLASH_VERIFICATION_BYTES_PER_BLOCK = 1024 * 1024;
 
 export interface GenesisDocument {
   networkId: string;
@@ -206,7 +220,8 @@ export class ChainManager extends EventEmitter {
     this.store = new BlockStore(options.dataDir);
     this.finalityStore = new FinalityStore(options.dataDir);
     this.mempool = new Mempool({
-      maxTransactions: options.mempoolSize ?? 10_000,
+      ...DEFAULT_MEMPOOL_OPTIONS,
+      maxTransactions: options.mempoolSize ?? DEFAULT_MEMPOOL_OPTIONS.maxTransactions,
       maxBytes: 32 * 1024 * 1024,
       maxPerSender: 64,
     });
@@ -1395,7 +1410,23 @@ export class ChainManager extends EventEmitter {
       working.advanceBlock(height, timestamp);
       const events: ProtocolEvent[] = [];
       const accepted: TxEnvelope[] = [];
+      let evidenceAttempted = 0;
+      let evidenceAttemptBytes = 0;
       for (const tx of candidates) {
+        if (tx.type === TxType.SLASH) {
+          const size = encodeSignedTx(tx).length;
+          if (
+            evidenceAttempted >= MAX_SLASH_VERIFICATIONS_PER_BLOCK ||
+            evidenceAttemptBytes + size > MAX_SLASH_VERIFICATION_BYTES_PER_BLOCK
+          ) {
+            // Left in the pool on purpose: this is a candidate for a later slot,
+            // not a rejected transaction. Dropping it here would let one peer
+            // decide which accusations a node is willing to look at.
+            continue;
+          }
+          evidenceAttempted += 1;
+          evidenceAttemptBytes += size;
+        }
         const trial = working.clone();
         trial.advanceBlock(height, timestamp);
         try {

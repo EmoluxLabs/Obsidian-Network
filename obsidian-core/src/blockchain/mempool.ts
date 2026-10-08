@@ -14,8 +14,9 @@
  *     the block builder.
  */
 
-import type { TxEnvelope } from '../protocol/types.js';
+import { TxType, type TxEnvelope } from '../protocol/types.js';
 import { encodeSignedTx } from '../transactions/encode.js';
+import { slashEvidenceBytes } from '../transactions/executors/slash.js';
 
 export interface MempoolEntry {
   tx: TxEnvelope;
@@ -25,13 +26,35 @@ export interface MempoolEntry {
   seq: number;
 }
 
+/**
+ * Equivocation evidence is a resource class of its own.
+ *
+ * A SLASH transaction is free to submit (gas 0), costs the node public-key work
+ * to verify, and is the one transaction type a peer can produce in unlimited
+ * variety from unlimited addresses. The generic pool limits — count, bytes,
+ * per-sender — do not cover it: 10,000 evidence transactions from 10,000 fresh
+ * addresses fit inside them, and every one would be re-examined by every
+ * producer, every slot. So evidence gets its own ceiling on how many may be
+ * pending at once, how many one sender may hold, and how many bytes the class
+ * may occupy — checked BEFORE the generic eviction path, so a flood of reports
+ * can never push honest transactions out of the pool to make room for itself.
+ */
 export interface MempoolOptions {
   maxTransactions: number;
   maxBytes: number;
   maxPerSender: number;
+  /** Equivocation reports pending at once, across all senders. */
+  maxPendingEvidence: number;
+  /** Equivocation reports pending from one sender. */
+  maxEvidencePerSender: number;
+  /** Total canonical evidence bytes the pool will hold. */
+  maxEvidenceBytes: number;
 }
 
 export const DEFAULT_MEMPOOL_OPTIONS: MempoolOptions = {
+  maxPendingEvidence: 256,
+  maxEvidencePerSender: 8,
+  maxEvidenceBytes: 4 * 1024 * 1024,
   maxTransactions: 10_000,
   maxBytes: 32 * 1024 * 1024,
   maxPerSender: 64,
@@ -42,6 +65,10 @@ export class Mempool {
   private readonly bySender = new Map<string, Set<string>>();
   private bytes = 0;
   private sequence = 0;
+  /** Evidence accounting, kept alongside the generic counters. */
+  private evidenceCount = 0;
+  private evidenceBytes = 0;
+  private readonly evidencePerSender = new Map<string, number>();
 
   constructor(private readonly options: MempoolOptions = DEFAULT_MEMPOOL_OPTIONS) {}
 
@@ -61,6 +88,24 @@ export class Mempool {
       return { accepted: false, reason: `sender pool quota (${this.options.maxPerSender}) reached` };
     }
     if (bytes > this.options.maxBytes) return { accepted: false, reason: 'transaction exceeds mempool byte budget' };
+    // Evidence first, and ahead of eviction: a report may not displace an honest
+    // transaction to get in, and a flood may not fill the pool with reports.
+    const evidenceSize = tx.type === TxType.SLASH ? slashEvidenceBytes(tx.body) : null;
+    if (evidenceSize !== null) {
+      const perSender = this.evidencePerSender.get(tx.sender) ?? 0;
+      if (this.evidenceCount >= this.options.maxPendingEvidence) {
+        return { accepted: false, reason: `pending equivocation evidence quota (${this.options.maxPendingEvidence}) reached` };
+      }
+      if (perSender >= this.options.maxEvidencePerSender) {
+        return { accepted: false, reason: `sender equivocation evidence quota (${this.options.maxEvidencePerSender}) reached` };
+      }
+      if (this.evidenceBytes + evidenceSize > this.options.maxEvidenceBytes) {
+        return { accepted: false, reason: 'equivocation evidence byte budget exhausted' };
+      }
+      this.evidenceCount += 1;
+      this.evidenceBytes += evidenceSize;
+      this.evidencePerSender.set(tx.sender, perSender + 1);
+    }
     if (this.byId.size >= this.options.maxTransactions || this.bytes + bytes > this.options.maxBytes) {
       if (!this.evictFor(bytes, tx.gas)) {
         return {
@@ -105,6 +150,16 @@ export class Mempool {
     if (!entry) return;
     this.byId.delete(txId);
     this.bytes -= entry.bytes;
+    // Release the evidence reservation with the transaction, or the class would
+    // slowly fill up with reports that are no longer here.
+    const released = slashEvidenceBytes(entry.tx.body);
+    if (entry.tx.type === TxType.SLASH && released !== null) {
+      this.evidenceCount = Math.max(0, this.evidenceCount - 1);
+      this.evidenceBytes = Math.max(0, this.evidenceBytes - released);
+      const perSender = this.evidencePerSender.get(entry.tx.sender) ?? 0;
+      if (perSender <= 1) this.evidencePerSender.delete(entry.tx.sender);
+      else this.evidencePerSender.set(entry.tx.sender, perSender - 1);
+    }
     const senderSet = this.bySender.get(entry.tx.sender);
     senderSet?.delete(txId);
     if (senderSet && senderSet.size === 0) this.bySender.delete(entry.tx.sender);

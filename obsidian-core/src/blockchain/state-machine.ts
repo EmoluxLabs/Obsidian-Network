@@ -26,6 +26,7 @@ import { ErrCode, ProtocolError, reject } from '../protocol/errors.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
 import { validateTxStructure, decodeSignedTx } from '../transactions/encode.js';
 import { executeTransaction } from '../transactions/index.js';
+import { slashEvidenceBytes } from '../transactions/executors/slash.js';
 import { processNameExpiry } from '../transactions/executors/ons.js';
 import { processNodeRewardRoutine } from '../economy/settlement.js';
 import { processValidatorBookkeeping } from '../transactions/executors/validator.js';
@@ -82,6 +83,40 @@ export function applyTransactions(
   const claimsPerWallet = new Map<string, number>();
   const events: ProtocolEvent[] = [];
   let gasBaseTotal = 0n;
+  // Equivocation evidence is the one thing in a block whose verification cost a
+  // submitter controls: each report costs public-key work, and a peer can pool
+  // as many as it likes. So the count and the canonical bytes a block may carry
+  // are CONSENSUS limits — the same numbers on every node, committed through the
+  // parameter hash — and a block over budget is refused outright rather than
+  // silently truncated. A report that does not fit is not rejected: it stays in
+  // the pool for a later block, and SLASH stays submittable by anyone.
+  //
+  // Counted in a PRE-PASS, before a single report is executed. Verification is
+  // the expensive part, so an over-budget block must cost the node nothing but
+  // the counting: a peer that could make a node verify eight accusations before
+  // refusing the ninth would already have bought the work it was denied.
+  {
+    let evidenceCount = 0;
+    let evidenceBytes = 0;
+    for (const tx of transactions) {
+      if (tx.type !== TxType.SLASH) continue;
+      const bytes = slashEvidenceBytes(tx.body);
+      if (bytes === null) continue;
+      evidenceCount += 1;
+      evidenceBytes += bytes;
+      if (
+        evidenceCount > CONSENSUS_PARAMS.consensus.slashing.maxEvidencePerBlock ||
+        evidenceBytes > CONSENSUS_PARAMS.consensus.slashing.maxEvidenceBytesPerBlock
+      ) {
+        reject(
+          ErrCode.EVIDENCE_LIMIT,
+          `a block may carry at most ${CONSENSUS_PARAMS.consensus.slashing.maxEvidencePerBlock} ` +
+            `equivocation reports (${CONSENSUS_PARAMS.consensus.slashing.maxEvidenceBytesPerBlock} bytes of evidence)`,
+          { height: ctx.height, evidenceCount, evidenceBytes },
+        );
+      }
+    }
+  }
 
   for (const tx of transactions) {
     const txId = tx.id;
