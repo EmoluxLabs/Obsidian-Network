@@ -58,6 +58,50 @@ The arrow never points backwards. Concretely:
 9. **One chain, one history: reorgs deeper than 256 blocks are refused.** Above
    that depth the node stops rather than pretending; this is a deliberate
    conservative bound, not an oversight.
+10. **One validator is one vote, and the bond is the admission barrier — not vote
+    weight.** Every active validator holds exactly 20,000 OBS, casts exactly one
+    finality vote, and counts exactly once in the committee hash and the 2/3+1
+    quorum. Nothing is weighted by stake, and bond size cannot buy influence:
+    a second seat costs a second full bond. That makes the honest cost of
+    controlling a quorum *n/2 × 20,000 OBS plus the ability to lose half of it on
+    a provable offence*, but it also means the barrier to entry is a fixed amount
+    of capital rather than a share of a pool. **This is a deliberate design
+    choice, not an oversight, and it is not being changed here.** A
+    stake-weighted upgrade would be a separate, larger change: the quorum rule,
+    the committee hash, the certificate format, the evidence rules, the P2P
+    messages and every test would have to move together, because a committee hash
+    computed one way and a quorum counted another way is a consensus split. It is
+    documented as future work in `docs/consensus.md`, not implemented.
+11. **Sybil resistance comes from the bond, and only from the bond.** There is no
+    identity check, no proof of personhood and no anti-collusion mechanism: anyone
+    who can fund *k* separate 20,000 OBS bonds controls *k* seats and *k* votes,
+    and no amount of code in this repository can tell the difference between one
+    operator with ten seats and ten operators. The protocol's answer is economic
+    — each seat costs a full bond and each offence forfeits half of it — and the
+    honest statement of the residual risk is that a well-funded single actor can
+    hold a majority. Mitigations that exist: the exact bond (no discount, no
+    partial seat), duplicate-identity prevention (a registration binds one key to
+    one sender, and a slashed registration cannot re-register without claiming
+    the remainder and bonding a fresh 20,000), and equal voting weight so that
+    splitting a large holding across seats buys no extra influence.
+12. **No independent security audit has been performed.** The analysis in this
+    repository — including the 1.6.1 consensus and slashing remediation — was
+    written and reviewed by the same people who wrote the code, with adversarial
+    tests as the check. That is not a substitute for an external review, and no
+    claim of independent verification is made anywhere in these documents.
+13. **Crash and power-loss behaviour is reasoned about and unit-tested, not
+    tested against real hardware.** Durability follows a fixed order (block, then
+    state and events, then the canonical marker and checkpoint, then the in-memory
+    head, then publication), and the tests simulate a process that dies between
+    steps by rebuilding from storage. Nobody has pulled the plug on a machine
+    running this node, and no filesystem-level fault injection has been run.
+14. **The network layer has not been tested against a hostile peer.** Per-link
+    token buckets, bounded queues, bounded evidence and the relay caps are all
+    implemented and unit-tested, and every peer-supplied object is validated
+    before it is trusted. What has not been done is a sustained adversarial
+    campaign: no fuzzed handshake, no eclipse attempt, no partition-and-rejoin
+    soak, no measurement of a node's behaviour under a real sybil flood. The
+    bounds are there; the confidence that they are sufficient is not.
 
 ## 4. Threats and mitigations
 

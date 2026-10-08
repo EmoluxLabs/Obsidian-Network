@@ -164,31 +164,13 @@ export interface StateDelta {
 }
 
 /**
- * Protocol time at which a validator's jail ends, or null when it is not jailed.
- *
- * A JAILED record with no term returns null and is treated as jailed for ever:
- * the term is what makes a jail end, and guessing a default would let a
- * malformed record free a validator that the chain had removed.
+ * The jail predicates live in `protocol/params.ts`, beside the parameter they
+ * interpret, so that the browser-safe validator executor can use the same rule
+ * the chain does without reaching into node-only state code. Re-exported here
+ * because this is where world state answers "is this validator active".
  */
-export function jailEndsAt(validator: { status: string; jailedUntilTime?: number }): number | null {
-  if (validator.status !== 'JAILED') return null;
-  const until = validator.jailedUntilTime;
-  if (typeof until !== 'number' || !Number.isFinite(until)) return null;
-  return until;
-}
-
-/**
- * Whether a jail has lapsed at `atTimestamp`.
- *
- * Deliberately a pure function of committed state and a protocol timestamp: the
- * same question asked about the same block gets the same answer on every node,
- * and it keeps working on a chain that has stopped producing blocks — which is
- * exactly the chain a jail can cause once it empties the active set.
- */
-export function jailIsOver(validator: { status: string; jailedUntilTime?: number }, atTimestamp: number): boolean {
-  const until = jailEndsAt(validator);
-  return until !== null && atTimestamp >= until;
-}
+export { jailEndsAt, jailIsOver } from '../protocol/params.js';
+import { jailIsOver } from '../protocol/params.js';
 
 export class WorldState {
   readonly s: MutableState;

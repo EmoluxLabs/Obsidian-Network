@@ -7,21 +7,69 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.6.0 that is `4a2883b210c4a7aeb873f9d669e2476f`.
+a node running it. For 1.6.1 that is `2dd76ca2b2305d725f3a975bfca04eb5`.
 
 ---
 
-## [1.6.0] — 2026-10-07
+## [1.6.1] — 2026-10-08
 
 **Consensus-breaking, new-genesis release for a pre-launch network.** Params hash
-is `4a2883b210c4a7aeb873f9d669e2476f`; mainnet genesis id is
-`3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c` and genesis block hash is
-`cdae9adc8e17f662c689b185e804d8c77c237be27e0ec04e57e0a6214990a4e5`. A 1.6.0
-node rejects 1.5.x peers and data directories, and it does not migrate a 1.5
-chain: this release is for an unstarted network. 1.5.x release archives and the
-1.5 historical record in this changelog are untouched.
+is `2dd76ca2b2305d725f3a975bfca04eb5`; mainnet genesis id is
+`56ec455d8afac5ef4f7d636ac03ef9e39bd5788f` and genesis block hash is
+`74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3` (all three
+printed by `GET /health` on a running node). A 1.6.1 node rejects 1.6.0 peers at
+the handshake, refuses a 1.6.0 data directory, and does not migrate a 1.6.0
+chain: the genesis identity moved, so this release is for an unstarted network.
 
-### Consensus and security
+1.6.1 exists because a 1.6.0 follow-up fixed a slashing-liability rule *without
+moving the protocol identity*. A node that applies the new rule and a node that
+does not would compute different state roots under the same version string, and
+nothing — no handshake, no genesis check, no state-root comparison — could tell
+them apart. That release was never launched; this one re-issues the same rules
+under a new identity. Everything 1.6.0 established is carried below unchanged,
+and this repository keeps one changelog entry: the release it ships.
+
+### 1.6.1 consensus and slashing remediation
+
+* **The protocol identity moved with the rules it describes** (`1.6.0` →
+  `1.6.1`, params hash `4a2883b2…` → `2dd76ca2…`, and with it all four genesis
+  ids). Identity is derived, not transcribed: `CONSENSUS_PARAMS` feeds
+  `computeParamsHash`, the document feeds `genesisId`, and both feed the state
+  root, the handshake, the finality signature domain and every signed message.
+  A node on 1.6.0 and a node on 1.6.1 cannot agree on a block, a certificate, a
+  vote or a handshake, and the two cannot be confused for one another.
+* **Whether production is open is consensus state, not an inference from a
+  count.** `validatorModeEstablished` is committed in the state root *ahead of*
+  the validator list, set only by the first successful registration, never
+  cleared, and refused if absent from a snapshot (snapshot format 2 → 3). An
+  established chain with no active validator halts for every round instead of
+  reopening to any node — the old rule read "no validators" as "bootstrap", so a
+  jail that emptied the set handed the chain to whoever could produce a block.
+* **A jail term is a duration, not a block count.** `jailedUntilTime`
+  (`jailSlots × targetBlockSeconds` = 50,400 s) is committed state; the term
+  lapses in the first block whose timestamp reaches it, and may lapse in a block
+  the jailed validator itself produces. A height-denominated term could never
+  expire on a chain that had stopped producing — and stopping is what a jail can
+  cause.
+* **One predicate decides whether a finality vote is valid.**
+  `validateCanonicalFinalityVote` (`src/consensus/finality-vote.ts`) is the only
+  implementation; vote admission, restoration, certificate verification,
+  equivocation detection, evidence verification and block execution all call it,
+  against the historical committee and the historical schedule. Both halves of an
+  accusation must satisfy it, so a node cannot be made to slash on a vote it
+  would have rejected.
+* **Slash evidence is bounded before it is verified.** A block carries at most 8
+  reports and 65,536 bytes of evidence (`ERR_EVIDENCE_LIMIT`), counted in a
+  pre-pass before any signature is checked; a producer verifies at most 32
+  reports and 1 MiB per attempt; the mempool holds 256 pending reports, 8 per
+  sender, in 4 MiB, checked before generic eviction. Submission stays
+  permissionless and a report that does not fit waits rather than being dropped.
+* **Verification is separated from application.** `verifyEvidence` is pure —
+  safe in P2P admission, mempool, simulation and certificate paths — while
+  `applyEquivocationSlash` alone mutates state. There is one implementation of
+  each, so the paths cannot drift.
+
+### Consensus and security (carried from the 1.6.0 ruleset)
 
 * **Finality bootstraps only from a public, genesis-committed set.** The
   bootstrap validator keys are a protocol constant
@@ -162,5 +210,17 @@ chain: this release is for an unstarted network. 1.5.x release archives and the
 
 * No claim of general BFT, universal immutability, production readiness,
   independent cryptographic review, or physical power-loss testing.
-* No automatic migration from 1.5.x, and no mainnet value transfer: a 1.6
+* **No independent security audit.** The 1.6.1 remediation was written and
+  reviewed by the same people who wrote the code, with adversarial tests as the
+  check. `docs/security-model.md` §3 says this in the same words.
+* **No power-loss or hardware crash testing.** Durability follows a fixed write
+  order and the suites simulate a process dying between steps by rebuilding from
+  storage; nobody has pulled the plug on a machine running this node.
+* **No hostile-peer testing.** The bounds are implemented and unit-tested, but no
+  fuzzed handshake, eclipse attempt, partition soak or sybil flood has been run
+  against a live node.
+* **No signed release.** `releases/` carries no `SHA256SUMS.asc`;
+  `scripts/verify-release.sh` prints `UNSIGNED RELEASE` rather than passing
+  quietly, and `docs/release-process.md` §5 states the operational requirement.
+* No automatic migration from 1.6.0, and no mainnet value transfer: a 1.6
   network starts from its own genesis.

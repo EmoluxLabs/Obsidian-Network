@@ -12,10 +12,10 @@ before it has users than after.
 |---|---|
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
-| Genesis id | `3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c` |
-| Genesis hash | `cdae9adc8e17f662c689b185e804d8c77c237be27e0ec04e57e0a6214990a4e5` |
-| Protocol version | `1.6.0` |
-| Params hash | `4a2883b210c4a7aeb873f9d669e2476f` — published at `/params`; must be identical on every node |
+| Genesis id | `56ec455d8afac5ef4f7d636ac03ef9e39bd5788f` |
+| Genesis hash | `74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3` |
+| Protocol version | `1.6.1` |
+| Params hash | `2dd76ca2b2305d725f3a975bfca04eb5` — published at `/params`; must be identical on every node |
 | Default RPC port | 8630 |
 | Default p2p port | 8631 |
 | Address prefix | `obs1` |
@@ -33,10 +33,10 @@ derived deterministically from the genesis document and the consensus
 parameters; if they differ, the two machines are not running the same protocol
 and must not be peered.
 
-**Protocol 1.6.0 activation is genesis-bound.** It rejects 1.5.x peers and data
+**Protocol 1.6.1 activation is genesis-bound.** It rejects 1.5.x peers and data
 directories; there is no rolling upgrade or automatic state migration. Use this
 runbook only for an unstarted network. If a value-bearing 1.4.x mainnet exists,
-stop: a separately reviewed migration design is required before 1.6.0 is used.
+stop: a separately reviewed migration design is required before 1.6.1 is used.
 
 ---
 
@@ -74,10 +74,10 @@ Never launch from a working copy. Launch from a signed release archive.
 sha256sum -c SHA256SUMS
 
 # the artifact you will actually run
-../scripts/verify-release.sh obsidian-node-operator-1.6.0.tar.gz
+../scripts/verify-release.sh obsidian-node-operator-1.6.1.tar.gz
 
 # the same code with its test suite attached, which the operator package omits
-../scripts/verify-release.sh obsidian-core-1.6.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.6.1.tar.gz --with-tests
 ```
 
 Expected: every archive reports `OK`, and the verifier prints the package
@@ -96,11 +96,11 @@ who produced them, because anyone who can edit the archive can edit
 `SHA256SUMS` beside it. The signed path is:
 
 ```bash
-../scripts/verify-release.sh obsidian-node-operator-1.6.0.tar.gz --signature-only
+../scripts/verify-release.sh obsidian-node-operator-1.6.1.tar.gz --signature-only
 ```
 
 That checks the detached signature against the publisher key in
-`keys/release-key.pub` and stops there. **The 1.6.0 archives in this repository
+`keys/release-key.pub` and stops there. **The 1.6.1 archives in this repository
 are unsigned**: no publisher key exists in the workspace that built them, so the
 command above reports that there is no signature to check rather than a success.
 Do not announce a launch on unsigned archives — generate the publisher key
@@ -238,7 +238,7 @@ Expect, in the log:
 
 ```
 chain ready   network=mainnet chainId=7777 height=0
-              genesisId=3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c
+              genesisId=56ec455d8afac5ef4f7d636ac03ef9e39bd5788f
 obsidian core ready   maxSupplyObs=21000000000000000000000000
 ```
 

@@ -159,9 +159,41 @@ self-appointed finality.
 
 Nodes retain and gossip bounded cryptographic evidence for one proposer signing
 different headers at the same height and round, or one validator signing
-incompatible finality targets for the same finalized anchor. Evidence carries
-both signed messages and is revalidated before storage or relay. Protocol 1.6.0
-adds no slashing or punishment economics.
+incompatible finality targets for the same finalized anchor. Evidence carries both
+signed messages and is revalidated before storage or relay; the penalty it
+triggers is in §4.3.
+
+**One predicate, every path.** Whether a finality vote is valid is answered by a
+single function, `validateCanonicalFinalityVote` in
+`obsidian-core/src/consensus/finality-vote.ts`. Vote admission, vote restoration
+after a restart, certificate construction and verification, equivocation
+detection, slash-evidence verification and block execution all call it, each
+supplying the same historical lookups (the committee in force at the anchor, the
+block by hash, the proposer schedule). Its rules, cheapest first: shape; protocol
+identity (version, network, chain, genesis, parameter hash); the caller's local
+anchor, when the caller asks for it; the parent's existence and height; the
+committee and the signer's membership **at the historical anchor**, which is a
+state lookup and so runs before any signature arithmetic; the signature over the
+finality domain with its key/address binding; the target's existence, height,
+parent, round and producer; and ordinary-or-bootstrap extension.
+
+Both halves of an accusation must satisfy it independently. Where a rule cannot be
+answered — the equivocated block was never received, the anchor state is not
+available — the verdict says so instead of guessing: consensus paths fail closed,
+and evidence verification is the one path that may proceed on an unverifiable
+target, because a node that never received the block must still recognise the
+offence rather than let an attacker escape slashing by withholding it.
+
+**Bounded cost.** A `SLASH` transaction is free to submit and expensive to verify,
+so the amount of evidence is limited in three places: a block may carry at most
+`consensus.slashing.maxEvidencePerBlock` (8) reports and
+`maxEvidenceBytesPerBlock` (65,536) bytes of evidence — a consensus limit, counted
+before any report is verified and refused as `ERR_EVIDENCE_LIMIT`; a producer
+verifies at most 32 reports and 1 MiB per attempt, leaving the rest pooled; and
+the mempool holds at most 256 pending reports, 8 per sender, in 4 MiB, checked
+before generic eviction so a flood cannot displace honest transactions. A report
+that does not fit is not rejected — it waits for a later block. Submitting stays
+permissionless.
 
 ---
 
@@ -224,8 +256,28 @@ fallback liveness. The round is derived
 from two timestamps already committed to the headers, so every node computes it
 from the block alone: no extra header field, no round negotiation.
 
-While **no** validator is registered, the network is in "genesis open" mode and
-any node may propose; the first registered validator closes it for every round.
+**Two modes, one committed indicator.** Whether production is open to any node is
+not inferred from how many validators a node can see — a count is exactly what a
+jail, an unbonding or a slash can empty, and it cannot say whether the set was
+ever non-empty. It is a consensus value, `validatorModeEstablished`, committed in
+the state root *ahead of* the validator list it qualifies (so two chains with the
+same empty list have different roots), restored on restart, and set only by the
+state transition of the first successful `VALIDATOR_REGISTER`:
+
+| mode | indicator | who may propose |
+| --- | --- | --- |
+| bootstrap | `false` | any node — this is how the first validator arrives at all |
+| established | `true`, for ever | the active set only; an empty active set **halts** the chain |
+
+Nothing in the protocol clears the indicator, so a chain can never re-derive
+bootstrap mode from a later state. An established chain with no active validator
+refuses every producer in every round — including the validator that just left —
+and resumes only by consensus: a jail term lapsing in time, or a fresh
+registration carrying a full 20,000 OBS bond. There is no operator action, no
+admin call and no permissionless fallback. A state snapshot that does not carry
+the indicator (format 2, from 1.6.0) is refused rather than read as "not
+established", which would hand an established chain back to open production.
+
 There is no auction or random leader election. Active validators also form the equal-membership PoT finality committee; that role does not grant power to mint or move balances, and bond size does not buy extra votes.
 
 **What the schedule is, and is not.** It is a rule about *when* a block may
@@ -254,18 +306,30 @@ Per block, the protocol tracks missed scheduled slots per validator:
   be earned by producing: an earlier rule, "any block it was not named in",
   could never jail an absent validator in a set of three or more, because an
   absent validator is the round-0 proposer of only one block in *n*;
-- crossing **40** net misses jails the validator for **10,080 blocks**
-  (about 14 hours) and emits `VALIDATOR_JAILED`;
-- when the jail expires the validator returns to `ACTIVE` with a reset counter
+- crossing **40** net misses jails the validator for **10,080 slots**
+  (`jailSlots × targetBlockSeconds` = **50,400 seconds**, about 14 hours) and
+  emits `VALIDATOR_JAILED`;
+- when the term lapses the validator returns to `ACTIVE` with a reset counter
   and emits `VALIDATOR_UNJAILED`.
 
-With a single validator that has died, the survivors wait out a round for each
-block until it is jailed after 41 blocks; then the validator set is empty,
-production is open to everyone, and blocks return to the normal pace.
+The term is a duration of **protocol time**, committed as `jailedUntilTime` in the
+state root, and not a number of blocks. A height-denominated term cannot expire
+on a chain that has stopped producing — and stopping is precisely what a jail can
+cause, once it empties the active set: the blocks that would count the jail down
+are the blocks nobody is allowed to produce. Measured in time, the term lapses
+whether or not anyone is producing, and the validator returns in the first block
+whose timestamp reaches it. That block may be produced by the validator the jail
+ended for, because the schedule is evaluated against the same committed term. A
+`JAILED` record with no term is treated as jailed for ever rather than as free.
 
-Jailing is height-driven and automatic: no dashboard action, no administrator
-and no vote. A jailed validator simply produces no blocks — and earns nothing
-from the node runner reward pool for the periods it was offline.
+With a single validator that has died, the survivors wait out a round for each
+block until it is jailed after 41 blocks. If that leaves the active set empty the
+chain **halts** — production does not open to everyone (see the two modes above).
+The chain restarts when the term lapses or when a new validator registers.
+
+Jailing is automatic: no dashboard action, no administrator and no vote. A jailed
+validator simply produces no blocks — and earns nothing from the node runner
+reward pool for the periods it was offline.
 
 ### Equivocation slashing
 

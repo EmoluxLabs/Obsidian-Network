@@ -486,3 +486,34 @@ export const MIN_CLAIM_REWARD = CONSENSUS_PARAMS.mining.dailyRewardFloor;
  */
 export const VALIDATOR_JAIL_SECONDS =
   CONSENSUS_PARAMS.consensus.jailSlots * CONSENSUS_PARAMS.block.targetBlockSeconds;
+
+/**
+ * Protocol time at which a validator's jail ends, or null when it is not jailed.
+ *
+ * A JAILED record with no term returns null and is treated as jailed for ever:
+ * the term is what makes a jail end, and guessing a default would let a
+ * malformed record free a validator that the chain had removed.
+ */
+export function jailEndsAt(validator: { status: string; jailedUntilTime?: number }): number | null {
+  if (validator.status !== 'JAILED') return null;
+  const until = validator.jailedUntilTime;
+  if (typeof until !== 'number' || !Number.isFinite(until)) return null;
+  return until;
+}
+
+/**
+ * Whether a jail has lapsed at `atTimestamp`.
+ *
+ * Deliberately a pure function of committed state and a protocol timestamp: the
+ * same question asked about the same block gets the same answer on every node,
+ * and it keeps working on a chain that has stopped producing blocks — which is
+ * exactly the chain a jail can cause once it empties the active set.
+ *
+ * It lives beside the parameter it interprets, in a module the browser build
+ * keeps, because the validator executor needs the same answer the chain
+ * computes: a browser-safe module may not reach into node-only state code.
+ */
+export function jailIsOver(validator: { status: string; jailedUntilTime?: number }, atTimestamp: number): boolean {
+  const until = jailEndsAt(validator);
+  return until !== null && atTimestamp >= until;
+}

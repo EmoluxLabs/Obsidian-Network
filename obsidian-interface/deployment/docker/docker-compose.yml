@@ -15,7 +15,7 @@ services:
       # Repository root: the Dockerfile builds obsidian-core first.
       context: ../../..
       dockerfile: obsidian-interface/deployment/docker/Dockerfile
-    image: obsidian/interface:1.6.0
+    image: obsidian/interface:1.6.1
     restart: unless-stopped
     environment:
       # Which network this interface serves. Required, no default: it decides

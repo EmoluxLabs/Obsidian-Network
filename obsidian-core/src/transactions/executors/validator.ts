@@ -12,8 +12,7 @@
  */
 
 import { Reader, Writer } from '../../protocol/encoding.js';
-import { CONSENSUS_PARAMS, VALIDATOR_JAIL_SECONDS } from '../../protocol/params.js';
-import { jailIsOver } from '../../blockchain/state.js';
+import { CONSENSUS_PARAMS, VALIDATOR_JAIL_SECONDS, jailIsOver } from '../../protocol/params.js';
 import { ErrCode, reject } from '../../protocol/errors.js';
 import { ValidatorOp, type TxEnvelope, type ValidatorBody } from '../../protocol/types.js';
 import { assertAmount, assertGas } from '../helpers.js';

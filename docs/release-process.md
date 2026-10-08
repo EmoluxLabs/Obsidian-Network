@@ -33,9 +33,9 @@ curl -s localhost:8630/version | jq .
 
 There are two numbers, and they move for different reasons:
 
-- **Software version** (`1.6.0`) increments for any shipped change — code,
+- **Software version** (`1.6.1`) increments for any shipped change — code,
   interface, tooling, documentation. Most releases do not change consensus.
-- **Protocol version** (`1.6.0`) increments only when a rule changes: block
+- **Protocol version** (`1.6.1`) increments only when a rule changes: block
   validity, state transitions, encoding, hashing, or an economic parameter.
   That is a hard fork. It changes the params hash, so **every node must upgrade
   together**; a node running a different protocol version is refused at the
@@ -84,8 +84,8 @@ started and probed by the `docker` CI job on every push.
 
 ```bash
 git status                                  # must be clean; the script refuses a dirty tree
-git tag -a v1.6.0 -m "Obsidian Network 1.6.0 - protocol 1.6.0"
-git push origin v1.6.0
+git tag -a v1.6.1 -m "Obsidian Network 1.6.1 - protocol 1.6.1"
+git push origin v1.6.1
 ./scripts/package-releases.sh               # the release gate; takes several minutes
 cd releases && sha256sum -c SHA256SUMS      # every line must print OK
 ```
@@ -119,8 +119,8 @@ release.
 ```bash
 cd releases
 sha256sum -c SHA256SUMS                                  # integrity
-../scripts/verify-release.sh obsidian-core-1.6.0.tar.gz --with-tests
-../scripts/verify-release.sh obsidian-node-operator-1.6.0.tar.gz
+../scripts/verify-release.sh obsidian-core-1.6.1.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-node-operator-1.6.1.tar.gz
 ```
 
 `verify-release.sh` refuses any archive not listed in `SHA256SUMS`, extracts into
@@ -173,13 +173,13 @@ the message telling the operator which side must upgrade.
 Consequences worth being explicit about:
 
 - Two software versions with the same protocol version **do** peer (for example
-  1.6.0 and a later 1.6.1), provided the older one is not below
+  1.6.1 and a later 1.6.1), provided the older one is not below
   `MIN_CORE_VERSION`.
-- Protocol 1.6.0 nodes reject 1.5.x during the signed handshake. Their changed
+- Protocol 1.6.1 nodes reject 1.5.x during the signed handshake. Their changed
   params hash and deterministic genesis identities also prevent data-directory
   sharing. There is no hidden activation height or automatic state migration.
-- Protocol 1.6.0 is therefore a **genesis-bound activation**: launch an unstarted
-  network from the published 1.6.0 genesis, or deliberately reset disposable
+- Protocol 1.6.1 is therefore a **genesis-bound activation**: launch an unstarted
+  network from the published 1.6.1 genesis, or deliberately reset disposable
   dev/test/staging. Do not roll validators one at a time. If a value-bearing
   1.5.x chain exists, stop and design and review a separate explicit migration;
   this release does not provide one.

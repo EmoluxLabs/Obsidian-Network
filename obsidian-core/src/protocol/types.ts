@@ -674,7 +674,11 @@ export interface ProtocolEvent {
 }
 
 export interface StateSnapshot {
-  /** Lossless snapshot format. v1.6.0 uses format 2; older snapshots are not compatible. */
+  /**
+   * Lossless snapshot format. 1.6.1 uses format 3 (it adds the committed
+   * validator-admission mode and the time-based jail term); snapshots from 1.6.0
+   * and older are not compatible and are refused rather than partially read.
+   */
   snapshotVersion?: number;
   /** Network identity fields make cross-network restores fail closed. */
   networkId?: string;

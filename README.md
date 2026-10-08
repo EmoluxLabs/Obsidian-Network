@@ -125,7 +125,7 @@ node --test tests/e2e/ecosystem.test.mjs                            # the interf
 node scripts/check-invariants.mjs                                   # the protocol and economic invariants
 ./scripts/package-releases.sh                                       # runs all of the above, then builds the archives + SHA256SUMS
 cd releases && sha256sum -c SHA256SUMS
-../scripts/verify-release.sh obsidian-core-1.6.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.6.1.tar.gz --with-tests
 ```
 
 The suites, the invariant check and the packaging gate fail loudly if anything drifts, including
