@@ -45,18 +45,19 @@ fun MiningScreen(
     val link by repository.link.collectAsState()
 
     ScreenShell(title = "Mining", kicker = "Proof of Time", onBack = onBack) {
-        when (link) {
+        val current = link
+        when (current) {
             is ChainLink.Online -> {
                 ObsidianCard {
                     SectionLabel("NETWORK")
                     Spacer(Modifier.height(ObsidianSpace.S))
-                    ObsidianRow("Block height", ChainValues.count(link.health.height), mono = true)
-                    ObsidianRow("Active miners", link.status.activeMiners.toString(), mono = true)
-                    ObsidianRow("Mining claims", ChainValues.count(link.status.metrics.miningClaims), mono = true)
-                    ObsidianRow("Reward pool", ChainValues.obs(link.status.pool.balance), mono = true)
-                    ObsidianRow("Pool lifetime inflow", ChainValues.obs(link.status.pool.lifetimeInflow), mono = true)
-                    ObsidianRow("Pool distributed", ChainValues.obs(link.status.pool.lifetimeDistributed), mono = true)
-                    ObsidianRow("Settled claims", ChainValues.count(link.status.pool.settledClaims), mono = true, divider = false)
+                    ObsidianRow("Block height", ChainValues.count(current.health.height), mono = true)
+                    ObsidianRow("Active miners", current.status.activeMiners.toString(), mono = true)
+                    ObsidianRow("Mining claims", ChainValues.count(current.status.metrics.miningClaims), mono = true)
+                    ObsidianRow("Reward pool", ChainValues.obs(current.status.pool.balance), mono = true)
+                    ObsidianRow("Pool lifetime inflow", ChainValues.obs(current.status.pool.lifetimeInflow), mono = true)
+                    ObsidianRow("Pool distributed", ChainValues.obs(current.status.pool.lifetimeDistributed), mono = true)
+                    ObsidianRow("Settled claims", ChainValues.count(current.status.pool.settledClaims), mono = true, divider = false)
                 }
 
                 Spacer(Modifier.height(ObsidianSpace.M))
@@ -148,16 +149,17 @@ fun MiningActiveScreen(repository: ObsidianRepository, onBack: () -> Unit) {
         SectionLabel("THE CHAIN IS PRODUCING")
         Spacer(Modifier.height(ObsidianSpace.XS))
         ObsidianCard {
-            when (link) {
+            val current = link
+            when (current) {
                 is ChainLink.Online -> {
-                    ObsidianRow("Block height", ChainValues.count(link.health.height), mono = true)
-                    ObsidianRow("Head hash", ChainValues.shorten(link.health.headHash), mono = true)
-                    ObsidianRow("Active miners", link.status.activeMiners.toString(), mono = true)
-                    ObsidianRow("Validators", link.status.validators.toString(), mono = true)
-                    ObsidianRow("Mempool", link.status.mempool.transactions.toString() + " tx", mono = true)
+                    ObsidianRow("Block height", ChainValues.count(current.health.height), mono = true)
+                    ObsidianRow("Head hash", ChainValues.shorten(current.health.headHash), mono = true)
+                    ObsidianRow("Active miners", current.status.activeMiners.toString(), mono = true)
+                    ObsidianRow("Validators", current.status.validators.toString(), mono = true)
+                    ObsidianRow("Mempool", current.status.mempool.transactions.toString() + " tx", mono = true)
                     ObsidianRow(
                         label = "Syncing",
-                        value = if (link.health.syncing) "Yes" else "No",
+                        value = if (current.health.syncing) "Yes" else "No",
                         divider = false,
                     )
                 }

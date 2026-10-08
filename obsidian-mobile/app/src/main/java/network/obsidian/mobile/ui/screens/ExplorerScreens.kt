@@ -117,15 +117,19 @@ fun ExplorerScreen(repository: ObsidianRepository, onBack: () -> Unit) {
         SectionLabel("LATEST")
         Spacer(Modifier.height(ObsidianSpace.XS))
         ObsidianCard {
-            when (link) {
+            // Read once into a local: `link` is a delegated property, so the
+            // compiler cannot smart-cast it, and re-reading it per row could in
+            // principle mix two different fetches on one card.
+            val current = link
+            when (current) {
                 is ChainLink.Online -> {
-                    ObsidianRow("Block height", ChainValues.count(link.health.height), mono = true)
-                    ObsidianRow("Head hash", ChainValues.shorten(link.health.headHash), mono = true)
-                    ObsidianRow("Peers", link.health.peers.toString(), mono = true)
-                    ObsidianRow("Transactions", ChainValues.count(link.status.metrics.transactions), mono = true)
-                    ObsidianRow("Accounts", ChainValues.count(link.status.metrics.accounts), mono = true)
-                    ObsidianRow("Active miners", link.status.activeMiners.toString(), mono = true)
-                    ObsidianRow("Validators", link.status.validators.toString(), mono = true, divider = false)
+                    ObsidianRow("Block height", ChainValues.count(current.health.height), mono = true)
+                    ObsidianRow("Head hash", ChainValues.shorten(current.health.headHash), mono = true)
+                    ObsidianRow("Peers", current.health.peers.toString(), mono = true)
+                    ObsidianRow("Transactions", ChainValues.count(current.status.metrics.transactions), mono = true)
+                    ObsidianRow("Accounts", ChainValues.count(current.status.metrics.accounts), mono = true)
+                    ObsidianRow("Active miners", current.status.activeMiners.toString(), mono = true)
+                    ObsidianRow("Validators", current.status.validators.toString(), mono = true, divider = false)
                 }
                 is ChainLink.Degraded -> ErrorBlock(
                     title = "Connection lost",
@@ -215,7 +219,7 @@ private fun search(
                 onSuccess = { names ->
                     val match = names.firstOrNull { it.equals(query, ignoreCase = true) }
                     if (match == null) onResult(null, null, "No name '$query' is registered.")
-                    else onResult("ONS NAME", match)
+                    else onResult("ONS NAME", match, null)
                 },
                 onFailure = { onResult(null, null, it.message ?: "Names could not be read") },
             )
@@ -223,7 +227,7 @@ private fun search(
             Addresses.isValid(query) -> api.rpcBalance(query).fold(
                 onSuccess = { element ->
                     if (element == null) onResult(null, null, "No account state for that address.")
-                    else onResult("ADDRESS", element.toString())
+                    else onResult("ADDRESS", element.toString(), null)
                 },
                 onFailure = { onResult(null, null, it.message ?: "Balance could not be read") },
             )
@@ -231,7 +235,7 @@ private fun search(
             query.toLongOrNull() != null -> api.block(query.toLong()).fold(
                 onSuccess = { element ->
                     if (element == null) onResult(null, null, "No block at height $query.")
-                    else onResult("BLOCK $query", element.toString())
+                    else onResult("BLOCK $query", element.toString(), null)
                 },
                 onFailure = { onResult(null, null, it.message ?: "Block could not be read") },
             )
@@ -239,7 +243,7 @@ private fun search(
             else -> api.transaction(query).fold(
                 onSuccess = { element ->
                     if (element == null) onResult(null, null, "No transaction with that id.")
-                    else onResult("TRANSACTION", element.toString())
+                    else onResult("TRANSACTION", element.toString(), null)
                 },
                 onFailure = { onResult(null, null, it.message ?: "Transaction could not be read") },
             )
