@@ -54,6 +54,7 @@ import network.obsidian.mobile.identity.WatchProfile
 import network.obsidian.mobile.remote.Addresses
 import network.obsidian.mobile.remote.AuthConfig
 import network.obsidian.mobile.remote.MiningEligibility
+import network.obsidian.mobile.remote.PlatformAccount
 import network.obsidian.mobile.remote.BalanceResponse
 import network.obsidian.mobile.remote.ChainLink
 import network.obsidian.mobile.remote.ObsidianRepository
@@ -1566,7 +1567,305 @@ fun SettingsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit)
     var note by remember { mutableStateOf<String?>(null) }
     val link by repository.link.collectAsState()
 
+    // ── account state ────────────────────────────────────────────────────────
+    // Every action here is the platform's own endpoint. The app holds no account
+    // record of its own, so nothing below can succeed or fail except as the server
+    // says it did.
+    val scope = rememberCoroutineScope()
+    var platformUrl by remember { mutableStateOf(repository.platformUrl.value) }
+    var account by remember { mutableStateOf<PlatformAccount?>(null) }
+    var accountError by remember { mutableStateOf<String?>(null) }
+    var mfaSecret by remember { mutableStateOf<String?>(null) }
+    var mfaCode by remember { mutableStateOf("") }
+    var mfaNote by remember { mutableStateOf<String?>(null) }
+    var invites by remember { mutableStateOf<List<String>>(emptyList()) }
+    var inviteNote by remember { mutableStateOf<String?>(null) }
+    var walletAddress by remember { mutableStateOf("") }
+    var walletNote by remember { mutableStateOf<String?>(null) }
+    var recoveryEmail by remember { mutableStateOf("") }
+    var recoveryCode by remember { mutableStateOf("") }
+    var recoveryPassword by remember { mutableStateOf("") }
+    var recoveryNote by remember { mutableStateOf<String?>(null) }
+
+    val refreshAccount: () -> Unit = {
+        scope.launch {
+            repository.platform.me().fold(
+                { account = it; accountError = null },
+                { account = null; accountError = it.message },
+            )
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) { refreshAccount() }
+
     BlueprintPage(title = "SETTINGS") {
+        ObsidianCard {
+            SectionLabel("Obsidian platform")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            ObsidianTextField(
+                platformUrl, { platformUrl = it; note = null },
+                "Platform address", placeholder = ObsidianRepository.DEFAULT_PLATFORM_URL,
+            )
+            Spacer(Modifier.height(ObsidianSpace.S))
+            PrimaryButton(
+                "USE THIS PLATFORM", showArrow = false,
+                onClick = {
+                    val t = platformUrl.trim()
+                    if (!t.startsWith("http://") && !t.startsWith("https://")) {
+                        note = "Enter a full address starting http:// or https://"
+                    } else {
+                        repository.setPlatformUrl(t)
+                        note = "Now talking to $t"
+                        refreshAccount()
+                    }
+                },
+            )
+            if (note != null) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                Text(note!!, style = ObsidianType.Support, color = ObsidianColors.Success)
+            }
+            Spacer(Modifier.height(ObsidianSpace.S))
+            Text(
+                "One origin for the whole app: accounts, invitations, MFA, recovery, wallet " +
+                    "linking and the node's RPC all come from here.",
+                style = ObsidianType.Support,
+                color = ObsidianColors.Muted,
+            )
+        }
+
+        Spacer(Modifier.height(ObsidianSpace.M))
+        ObsidianCard {
+            SectionLabel("Account")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            val a = account
+            if (a != null) {
+                ObsidianRow("Signed in as", a.email.ifBlank { "—" })
+                ObsidianRow("Display name", a.displayName ?: "—")
+                ObsidianRow("Wallet", a.walletAddress ?: "Not linked", mono = true)
+                ObsidianRow(
+                    "Second factor",
+                    if (a.mfaEnabled) "Enrolled" else "Not enrolled",
+                    divider = false,
+                )
+            } else {
+                Text(
+                    accountError ?: "No session. Sign in to manage this account.",
+                    style = ObsidianType.Support,
+                    color = if (accountError != null) ObsidianColors.Danger else ObsidianColors.Muted,
+                )
+            }
+        }
+
+        // ── MFA enrolment ────────────────────────────────────────────────────
+        Spacer(Modifier.height(ObsidianSpace.M))
+        ObsidianCard {
+            SectionLabel("Second factor")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            Text(
+                "The platform requires MFA before an account may mine. Enrolment is two calls: " +
+                    "the server issues a secret, then accepts one code from your authenticator " +
+                    "to prove you hold it. Until that second call succeeds there is no second " +
+                    "factor, and this screen will not say otherwise.",
+                style = ObsidianType.Support,
+                color = ObsidianColors.Muted,
+            )
+            Spacer(Modifier.height(ObsidianSpace.S))
+            SecondaryButton(
+                "GET ENROLMENT SECRET", showArrow = false, enabled = account != null,
+                onClick = {
+                    scope.launch {
+                        repository.platform.mfaSetup().fold(
+                            {
+                                mfaSecret = (it as? kotlinx.serialization.json.JsonObject)
+                                    ?.let { o ->
+                                        ((o["secret"] ?: o["otpauth"] ?: o["uri"])
+                                            as? kotlinx.serialization.json.JsonPrimitive)?.content
+                                    } ?: it.toString()
+                                mfaNote = null
+                            },
+                            { mfaNote = it.message },
+                        )
+                    }
+                },
+            )
+            if (mfaSecret != null) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                ObsidianCard {
+                    Text(
+                        mfaSecret!!,
+                        style = ObsidianType.Mono,
+                        color = ObsidianColors.Ink,
+                    )
+                }
+                Spacer(Modifier.height(ObsidianSpace.S))
+                ObsidianTextField(mfaCode, { mfaCode = it; mfaNote = null }, "Code from your authenticator", placeholder = "000000")
+                Spacer(Modifier.height(ObsidianSpace.S))
+                PrimaryButton(
+                    "CONFIRM SECOND FACTOR", showArrow = false, enabled = mfaCode.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            repository.platform.mfaConfirm(mfaCode.trim()).fold(
+                                { mfaNote = "Second factor enrolled."; mfaSecret = null; mfaCode = ""; refreshAccount() },
+                                { mfaNote = it.message },
+                            )
+                        }
+                    },
+                )
+            }
+            if (mfaNote != null) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                Text(mfaNote!!, style = ObsidianType.Support, color = ObsidianColors.Muted)
+            }
+        }
+
+        // ── invitations ──────────────────────────────────────────────────────
+        Spacer(Modifier.height(ObsidianSpace.M))
+        ObsidianCard {
+            SectionLabel("Invitations")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            Text(
+                "Obsidian is invite only. The platform issues codes and enforces its own limit " +
+                    "per account; this app only asks for one and shows what the server returned.",
+                style = ObsidianType.Support,
+                color = ObsidianColors.Muted,
+            )
+            Spacer(Modifier.height(ObsidianSpace.S))
+            SecondaryButton(
+                "ISSUE AN INVITATION", showArrow = false, enabled = account != null,
+                onClick = {
+                    scope.launch {
+                        repository.platform.issueInvite().fold(
+                            {
+                                val code = (it as? kotlinx.serialization.json.JsonObject)
+                                    ?.get("invite")
+                                    ?.let { inv ->
+                                        ((inv as? kotlinx.serialization.json.JsonObject)?.get("code")
+                                            as? kotlinx.serialization.json.JsonPrimitive)?.content
+                                    }
+                                invites = if (code != null) invites + code else invites
+                                inviteNote = if (code != null) null else "The server issued no code."
+                            },
+                            { inviteNote = it.message },
+                        )
+                    }
+                },
+            )
+            Spacer(Modifier.height(ObsidianSpace.S))
+            SecondaryButton(
+                "LIST MY INVITATIONS", showArrow = false, enabled = account != null,
+                onClick = {
+                    scope.launch {
+                        repository.platform.invites().fold(
+                            {
+                                val list = (it as? kotlinx.serialization.json.JsonObject)
+                                    ?.get("invites")
+                                    ?.let { arr ->
+                                        (arr as? kotlinx.serialization.json.JsonArray)?.mapNotNull { e ->
+                                            ((e as? kotlinx.serialization.json.JsonObject)?.get("code")
+                                                as? kotlinx.serialization.json.JsonPrimitive)?.content
+                                        }
+                                    }
+                                invites = list.orEmpty()
+                                inviteNote = null
+                            },
+                            { inviteNote = it.message },
+                        )
+                    }
+                },
+            )
+            if (invites.isNotEmpty()) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                invites.forEachIndexed { i, code ->
+                    ObsidianRow("Invitation ${i + 1}", code, mono = true, divider = i != invites.lastIndex)
+                }
+            }
+            if (inviteNote != null) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                Text(inviteNote!!, style = ObsidianType.Support, color = ObsidianColors.Muted)
+            }
+        }
+
+        // ── wallet linking ───────────────────────────────────────────────────
+        Spacer(Modifier.height(ObsidianSpace.M))
+        ObsidianCard {
+            SectionLabel("Wallet")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            Text(
+                "Links a watch address to this account. Only the address is sent — never a key, " +
+                    "phrase or password. The server validates the bech32 form with its own " +
+                    "pattern and rejects anything else.",
+                style = ObsidianType.Support,
+                color = ObsidianColors.Muted,
+            )
+            Spacer(Modifier.height(ObsidianSpace.S))
+            ObsidianTextField(walletAddress, { walletAddress = it; walletNote = null }, "Obsidian address", placeholder = "obs1…")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            PrimaryButton(
+                "LINK THIS ADDRESS", showArrow = false,
+                enabled = account != null && Addresses.isValid(walletAddress.trim()),
+                onClick = {
+                    scope.launch {
+                        repository.platform.linkWallet(walletAddress.trim()).fold(
+                            { walletNote = "Linked."; refreshAccount() },
+                            { walletNote = it.message },
+                        )
+                    }
+                },
+            )
+            if (walletNote != null) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                Text(walletNote!!, style = ObsidianType.Support, color = ObsidianColors.Muted)
+            }
+        }
+
+        // ── recovery ─────────────────────────────────────────────────────────
+        Spacer(Modifier.height(ObsidianSpace.M))
+        ObsidianCard {
+            SectionLabel("Account recovery")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            Text(
+                "Spends one of the account's recovery codes to set a new password. Recovery codes " +
+                    "are single use: the server consumes the one that matches and it cannot be " +
+                    "used again.",
+                style = ObsidianType.Support,
+                color = ObsidianColors.Muted,
+            )
+            Spacer(Modifier.height(ObsidianSpace.S))
+            ObsidianTextField(recoveryEmail, { recoveryEmail = it; recoveryNote = null }, "Email", placeholder = "you@gmail.com")
+            Spacer(Modifier.height(ObsidianSpace.M))
+            ObsidianTextField(recoveryCode, { recoveryCode = it; recoveryNote = null }, "Recovery code", placeholder = "As issued at enrolment")
+            Spacer(Modifier.height(ObsidianSpace.M))
+            ObsidianTextField(
+                recoveryPassword, { recoveryPassword = it; recoveryNote = null },
+                "New password", placeholder = "At least 12 characters",
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            )
+            Spacer(Modifier.height(ObsidianSpace.S))
+            PrimaryButton(
+                "RESET PASSWORD", showArrow = false,
+                enabled = recoveryEmail.isNotBlank() && recoveryCode.isNotBlank() && recoveryPassword.isNotBlank(),
+                onClick = {
+                    scope.launch {
+                        repository.platform
+                            .recover(recoveryEmail.trim(), recoveryCode.trim(), recoveryPassword)
+                            .fold(
+                                {
+                                    recoveryNote = "Password reset. Sign in with the new one."
+                                    recoveryCode = ""; recoveryPassword = ""
+                                },
+                                { recoveryNote = it.message },
+                            )
+                    }
+                },
+            )
+            if (recoveryNote != null) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                Text(recoveryNote!!, style = ObsidianType.Support, color = ObsidianColors.Muted)
+            }
+        }
+
+        Spacer(Modifier.height(ObsidianSpace.M))
         ObsidianCard {
             ObsidianTextField(url, { url = it; note = null }, "Node address", placeholder = ObsidianRepository.DEFAULT_NODE_URL)
             Spacer(Modifier.height(ObsidianSpace.S))
