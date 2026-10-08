@@ -168,6 +168,40 @@ jobs:
           fi
           (cd ../artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
 
+      # The sandbox that drives this build cannot reach Actions' artefact storage,
+      # so the facts that matter about the package are printed here as notice
+      # annotations, where they can actually be read back: identity, permissions,
+      # launch entry point and signing status. This is also the evidence behind
+      # the permission summary — it comes from the built package, not from the
+      # manifest's intent.
+      - name: Inspect the built APK
+        run: |
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          APK=$(ls -1 app/build/outputs/apk/debug/*.apk | head -1)
+          echo "::notice title=APK file::$(basename "$APK") $(stat -c%s "$APK") bytes"
+          echo "::notice title=APK sha256::$(sha256sum "$APK" | cut -d' ' -f1)"
+          "$BT/aapt2" dump badging "$APK" \
+            | grep -E "^package:|launchable-activity:|sdkVersion:|targetSdkVersion:|uses-permission:|application-label:" \
+            | while IFS= read -r line; do echo "::notice title=APK badging::${line}"; done
+          echo "::notice title=APK contents (top level)::$(unzip -l "$APK" | awk 'NR>3 {print $4}' | grep -v '^$' | cut -d/ -f1 | sort -u | tr '\n' ' ')"
+          # Debug builds are signed with the Android debug key; a release build is
+          # unsigned unless the operator supplied a keystore. Either way, report it
+          # rather than letting anyone assume it is release-signed.
+          if "$BT/apksigner" verify --print-certs "$APK" > signer.txt 2>&1; then
+            grep -E "Signer #1 certificate DN|Signer #1 certificate SHA-256" signer.txt \
+              | while IFS= read -r line; do echo "::notice title=APK signing::${line}"; done
+          else
+            echo "::notice title=APK signing::not signed — $(head -1 signer.txt)"
+          fi
+          RELEASE=$(ls -1 app/build/outputs/apk/release/*.apk 2>/dev/null | head -1 || true)
+          if [ -n "${RELEASE:-}" ]; then
+            if "$BT/apksigner" verify "$RELEASE" > /dev/null 2>&1; then
+              echo "::notice title=Release APK::signed"
+            else
+              echo "::notice title=Release APK::UNSIGNED — install the debug APK, or supply OBSIDIAN_KEYSTORE secrets to sign the release"
+            fi
+          fi
+
       - name: Upload APK artefacts
         uses: actions/upload-artifact@v4
         with:
