@@ -5,6 +5,11 @@
  * product. It is not a directory of buttons. There are exactly three calls to
  * action — Start Mining, Create Wallet, Explorer — because those are the three
  * things a visitor can actually do with a decentralised network.
+ *
+ * The Android download sits below them rather than beside them, so the three
+ * remain the page's actions. It points at the GitHub release asset for the
+ * OBSIDIAN-debug.apk of the newest android-v* release — a permanent URL, not a CI
+ * artefact that expires.
  */
 
 import { layout } from '../lib/shell.js';
@@ -34,6 +39,28 @@ const hero = el(
     cta('/mine/', 'Start Mining', 'primary'),
     cta('/wallet/', 'Create Wallet', 'secondary'),
     cta('/explorer/', 'Explorer', 'quiet'),
+  ),
+  el(
+    'div',
+    { class: 'cta-row cta-row-app' },
+    // `latest/download/<asset>` always resolves to that asset in the newest
+    // release, so this link stays valid as new versions ship. It is a real file
+    // on a real release: OBSIDIAN-debug.apk, published by the Android workflow
+    // from a commit whose tests, lint and assembly were green.
+    el(
+      'a',
+      {
+        class: 'cta cta-secondary',
+        href: 'https://github.com/EmoluxLabs/Obsidian-Network/releases/latest/download/OBSIDIAN-debug.apk',
+        rel: 'noopener',
+      },
+      'Download Obsidian App',
+    ),
+    el(
+      'span',
+      { class: 'cta-note' },
+      'Android · debug-signed APK. The release build ships unsigned until a signing key is configured.',
+    ),
   ),
   el(
     'p',

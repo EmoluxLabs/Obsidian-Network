@@ -538,3 +538,8 @@ form.stack { display: flex; flex-direction: column; gap: 14px; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Android download: same button language as the three hero actions, on its own
+   line, with a note that says plainly what the file is. */
+.cta-row-app { margin-top: 14px; align-items: center; gap: 14px; flex-wrap: wrap; }
+.cta-note { font-size: 12.5px; color: var(--muted, #68707c); letter-spacing: 0.01em; }
