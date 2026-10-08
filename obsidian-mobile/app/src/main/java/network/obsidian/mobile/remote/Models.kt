@@ -17,6 +17,47 @@ import kotlinx.serialization.Serializable
  * define.
  */
 
+/**
+ * The node's mining eligibility answer for one address.
+ *
+ * Every field mirrors `MiningEligibility` in the protocol's `mining/rules.ts`, which
+ * derives it from protocol state and the including block's timestamp alone. Nothing
+ * here is computed on the device: the reward per claim in particular depends on how
+ * many miners are active, so a constant in this app would be wrong as soon as that
+ * count moved.
+ */
+data class MiningEligibility(
+    val eligible: Boolean,
+    val nextEligibleAt: Long,
+    val secondsRemaining: Long,
+    val claimsThisCycle: Int,
+    val claimsRemainingInCycle: Int,
+    val rewardPerClaim: String,
+    val claimIntervalSeconds: Long,
+    val maxClaimsPerCycle: Int,
+) {
+    companion object {
+        /** Reads the node's JSON, tolerating either a string or a number for the
+         *  reward, since the protocol serialises seals as a decimal string. */
+        fun from(element: JsonElement): MiningEligibility {
+            val o = element as? JsonObject ?: JsonObject(emptyMap())
+            fun str(key: String) = (o[key] as? JsonPrimitive)?.content ?: ""
+            fun long(key: String) = str(key).toLongOrNull() ?: 0L
+            fun int(key: String) = str(key).toIntOrNull() ?: 0
+            return MiningEligibility(
+                eligible = str("eligible").toBoolean(),
+                nextEligibleAt = long("nextEligibleAt"),
+                secondsRemaining = long("secondsRemaining"),
+                claimsThisCycle = int("claimsThisCycle"),
+                claimsRemainingInCycle = int("claimsRemainingInCycle"),
+                rewardPerClaim = str("rewardPerClaim"),
+                claimIntervalSeconds = long("claimIntervalSeconds").takeIf { it > 0 } ?: 14_400L,
+                maxClaimsPerCycle = int("maxClaimsPerCycle").takeIf { it > 0 } ?: 6,
+            )
+        }
+    }
+}
+
 @Serializable
 data class HealthResponse(
     val status: String = "",

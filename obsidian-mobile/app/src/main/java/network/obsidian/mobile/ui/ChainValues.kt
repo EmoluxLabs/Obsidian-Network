@@ -49,6 +49,28 @@ object ChainValues {
             ?.get("finalizedHeight")
             ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() }
 
+    /**
+     * A seal amount as OBS. The protocol's internal unit is the seal; the app never
+     * shows a raw seal count as though it were OBS.
+     */
+    fun seals(raw: String?): String {
+        val value = decimal(raw) ?: return "—"
+        return obs(value.divide(BigDecimal(100_000_000)).toPlainString(), 8)
+    }
+
+    /** A duration as the protocol counts it: hours, minutes and seconds. */
+    fun duration(seconds: Long): String {
+        if (seconds <= 0) return "0s"
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        val s = seconds % 60
+        return listOfNotNull(
+            if (h > 0) "${h}h" else null,
+            if (m > 0) "${m}m" else null,
+            if (s > 0 || (h == 0L && m == 0L)) "${s}s" else null,
+        ).joinToString(" ")
+    }
+
     /** Maximum supply, as the chain states it. */
     fun maximumSupply(supply: SupplyResponse?): String = supply?.maxSupplyObs?.let { obs(it, 0) } ?: "—"
 

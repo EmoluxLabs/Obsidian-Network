@@ -62,10 +62,10 @@ object AppGraph {
             LandingScreen(repository = repo, onNavigate = { nav.navigate(it) })
         },
         RouteEntry(R_SIGNUP, "Sign Up") { nav, _, store ->
-            SignUpScreen(store = store, onSignIn = { nav.navigate(R_SIGNIN) }, onDone = { nav.navigate(R_HOME) })
+            SignUpScreen(store = store, repository = repo, onSignIn = { nav.navigate(R_SIGNIN) }, onDone = { nav.navigate(R_HOME) })
         },
         RouteEntry(R_SIGNIN, "Sign In") { nav, _, store ->
-            SignInScreen(store = store, onUnlock = { nav.navigate(R_HOME) }, onSignUp = { nav.navigate(R_SIGNUP) })
+            SignInScreen(store = store, repository = repo, onUnlock = { nav.navigate(R_HOME) }, onSignUp = { nav.navigate(R_SIGNUP) })
         },
         RouteEntry(R_HOME, "Home") { nav, repo, store ->
             HomeScreen(store = store, repository = repo, onNavigate = { nav.navigate(it) })

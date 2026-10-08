@@ -52,6 +52,8 @@ import network.obsidian.mobile.edgenode.EdgeNodeTelemetry
 import network.obsidian.mobile.identity.ProfileStore
 import network.obsidian.mobile.identity.WatchProfile
 import network.obsidian.mobile.remote.Addresses
+import network.obsidian.mobile.remote.AuthConfig
+import network.obsidian.mobile.remote.MiningEligibility
 import network.obsidian.mobile.remote.BalanceResponse
 import network.obsidian.mobile.remote.ChainLink
 import network.obsidian.mobile.remote.ObsidianRepository
@@ -517,13 +519,28 @@ fun LandingScreen(
 // ── 3 & 4. SIGN UP / SIGN IN ─────────────────────────────────────────────────
 
 @Composable
-fun SignUpScreen(store: ProfileStore, onSignIn: () -> Unit, onDone: () -> Unit) {
+fun SignUpScreen(
+    store: ProfileStore,
+    repository: ObsidianRepository,
+    onSignIn: () -> Unit,
+    onDone: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var config by remember { mutableStateOf<AuthConfig?>(null) }
     var email by remember { mutableStateOf("") }
-    var label by remember { mutableStateOf("Main wallet") }
-    var address by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var label by remember { mutableStateOf("") }
     var referral by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
     var done by remember { mutableStateOf(false) }
+
+    // The form rules are the server's. Reading them stops the app asserting a
+    // minimum length or a domain list the platform has since changed.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        repository.platform.authConfig().fold({ config = it }, { error = it.message })
+    }
 
     // The blueprint's signup() has no hdr(): a centred mark, the wordmark, then
     // the heading. padding-top:34px, logo 76, wordmark at .22em, h1 at 26px.
@@ -542,66 +559,101 @@ fun SignUpScreen(store: ProfileStore, onSignIn: () -> Unit, onDone: () -> Unit) 
         Text("CREATE YOUR ACCOUNT", style = ObsidianType.HeadingLarge, color = ObsidianColors.Ink)
         Spacer(Modifier.height(6.dp))
         Text(
-            "Obsidian has no account server. This creates a profile on this device for an " +
-                "address you control; it does not register you with anyone.",
+            when {
+                config == null && error != null ->
+                    "The Obsidian platform could not be reached, so the sign-up rules are " +
+                        "unknown. Set its address in Settings. Nothing is guessed here."
+                config == null -> "Reading the sign-up rules from the Obsidian platform…"
+                else -> "Obsidian is invite only. Accounts use " +
+                    "${config!!.emailDomains.joinToString(" or ")}, a password of at least " +
+                    "${config!!.passwordMinLength} characters, and an invitation code. The " +
+                    "platform verifies the code; this app holds no list of valid ones."
+            },
             style = ObsidianType.Body,
             color = ObsidianColors.Muted,
         )
 
         if (done) {
             ObsidianCard {
-                SectionLabel("Profile created")
+                SectionLabel("Account created")
                 Spacer(Modifier.height(ObsidianSpace.S))
-                ObsidianRow("Address", Addresses.shorten(address), mono = true, divider = false)
+                ObsidianRow("Signed in as", email, divider = false)
             }
+            Spacer(Modifier.height(ObsidianSpace.M))
+            Text(
+                "The platform issued this device a session. Enrol a second factor from the " +
+                    "Account screen before you mine — the platform requires MFA for mining.",
+                style = ObsidianType.Support,
+                color = ObsidianColors.Muted,
+            )
             Spacer(Modifier.height(ObsidianSpace.M))
             PrimaryButton("CONTINUE", onClick = onDone, showArrow = false)
             return@BlueprintPage
         }
 
         ObsidianCard {
-            // The design shows a referral code because the reference is invite-only.
-            // The protocol has no invitation system, so the field is collected and
-            // format-checked, and the app says plainly that it cannot verify one.
-            // Claiming "code verified" would be a fabricated authorisation.
-            Text(
-                "Obsidian is non-custodial: there is no account server, so this creates a " +
-                    "profile on this device for an address you control. It does not register " +
-                    "you with anyone.",
-                style = ObsidianType.Support,
-                color = ObsidianColors.Muted,
-            )
-            Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianTextField(email, { email = it; error = null }, "Email (optional, stays on device)", placeholder = "you@example.com")
-            Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianTextField(label, { label = it; error = null }, "Profile label", placeholder = "Main wallet")
-            Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianTextField(address, { address = it; error = null }, "Obsidian address", placeholder = "obs1…", error = error)
+            ObsidianTextField(email, { email = it; error = null }, "Email", placeholder = "you@gmail.com")
             Spacer(Modifier.height(ObsidianSpace.M))
             ObsidianTextField(
-                referral,
-                { referral = it.uppercase(); error = null },
-                "Referral code (optional)", placeholder = "OBS-XXXX-XXXX")
-            Spacer(Modifier.height(ObsidianSpace.XS))
-            Text(
-                "Format is checked only. Obsidian publishes no invitation service, so this app " +
-                    "cannot and does not verify a code — entering one changes nothing on chain.",
-                style = ObsidianType.Support,
-                color = ObsidianColors.Muted,
+                password, { password = it; error = null },
+                "Password", placeholder = "At least ${config?.passwordMinLength ?: 12} characters",
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
             )
             Spacer(Modifier.height(ObsidianSpace.M))
+            ObsidianTextField(
+                confirm, { confirm = it; error = null },
+                "Confirm password", placeholder = "Repeat it",
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                error = error,
+            )
+            Spacer(Modifier.height(ObsidianSpace.M))
+            ObsidianTextField(
+                referral, { referral = it.trim(); error = null },
+                if (config?.accountsExist == false) "Genesis invitation" else "Invitation code",
+                placeholder = "Issued by an existing account",
+            )
+            Spacer(Modifier.height(ObsidianSpace.M))
+            ObsidianTextField(label, { label = it; error = null }, "Display name (optional)", placeholder = "Main wallet")
+            Spacer(Modifier.height(ObsidianSpace.M))
             PrimaryButton(
-                "CREATE ACCOUNT",
+                if (busy) "CREATING…" else "CREATE ACCOUNT",
                 showArrow = false,
+                enabled = !busy && config != null,
                 onClick = {
-                    error = if (referral.isNotBlank() && !Regex("^OBS-[A-Z0-9]{4}-[A-Z0-9]{4}$").matches(referral)) {
-                        "A referral code looks like OBS-XXXX-XXXX"
-                    } else null
-                    if (error == null) {
-                        when (val r = store.save(WatchProfile(label, address, null, System.currentTimeMillis()))) {
-                            is ProfileStore.SaveResult.Saved -> done = true
-                            is ProfileStore.SaveResult.Rejected -> error = r.reason
-                        }
+                    // Only the checks that cannot reach the server are made here.
+                    // Whether the invitation is real is the platform's call, and its
+                    // wording is shown verbatim: it distinguishes a spent code from an
+                    // address that is already taken, which the app cannot see.
+                    val minimum = config?.passwordMinLength ?: 12
+                    error = when {
+                        email.isBlank() -> "An email address is required."
+                        password.length < minimum -> "Password must be at least $minimum characters."
+                        password != confirm -> "Passwords do not match."
+                        referral.isBlank() -> "An invitation code is required. Obsidian is invite only."
+                        else -> null
+                    }
+                    if (error != null) return@PrimaryButton
+                    busy = true
+                    scope.launch {
+                        repository.platform
+                            .register(email.trim(), password, referral.trim(), label.trim().ifBlank { null })
+                            .fold(
+                                onSuccess = { account ->
+                                    store.save(
+                                        WatchProfile(
+                                            account.displayName ?: account.email,
+                                            account.walletAddress.orEmpty(),
+                                            null,
+                                            System.currentTimeMillis(),
+                                        ),
+                                    )
+                                    busy = false
+                                    done = true
+                                },
+                                onFailure = { error = it.message; busy = false },
+                            )
                     }
                 },
             )
@@ -611,10 +663,18 @@ fun SignUpScreen(store: ProfileStore, onSignIn: () -> Unit, onDone: () -> Unit) 
 }
 
 @Composable
-fun SignInScreen(store: ProfileStore, onUnlock: () -> Unit, onSignUp: () -> Unit) {
+fun SignInScreen(
+    store: ProfileStore,
+    repository: ObsidianRepository,
+    onUnlock: () -> Unit,
+    onSignUp: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
     val profiles = remember { store.all() }
-    var pin by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf(profiles.firstOrNull()?.label.orEmpty()) }
+    var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
     val target = profiles.firstOrNull()
 
     // signin(): padding-top:50px, logo 96, wordmark .22em, h1 at the default 30px.
@@ -632,49 +692,49 @@ fun SignInScreen(store: ProfileStore, onUnlock: () -> Unit, onSignUp: () -> Unit
         Spacer(Modifier.height(ObsidianSpace.XL))
         Text("WELCOME BACK", style = ObsidianType.Hero, color = ObsidianColors.Ink)
 
-        if (target == null) {
-            ObsidianCard {
-                Text(
-                    "No profile exists on this device. Because Obsidian has no account server, " +
-                        "there is nothing to sign into — an identity starts here, from an address " +
-                        "you control.",
-                    style = ObsidianType.Support,
-                    color = ObsidianColors.Muted,
-                )
-            }
-            Spacer(Modifier.height(ObsidianSpace.M))
-            PrimaryButton("CREATE ACCOUNT", onClick = onSignUp, showArrow = false)
-            return@BlueprintPage
-        }
-
         ObsidianCard {
-            ObsidianRow("Profile", target.label)
-            ObsidianRow("Address", Addresses.shorten(target.address), mono = true, divider = false)
+            ObsidianTextField(email, { email = it; error = null }, "Email", placeholder = "you@gmail.com")
             Spacer(Modifier.height(ObsidianSpace.M))
-            if (target.pinHash != null) {
-                ObsidianTextField(
-                    pin, { pin = it.filter(Char::isDigit).take(6); error = null },
-                    "Device lock",
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    error = error)
-                Spacer(Modifier.height(ObsidianSpace.M))
-            } else {
-                Text(
-                    "This profile has no device lock. The check below unlocks this device only — " +
-                        "it is not server authentication, because no server holds an account.",
-                    style = ObsidianType.Support,
-                    color = ObsidianColors.Muted,
-                )
-                Spacer(Modifier.height(ObsidianSpace.M))
-            }
+            ObsidianTextField(
+                password, { password = it; error = null },
+                "Password", placeholder = "Your password",
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                error = error,
+            )
+            Spacer(Modifier.height(ObsidianSpace.M))
             PrimaryButton(
-                "SIGN IN",
+                if (busy) "SIGNING IN…" else "SIGN IN",
                 showArrow = false,
+                enabled = !busy,
                 onClick = {
-                    if (target.pinHash == null) onUnlock()
-                    else if (store.checkPin(target.address, pin)) onUnlock()
-                    else { error = "That lock does not match"; pin = "" }
+                    if (email.isBlank() || password.isBlank()) {
+                        error = "Enter your email and password."
+                        return@PrimaryButton
+                    }
+                    busy = true
+                    scope.launch {
+                        repository.platform.login(email.trim(), password)
+                            .fold(
+                                onSuccess = { account ->
+                                    store.save(
+                                        WatchProfile(
+                                            account.displayName ?: account.email,
+                                            account.walletAddress.orEmpty(),
+                                            null,
+                                            System.currentTimeMillis(),
+                                        ),
+                                    )
+                                    busy = false
+                                    onUnlock()
+                                },
+                                onFailure = {
+                                    error = it.message
+                                    password = ""
+                                    busy = false
+                                },
+                            )
+                    }
                 },
             )
         }
@@ -782,8 +842,24 @@ private suspend fun readBalance(
 @Composable
 fun MineScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: (String) -> Unit) {
     val link by repository.link.collectAsState()
+    val scope = rememberCoroutineScope()
     val online = link as? ChainLink.Online
     val supply = online?.supply
+    val profile = remember { store.active() }
+    var eligibility by remember { mutableStateOf<MiningEligibility?>(null) }
+    var eligibilityError by remember { mutableStateOf<String?>(null) }
+
+    // The reward is read, never assumed. The protocol derives it from how many
+    // miners are active (claimRewardForActiveMiners), so a number written into this
+    // file would be wrong the moment that count moved. The reference HTML's fixed
+    // RATE=0.25 is exactly that mistake.
+    androidx.compose.runtime.LaunchedEffect(profile?.address, online?.status?.activeMiners) {
+        val address = profile?.address?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        repository.api.miningStatus(address).fold(
+            { eligibility = it?.let { e -> MiningEligibility.from(e) }; eligibilityError = null },
+            { eligibilityError = it.message },
+        )
+    }
 
     BlueprintPage(title = "MINING", onNavigate = onNavigate, nav = R_MINE) {
         ObsidianCard {
@@ -831,22 +907,76 @@ fun MineScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
 
         Spacer(Modifier.height(ObsidianSpace.M))
         ObsidianCard {
-            SectionLabel("This device")
+            SectionLabel("Mining status")
             Spacer(Modifier.height(ObsidianSpace.S))
-            Text("Not mining", style = ObsidianType.Statement, color = ObsidianColors.Ink)
-            Spacer(Modifier.height(ObsidianSpace.XS))
-            Text(
-                "Obsidian Mobile runs no miner and is not a validator. Producing a block needs a " +
-                    "registered bond and a signing key; this app has neither and does not " +
-                    "simulate having them. The blueprint's four-hour session and hourly rate are " +
-                    "demo values with no counterpart in the protocol, so they are not shown.",
-                style = ObsidianType.Support,
-                color = ObsidianColors.Muted,
-            )
+            val e = eligibility
+            when {
+                profile == null -> Text(
+                    "No account is linked, so the protocol has no mining state to report for " +
+                        "this device. Sign in and link a wallet address first.",
+                    style = ObsidianType.Support,
+                    color = ObsidianColors.Muted,
+                )
+                eligibilityError != null -> InlineStateBlock(
+                    title = "Eligibility unavailable",
+                    body = "The node did not answer getminingstatus for this address. No rate " +
+                        "is estimated in its place.",
+                )
+                e == null -> LoadingBlock(label = "Reading mining state")
+                else -> {
+                    Text(
+                        when {
+                            e.eligible -> "ELIGIBLE TO CLAIM"
+                            e.secondsRemaining > 0 -> "WAITING FOR INTERVAL"
+                            else -> "NOT ELIGIBLE"
+                        },
+                        style = ObsidianType.Statement,
+                        color = if (e.eligible) ObsidianColors.Success else ObsidianColors.Ink,
+                    )
+                    Spacer(Modifier.height(ObsidianSpace.XS))
+                    Text(
+                        // The blueprint's four-hour session turns out to be the real
+                        // claimIntervalSeconds. What was fake was the fixed 0.25 rate and
+                        // the local balance it added to; both are gone.
+                        "The protocol sets a claim interval and a reward per claim that depends " +
+                            "on how many miners are active. Every figure below is the node's own " +
+                            "computation for this address, not one the app chose.",
+                        style = ObsidianType.Support,
+                        color = ObsidianColors.Muted,
+                    )
+                    Spacer(Modifier.height(ObsidianSpace.S))
+                    ObsidianRow("Reward per claim", ChainValues.seals(e.rewardPerClaim), mono = true)
+                    ObsidianRow("Claim interval", "${e.claimIntervalSeconds / 3600} hours", mono = true)
+                    ObsidianRow(
+                        "Claims left this cycle",
+                        "${e.claimsRemainingInCycle} of ${e.maxClaimsPerCycle}",
+                        mono = true,
+                    )
+                    ObsidianRow(
+                        "Next claim in",
+                        if (e.eligible) "Now" else ChainValues.duration(e.secondsRemaining),
+                        mono = true,
+                    )
+                    ObsidianRow("Claims made this cycle", e.claimsThisCycle.toString(), mono = true)
+                    ObsidianRow(
+                        "Active miners",
+                        online?.status?.activeMiners?.toString() ?: "—",
+                        mono = true,
+                        divider = false,
+                    )
+                    Spacer(Modifier.height(ObsidianSpace.S))
+                    Text(
+                        "Claiming is a signed MINING_CLAIM transaction. This app holds no key, " +
+                            "so it reports eligibility and never submits a claim, never adds to " +
+                            "a balance and never counts down a reward that has not been earned.",
+                        style = ObsidianType.Support,
+                        color = ObsidianColors.Muted,
+                    )
+                }
+            }
             Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianRow("Address", profile(store)?.let { Addresses.shorten(it) } ?: "None attached", mono = true)
+            ObsidianRow("Address", profile?.address?.let { Addresses.shorten(it) } ?: "None attached", mono = true)
             ObsidianRow("Block height", ChainValues.count(online?.health?.height), mono = true)
-            ObsidianRow("Active miners", online?.status?.activeMiners?.toString() ?: "—", mono = true)
             ObsidianRow("Settled claims", ChainValues.count(online?.status?.pool?.settledClaims), mono = true, divider = false)
         }
 
@@ -1364,6 +1494,7 @@ fun ApiScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
 @Composable
 fun MenuScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: (String) -> Unit) {
     val link by repository.link.collectAsState()
+    val scope = rememberCoroutineScope()
     val profile = remember { store.active() }
 
     BlueprintPage(title = "MENU", onNavigate = onNavigate, nav = R_MENU) {
@@ -1401,7 +1532,15 @@ fun MenuScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
                 showArrow = false,
                 onClick = { onNavigate(R_SIGNIN) },
             )
-            DangerButton("SIGN OUT", onClick = { onNavigate(R_LANDING) })
+            DangerButton(
+                "SIGN OUT",
+                onClick = {
+                    // Destroys the session on the platform, then leaves. Signing out
+                    // locally only would leave a live cookie behind.
+                    scope.launch { repository.platform.logout() }
+                    onNavigate(R_LANDING)
+                },
+            )
             Spacer(Modifier.height(ObsidianSpace.XS))
             Text(
                 "There is no session to sign out of: Obsidian has no account server, so this " +
