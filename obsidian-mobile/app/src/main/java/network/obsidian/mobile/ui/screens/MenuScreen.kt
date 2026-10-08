@@ -8,7 +8,7 @@ import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Pickaxe
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.TravelExplore
@@ -92,7 +92,7 @@ fun MenuScreen(
             MenuRow("Home", onClick = { onNavigate(network.obsidian.mobile.Routes.LANDING) }, icon = Icons.Outlined.Home)
             MenuRow("Account", onClick = { onNavigate(network.obsidian.mobile.Routes.ACCOUNT) }, icon = Icons.Outlined.Person)
             MenuRow("Wallet", onClick = { onNavigate(network.obsidian.mobile.Routes.WALLET) }, icon = Icons.Outlined.AccountBalanceWallet)
-            MenuRow("Mining", onClick = { onNavigate(network.obsidian.mobile.Routes.MINING) }, icon = Icons.Outlined.Pickaxe, divider = false)
+            MenuRow("Mining", onClick = { onNavigate(network.obsidian.mobile.Routes.MINING) }, icon = Icons.Outlined.Bolt, divider = false)
         }
 
         Spacer(Modifier.height(ObsidianSpace.M))
