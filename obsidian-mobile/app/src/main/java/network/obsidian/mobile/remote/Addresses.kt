@@ -34,7 +34,7 @@ object Addresses {
     fun validate(address: String?): String? {
         val value = address?.trim().orEmpty()
         if (value.isEmpty()) return "Enter an address"
-        if (value.length != value.lowercase().length) return "Addresses are lowercase"
+        if (value != value.lowercase()) return "Addresses are lowercase"
         val separator = value.lastIndexOf('1')
         if (separator < 1) return "Missing the '1' separator"
         val hrp = value.substring(0, separator)

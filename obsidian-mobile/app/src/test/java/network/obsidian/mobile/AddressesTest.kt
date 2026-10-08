@@ -57,9 +57,11 @@ class AddressesTest {
 
     @Test
     fun `rejects a payload of the wrong length`() {
-        // 19 bytes would decode to a payload that is not a RIPEMD160 digest.
-        val tooShort = "obs1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn3jmw"
-        assertTrue(Addresses.validate(tooShort)!!.contains("payload"))
+        // A 19-byte payload with a correct checksum: it passes every earlier
+        // check and is caught by the payload length alone. RIPEMD160 is 20 bytes,
+        // so anything else is not an Obsidian address however valid its bech32.
+        val wrongLength = "obs1qqqsyqcyq5rqwzqfpg9scrgwpugpzysuwlgju"
+        assertTrue(Addresses.validate(wrongLength)!!.contains("payload"))
     }
 
     @Test
