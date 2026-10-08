@@ -288,18 +288,16 @@ fun SignUpScreen(store: ProfileStore, onSignIn: () -> Unit, onDone: () -> Unit) 
                 color = ObsidianColors.Muted,
             )
             Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianTextField(email, { email = it; error = null }, "Email (optional, stays on device)", "you@example.com")
+            ObsidianTextField(email, { email = it; error = null }, "Email (optional, stays on device)", placeholder = "you@example.com")
             Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianTextField(label, { label = it; error = null }, "Profile label", "Main wallet")
+            ObsidianTextField(label, { label = it; error = null }, "Profile label", placeholder = "Main wallet")
             Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianTextField(address, { address = it; error = null }, "Obsidian address", "obs1…", error = error)
+            ObsidianTextField(address, { address = it; error = null }, "Obsidian address", placeholder = "obs1…", error = error)
             Spacer(Modifier.height(ObsidianSpace.M))
             ObsidianTextField(
                 referral,
                 { referral = it.uppercase(); error = null },
-                "Referral code (optional)",
-                "OBS-XXXX-XXXX",
-            )
+                "Referral code (optional)", placeholder = "OBS-XXXX-XXXX")
             Spacer(Modifier.height(ObsidianSpace.XS))
             Text(
                 "Format is checked only. Obsidian publishes no invitation service, so this app " +
@@ -367,8 +365,7 @@ fun SignInScreen(store: ProfileStore, onUnlock: () -> Unit, onSignUp: () -> Unit
                     "Device lock",
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword,
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    error = error,
-                )
+                    error = error)
                 Spacer(Modifier.height(ObsidianSpace.M))
             } else {
                 Text(
@@ -620,7 +617,7 @@ fun WalletScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate
                 Spacer(Modifier.height(ObsidianSpace.M))
                 SectionLabel("Transaction lookup")
                 Spacer(Modifier.height(ObsidianSpace.XS))
-                ObsidianTextField(txId, { txId = it; txOut = null; txErr = null }, "Transaction id", "tx hash")
+                ObsidianTextField(txId, { txId = it; txOut = null; txErr = null }, "Transaction id", placeholder = "tx hash")
                 Spacer(Modifier.height(ObsidianSpace.S))
                 PrimaryButton(
                     "LOOK UP", showArrow = false, enabled = txId.isNotBlank(),
@@ -673,7 +670,7 @@ fun ExplorerScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit)
         ObsidianCard {
             SectionLabel("Search")
             Spacer(Modifier.height(ObsidianSpace.XS))
-            ObsidianTextField(q, { q = it; outTitle = null; outBody = null }, "Height, tx id or address", "1284906 · tx… · obs1…")
+            ObsidianTextField(q, { q = it; outTitle = null; outBody = null }, "Height, tx id or address", placeholder = "1284906 · tx… · obs1…")
             Spacer(Modifier.height(ObsidianSpace.S))
             PrimaryButton(
                 "SEARCH", showArrow = false, enabled = q.isNotBlank(),
@@ -768,7 +765,7 @@ fun OnsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
         ObsidianCard {
             Text("Claim a unique name tied to a wallet.", style = ObsidianType.Support, color = ObsidianColors.Muted)
             Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianTextField(q, { q = it; result = null }, "Name", "name.obs")
+            ObsidianTextField(q, { q = it; result = null }, "Name", placeholder = "name.obs")
             Spacer(Modifier.height(ObsidianSpace.S))
             PrimaryButton(
                 "SEARCH", showArrow = false, enabled = q.isNotBlank(),
@@ -1000,7 +997,7 @@ fun SettingsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit)
 
     BlueprintPage(title = "Settings", onMenu = { onNavigate(R_MENU) }) {
         ObsidianCard {
-            ObsidianTextField(url, { url = it; note = null }, "Node address", ObsidianRepository.DEFAULT_NODE_URL)
+            ObsidianTextField(url, { url = it; note = null }, "Node address", placeholder = ObsidianRepository.DEFAULT_NODE_URL)
             Spacer(Modifier.height(ObsidianSpace.S))
             PrimaryButton(
                 "USE THIS NODE", showArrow = false,
