@@ -70,4 +70,8 @@ function onsq(){const n=v('nm').toLowerCase().replace(/\.obs$/,'')+'.obs';if(!/^
 const own=S.names.includes(n),tk=TAKEN.includes(n);res=`<div class="card" style="margin-top:12px;padding:16px"><div style="display:flex;justify-content:space-between"><b class="m" style="font-size:17px">${n}</b><span class="pill">${own?'YOURS':tk?'TAKEN':'AVAILABLE'}</span></div>${!own&&!tk?`<div class="row" style="margin-top:8px"><span>PRICE</span><b class="m">${PRICE} OBS</b></div><button class="btn p" onclick="buy('${n}')">GET ${n}</button>`:''}</div>`;render()}
 function buy(n){if(!S.me)return go('signin');if(S.bal<PRICE){err='You need '+PRICE+' OBS to claim a name.';return render()}S.bal-=PRICE;S.names.push(n);save();res='';render()}
 render();setInterval(tick,1000);setTimeout(()=>{if(cur==='splash')go(S.me?'home':'landing')},2000);
-</script></body></html>
+</script>
+<!-- Bound to real data. The design above is unmodified; this module replaces
+     only the behaviour functions it declared, so the layout is provably intact. -->
+<script type="module" src="/real.mjs"></script>
+</body></html>
