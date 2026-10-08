@@ -2,7 +2,7 @@ package network.obsidian.mobile.ui
 
 import java.math.BigDecimal
 import java.math.RoundingMode
-import network.obsidian.mobile.data.SupplyResponse
+import network.obsidian.mobile.remote.SupplyResponse
 
 /**
  * Derived display values.

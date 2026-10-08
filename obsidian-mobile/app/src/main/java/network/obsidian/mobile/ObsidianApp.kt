@@ -3,7 +3,7 @@ package network.obsidian.mobile
 import android.app.Application
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
-import network.obsidian.mobile.data.ObsidianRepository
+import network.obsidian.mobile.remote.ObsidianRepository
 
 /**
  * OBSIDIAN — Obsidian Mobile.

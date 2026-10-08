@@ -23,8 +23,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import network.obsidian.mobile.R
-import network.obsidian.mobile.data.ApiFailure
-import network.obsidian.mobile.data.ObsidianApi
+import network.obsidian.mobile.remote.ApiFailure
+import network.obsidian.mobile.remote.ObsidianApi
 
 /**
  * The Obsidian Edge Node.

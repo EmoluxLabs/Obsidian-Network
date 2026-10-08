@@ -55,3 +55,10 @@ Thumbs.db
 *.swp
 coverage/
 .vitest/
+
+# The Android client's Kotlin packages are source, not build output. A generic
+# pattern above (`data/`) matched network/obsidian/mobile/data/ and the files
+# were silently left out of a commit, so CI compiled without them. Source trees
+# under obsidian-mobile are re-included explicitly; build output stays ignored.
+!obsidian-mobile/**/src/
+!obsidian-mobile/**/src/**

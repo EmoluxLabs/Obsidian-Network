@@ -49,7 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import network.obsidian.mobile.R
 import network.obsidian.mobile.Routes
-import network.obsidian.mobile.data.ChainLink
+import network.obsidian.mobile.remote.ChainLink
 import network.obsidian.mobile.ui.ChainValues
 import network.obsidian.mobile.ui.components.GhostButton
 import network.obsidian.mobile.ui.components.GoldKicker
