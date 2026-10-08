@@ -21,6 +21,9 @@ name: Android
 on:
   push:
     branches: ['**']
+    # A tag push carries no changed paths, so the paths filter cannot apply here:
+    # this is what makes an android-v* tag actually build and publish a release.
+    tags: ['android-v*']
     paths:
       - 'obsidian-mobile/**'
       - '.github/workflows/android.yml'
