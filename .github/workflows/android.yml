@@ -90,14 +90,42 @@ jobs:
         # Gradle version rather than the runner's.
         run: gradle wrapper --gradle-version "${GRADLE_VERSION}" --no-daemon
 
+      # Every Gradle step pipes through the same reporter. A Kotlin compile
+      # error or an unresolvable dependency is echoed back as a check-run
+      # annotation, so the diagnosis is readable from the run summary itself
+      # rather than only from the raw log. Without this, a failure here says
+      # "exit code 1" and nothing else.
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --no-daemon 2>&1 | tee unit-tests.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -E "^e: |^w: .*error|error:|FAILURE:|Could not resolve|Unresolved reference|What went wrong" unit-tests.log \
+              | head -60 | while IFS= read -r line; do echo "::error title=Kotlin::${line}"; done
+            exit "$status"
+          fi
 
       - name: Lint
-        run: ./gradlew lintDebug --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew lintDebug --no-daemon 2>&1 | tee lint.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -E "Error:|error:|FAILURE:|What went wrong" lint.log | head -40 | while IFS= read -r line; do echo "::error title=Lint::${line}"; done
+            exit "$status"
+          fi
 
       - name: Assemble debug and release
-        run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug assembleRelease --no-daemon 2>&1 | tee assemble.log
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            grep -E "^e: |error:|FAILURE:|Could not resolve|Unresolved reference|What went wrong" assemble.log \
+              | head -60 | while IFS= read -r line; do echo "::error title=Build::${line}"; done
+            exit "$status"
+          fi
         env:
           # Present only when the operator configured release signing secrets.
           OBSIDIAN_KEYSTORE: ${{ secrets.OBSIDIAN_KEYSTORE_PATH || '' }}
@@ -124,6 +152,16 @@ jobs:
           name: OBSIDIAN-apk
           path: artifacts/
           if-no-files-found: error
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            obsidian-mobile/*.log
+            obsidian-mobile/app/build/reports/
+          if-no-files-found: ignore
 
       - name: Publish to a GitHub Release on an android-v* tag
         if: startsWith(github.ref, 'refs/tags/android-v')
