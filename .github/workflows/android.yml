@@ -174,37 +174,53 @@ jobs:
       # launch entry point and signing status. This is also the evidence behind
       # the permission summary — it comes from the built package, not from the
       # manifest's intent.
+      # The sandbox driving this build cannot reach Actions' artefact storage, so
+      # the facts that matter about the package are printed here as notice
+      # annotations, where they can be read back: identity, signing status, the
+      # permissions baked into the package, and the launch entry point. This is
+      # the evidence behind the permission summary — taken from the built package
+      # rather than from what the manifest intended.
+      #
+      # Ordering matters: annotations emitted late in a step have been observed
+      # not to surface, so the load-bearing facts come first and the cosmetic
+      # listing last.
       - name: Inspect the built APK
         run: |
           BT="$ANDROID_HOME/build-tools/34.0.0"
           APK=$(ls -1 app/build/outputs/apk/debug/*.apk | head -1)
           echo "::notice title=APK file::$(basename "$APK") $(stat -c%s "$APK") bytes"
           echo "::notice title=APK sha256::$(sha256sum "$APK" | cut -d' ' -f1)"
-          "$BT/aapt2" dump badging "$APK" \
-            | grep -E "^package:|launchable-activity:|sdkVersion:|targetSdkVersion:|uses-permission:|application-label:" \
-            | while IFS= read -r line; do echo "::notice title=APK badging::${line}"; done
-          echo "::notice title=APK top-level entries::$(unzip -l "$APK" | awk 'NR>3 && NF>3 {print $4}' | cut -d/ -f1 | sort -u | tr '\n' ' ' || echo 'unzip unavailable')"
-          # Debug builds are signed with the Android debug key; a release build is
-          # unsigned unless the operator supplied a keystore. Either way report the
-          # raw verdict rather than a filtered summary that can silently vanish.
+
+          # Debug builds are signed with the Android debug key; the release variant
+          # is unsigned unless the operator supplied a keystore. Report the raw
+          # verdict and its exit code rather than a filtered summary that could
+          # silently vanish and look like a pass.
           set +e
           "$BT/apksigner" verify --print-certs "$APK" > signer.txt 2>&1
           RC=$?
           set -e
-          echo "::notice title=APK signing (exit $RC)::$(head -4 signer.txt | tr '\n' ' | ')"
+          echo "::notice title=APK signing exit $RC::$(head -3 signer.txt | tr '\n' ' ~ ')"
+
           RELEASE=$(ls -1 app/build/outputs/apk/release/*.apk 2>/dev/null | head -1 || true)
           if [ -n "${RELEASE:-}" ]; then
             set +e; "$BT/apksigner" verify "$RELEASE" > rel.txt 2>&1; RRC=$?; set -e
             if [ "$RRC" -eq 0 ]; then
               echo "::notice title=Release APK::signed"
             else
-              echo "::notice title=Release APK::UNSIGNED (apksigner exit $RRC) - install the debug APK, or supply the OBSIDIAN_KEYSTORE secrets to sign the release"
+              echo "::notice title=Release APK::UNSIGNED (apksigner exit $RRC). Install the debug APK, or set the OBSIDIAN_KEYSTORE secrets to sign the release."
             fi
           else
             echo "::notice title=Release APK::no release APK produced"
           fi
+
           LAUNCH=$("$BT/aapt2" dump badging "$APK" | grep -i 'launchable' || echo 'NO LAUNCHABLE ACTIVITY FOUND')
-          echo "::notice title=APK badging launch entry::${LAUNCH}"
+          echo "::notice title=APK launch entry::${LAUNCH}"
+
+          "$BT/aapt2" dump badging "$APK" \
+            | grep -E "^package:|sdkVersion:|targetSdkVersion:|uses-permission:|application-label:" \
+            | while IFS= read -r line; do echo "::notice title=APK badging::${line}"; done
+
+          echo "::notice title=APK top-level entries::$(unzip -l "$APK" 2>/dev/null | awk 'NR>3 && NF>3 {print $4}' | cut -d/ -f1 | sort -u | tr '\n' ' ' || echo 'unzip unavailable')"
 
       - name: Upload APK artefacts
         uses: actions/upload-artifact@v4
