@@ -67,7 +67,7 @@ object ObsidianColors {
     /** Destructive and failed states. Not in the artboards' palette, which have
      *  no error screen; derived by darkening the accent family's complement so
      *  a failure reads as an Obsidian state and not a stock Material red. */
-    val Danger = Color(0xFFB3261E)
+    val Danger = Color(0xFFA12626)
     val DangerFill = Color(0xFFFDECEA)
 
     /** Muted text on the dark footer card. */
@@ -80,7 +80,7 @@ object ObsidianColors {
 /** Corner radii, taken from the artboards. There are exactly five. */
 object ObsidianRadius {
     /** Hero and large feature cards. */
-    val Card = 28.dp
+    val Card = 20.dp
     /** Standard cards and list rows. */
     val CardSmall = 20.dp
     /** Icon tiles. */
@@ -108,7 +108,7 @@ object ObsidianSpace {
 /** Component metrics that are part of the design, not implementation detail. */
 object ObsidianMetrics {
     val HeaderHeight = 76.dp
-    val PrimaryButtonHeight = 58.dp
+    val PrimaryButtonHeight = 56.dp
     val SecondaryButtonHeight = 56.dp
     val LogoSize = 38.dp
     val MenuButtonSize = 48.dp
@@ -128,8 +128,8 @@ object ObsidianType {
 
     /** 35px / 1.08 / 800 / -0.02em — the hero headline. */
     val Hero = TextStyle(
-        fontFamily = FontSans, fontWeight = FontWeight.ExtraBold, fontSize = 35.sp,
-        lineHeight = 38.sp, letterSpacing = (-0.7).sp,
+        fontFamily = FontSans, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp,
+        lineHeight = 33.sp, letterSpacing = (-0.6).sp,
     )
 
     /** 18px / 700 — dark footer statement. */

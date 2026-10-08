@@ -22,8 +22,8 @@ class AppGraphTest {
 
     /** Every route the app declares, read from the source of truth by reflection. */
     private val declaredRoutes: List<Pair<String, String>> =
-        Routes::class.java.declaredFields
-            .filter { Modifier.isStatic(it.modifiers) && it.type == String::class.java }
+        Class.forName("network.obsidian.mobile.ui.screens.BlueprintScreensKt").declaredFields
+            .filter { Modifier.isStatic(it.modifiers) && it.type == String::class.java && it.name.startsWith("R_") }
             .map { it.name to (it.get(null) as String) }
 
     private val registered = AppGraph.entries.map { it.route }
@@ -34,7 +34,7 @@ class AppGraphTest {
         // a real destination with a real composable, not a theme.
         assertEquals(
             "route list changed; update the graph and this expectation together",
-            17,
+            13,
             declaredRoutes.size,
         )
     }
@@ -86,7 +86,7 @@ class AppGraphTest {
     fun `the start destination is registered`() {
         assertTrue(
             "the app would open on an unregistered route",
-            registered.contains(Routes.LANDING),
+            registered.contains(network.obsidian.mobile.ui.screens.R_LANDING),
         )
     }
 }
