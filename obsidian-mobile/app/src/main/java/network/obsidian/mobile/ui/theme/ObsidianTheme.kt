@@ -8,8 +8,8 @@ import androidx.compose.runtime.Composable
 /**
  * The Obsidian theme.
  *
- * The supplied design is light-only: every one of the 18 artboards is the
- * #F6F7F9 canvas with white cards and #0B0D10 ink. There is no dark artboard, so
+ * The supplied design is light-only: `obsidian-app.html` paints one canvas,
+ * #F6F7F9 with white cards and #0B0D10 ink, and defines no dark variant, so
  * this does not invent one — a device in dark mode still gets the design the
  * client asked for. Adding a dark palette would mean inventing colours the
  * design never specified, which is exactly the drift this file exists to stop.
@@ -35,7 +35,7 @@ private val ObsidianColorScheme = lightColorScheme(
     outlineVariant = ObsidianColors.Divider,
     error = ObsidianColors.Danger,
     onError = ObsidianColors.Surface,
-    errorContainer = ObsidianColors.DangerFill,
+    errorContainer = ObsidianColors.Surface,
     onErrorContainer = ObsidianColors.Danger,
 )
 

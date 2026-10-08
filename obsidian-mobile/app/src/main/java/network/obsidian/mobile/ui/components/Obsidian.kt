@@ -117,7 +117,8 @@ fun GoldKicker(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** A fully-round mono pill. Gold when [emphasised], neutral otherwise. */
+/** `.pill` — a borderless, fully-round status chip. Green by default; gold when
+ *  [emphasised], matching the wallet screen's name pill. */
 @Composable
 fun ObsidianPill(
     text: String,
@@ -125,17 +126,15 @@ fun ObsidianPill(
     emphasised: Boolean = false,
     textColor: Color? = null,
 ) {
-    val fill = if (emphasised) ObsidianColors.GoldPillFill else ObsidianColors.Canvas
-    val stroke = if (emphasised) ObsidianColors.GoldPillBorder else ObsidianColors.Border
+    val fill = if (emphasised) ObsidianColors.GoldPillFill else ObsidianColors.SuccessPillFill
     val content = textColor
-        ?: if (emphasised) ObsidianColors.GoldText else ObsidianColors.Text
+        ?: if (emphasised) ObsidianColors.GoldText else ObsidianColors.Success
     Box(
         modifier = modifier
             .background(fill, RoundedCornerShape(ObsidianRadius.Pill))
-            .border(BorderStroke(1.dp, stroke), RoundedCornerShape(ObsidianRadius.Pill))
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .padding(horizontal = 9.dp, vertical = 4.dp),
     ) {
-        Text(text, style = ObsidianType.Mono, color = content)
+        Text(text, style = ObsidianType.Pill, color = content)
     }
 }
 
@@ -336,8 +335,8 @@ fun IconTile(
 ) {
     Box(
         modifier = modifier
-            .size(ObsidianMetrics.IconTileSize)
-            .background(ObsidianColors.Ink, RoundedCornerShape(ObsidianRadius.Tile)),
+            .size(40.dp)
+            .background(ObsidianColors.Ink, RoundedCornerShape(ObsidianRadius.Code)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = contentDescription, tint = ObsidianColors.Gold, modifier = Modifier.size(24.dp))

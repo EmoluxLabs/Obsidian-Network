@@ -50,7 +50,7 @@ fun ScreenShell(
     kicker: String? = null,
     onBack: (() -> Unit)? = null,
     headerTrailing: (@Composable () -> Unit)? = null,
-    contentPadding: PaddingValues = PaddingValues(bottom = ObsidianSpace.XXL),
+    contentPadding: PaddingValues(bottom = ObsidianSpace.NavClearance),
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
     Column(
@@ -132,7 +132,7 @@ fun GuaranteePanel(
     items: List<Pair<String, String>>,
     accent: Color = ObsidianColors.Gold,
 ) {
-    ObsidianCard(modifier = modifier, radius = network.obsidian.mobile.ui.theme.ObsidianRadius.CardSmall) {
+    ObsidianCard(modifier = modifier, radius = network.obsidian.mobile.ui.theme.ObsidianRadius.Card) {
         SectionLabel("WHAT THIS NEVER DOES")
         Spacer(Modifier.height(ObsidianSpace.S))
         items.forEachIndexed { index, (label, body) ->

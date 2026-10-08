@@ -34,19 +34,21 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import network.obsidian.mobile.R
 import network.obsidian.mobile.ui.theme.ObsidianColors
 import network.obsidian.mobile.ui.theme.ObsidianType
 
 /**
- * Launch splash — artboard 00, "Launch Splash (animated)".
+ * The `splash` entry of the blueprint's `const V`, reproduced element by element:
+ * a 240px ring on a #E4E7EB track with a gold #C8A85A arc, the 150px mark centred
+ * inside it, the OBSIDIAN NETWORK wordmark 34px below, and "THE PROOF OF TIME
+ * BLOCKCHAIN" 8px below that in the dark gold.
  *
- * Reproduced from the supplied design: the canvas background, the logo, the
- * OBSIDIAN NETWORK wordmark, "THE PROOF OF TIME BLOCKCHAIN" beneath it and the
- * "Build. Validate. Decentralize." line, with the artboard's slow breathing
- * animation on the mark.
+ * It holds for exactly the blueprint's 2000ms — `setTimeout(() => go(…), 2000)` —
+ * and then routes to the landing page, or to the wallet if a profile already
+ * exists on this device. That is a brand beat, not a progress indicator: nothing
+ * here represents connecting to a node, and no chain data is read while it shows.
  *
  * It leaves on a fixed delay and never waits on the network. Gating the splash on
  * a node answering would leave a user with no chain connection staring at a logo
@@ -70,9 +72,14 @@ fun SplashScreen(onFinished: () -> Unit) {
     // and holds, and animateFloat on an InfiniteTransition only accepts a
     // repeating spec.
     val fade = remember { Animatable(0f) }
+    val fadeTagline = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         delay(600)
         fade.animateTo(1f, tween(800))
+    }
+    LaunchedEffect(Unit) {
+        delay(800)
+        fadeTagline.animateTo(1f, tween(800))
     }
 
     LaunchedEffect(Unit) {
@@ -80,10 +87,9 @@ fun SplashScreen(onFinished: () -> Unit) {
         onFinished()
     }
 
-    // The blueprint's splash: a 240px ring that rotates once every 2.4s, its gold
-    // arc 150 of 704 units long on a #E4E7EB track, with the 150px mark centred
-    // inside it and the wordmark fading in after 0.6s. Reproduced as a drawn arc
-    // rather than a bitmap so the rotation stays smooth at any density.
+    // The ring is drawn rather than pasted in as a bitmap so the 2.4s rotation
+    // stays smooth at any density, and so the arc length stays a real ratio: 150
+    // of the 704-unit circumference the SVG's stroke-dasharray="150 554" implies.
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -92,7 +98,7 @@ fun SplashScreen(onFinished: () -> Unit) {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(240.dp)) {
-                Canvas(Modifier.size(240.dp).rotate(sweep)) {
+                Canvas(Modifier.size(224.dp).rotate(sweep)) {
                     val stroke = 5.dp.toPx()
                     val inset = stroke / 2
                     val arc = Size(size.width - stroke, size.height - stroke)
@@ -121,14 +127,20 @@ fun SplashScreen(onFinished: () -> Unit) {
             Spacer(Modifier.height(34.dp))
             Text(
                 "OBSIDIAN NETWORK",
-                style = ObsidianType.Wordmark.copy(letterSpacing = 5.76.sp),
+                style = ObsidianType.WordmarkSplash,
                 color = ObsidianColors.Ink,
                 modifier = Modifier.alpha(fade.value),
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "THE PROOF OF TIME BLOCKCHAIN",
+                style = ObsidianType.WordmarkSub,
+                color = ObsidianColors.GoldText,
+                modifier = Modifier.alpha(fadeTagline.value),
             )
         }
     }
 }
 
-/** Long enough to be seen as a deliberate brand moment, short enough to never
- *  feel like the app is stuck. */
-private const val SPLASH_MILLIS = 1_400L
+/** The blueprint's own dwell: `setTimeout(() => { if (cur === 'splash') go(…) }, 2000)`. */
+private const val SPLASH_MILLIS = 2_000L

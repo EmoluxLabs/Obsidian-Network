@@ -1,7 +1,11 @@
 package network.obsidian.mobile.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -26,7 +31,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
@@ -52,6 +62,7 @@ import network.obsidian.mobile.ui.components.LoadingBlock
 import network.obsidian.mobile.ui.components.MenuRow
 import network.obsidian.mobile.ui.components.ObsidianCard
 import network.obsidian.mobile.ui.components.ObsidianDarkCard
+import network.obsidian.mobile.ui.components.ObsidianPill
 import network.obsidian.mobile.ui.components.ObsidianRow
 import network.obsidian.mobile.ui.components.ObsidianTextField
 import network.obsidian.mobile.ui.components.PrimaryButton
@@ -59,6 +70,7 @@ import network.obsidian.mobile.ui.components.SecondaryButton
 import network.obsidian.mobile.ui.components.SectionLabel
 import network.obsidian.mobile.ui.components.StatusDot
 import network.obsidian.mobile.ui.theme.ObsidianColors
+import network.obsidian.mobile.ui.theme.ObsidianMetrics
 import network.obsidian.mobile.ui.theme.ObsidianRadius
 import network.obsidian.mobile.ui.theme.ObsidianSpace
 import network.obsidian.mobile.ui.theme.ObsidianType
@@ -95,52 +107,235 @@ fun BrandMark(size: Int, modifier: Modifier = Modifier) {
     )
 }
 
-/** The blueprint's `hdr(title)`: brand row plus an uppercase title. */
+/**
+ * The blueprint's header. It has two shapes, and they are not the same element:
+ *
+ * `hdr(t)` — used by HOME, MINE, WALLET, EXPLORER and MENU — is a 68px row of the
+ * 34px mark, the screen's own title at 12px with .18em tracking, and a LIVE pill:
+ * `<div class="hd"><div>logo(34)<b>${'$'}{t}</b></div><span class="pill">LIVE</span></div>`.
+ * It carries no heading; each screen writes its own `<h1>` where the design has one.
+ *
+ * The landing row is written inline in `landing()` and is wider: logo 38, the
+ * "OBSIDIAN NETWORK" wordmark, and a 48px ☰ button with a 14px radius. Pass
+ * [brand] for that one.
+ */
 @Composable
-fun BlueprintHeader(title: String, onMenu: (() -> Unit)? = null) {
+fun BlueprintHeader(title: String, brand: Boolean = false, onMenu: (() -> Unit)? = null) {
     Row(
-        Modifier.fillMaxWidth().height(ObsidianMetricsHeader).padding(horizontal = ObsidianSpace.Gutter),
+        Modifier.fillMaxWidth().height(ObsidianMetrics.HeaderHeight),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            BrandMark(38)
-            Spacer(Modifier.width(ObsidianSpace.S))
-            Text("OBSIDIAN NETWORK", style = ObsidianType.Wordmark, color = ObsidianColors.Ink)
+            BrandMark(if (brand) 38 else 34)
+            Spacer(Modifier.width(ObsidianMetrics.HeaderGap))
+            Text(
+                if (brand) "OBSIDIAN NETWORK" else title,
+                style = if (brand) ObsidianType.Wordmark else ObsidianType.Label,
+                color = ObsidianColors.Ink,
+            )
         }
-        if (onMenu != null) {
+        if (brand) {
             Box(
-                Modifier.size(44.dp).background(ObsidianColors.Surface, RoundedCornerShape(12.dp)),
+                Modifier
+                    .size(ObsidianMetrics.MenuButtonSize)
+                    .background(ObsidianColors.Surface, RoundedCornerShape(ObsidianRadius.Input))
+                    .clickable(enabled = onMenu != null) { onMenu?.invoke() },
                 contentAlignment = Alignment.Center,
             ) {
-                androidx.compose.material3.TextButton(onClick = onMenu) {
-                    Text("MENU", style = ObsidianType.Kicker, color = ObsidianColors.GoldText)
-                }
+                Text("☰", style = ObsidianType.Value, color = ObsidianColors.Ink)
             }
+        } else {
+            ObsidianPill("LIVE")
         }
     }
-    Text(title, style = ObsidianType.Hero, color = ObsidianColors.Ink, modifier = Modifier.padding(horizontal = ObsidianSpace.Gutter))
-    Spacer(Modifier.height(ObsidianSpace.M))
 }
 
-private val ObsidianMetricsHeader = 76.dp
-
-/** Page frame: canvas, gutters, scroll — the blueprint's #app container. */
+/**
+ * The page frame — the blueprint's `#app`: the #F6F7F9 canvas, 20px gutters,
+ * 100px of bottom clearance, and a scroll region.
+ *
+ * The blueprint's `.nav` is `position:fixed`, so when [nav] names the current tab
+ * the bar is laid out over the frame rather than inside the scroll, and the
+ * content keeps an extra tab's worth of clearance so the last row is never
+ * underneath it.
+ */
 @Composable
 fun BlueprintPage(
     title: String,
     onMenu: (() -> Unit)? = null,
+    onNavigate: ((String) -> Unit)? = null,
+    brand: Boolean = false,
     header: Boolean = true,
+    nav: String? = null,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
-    Column(
-        Modifier.fillMaxSize().background(ObsidianColors.Canvas)
-            .statusBarsPadding().verticalScroll(rememberScrollState())
-            .padding(horizontal = ObsidianSpace.Gutter, vertical = ObsidianSpace.L),
+    Box(Modifier.fillMaxSize().background(ObsidianColors.Canvas)) {
+        Column(
+            Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState())
+                .padding(horizontal = ObsidianSpace.Gutter),
+        ) {
+            if (header) {
+                BlueprintHeader(title, brand, onMenu)
+                Spacer(Modifier.height(ObsidianSpace.M))
+            }
+            content()
+            Spacer(
+                Modifier.height(
+                    ObsidianSpace.NavClearance +
+                        if (nav != null) ObsidianMetrics.NavHeight else 0.dp,
+                ),
+            )
+        }
+        if (nav != null && onNavigate != null) {
+            BlueprintNav(nav, onNavigate, Modifier.align(Alignment.BottomCenter))
+        }
+    }
+}
+
+/**
+ * The blueprint's fixed tab bar: `<div class="nav">` — 72px, white, a hairline on
+ * top, five labels at 10px/.1em, the active one in ink under an 18×3 gold bar.
+ *
+ * HOME, MINE, WALLET, EXPLORER and MENU, in that order, exactly as `nav(a)` builds
+ * them. A tab the blueprint does not have is not added here; screens outside the
+ * five (ONS, NODE, API, settings, sign-up) are reached from the menu instead.
+ */
+@Composable
+fun BlueprintNav(current: String, onNavigate: (String) -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(ObsidianColors.Surface)
+            .navigationBarsPadding()
+            .height(ObsidianMetrics.NavHeight)
+            .border(
+                BorderStroke(1.dp, ObsidianColors.Border),
+                shape = RectangleShape,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceAround,
     ) {
-        if (header) BlueprintHeader(title, onMenu)
-        content()
-        Spacer(Modifier.height(100.dp))
+        NAV_TABS.forEach { (route, label) ->
+            val selected = route == current
+            Column(
+                Modifier
+                    .clickable { onNavigate(route) }
+                    .padding(
+                        horizontal = ObsidianMetrics.NavItemPaddingH,
+                        vertical = ObsidianMetrics.NavItemPaddingV,
+                    ),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    Modifier
+                        .width(ObsidianMetrics.NavIndicatorWidth)
+                        .height(ObsidianMetrics.NavIndicatorHeight)
+                        .background(
+                            if (selected) ObsidianColors.Gold else ObsidianColors.Surface,
+                            RoundedCornerShape(2.dp),
+                        ),
+                )
+                Spacer(Modifier.height(ObsidianMetrics.NavIndicatorGap))
+                Text(
+                    label,
+                    style = ObsidianType.Pill,
+                    color = if (selected) ObsidianColors.Ink else ObsidianColors.Muted,
+                )
+            }
+        }
+    }
+}
+
+/** `nav(a)`'s own list, in its own order. */
+private val NAV_TABS = listOf(
+    R_HOME to "HOME",
+    R_MINE to "MINE",
+    R_WALLET to "WALLET",
+    R_EXPLORER to "EXPLORER",
+    R_MENU to "MENU",
+)
+
+/**
+ * `.big` — the blueprint's quick-link tile: white, 1px #E4E7EB border, 18px radius,
+ * 20px/16px padding, a 15px/.12em bold label and a `›` on the right. Used on HOME
+ * (MINING / WALLET / EXPLORER) and MENU (ONS / NODE / API).
+ */
+@Composable
+fun BigTile(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .background(ObsidianColors.Surface, RoundedCornerShape(ObsidianRadius.Big))
+            .border(BorderStroke(1.dp, ObsidianColors.Border), RoundedCornerShape(ObsidianRadius.Big))
+            .clickable(onClick = onClick)
+            .padding(horizontal = ObsidianMetrics.CardPaddingH, vertical = ObsidianSpace.L),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, style = ObsidianType.CardTitle, color = ObsidianColors.Ink)
+        Text("\u203a", style = ObsidianType.Value, color = ObsidianColors.Muted)
+    }
+}
+
+/**
+ * The blueprint's own switch, not a Material one:
+ * `width:52px;height:30px;border-radius:15px;background:#0B0D10|#D5D9DF` with a 24px
+ * knob inset 3px, gold when on and white when off.
+ */
+@Composable
+fun BlueprintToggle(enabled: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .size(width = ObsidianMetrics.ToggleWidth, height = ObsidianMetrics.ToggleHeight)
+            .background(
+                if (enabled) ObsidianColors.Ink else ObsidianColors.BorderStrong,
+                RoundedCornerShape(ObsidianRadius.Toggle),
+            )
+            .clickable(onClick = onToggle)
+            .padding(ObsidianMetrics.ToggleInset),
+        contentAlignment = if (enabled) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier
+                .size(ObsidianMetrics.ToggleKnob)
+                .background(
+                    if (enabled) ObsidianColors.Gold else ObsidianColors.Surface,
+                    RoundedCornerShape(ObsidianRadius.Pill),
+                ),
+        )
+    }
+}
+
+/**
+ * The MINE screen's ring: a 250px circle, #E4E7EB track at 6px, and a gold arc on a
+ * centre line of r=108. The blueprint drives `stroke-dasharray` from a session timer
+ * that does not exist in the protocol; here the sweep is the ratio of minted supply
+ * to the maximum the protocol defines, so the arc is a real figure and not a clock.
+ */
+@Composable
+fun MineRing(ratio: Float, modifier: Modifier = Modifier, center: @Composable () -> Unit = {}) {
+    val r = ObsidianMetrics.MineRingRadius
+    Box(modifier.size(ObsidianMetrics.MineRing), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(ObsidianMetrics.MineRing)) {
+            val stroke = ObsidianMetrics.MineRingStroke.toPx()
+            val inset = (size.width - r.toPx() * 2) / 2 + stroke / 2
+            val side = r.toPx() * 2 - stroke
+            val topLeft = Offset(inset, inset)
+            drawArc(
+                color = ObsidianColors.Border, startAngle = 0f, sweepAngle = 360f,
+                useCenter = false, topLeft = topLeft, size = Size(side, side),
+                style = Stroke(width = stroke),
+            )
+            drawArc(
+                color = ObsidianColors.Gold, startAngle = -90f,
+                sweepAngle = 360f * ratio.coerceIn(0f, 1f), useCenter = false,
+                topLeft = topLeft, size = Size(side, side),
+                style = Stroke(width = stroke, cap = StrokeCap.Round),
+            )
+        }
+        Box(contentAlignment = Alignment.Center) { center() }
     }
 }
 
@@ -167,7 +362,7 @@ fun LandingScreen(
     val online = link as? ChainLink.Online
     val degraded = (link as? ChainLink.Degraded)?.last
 
-    BlueprintPage(title = "The Proof of Time Blockchain", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "OBSIDIAN NETWORK", brand = true, onMenu = { onNavigate(R_MENU) }) {
         GoldKicker("Invite-only · Proof of Time")
         Spacer(Modifier.height(ObsidianSpace.S))
         Text(
@@ -177,7 +372,20 @@ fun LandingScreen(
             color = ObsidianColors.Text,
         )
         Spacer(Modifier.height(ObsidianSpace.XL))
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { BrandMark(190) }
+        Spacer(Modifier.height(ObsidianSpace.XL))
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier
+                    .size(ObsidianMetrics.LandingMedallion)
+                    .background(ObsidianColors.Surface, RoundedCornerShape(ObsidianRadius.Pill))
+                    .border(
+                        BorderStroke(1.dp, ObsidianColors.Border),
+                        RoundedCornerShape(ObsidianRadius.Pill),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) { BrandMark(190) }
+        }
+        Spacer(Modifier.height(ObsidianSpace.XL))
         Spacer(Modifier.height(ObsidianSpace.XL))
 
         PrimaryButton("START MINING", onClick = { onNavigate(R_MINE) }, showArrow = false)
@@ -196,7 +404,7 @@ fun LandingScreen(
                     ChainLink.Offline -> "Not connected"
                 },
                 colour = when (link) {
-                    is ChainLink.Online -> ObsidianColors.SuccessText
+                    is ChainLink.Online -> ObsidianColors.Success
                     is ChainLink.Degraded -> ObsidianColors.Danger
                     ChainLink.Offline -> ObsidianColors.Muted
                 },
@@ -240,9 +448,13 @@ fun LandingScreen(
 
         Spacer(Modifier.height(ObsidianSpace.XL))
         ObsidianDarkCard {
-            Text("OBSIDIAN NETWORK", style = ObsidianType.Wordmark, color = ObsidianColors.Surface)
-            Spacer(Modifier.height(6.dp))
-            Text("Build. Validate. Decentralize.", style = ObsidianType.Support, color = ObsidianColors.OnDarkMuted)
+            Text("OBSIDIAN NETWORK", style = ObsidianType.Statement, color = ObsidianColors.Surface)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Build. Validate. Decentralize.",
+                style = ObsidianType.Value,
+                color = ObsidianColors.GoldLight,
+            )
         }
     }
 }
@@ -402,7 +614,9 @@ fun HomeScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
     var loading by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
 
-    BlueprintPage(title = "Welcome back.", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "OBSIDIAN NETWORK", onNavigate = onNavigate, nav = R_HOME) {
+        Text("Welcome back.", style = ObsidianType.HeadingSmall, color = ObsidianColors.Ink)
+        Spacer(Modifier.height(ObsidianSpace.M))
         ObsidianCard {
             SectionLabel("OBS balance")
             Spacer(Modifier.height(ObsidianSpace.S))
@@ -457,6 +671,10 @@ fun HomeScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
             ObsidianRow("Peers", o?.health?.peers?.toString() ?: "—", mono = true, divider = false)
         }
 
+        BigTile("MINING", onClick = { onNavigate(R_MINE) })
+        BigTile("WALLET", onClick = { onNavigate(R_WALLET) })
+        BigTile("EXPLORER", onClick = { onNavigate(R_EXPLORER) })
+
         Spacer(Modifier.height(ObsidianSpace.M))
         ObsidianCard {
             SectionLabel("Recent activity")
@@ -467,10 +685,6 @@ fun HomeScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
                     "is listed here rather than showing an invented one. Look one up in the " +
                     "Explorer.",
             )
-            Spacer(Modifier.height(ObsidianSpace.S))
-            MenuRow("Wallet", onClick = { onNavigate(R_WALLET) })
-            MenuRow("Explorer", onClick = { onNavigate(R_EXPLORER) })
-            MenuRow("Mining", onClick = { onNavigate(R_MINE) }, divider = false)
         }
     }
 }
@@ -492,7 +706,7 @@ fun MineScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
     val online = link as? ChainLink.Online
     val supply = online?.supply
 
-    BlueprintPage(title = "Mining", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "MINING", onNavigate = onNavigate, nav = R_MINE) {
         ObsidianCard {
             SectionLabel("OBS supply")
             Spacer(Modifier.height(ObsidianSpace.S))
@@ -505,10 +719,29 @@ fun MineScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
                 // The blueprint's arc showed a mining session. The protocol has no
                 // session, so the ring shows a real ratio instead: minted against
                 // the maximum the protocol defines.
+                val minted = ChainValues.mintedSupply(supply)
+                val maximum = ChainValues.maximumSupply(supply)
+                val fraction = ChainValues.supplyFraction(supply)
+                val shown = fraction?.let { String.format(java.util.Locale.US, "%.5f", it * 100) }
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    MineRing(ratio = fraction ?: 0f) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                if (shown == null) "\u2014" else "$shown%",
+                                style = ObsidianType.MonoLarge,
+                                color = ObsidianColors.Ink,
+                            )
+                            Spacer(Modifier.height(ObsidianSpace.XXS))
+                            Text("OF MAXIMUM", style = ObsidianType.RowKey, color = ObsidianColors.Muted)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(ObsidianSpace.S))
                 Text(
-                    "${ChainValues.mintedSupply(supply)} / ${ChainValues.maximumSupply(supply)} OBS",
+                    "$minted of $maximum OBS minted",
                     style = ObsidianType.MonoValue,
                     color = ObsidianColors.Ink,
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(ObsidianSpace.S))
                 ObsidianRow("Mined", ChainValues.minedSupply(supply), mono = true)
@@ -568,7 +801,7 @@ fun WalletScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate
     var txOut by remember { mutableStateOf<String?>(null) }
     var txErr by remember { mutableStateOf<String?>(null) }
 
-    BlueprintPage(title = "Wallet", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "WALLET", onNavigate = onNavigate, nav = R_WALLET) {
         ObsidianCard {
             SectionLabel("OBS balance")
             Spacer(Modifier.height(ObsidianSpace.S))
@@ -666,7 +899,7 @@ fun ExplorerScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit)
         blocks = repository.api.blocks(from = (h - 9).coerceAtLeast(0), limit = 10).getOrNull()
     }
 
-    BlueprintPage(title = "Explorer", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "EXPLORER", onNavigate = onNavigate, nav = R_EXPLORER) {
         ObsidianCard {
             SectionLabel("Search")
             Spacer(Modifier.height(ObsidianSpace.XS))
@@ -761,7 +994,9 @@ fun OnsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
         repository.api.names().fold({ names = it; err = null }, { err = it.message ?: "Names could not be read" })
     }
 
-    BlueprintPage(title = "Obsidian Name Service", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "ONS") {
+        Text("OBSIDIAN NAME SERVICE", style = ObsidianType.HeadingLarge, color = ObsidianColors.Ink)
+        Spacer(Modifier.height(ObsidianSpace.M))
         ObsidianCard {
             Text("Claim a unique name tied to a wallet.", style = ObsidianType.Support, color = ObsidianColors.Muted)
             Spacer(Modifier.height(ObsidianSpace.M))
@@ -835,13 +1070,41 @@ fun NodeScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
     val nodeUrl by repository.nodeUrl.collectAsState()
     val online = link as? ChainLink.Online
 
-    BlueprintPage(title = "Obsidian Edge Node", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "NODE") {
+        Text("OBSIDIAN EDGE NODE", style = ObsidianType.HeadingLarge, color = ObsidianColors.Ink)
+        Spacer(Modifier.height(ObsidianSpace.M))
         ObsidianCard {
-            StatusPill(
-                label = "Edge Node",
-                value = if (enabled) "Enabled" else "Disabled",
-                colour = if (enabled) ObsidianColors.SuccessText else ObsidianColors.Muted,
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f).padding(end = ObsidianSpace.S)) {
+                    Text(
+                        if (enabled) "NODE ONLINE" else "NODE OFFLINE",
+                        style = ObsidianType.HeadingSmall,
+                        color = if (enabled) ObsidianColors.Success else ObsidianColors.Muted,
+                    )
+                    Spacer(Modifier.height(ObsidianSpace.XXS))
+                    Text(
+                        if (enabled) "Following the chain from this device."
+                        else "Disabled on this device.",
+                        style = ObsidianType.Support,
+                        color = ObsidianColors.Muted,
+                    )
+                }
+                BlueprintToggle(
+                    enabled = enabled,
+                    onToggle = {
+                        if (enabled) {
+                            EdgeNodeService.stop(context); EdgeNodeTelemetry.enabled.value = false
+                            EdgeNodeTelemetry.reset(); EdgeNodeState.current.value = EdgeNodeState.Stopped
+                        } else {
+                            EdgeNodeService.start(context, nodeUrl)
+                        }
+                    },
+                )
+            }
             Spacer(Modifier.height(ObsidianSpace.S))
             Text(state.describe("Edge Node"), style = ObsidianType.Body, color = ObsidianColors.Text)
             Spacer(Modifier.height(ObsidianSpace.M))
@@ -894,7 +1157,9 @@ fun ApiScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
     val nodeUrl by repository.nodeUrl.collectAsState()
     val online = link as? ChainLink.Online
 
-    BlueprintPage(title = "Obsidian Developer", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "API") {
+        Text("OBSIDIAN DEVELOPER", style = ObsidianType.HeadingLarge, color = ObsidianColors.Ink)
+        Spacer(Modifier.height(ObsidianSpace.M))
         ObsidianCard {
             SectionLabel("Quick start")
             Spacer(Modifier.height(ObsidianSpace.S))
@@ -947,15 +1212,27 @@ fun MenuScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
     val link by repository.link.collectAsState()
     val profile = remember { store.active() }
 
-    BlueprintPage(title = "Menu") {
+    BlueprintPage(title = "MENU", onNavigate = onNavigate, nav = R_MENU) {
+        ObsidianCard {
+            Text(profile?.label ?: "No profile", style = ObsidianType.Value, color = ObsidianColors.Ink)
+            Spacer(Modifier.height(ObsidianSpace.XXS))
+            Text(
+                if (profile == null) "No address attached on this device." else profile.address,
+                style = ObsidianType.Mono,
+                color = ObsidianColors.Muted,
+            )
+        }
+
+        BigTile("ONS", onClick = { onNavigate(R_ONS) })
+        BigTile("NODE", onClick = { onNavigate(R_NODE) })
+        BigTile("API", onClick = { onNavigate(R_API) })
+
+        Spacer(Modifier.height(ObsidianSpace.M))
         ObsidianCard {
             MenuRow("Home", onClick = { onNavigate(R_HOME) })
             MenuRow("Mining", onClick = { onNavigate(R_MINE) })
             MenuRow("Wallet", onClick = { onNavigate(R_WALLET) })
             MenuRow("Explorer", onClick = { onNavigate(R_EXPLORER) })
-            MenuRow("Obsidian Name Service", onClick = { onNavigate(R_ONS) })
-            MenuRow("Edge Node", onClick = { onNavigate(R_NODE) })
-            MenuRow("Developer API", onClick = { onNavigate(R_API) })
             MenuRow("Settings", onClick = { onNavigate(R_SETTINGS) }, divider = false)
         }
 
@@ -995,7 +1272,7 @@ fun SettingsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit)
     var note by remember { mutableStateOf<String?>(null) }
     val link by repository.link.collectAsState()
 
-    BlueprintPage(title = "Settings", onMenu = { onNavigate(R_MENU) }) {
+    BlueprintPage(title = "SETTINGS") {
         ObsidianCard {
             ObsidianTextField(url, { url = it; note = null }, "Node address", placeholder = ObsidianRepository.DEFAULT_NODE_URL)
             Spacer(Modifier.height(ObsidianSpace.S))
@@ -1007,7 +1284,7 @@ fun SettingsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit)
                     else { repository.setNodeUrl(t); note = "Now reading from $t" }
                 },
             )
-            if (note != null) { Spacer(Modifier.height(ObsidianSpace.S)); Text(note!!, style = ObsidianType.Support, color = ObsidianColors.SuccessText) }
+            if (note != null) { Spacer(Modifier.height(ObsidianSpace.S)); Text(note!!, style = ObsidianType.Support, color = ObsidianColors.Success) }
             Spacer(Modifier.height(ObsidianSpace.S))
             Text(
                 "Changing the node discards cached state, so a height on screen always belongs to " +

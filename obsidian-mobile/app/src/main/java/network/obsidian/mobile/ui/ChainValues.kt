@@ -38,6 +38,22 @@ object ChainValues {
     /** Maximum supply, as the chain states it. */
     fun maximumSupply(supply: SupplyResponse?): String = supply?.maxSupplyObs?.let { obs(it, 0) } ?: "—"
 
+    /**
+     * Minted as a fraction of the maximum the chain states, for the MINE ring.
+     *
+     * Both operands come from `/supply` — `totalSupplyObs` over `maxSupplyObs` — so
+     * this is the protocol's own ratio and not a progress figure the app invented.
+     * It returns null rather than 0 when either figure is missing or the maximum is
+     * zero, because a zero-filled arc would read as "nothing has been minted", which
+     * is a claim about the chain rather than an admission that it did not answer.
+     */
+    fun supplyFraction(supply: SupplyResponse?): Float? {
+        val minted = decimal(supply?.totalSupplyObs) ?: return null
+        val maximum = decimal(supply?.maxSupplyObs) ?: return null
+        if (maximum.signum() <= 0) return null
+        return (minted / maximum).toFloat()
+    }
+
     /** Total minted to date: genesis allocation plus everything mined. */
     fun mintedSupply(supply: SupplyResponse?): String = supply?.totalSupplyObs?.let { obs(it, 2) } ?: "—"
 
