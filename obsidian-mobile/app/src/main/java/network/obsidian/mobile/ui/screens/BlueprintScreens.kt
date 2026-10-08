@@ -1163,13 +1163,20 @@ fun ApiScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
         ObsidianCard {
             SectionLabel("Quick start")
             Spacer(Modifier.height(ObsidianSpace.S))
-            Text(
-                "curl $nodeUrl/health\n\n{\n  \"network\": \"${online?.health?.network ?: "—"}\",\n" +
-                    "  \"protocolVersion\": \"${online?.health?.protocolVersion ?: "—"}\",\n" +
-                    "  \"height\": ${online?.health?.height ?: "—"}\n}",
-                style = ObsidianType.Mono,
-                color = ObsidianColors.Text,
-            )
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .background(ObsidianColors.Ink, RoundedCornerShape(ObsidianRadius.Code))
+                    .padding(ObsidianSpace.L),
+            ) {
+                Text(
+                    "curl $nodeUrl/health\n\n{\n  \"network\": \"${online?.health?.network ?: "—"}\",\n" +
+                        "  \"protocolVersion\": \"${online?.health?.protocolVersion ?: "—"}\",\n" +
+                        "  \"height\": ${online?.health?.height ?: "—"}\n}",
+                    style = ObsidianType.Code,
+                    color = ObsidianColors.GoldLight,
+                )
+            }
             Spacer(Modifier.height(ObsidianSpace.S))
             Text(
                 "Values above are this device's live reading from the configured node, or an " +
