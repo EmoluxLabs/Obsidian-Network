@@ -21,12 +21,11 @@ name: Android
 on:
   push:
     branches: ['**']
-    # A tag push carries no changed paths, so the paths filter cannot apply here:
-    # this is what makes an android-v* tag actually build and publish a release.
     tags: ['android-v*']
-    paths:
-      - 'obsidian-mobile/**'
-      - '.github/workflows/android.yml'
+    # No paths filter on push, deliberately. A tag push carries no changed files
+    # of its own, so with a filter in place GitHub evaluated it against the tagged
+    # commit, found nothing new, and the release build never ran. The filter stays
+    # on pull_request, where it still saves an hour of Gradle per unrelated change.
   pull_request:
     paths:
       - 'obsidian-mobile/**'
