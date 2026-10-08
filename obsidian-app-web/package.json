@@ -1,0 +1,14 @@
+{
+  "name": "@obsidian/app-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Obsidian mobile client as a web app. Uses the supplied HTML design verbatim and the Obsidian Web platform's own API as its single backend.",
+  "scripts": {
+    "start": "node server/main.mjs",
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
