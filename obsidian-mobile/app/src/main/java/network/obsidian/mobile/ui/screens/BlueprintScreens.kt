@@ -339,6 +339,60 @@ fun MineRing(ratio: Float, modifier: Modifier = Modifier, center: @Composable ()
     }
 }
 
+/**
+ * The blueprint's inline footnote link: centred muted copy with one bold word in
+ * ink and a 2px gold rule under it —
+ * `<p class="mu">Already have an account? <b style="border-bottom:2px solid var(--go)">SIGN IN</b></p>`.
+ *
+ * It is a link, not a button, and is drawn as one: no fill, no border box.
+ */
+@Composable
+fun LinkFootnote(prefix: String, action: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val text = buildAnnotatedString {
+        append("$prefix ")
+        withStyle(
+            androidx.compose.ui.text.SpanStyle(
+                color = ObsidianColors.Ink,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+            ),
+        ) { append(action) }
+    }
+    Box(modifier.fillMaxWidth().clickable(onClick = onClick).padding(top = ObsidianSpace.M)) {
+        Text(
+            text,
+            style = ObsidianType.Support,
+            color = ObsidianColors.Muted,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/**
+ * The MENU screen's SIGN OUT: `.btn` with `color:var(--er)` and
+ * `border-color:#E7C9C9`, 24px above the last tile.
+ *
+ * It is honest about what it does. Obsidian has no account server, so there is no
+ * session to end — the label says SIGN OUT because the blueprint says it, and the
+ * body text underneath says what actually happens.
+ */
+@Composable
+fun DangerButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(ObsidianMetrics.SecondaryButtonHeight)
+            .padding(top = ObsidianSpace.S)
+            .background(ObsidianColors.Surface, RoundedCornerShape(ObsidianRadius.Button))
+            .border(BorderStroke(1.5.dp, ObsidianColors.DangerBorder), RoundedCornerShape(ObsidianRadius.Button))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = ObsidianType.Button, color = ObsidianColors.Danger)
+    }
+}
+
 /** The status pill the blueprint repeats: NETWORK LIVE / Operational / Active. */
 @Composable
 fun StatusPill(label: String, value: String, colour: androidx.compose.ui.graphics.Color) {
@@ -385,7 +439,6 @@ fun LandingScreen(
                 contentAlignment = Alignment.Center,
             ) { BrandMark(190) }
         }
-        Spacer(Modifier.height(ObsidianSpace.XL))
         Spacer(Modifier.height(ObsidianSpace.XL))
 
         PrimaryButton("START MINING", onClick = { onNavigate(R_MINE) }, showArrow = false)
@@ -470,11 +523,28 @@ fun SignUpScreen(store: ProfileStore, onSignIn: () -> Unit, onDone: () -> Unit) 
     var error by remember { mutableStateOf<String?>(null) }
     var done by remember { mutableStateOf(false) }
 
-    BlueprintPage(title = "Create your account", header = true) {
+    // The blueprint's signup() has no hdr(): a centred mark, the wordmark, then
+    // the heading. padding-top:34px, logo 76, wordmark at .22em, h1 at 26px.
+    BlueprintPage(title = "Create your account", header = false) {
+        Spacer(Modifier.height(34.dp))  // signup(): padding-top:34px
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { BrandMark(76) }
-        Spacer(Modifier.height(ObsidianSpace.M))
-        Text("OBSIDIAN NETWORK", style = ObsidianType.Wordmark, color = ObsidianColors.Ink, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        Spacer(Modifier.height(ObsidianSpace.L))
+        Spacer(Modifier.height(ObsidianSpace.S))
+        Text(
+            "OBSIDIAN NETWORK",
+            style = ObsidianType.WordmarkAuth,
+            color = ObsidianColors.Ink,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(ObsidianSpace.XL))
+        Text("CREATE YOUR ACCOUNT", style = ObsidianType.HeadingLarge, color = ObsidianColors.Ink)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Obsidian has no account server. This creates a profile on this device for an " +
+                "address you control; it does not register you with anyone.",
+            style = ObsidianType.Body,
+            color = ObsidianColors.Muted,
+        )
 
         if (done) {
             ObsidianCard {
@@ -534,8 +604,7 @@ fun SignUpScreen(store: ProfileStore, onSignIn: () -> Unit, onDone: () -> Unit) 
                 },
             )
         }
-        Spacer(Modifier.height(ObsidianSpace.M))
-        SecondaryButton("ALREADY HAVE AN ACCOUNT? SIGN IN", onClick = onSignIn, showArrow = false)
+        LinkFootnote("Already have an account?", "SIGN IN", onClick = onSignIn)
     }
 }
 
@@ -546,11 +615,20 @@ fun SignInScreen(store: ProfileStore, onUnlock: () -> Unit, onSignUp: () -> Unit
     var error by remember { mutableStateOf<String?>(null) }
     val target = profiles.firstOrNull()
 
-    BlueprintPage(title = "Welcome back") {
+    // signin(): padding-top:50px, logo 96, wordmark .22em, h1 at the default 30px.
+    BlueprintPage(title = "Welcome back", header = false) {
+        Spacer(Modifier.height(50.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { BrandMark(96) }
-        Spacer(Modifier.height(ObsidianSpace.M))
-        Text("OBSIDIAN NETWORK", style = ObsidianType.Wordmark, color = ObsidianColors.Ink, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        Spacer(Modifier.height(ObsidianSpace.L))
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "OBSIDIAN NETWORK",
+            style = ObsidianType.WordmarkAuth,
+            color = ObsidianColors.Ink,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(ObsidianSpace.XL))
+        Text("WELCOME BACK", style = ObsidianType.Hero, color = ObsidianColors.Ink)
 
         if (target == null) {
             ObsidianCard {
@@ -598,8 +676,7 @@ fun SignInScreen(store: ProfileStore, onUnlock: () -> Unit, onSignUp: () -> Unit
                 },
             )
         }
-        Spacer(Modifier.height(ObsidianSpace.M))
-        SecondaryButton("NEW TO OBSIDIAN? CREATE ACCOUNT", onClick = onSignUp, showArrow = false)
+        LinkFootnote("New to Obsidian?", "Create account", onClick = onSignUp)
     }
 }
 
@@ -824,8 +901,15 @@ fun WalletScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate
 
         Spacer(Modifier.height(ObsidianSpace.M))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(ObsidianSpace.S)) {
-            Box(Modifier.weight(1f)) { SecondaryButton("RECEIVE", showArrow = false, onClick = { receive = true }) }
-            Box(Modifier.weight(1f)) { SecondaryButton("SEND", showArrow = false, onClick = { receive = false }) }
+            // The blueprint gives the selected one .p and leaves the other plain.
+            Box(Modifier.weight(1f)) {
+                if (receive) PrimaryButton("RECEIVE", showArrow = false, onClick = { })
+                else SecondaryButton("RECEIVE", showArrow = false, onClick = { receive = true })
+            }
+            Box(Modifier.weight(1f)) {
+                if (receive) SecondaryButton("SEND", showArrow = false, onClick = { receive = false })
+                else PrimaryButton("SEND", showArrow = false, onClick = { })
+            }
         }
 
         Spacer(Modifier.height(ObsidianSpace.M))
@@ -891,12 +975,14 @@ fun ExplorerScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit)
     var outTitle by remember { mutableStateOf<String?>(null) }
     var outBody by remember { mutableStateOf<String?>(null) }
     var blocks by remember { mutableStateOf<List<String>?>(null) }
+    var finalized by remember { mutableStateOf<Long?>(null) }
     val online = link as? ChainLink.Online
     val height = online?.health?.height ?: (link as? ChainLink.Degraded)?.last?.health?.height
 
     androidx.compose.runtime.LaunchedEffect(height) {
         val h = height ?: return@LaunchedEffect
         blocks = repository.api.blocks(from = (h - 9).coerceAtLeast(0), limit = 10).getOrNull()
+        finalized = ChainValues.finalizedHeight(repository.api.finality().getOrNull())
     }
 
     BlueprintPage(title = "EXPLORER", onNavigate = onNavigate, nav = R_EXPLORER) {
@@ -972,8 +1058,37 @@ fun ExplorerScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit)
             when {
                 blocks == null -> LoadingBlock(label = "Reading blocks")
                 blocks!!.isEmpty() -> EmptyBlock(title = "No blocks in range")
+                // The blueprint's block row: #height in mono, its hash at 12px below,
+                // and a pill on the right. The reference marks the newest PENDING and
+                // the rest FINAL by position; here the split comes from the chain's own
+                // finalizedHeight, so a block is only called final once it is.
                 else -> blocks!!.forEachIndexed { i, h ->
-                    MenuRow("Block ${((height ?: 0) - i)}", subtitle = ChainValues.shorten(h), onClick = { }, divider = i != blocks!!.lastIndex)
+                    val at = (height ?: 0) - i
+                    val settled = finalized?.let { at <= it }
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = ObsidianMetrics.RowPaddingV),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column {
+                            Text("#${ChainValues.count(at)}", style = ObsidianType.MonoValue, color = ObsidianColors.Ink)
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                ChainValues.shorten(h),
+                                style = ObsidianType.Caption,
+                                color = ObsidianColors.Muted,
+                            )
+                        }
+                        if (settled != null) {
+                            ObsidianPill(if (settled) "FINAL" else "PENDING")
+                        }
+                    }
+                    if (i != blocks!!.lastIndex) {
+                        Box(
+                            Modifier.fillMaxWidth().height(1.dp)
+                                .background(ObsidianColors.Divider),
+                        )
+                    }
                 }
             }
         }
@@ -989,6 +1104,7 @@ fun OnsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
     var err by remember { mutableStateOf<String?>(null) }
     var q by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<String?>(null) }
+    var registered by remember { mutableStateOf<Boolean?>(null) }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         repository.api.names().fold({ names = it; err = null }, { err = it.message ?: "Names could not be read" })
@@ -1000,7 +1116,7 @@ fun OnsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
         ObsidianCard {
             Text("Claim a unique name tied to a wallet.", style = ObsidianType.Support, color = ObsidianColors.Muted)
             Spacer(Modifier.height(ObsidianSpace.M))
-            ObsidianTextField(q, { q = it; result = null }, "Name", placeholder = "name.obs")
+            ObsidianTextField(q, { q = it; result = null; registered = null }, "Name", placeholder = "name.obs")
             Spacer(Modifier.height(ObsidianSpace.S))
             PrimaryButton(
                 "SEARCH", showArrow = false, enabled = q.isNotBlank(),
@@ -1009,14 +1125,43 @@ fun OnsScreen(repository: ObsidianRepository, onNavigate: (String) -> Unit) {
                         repository.api.names().fold(
                             { all ->
                                 val n = q.trim().lowercase().let { if (it.endsWith(".obs")) it else "$it.obs" }
-                                result = if (all.any { it == n }) "$n is registered on this chain." else "$n is not registered."
+                                result = n
+                                registered = all.any { it == n }
                             },
                             { result = it.message ?: "Names could not be read" },
                         )
                     }
                 },
             )
-            if (result != null) { Spacer(Modifier.height(ObsidianSpace.S)); Text(result!!, style = ObsidianType.Support, color = ObsidianColors.Text) }
+            // onsq()'s result card: the name at 17px mono with a status pill. The
+            // blueprint's third state and its PRICE row come from a hardcoded TAKEN
+            // list and a PRICE=25 constant, so the only two states shown here are the
+            // two the node can actually attest to.
+            if (result != null && registered != null) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                ObsidianCard {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(result!!, style = ObsidianType.MonoTitle, color = ObsidianColors.Ink)
+                        ObsidianPill(if (registered!!) "REGISTERED" else "FREE")
+                    }
+                    Spacer(Modifier.height(ObsidianSpace.S))
+                    Text(
+                        if (registered!!) "This name is on the chain's name set."
+                        else "No registration exists for this name. Claiming one is a signed " +
+                            "ONS transaction, and this app holds no key, so it can read the " +
+                            "name set but cannot register a name.",
+                        style = ObsidianType.Support,
+                        color = ObsidianColors.Muted,
+                    )
+                }
+            } else if (result != null) {
+                Spacer(Modifier.height(ObsidianSpace.S))
+                Text(result!!, style = ObsidianType.Support, color = ObsidianColors.Text)
+            }
             Spacer(Modifier.height(ObsidianSpace.S))
             Text(
                 "Availability comes from the node's own name set. The reference file's TAKEN list " +
@@ -1254,6 +1399,7 @@ fun MenuScreen(store: ProfileStore, repository: ObsidianRepository, onNavigate: 
                 showArrow = false,
                 onClick = { onNavigate(R_SIGNIN) },
             )
+            DangerButton("SIGN OUT", onClick = { onNavigate(R_LANDING) })
             Spacer(Modifier.height(ObsidianSpace.XS))
             Text(
                 "There is no session to sign out of: Obsidian has no account server, so this " +

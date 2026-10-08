@@ -35,6 +35,20 @@ object ChainValues {
     /** A large count, comma separated: block heights, transaction counts. */
     fun count(value: Long?): String = value?.toString()?.reversed()?.chunked(3)?.joinToString(",")?.reversed() ?: "—"
 
+    /**
+     * The height the chain has finalised, from `/finality`'s `finalizedHeight`.
+     *
+     * The explorer uses this to separate settled blocks from ones still at the tip,
+     * which is the distinction the blueprint's FINAL/PENDING pill draws. It reads the
+     * chain's own finality marker rather than assuming "everything but the newest
+     * block is final", and returns null when the node does not say - in which case no
+     * block is labelled final at all.
+     */
+    fun finalizedHeight(finality: kotlinx.serialization.json.JsonElement?): Long? =
+        (finality as? kotlinx.serialization.json.JsonObject)
+            ?.get("finalizedHeight")
+            ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull() }
+
     /** Maximum supply, as the chain states it. */
     fun maximumSupply(supply: SupplyResponse?): String = supply?.maxSupplyObs?.let { obs(it, 0) } ?: "—"
 
