@@ -146,6 +146,23 @@ jobs:
           ./gradlew lintDebug --no-daemon 2>&1 | tee lint.log || status=$?
           if [ "$status" -ne 0 ]; then
             /tmp/report.sh lint.log Lint
+            # Lint's summary says "found errors" without naming them in the
+            # annotation budget, and the XML report is the authoritative list.
+            for f in app/build/reports/lint-results-debug.xml app/build/reports/lint-results-debug.txt; do
+              [ -e "$f" ] || continue
+              case "$f" in
+                *.xml)
+                  grep -B2 'severity="Error"' "$f" | grep -oE 'id="[^"]*"|message="[^"]*"' | head -20 | while IFS= read -r m; do
+                    echo "::error title=Lint error::${m}"
+                  done
+                  ;;
+                *.txt)
+                  grep -E "Error:" "$f" | head -20 | while IFS= read -r m; do
+                    echo "::error title=Lint error::${m}"
+                  done
+                  ;;
+              esac
+            done
             exit "$status"
           fi
 
