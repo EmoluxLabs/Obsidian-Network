@@ -1,5 +1,8 @@
 package network.obsidian.mobile.remote
 
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -35,6 +38,53 @@ open class ObsidianApi(
     open suspend fun health(): Result<HealthResponse> = get("/health")
     open suspend fun status(): Result<StatusResponse> = get("/status")
     open suspend fun supply(): Result<SupplyResponse> = get("/supply")
+
+    // ── JSON-RPC ────────────────────────────────────────────────────────────
+    //
+    // These wrap the node's existing RPC methods with no change to what the node
+    // does or returns. Each returns the node's own value, including `null` when
+    // the node has no such object — an absent block is a fact, and the screens
+    // render it as "not found" rather than as an error.
+
+    /** `getblocks`: canonical block hashes from [from], newest ordering as the
+     *  node returns it. */
+    suspend fun blocks(from: Long, limit: Int): Result<List<String>> =
+        rpc("getblocks", mapOf("from" to JsonPrimitive(from), "limit" to JsonPrimitive(limit)))
+            .mapCatching { element ->
+                element.jsonArray.map { it.jsonPrimitive.content }
+            }
+
+    /** `getblock`: one block header by height, or null when the node has none. */
+    suspend fun block(height: Long): Result<JsonElement?> =
+        rpc("getblock", mapOf("height" to JsonPrimitive(height)))
+            .mapCatching { it.takeIf { e -> e !is JsonNull } }
+
+    /** `gettransaction`: one indexed transaction by id, or null. */
+    suspend fun transaction(txId: String): Result<JsonElement?> =
+        rpc("gettransaction", mapOf("txId" to JsonPrimitive(txId)))
+            .mapCatching { it.takeIf { e -> e !is JsonNull } }
+
+    /** `getnames`: every registered ONS name, as the node lists them. */
+    suspend fun names(): Result<List<String>> =
+        rpc("getnames").mapCatching { element ->
+            element.jsonArray.map { it.jsonPrimitive.content }
+        }
+
+    /** `getbalance` over RPC, for a lookup that is not the app's watched address. */
+    suspend fun rpcBalance(address: String): Result<JsonElement?> =
+        rpc("getbalance", mapOf("address" to JsonPrimitive(address)))
+            .mapCatching { it.takeIf { e -> e !is JsonNull } }
+
+    /**
+     * `getminingstatus`: the node's own eligibility verdict for an address,
+     * including the reward per claim and the cycle timers.
+     *
+     * The app never computes mining eligibility itself — the rules live in
+     * obsidian-core/src/mining/rules.ts and this only displays their answer.
+     */
+    suspend fun miningStatus(address: String): Result<JsonElement?> =
+        rpc("getminingstatus", mapOf("address" to JsonPrimitive(address)))
+            .mapCatching { it.takeIf { e -> e !is JsonNull } }
     suspend fun params(): Result<JsonElement> = getRaw("/params")
     suspend fun network(): Result<JsonElement> = getRaw("/network")
     suspend fun peers(): Result<JsonElement> = getRaw("/peers")

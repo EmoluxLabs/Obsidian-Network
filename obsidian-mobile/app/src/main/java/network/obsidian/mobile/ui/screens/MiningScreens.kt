@@ -1,0 +1,174 @@
+package network.obsidian.mobile.ui.screens
+
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import network.obsidian.mobile.identity.ProfileStore
+import network.obsidian.mobile.remote.ChainLink
+import network.obsidian.mobile.remote.ObsidianRepository
+import network.obsidian.mobile.ui.ChainValues
+import network.obsidian.mobile.ui.components.EmptyBlock
+import network.obsidian.mobile.ui.components.ErrorBlock
+import network.obsidian.mobile.ui.components.GoldKicker
+import network.obsidian.mobile.ui.components.ObsidianCard
+import network.obsidian.mobile.ui.components.ObsidianRow
+import network.obsidian.mobile.ui.components.ScreenShell
+import network.obsidian.mobile.ui.components.SectionLabel
+import network.obsidian.mobile.ui.theme.ObsidianColors
+import network.obsidian.mobile.ui.theme.ObsidianSpace
+import network.obsidian.mobile.ui.theme.ObsidianType
+
+/*
+ * Mining on this screen means the chain's mining, shown truthfully.
+ *
+ * The rules live in obsidian-core/src/mining/rules.ts. This app does not
+ * reimplement eligibility, reward curves or cycle timers, and it does not run a
+ * miner: a phone is not a validator and pretending otherwise would be the
+ * "fake active miner" the design must never show. What is displayed is the
+ * network's real mining state from /status, and — for the attached address — the
+ * node's own eligibility verdict from getminingstatus.
+ *
+ * When mining is not active, that is what the screen says.
+ */
+
+@Composable
+fun MiningScreen(
+    store: ProfileStore,
+    repository: ObsidianRepository,
+    onBack: () -> Unit,
+    onActive: () -> Unit,
+) {
+    val link by repository.link.collectAsState()
+
+    ScreenShell(title = "Mining", kicker = "Proof of Time", onBack = onBack) {
+        when (link) {
+            is ChainLink.Online -> {
+                ObsidianCard {
+                    SectionLabel("NETWORK")
+                    Spacer(Modifier.height(ObsidianSpace.S))
+                    ObsidianRow("Block height", ChainValues.count(link.health.height), mono = true)
+                    ObsidianRow("Active miners", link.status.activeMiners.toString(), mono = true)
+                    ObsidianRow("Mining claims", ChainValues.count(link.status.metrics.miningClaims), mono = true)
+                    ObsidianRow("Reward pool", ChainValues.obs(link.status.pool.balance), mono = true)
+                    ObsidianRow("Pool lifetime inflow", ChainValues.obs(link.status.pool.lifetimeInflow), mono = true)
+                    ObsidianRow("Pool distributed", ChainValues.obs(link.status.pool.lifetimeDistributed), mono = true)
+                    ObsidianRow("Settled claims", ChainValues.count(link.status.pool.settledClaims), mono = true, divider = false)
+                }
+
+                Spacer(Modifier.height(ObsidianSpace.M))
+                SectionLabel("THIS DEVICE")
+                Spacer(Modifier.height(ObsidianSpace.XS))
+                ObsidianCard {
+                    val profile = store.active()
+                    if (profile == null) {
+                        EmptyBlock(
+                            title = "No address attached",
+                            body = "Eligibility is per address. Attach one to see the node's own " +
+                                "verdict for it — this app never computes eligibility itself.",
+                        )
+                    } else {
+                        ObsidianRow("Address", ChainValues.shorten(profile.address), mono = true)
+                        ObsidianRow(
+                            label = "State",
+                            value = "Not mining here",
+                            valueColor = ObsidianColors.Muted,
+                            divider = false,
+                        )
+                        Spacer(Modifier.height(ObsidianSpace.S))
+                        Text(
+                            "This device is not a miner. Claiming a mining reward is a signed " +
+                                "transaction, and the app holds no key with which to sign one.",
+                            style = ObsidianType.Support,
+                            color = ObsidianColors.Muted,
+                        )
+                    }
+                }
+            }
+            is ChainLink.Degraded -> ErrorBlock(
+                title = "Connection lost",
+                body = "The last values this device received are not shown as current. Reconnect to " +
+                    "read live mining state.",
+            )
+            ChainLink.Offline -> ErrorBlock(
+                title = "Offline",
+                body = "No node has answered, so there is no mining state to show.",
+            )
+        }
+
+        Spacer(Modifier.height(ObsidianSpace.M))
+        ObsidianCard {
+            GoldKicker("Proof of Time")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            Text(
+                "Obsidian's consensus is Proof of Time: validators are scheduled into slots and " +
+                    "produce blocks in turn. Mining claims are how rewards reach miners, and the " +
+                    "pool above is where those rewards accumulate before settlement. None of those " +
+                    "rules are restated or altered by this app.",
+                style = ObsidianType.Support,
+                color = ObsidianColors.Muted,
+            )
+        }
+
+        Spacer(Modifier.height(ObsidianSpace.XL))
+    }
+}
+
+/**
+ * ACTIVE MINING — the honest version.
+ *
+ * There is no state in which this phone is producing blocks, so the screen shows
+ * the network's real producing state instead of inventing a local miner. An
+ * "active mining" animation with a fabricated hashrate would be a fake success
+ * state, which is worse than an accurate inactive one.
+ */
+@Composable
+fun MiningActiveScreen(repository: ObsidianRepository, onBack: () -> Unit) {
+    val link by repository.link.collectAsState()
+
+    ScreenShell(title = "Mining status", kicker = "Live", onBack = onBack) {
+        ObsidianCard {
+            GoldKicker("This device")
+            Spacer(Modifier.height(ObsidianSpace.S))
+            Text("Not mining", style = ObsidianType.Statement, color = ObsidianColors.Ink)
+            Spacer(Modifier.height(ObsidianSpace.XS))
+            Text(
+                "Obsidian Mobile does not run a miner and is not a validator. Producing a block " +
+                    "requires a registered validator bond and a signing key; this app has neither " +
+                    "and does not simulate having them.",
+                style = ObsidianType.Support,
+                color = ObsidianColors.Muted,
+            )
+        }
+
+        Spacer(Modifier.height(ObsidianSpace.M))
+        SectionLabel("THE CHAIN IS PRODUCING")
+        Spacer(Modifier.height(ObsidianSpace.XS))
+        ObsidianCard {
+            when (link) {
+                is ChainLink.Online -> {
+                    ObsidianRow("Block height", ChainValues.count(link.health.height), mono = true)
+                    ObsidianRow("Head hash", ChainValues.shorten(link.health.headHash), mono = true)
+                    ObsidianRow("Active miners", link.status.activeMiners.toString(), mono = true)
+                    ObsidianRow("Validators", link.status.validators.toString(), mono = true)
+                    ObsidianRow("Mempool", link.status.mempool.transactions.toString() + " tx", mono = true)
+                    ObsidianRow(
+                        label = "Syncing",
+                        value = if (link.health.syncing) "Yes" else "No",
+                        divider = false,
+                    )
+                }
+                is ChainLink.Degraded -> ErrorBlock(
+                    title = "Connection lost",
+                    body = "Live producing state is unavailable until the node answers again.",
+                )
+                ChainLink.Offline -> ErrorBlock(title = "Offline", body = "No node has answered yet.")
+            }
+        }
+
+        Spacer(Modifier.height(ObsidianSpace.XL))
+    }
+}
