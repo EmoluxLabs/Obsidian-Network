@@ -1,6 +1,8 @@
 package network.obsidian.mobile
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.navigation.NavHostController
 import network.obsidian.mobile.identity.ProfileStore
 import network.obsidian.mobile.remote.ObsidianRepository
@@ -110,7 +112,11 @@ object AppGraph {
             OnsScreen(repository = repo, onBack = { nav.popBackStack() })
         },
         RouteEntry(Routes.EDGE_NODE, "Edge Node") { nav, repo, _ ->
-            EdgeNodeScreen(nodeUrl = repo.nodeUrl.value, onBack = { nav.popBackStack() })
+            // Collected, not read: StateFlow.value inside composition does not
+            // subscribe, so the screen would keep showing the node it opened with
+            // even after the user pointed the app at another one.
+            val nodeUrl by repo.nodeUrl.collectAsState()
+            EdgeNodeScreen(nodeUrl = nodeUrl, onBack = { nav.popBackStack() })
         },
         RouteEntry(Routes.SETTINGS, "Settings") { nav, repo, _ ->
             SettingsScreen(repository = repo, onBack = { nav.popBackStack() })
