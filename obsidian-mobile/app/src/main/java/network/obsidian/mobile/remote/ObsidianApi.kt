@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
  * a network error is never translated into a default value that a screen could
  * mistake for chain state. Requirement 28 — no fake success — starts here.
  */
-class ObsidianApi(
+open class ObsidianApi(
     private val baseUrl: String,
     private val client: OkHttpClient = defaultClient(),
 ) {
@@ -32,9 +32,9 @@ class ObsidianApi(
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
-    suspend fun health(): Result<HealthResponse> = get("/health")
-    suspend fun status(): Result<StatusResponse> = get("/status")
-    suspend fun supply(): Result<SupplyResponse> = get("/supply")
+    open suspend fun health(): Result<HealthResponse> = get("/health")
+    open suspend fun status(): Result<StatusResponse> = get("/status")
+    open suspend fun supply(): Result<SupplyResponse> = get("/supply")
     suspend fun params(): Result<JsonElement> = getRaw("/params")
     suspend fun network(): Result<JsonElement> = getRaw("/network")
     suspend fun peers(): Result<JsonElement> = getRaw("/peers")
