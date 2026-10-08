@@ -98,19 +98,23 @@ jobs:
       - name: Unit tests
         run: |
           set -o pipefail
-          ./gradlew testDebugUnitTest --no-daemon 2>&1 | tee unit-tests.log
-          status=$?
+          status=0
+          # Guarded with ||: the shell runs with -e, so a bare failing pipeline
+          # would abort before the error lines could be reported.
+          ./gradlew testDebugUnitTest --no-daemon 2>&1 | tee unit-tests.log || status=$?
           if [ "$status" -ne 0 ]; then
-            grep -E "^e: |^w: .*error|error:|FAILURE:|Could not resolve|Unresolved reference|What went wrong" unit-tests.log \
-              | head -60 | while IFS= read -r line; do echo "::error title=Kotlin::${line}"; done
+            grep -E "^e: |error:|FAILURE:|Could not resolve|Could not find|Unresolved reference|What went wrong|> " unit-tests.log \
+              | head -80 | while IFS= read -r line; do echo "::error title=Kotlin::${line}"; done
             exit "$status"
           fi
 
       - name: Lint
         run: |
           set -o pipefail
-          ./gradlew lintDebug --no-daemon 2>&1 | tee lint.log
-          status=$?
+          status=0
+          # Guarded with ||: the shell runs with -e, so a bare failing pipeline
+          # would abort before the error lines could be reported.
+          ./gradlew lintDebug --no-daemon 2>&1 | tee lint.log || status=$?
           if [ "$status" -ne 0 ]; then
             grep -E "Error:|error:|FAILURE:|What went wrong" lint.log | head -40 | while IFS= read -r line; do echo "::error title=Lint::${line}"; done
             exit "$status"
@@ -119,8 +123,10 @@ jobs:
       - name: Assemble debug and release
         run: |
           set -o pipefail
-          ./gradlew assembleDebug assembleRelease --no-daemon 2>&1 | tee assemble.log
-          status=$?
+          status=0
+          # Guarded with ||: the shell runs with -e, so a bare failing pipeline
+          # would abort before the error lines could be reported.
+          ./gradlew assembleDebug assembleRelease --no-daemon 2>&1 | tee assemble.log || status=$?
           if [ "$status" -ne 0 ]; then
             grep -E "^e: |error:|FAILURE:|Could not resolve|Unresolved reference|What went wrong" assemble.log \
               | head -60 | while IFS= read -r line; do echo "::error title=Build::${line}"; done

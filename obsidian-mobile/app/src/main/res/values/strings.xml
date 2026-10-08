@@ -13,6 +13,7 @@
     <string name="edge_node_zero_votes">0 voting power</string>
     <string name="node_runner_name">Node Runner</string>
     <string name="edge_node_not_node_runner">An Edge Node is not a Node Runner</string>
+    <string name="edge_node_channel_description">Shows while the Edge Node is connected and helping propagate blocks and transactions. It never votes, produces blocks or earns rewards.</string>
 
     <!-- System states. Every major screen uses these words, so an offline chain
          never reads as a success. -->
