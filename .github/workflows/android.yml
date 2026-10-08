@@ -183,24 +183,28 @@ jobs:
           "$BT/aapt2" dump badging "$APK" \
             | grep -E "^package:|launchable-activity:|sdkVersion:|targetSdkVersion:|uses-permission:|application-label:" \
             | while IFS= read -r line; do echo "::notice title=APK badging::${line}"; done
-          echo "::notice title=APK contents (top level)::$(unzip -l "$APK" | awk 'NR>3 {print $4}' | grep -v '^$' | cut -d/ -f1 | sort -u | tr '\n' ' ')"
+          echo "::notice title=APK top-level entries::$(unzip -l "$APK" | awk 'NR>3 && NF>3 {print $4}' | cut -d/ -f1 | sort -u | tr '\n' ' ' || echo 'unzip unavailable')"
           # Debug builds are signed with the Android debug key; a release build is
-          # unsigned unless the operator supplied a keystore. Either way, report it
-          # rather than letting anyone assume it is release-signed.
-          if "$BT/apksigner" verify --print-certs "$APK" > signer.txt 2>&1; then
-            grep -E "Signer #1 certificate DN|Signer #1 certificate SHA-256" signer.txt \
-              | while IFS= read -r line; do echo "::notice title=APK signing::${line}"; done
-          else
-            echo "::notice title=APK signing::not signed — $(head -1 signer.txt)"
-          fi
+          # unsigned unless the operator supplied a keystore. Either way report the
+          # raw verdict rather than a filtered summary that can silently vanish.
+          set +e
+          "$BT/apksigner" verify --print-certs "$APK" > signer.txt 2>&1
+          RC=$?
+          set -e
+          echo "::notice title=APK signing (exit $RC)::$(head -4 signer.txt | tr '\n' ' | ')"
           RELEASE=$(ls -1 app/build/outputs/apk/release/*.apk 2>/dev/null | head -1 || true)
           if [ -n "${RELEASE:-}" ]; then
-            if "$BT/apksigner" verify "$RELEASE" > /dev/null 2>&1; then
+            set +e; "$BT/apksigner" verify "$RELEASE" > rel.txt 2>&1; RRC=$?; set -e
+            if [ "$RRC" -eq 0 ]; then
               echo "::notice title=Release APK::signed"
             else
-              echo "::notice title=Release APK::UNSIGNED — install the debug APK, or supply OBSIDIAN_KEYSTORE secrets to sign the release"
+              echo "::notice title=Release APK::UNSIGNED (apksigner exit $RRC) - install the debug APK, or supply the OBSIDIAN_KEYSTORE secrets to sign the release"
             fi
+          else
+            echo "::notice title=Release APK::no release APK produced"
           fi
+          LAUNCH=$("$BT/aapt2" dump badging "$APK" | grep -i 'launchable' || echo 'NO LAUNCHABLE ACTIVITY FOUND')
+          echo "::notice title=APK badging launch entry::${LAUNCH}"
 
       - name: Upload APK artefacts
         uses: actions/upload-artifact@v4
