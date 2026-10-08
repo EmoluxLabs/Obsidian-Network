@@ -142,9 +142,12 @@ class EdgeNodeSecurityTest {
         // at which a seed phrase could be handed over.
         val forbidden = Regex("privatekey|seedphrase|seed|mnemonic|passphrase|secret", RegexOption.IGNORE_CASE)
 
-        val ctorParams = EdgeNodeController::class.constructors
-            .flatMap { it.parameters.asSequence() }
-            .map { it.name.orEmpty() }
+        // Java reflection only, deliberately: kotlin-reflect is not a dependency
+        // of this module, and adding one just to inspect a class would be a
+        // heavier change than the test warrants.
+        val ctorParams = EdgeNodeController::class.java.declaredConstructors
+            .flatMap { it.parameterTypes.asSequence() }
+            .map { it.simpleName }
         assertTrue(
             "a constructor parameter looks like key material: $ctorParams",
             ctorParams.none { forbidden.containsMatchIn(it) },
@@ -153,8 +156,17 @@ class EdgeNodeSecurityTest {
         val fields = EdgeNodeController::class.java.declaredFields.map { it.name }
         assertTrue("a field looks like key material: $fields", fields.none { forbidden.containsMatchIn(it) })
 
-        assertEquals("enable() must take no credential", 0, EdgeNodeController::class.members
-            .first { it.name == "enable" }.parameters.count { it.name != null })
+        // enable() is a suspend function, so its only JVM parameter is the
+        // coroutine continuation. If a credential were ever added it would appear
+        // here as a real type — which is exactly what this asserts against.
+        val enableParams = EdgeNodeController::class.java.declaredMethods
+            .first { it.name == "enable" }
+            .parameterTypes
+            .map { it.name }
+        assertTrue(
+            "enable() must accept no credential, but takes $enableParams",
+            enableParams.all { it == "kotlin.coroutines.Continuation" },
+        )
     }
 
     @Test

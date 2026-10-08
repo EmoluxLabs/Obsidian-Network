@@ -131,6 +131,11 @@ class RepositoryStateTest {
         assertTrue(repo.link.value is ChainLink.Online)
 
         repo.setNodeUrl("http://another-node.local:8630")
+        // setNodeUrl restarts the poller, and in a TestScope the delay between
+        // refreshes is skipped — so without this the loop would spin for the whole
+        // test timeout. Stopping it is also the honest end state for a test that
+        // never wanted a background poller running.
+        repo.stopPolling()
 
         assertEquals(ChainLink.Offline, repo.link.value)
         assertEquals("http://another-node.local:8630", repo.nodeUrl.value)
