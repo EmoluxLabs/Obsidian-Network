@@ -20,7 +20,7 @@
  */
 
 import { Reader } from '../protocol/encoding.js';
-import type { Block, ProtocolEvent, TxEnvelope } from '../protocol/types.js';
+import type { Block, ConsensusEvidenceContext, ProtocolEvent, TxEnvelope } from '../protocol/types.js';
 import { TxType } from '../protocol/types.js';
 import { ErrCode, ProtocolError, reject } from '../protocol/errors.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
@@ -41,6 +41,8 @@ export interface BlockContext {
   timestamp: number;
   chainId: number;
   producer: string;
+  /** Historical lookups for evidence-carrying transactions; see ExecutorContext. */
+  evidence?: ConsensusEvidenceContext;
 }
 
 export interface BlockRoutinesOptions {
@@ -115,7 +117,10 @@ export function applyTransactions(
       claimsPerWallet.set(tx.sender, count + 1);
     }
 
-    const result = executeTransaction({ state, apply, net, chainId: ctx.chainId }, tx);
+    // `evidence` is forwarded so an executor that must judge something signed in
+    // the PAST (SLASH) can do it against history. Executors that do not need it
+    // ignore it; one that does and was not given it must refuse, and does.
+    const result = executeTransaction({ state, apply, net, chainId: ctx.chainId, evidence: ctx.evidence }, tx);
     gasBaseTotal += result.gasBase;
 
     state.setNonce(tx.sender, tx.nonce + 1, apply);
@@ -205,6 +210,8 @@ export interface ApplyBlockOptions {
    * validating node does — the list is never taken from a peer.
    */
   missedProposers?: string[];
+  /** Chain context for evidence verification; see ExecutorContext. */
+  evidence?: ConsensusEvidenceContext;
 }
 
 /**
@@ -237,6 +244,7 @@ export function applyBlock(
     timestamp: block.header.timestamp,
     chainId: block.header.chainId,
     producer: block.header.producer,
+    evidence: options.evidence,
   };
 
   const applied = applyTransactions(state, block.transactions, ctx, net);

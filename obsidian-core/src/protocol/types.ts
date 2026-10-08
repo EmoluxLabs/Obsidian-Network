@@ -751,18 +751,35 @@ export interface ConsensusEvidenceContext {
   readonly chainId: number;
   readonly genesisId: string;
   readonly paramsHash: string;
+  /** Bech32 prefix this network's validator addresses use. */
+  readonly addressHrp: string;
   /** Height and protocol time of a block this node holds, or null. */
   anchorFor(hash: string): { height: number; timestamp: number } | null;
   /** A block this node holds, or null. */
   blockByHash(hash: string): Block | null;
   /**
-   * Finality committee in force for the anchor's parent — address mapped to the
-   * key that validator registered with — or null when the anchor state is not
-   * available on this node.
+   * Finality committee in force for the anchor's parent, in the deterministic
+   * address order the set hash is computed over — or null when the anchor state
+   * is not available on this node. Order is part of the hash, so a caller must
+   * not re-sort or filter what it returns.
    */
-  committeeFor(parentHash: string, finalizedHeight: number): ReadonlyMap<string, string> | null;
-  /** Whether `block` qualifies as a bootstrap finality target. */
-  isBootstrapTarget(block: Block): boolean;
+  committeeFor(
+    parentHash: string,
+    finalizedHeight: number,
+  ): readonly { address: string; publicKey: string }[] | null;
+  /** Whether `block` qualifies as a bootstrap finality target for `setHash`. */
+  isBootstrapTarget(block: Block, setHash: string, historical: boolean): boolean;
+  /**
+   * Address the proposer schedule names for `height` in `round` on top of
+   * `parentHash`, or null when no validator is scheduled (bootstrap mode). A
+   * vote may only point at a block the schedule actually authorised.
+   */
+  scheduledProposerFor(
+    parentHash: string,
+    height: number,
+    round: number,
+    timestamp: number,
+  ): string | null;
 }
 
 export interface ChainMeta {

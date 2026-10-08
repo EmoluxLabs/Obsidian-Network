@@ -19,6 +19,7 @@ import type {
   Block,
   BlockHeader,
   BlockSummary,
+  ConsensusEvidenceContext,
   EquivocationEvidence,
   FinalityCertificate,
   FinalityVote,
@@ -75,9 +76,13 @@ import { CORE_VERSION, PROTOCOL_VERSION, STATE_SNAPSHOT_VERSION } from '../versi
 import { FinalityStore, type FinalityIdentity, type PersistedFinalityState } from '../storage/finality-store.js';
 import {
   bootstrapFinalityValidators, certificateShape, evidenceSerializedBytes, finalityQuorum, finalityValidators,
-  finalityVoteId, finalityVoteShape, makeProposerEvidence, makeVoteEvidence,
-  signFinalityVote, validatorSetHash, verifyFinalityVoteSignature,
+  finalityVoteId, makeProposerEvidence, makeVoteEvidence,
+  signFinalityVote, validatorSetHash,
 } from '../consensus/finality.js';
+import {
+  validateCanonicalFinalityVote,
+  type FinalityVoteVerdict,
+} from '../consensus/finality-vote.js';
 import { fromHex, toHex } from '../crypto/hash.js';
 
 export interface ChainManagerOptions {
@@ -384,8 +389,16 @@ export class ChainManager extends EventEmitter {
     const shape=certificateShape(c); if(!shape.ok)return {ok:false,message:shape.reason};
     const seen=new Set<string>();
     for(const vote of c.votes){
-      const voteShape=finalityVoteShape(vote);if(!voteShape.ok)return {ok:false,message:voteShape.reason};
-      if(vote.protocolVersion!==PROTOCOL_VERSION||vote.networkId!==this.options.net.networkId||vote.chainId!==this.options.net.chainId||vote.genesisId!==this.genesisId||vote.paramsHash!==PARAMS_HASH||!verifyFinalityVoteSignature(vote,this.options.net.addressHrp))return {ok:false,message:'certificate vote signature or network identity invalid'};
+      // Not a second, shorter list of rules: the certificate's votes go through
+      // the SAME canonical predicate as an admitted vote, so a certificate can
+      // never be built out of votes this node would refuse individually. The
+      // local anchor is deliberately not required (the certificate may certify
+      // an anchor this node has not reached) and the target block may be one
+      // this node does not hold yet — that is the ordinary case when a certified
+      // branch arrives from a peer, and the quorum of signatures over a known
+      // committee is what makes it safe.
+      const verdict=this.validateFinalityVote(vote,{allowUnknown:true,skipAnchorCheck:true});
+      if(!verdict.ok&&!verdict.unknown)return {ok:false,message:`certificate vote invalid: ${verdict.message}`};
       if(vote.finalizedHeight!==c.finalizedHeight||vote.finalizedHash!==c.finalizedHash||vote.height!==c.height||vote.blockHash!==c.blockHash||vote.parentHash!==c.parentHash||vote.validatorSetHash!==c.validatorSetHash||seen.has(vote.validator))return {ok:false,message:'certificate contains duplicate or mismatched vote'};
       seen.add(vote.validator);
     }
@@ -682,17 +695,75 @@ export class ChainManager extends EventEmitter {
     return signFinalityVote(template, identity.privateKey);
   }
 
-  private validateFinalityVote(vote:FinalityVote,options:{allowUnknown:boolean;skipAnchorCheck:boolean}):{ok:true}|{ok:false;message:string;unknown?:boolean} {
-    const shape=finalityVoteShape(vote); if (!shape.ok) return {ok:false,message:shape.reason};
-    if (vote.protocolVersion!==PROTOCOL_VERSION||vote.networkId!==this.options.net.networkId||vote.chainId!==this.options.net.chainId||vote.genesisId!==this.genesisId||vote.paramsHash!==PARAMS_HASH) return {ok:false,message:'vote belongs to another protocol or network'};
-    if (!verifyFinalityVoteSignature(vote,this.options.net.addressHrp)) return {ok:false,message:'vote signature or address invalid'};
-    if (!options.skipAnchorCheck&&(vote.finalizedHeight!==this.finality.finalizedHeight||vote.finalizedHash!==this.finality.finalizedHash)) return {ok:false,message:'vote does not extend local finality'};
-    const parent=this.store.getIndexEntry(vote.parentHash); if (!parent||vote.height!==parent.height+1) return {ok:false,message:'vote parent unknown or height inconsistent'};
-    const validators = this.validatorsForAnchor(this.stateOf(parent), vote.finalizedHeight); if (validatorSetHash(validators) !== vote.validatorSetHash || !validators.some((v) => v.address === vote.validator && v.publicKey === vote.publicKey)) return { ok: false, message: 'validator not eligible in target parent state' };
-    const block=this.store.getBlockByHash(vote.blockHash); if (!block) return {ok:false,message:'vote target unknown',unknown:options.allowUnknown};
-    if (block.header.height!==vote.height||block.header.prevHash!==vote.parentHash||proposerRound(parent.timestamp,block.header.timestamp)!==vote.round) return {ok:false,message:'vote target metadata mismatch'};
-    const ordinary=vote.height===vote.finalizedHeight+1&&vote.parentHash===vote.finalizedHash; const bootstrap=vote.finalizedHeight===0&&this.isBootstrapTarget(block,vote.validatorSetHash,options.skipAnchorCheck); if (!ordinary&&!bootstrap) return {ok:false,message:'vote target does not extend anchor'};
-    return {ok:true};
+  /**
+   * The historical lookups the canonical finality predicate needs, bound to
+   * THIS chain's storage and state.
+   *
+   * One factory, so every consumer — vote admission, vote restoration after a
+   * restart, certificate verification, the equivocation detector and slash
+   * evidence in a block being executed — asks the same question of the same
+   * data. Nothing here is node-local opinion: each lookup answers from stored
+   * blocks and from the state committed at a given block, and returns null when
+   * this node genuinely does not have the answer.
+   */
+  private finalityVoteContext(): ConsensusEvidenceContext {
+    return {
+      networkId: this.options.net.networkId,
+      chainId: this.options.net.chainId,
+      genesisId: this.genesisId,
+      paramsHash: PARAMS_HASH,
+      addressHrp: this.options.net.addressHrp,
+      anchorFor: (hash) => {
+        const entry = this.store.getIndexEntry(hash);
+        return entry ? { height: entry.height, timestamp: entry.timestamp } : null;
+      },
+      blockByHash: (hash) => this.store.getBlockByHash(hash) ?? null,
+      committeeFor: (parentHash, finalizedHeight) => {
+        const parent = this.store.getIndexEntry(parentHash);
+        if (!parent) return null;
+        return this.validatorsForAnchor(this.stateOf(parent), finalizedHeight);
+      },
+      isBootstrapTarget: (block, setHash, historical) => this.isBootstrapTarget(block, setHash, historical),
+      scheduledProposerFor: (parentHash, height, round, timestamp) => {
+        const parent = this.store.getIndexEntry(parentHash);
+        if (!parent) return null;
+        return scheduledProposer(this.stateOf(parent), height, round, timestamp);
+      },
+    };
+  }
+
+  /**
+   * The same context, handed to the state transition so a SLASH transaction is
+   * verified against history rather than against whatever this node holds now.
+   *
+   * Public on purpose: a caller that applies a block itself — a test, a
+   * migration tool, an offline verifier — must supply the same history the chain
+   * would, or evidence inside that block cannot be judged at all.
+   */
+  consensusEvidenceContext(): ConsensusEvidenceContext {
+    return this.finalityVoteContext();
+  }
+
+  /**
+   * Is this vote valid? Delegates to the canonical predicate in
+   * consensus/finality-vote.ts — the chain holds no rules of its own, so the
+   * answer cannot drift from the one the evidence verifier or a certificate
+   * gives. `skipAnchorCheck` is what separates ADMISSION (the vote must extend
+   * this node's own anchor) from judging a vote that arrived inside evidence or
+   * a certificate, where the offence may predate this node's anchor.
+   */
+  private validateFinalityVote(
+    vote: FinalityVote,
+    options: { allowUnknown: boolean; skipAnchorCheck: boolean },
+  ): FinalityVoteVerdict {
+    return validateCanonicalFinalityVote(vote, this.finalityVoteContext(), {
+      requireLocalAnchor: options.skipAnchorCheck
+        ? false
+        : { height: this.finality.finalizedHeight, hash: this.finality.finalizedHash },
+      requireTargetBlock: true,
+      allowUnknownTarget: options.allowUnknown,
+      allowBootstrapTarget: true,
+    });
   }
 
   addFinalityVote(vote:FinalityVote):FinalityAdmissionResult {
@@ -943,7 +1014,14 @@ export class ChainManager extends EventEmitter {
       }
     }
 
-    const applied = applyBlock(parentState, block, { net: this.options.net });
+    const applied = applyBlock(parentState, block, {
+      net: this.options.net,
+      // Evidence inside this block is verified against history: the committee
+      // and the anchor as they were when the offence happened, never this node's
+      // current view. Every node applying the block builds the same context from
+      // the same stored blocks, so the verdict is identical everywhere.
+      evidence: this.consensusEvidenceContext(),
+    });
 
     this.store.putBlock(block);
     const entry = this.store.getIndexEntry(hash)!;
@@ -1036,7 +1114,7 @@ export class ChainManager extends EventEmitter {
         continue;
       }
       if (!state) state = this.stateOf(this.store.getCanonicalAtHeight(height - 1)!);
-      const applied = applyBlock(state, block, { net: this.options.net });
+      const applied = applyBlock(state, block, { net: this.options.net, evidence: this.consensusEvidenceContext() });
       state = applied.state;
       yield { block, events: applied.events };
     }
@@ -1104,7 +1182,7 @@ export class ChainManager extends EventEmitter {
         state = cached.state;
         continue;
       }
-      const applied = applyBlock(state, block, { net: this.options.net });
+      const applied = applyBlock(state, block, { net: this.options.net, evidence: this.consensusEvidenceContext() });
       state = applied.state;
       this.rememberState(entry, state);
       this.rememberEvents(entry.hash, applied.events);
@@ -1228,7 +1306,7 @@ export class ChainManager extends EventEmitter {
       const step = path[index]!;
       const block = this.store.getBlockByHash(step.hash);
       if (!block) throw new Error(`missing block ${step.hash} at height ${step.height}`);
-      state = applyBlock(state, block, { net: this.options.net }).state;
+      state = applyBlock(state, block, { net: this.options.net, evidence: this.consensusEvidenceContext() }).state;
       this.rememberState(step, state);
     }
     return state;
@@ -1295,6 +1373,10 @@ export class ChainManager extends EventEmitter {
       timestamp,
       chainId: this.options.net.chainId,
       producer: producer.address,
+      // A producer verifies the evidence it is about to include with exactly the
+      // context a validating node will use, so the two cannot reach different
+      // verdicts about the same transaction.
+      evidence: this.consensusEvidenceContext(),
     };
     // Derived from the PARENT state before the working copy advances, exactly as
     // every validating node derives it from the finished block.

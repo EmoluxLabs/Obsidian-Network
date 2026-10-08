@@ -74,7 +74,14 @@ import { ErrCode } from '../protocol/errors.js';
 import { PROTOCOL_VERSION } from '../version.js';
 import { PARAMS_HASH } from '../blockchain/state-root.js';
 import { blockHash, decodeSignedHeader, verifyBlockSignature } from '../blockchain/block.js';
-import type { BlockHeader, EquivocationEvidence, SlashBody } from '../protocol/types.js';
+import type {
+  BlockHeader,
+  ConsensusEvidenceContext,
+  EquivocationEvidence,
+  FinalityVote,
+  SlashBody,
+} from '../protocol/types.js';
+import { validateCanonicalFinalityVote } from './finality-vote.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
 import type { WorldState } from '../blockchain/state.js';
 import { fromHex } from '../crypto/hash.js';
@@ -159,12 +166,26 @@ function decodeHeaderHex(hex: string): BlockHeader | null {
  * The single authoritative verification path. Returns the exact amounts to
  * apply on success; every rejection carries the protocol error code the node
  * reports.
+ *
+ * PURE: it reads state and `consensus`, mutates nothing and applies nothing, so
+ * the very same function can run in P2P admission, in the mempool, in a
+ * simulation and inside the state transition of a block — and every one of
+ * those callers gets the same verdict. Applying the penalty is a separate step
+ * (see the SLASH executor), which is what keeps "looks valid" from ever being
+ * confused with "has been paid out".
+ *
+ * `consensus` supplies the historical lookups (committee at the anchor, block by
+ * hash, schedule) that vote evidence needs. It is optional in the signature but
+ * NOT in practice: without it this function refuses vote evidence rather than
+ * guessing, because a node that cannot check the committee cannot check the
+ * accusation.
  */
 export function verifyEquivocationEvidence(
   state: WorldState,
   net: NetworkDefinition,
   body: SlashBody,
   atHeight: number,
+  consensus?: ConsensusEvidenceContext,
 ): SlashVerification {
   const evidence = body.evidence as EquivocationEvidence | undefined;
   if (!evidence || typeof evidence !== 'object' || evidence.version !== 1) {
@@ -194,6 +215,8 @@ export function verifyEquivocationEvidence(
   let height: number;
   let round: number;
   let signingKey: string;
+  /** Votes that must each satisfy the canonical finality-vote predicate. */
+  let votesToValidate: [FinalityVote, FinalityVote] | null = null;
 
   if (evidence.type === 'VOTE_EQUIVOCATION') {
     const first = evidence.firstVote;
@@ -260,6 +283,7 @@ export function verifyEquivocationEvidence(
     height = rebuilt.height;
     round = rebuilt.round;
     signingKey = first.publicKey;
+    votesToValidate = [first, second];
   } else if (evidence.type === 'PROPOSER_EQUIVOCATION') {
     const first = decodeHeaderHex(evidence.firstHeader);
     const second = decodeHeaderHex(evidence.secondHeader);
@@ -363,6 +387,45 @@ export function verifyEquivocationEvidence(
       ErrCode.UNAUTHORIZED,
       'the offence falls outside the tenure of the registration that is bonded now, so it cannot be charged to this bond',
     );
+  }
+
+  // BOTH halves of the accusation must independently be valid consensus votes,
+  // judged by the SAME canonical predicate a node applies to a vote it receives
+  // off the wire (consensus/finality-vote.ts). Not a second, shorter list of
+  // rules: if the two ever disagreed, an accusation one code path relayed could
+  // be one no node would act on, or one that confiscated a bond from a validator
+  // whose votes were never valid here.
+  //
+  // The target block is NOT required. An offence is proven by two signatures
+  // over conflicting blocks, cast by a member of a committee this node can
+  // verify — and a node that never received the equivocated block must still be
+  // able to recognise the offence, or an attacker would escape slashing simply
+  // by withholding the block from some peers. What is unverifiable here is
+  // reported as unknown and left unjudged, never turned into approval.
+  if (votesToValidate !== null) {
+    if (!consensus) {
+      return reject(
+        ErrCode.UNAUTHORIZED,
+        'this node has no historical context for the vote evidence, so it cannot verify the accusation',
+      );
+    }
+    for (const [index, vote] of votesToValidate.entries()) {
+      const verdict = validateCanonicalFinalityVote(vote, consensus, {
+        requireLocalAnchor: false,
+        requireTargetBlock: false,
+        allowUnknownTarget: true,
+        // A bootstrap-form vote is still a signed vote by a bonded validator, so
+        // it stays punishable: leaving it out would open a window in which
+        // equivocation on the first checkpoints could not be charged at all.
+        allowBootstrapTarget: true,
+      });
+      if (!verdict.ok && !verdict.unknown) {
+        return reject(
+          ErrCode.UNAUTHORIZED,
+          `${index === 0 ? 'first' : 'second'} vote is not a valid consensus vote: ${verdict.message}`,
+        );
+      }
+    }
   }
 
   const amount = slashAmountFor(bond);

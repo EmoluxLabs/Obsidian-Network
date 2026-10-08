@@ -193,7 +193,9 @@ export async function createHarness(options: { network?: string; producer?: Test
               },
               transactions: txs,
             },
-            { net, skipRootCheck: true },
+            // The harness applies blocks the way a node does, so a trial that
+            // carries evidence gets the same historical context a node would use.
+            { net, skipRootCheck: true, evidence: chain.consensusEvidenceContext() },
           );
     const block = buildBlock({
       protocolVersion: PROTOCOL_VERSION,
@@ -236,7 +238,9 @@ export async function createHarness(options: { network?: string; producer?: Test
         },
         transactions: txs,
       },
-      { net, skipRootCheck: true },
+      // The harness applies blocks the way a node does, so a trial that
+            // carries evidence gets the same historical context a node would use.
+            { net, skipRootCheck: true, evidence: chain.consensusEvidenceContext() },
     );
     const block = buildBlock({
       protocolVersion: PROTOCOL_VERSION,

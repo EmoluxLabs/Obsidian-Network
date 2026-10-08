@@ -90,7 +90,10 @@ export function executeSlash(
   const body = decodeSlashBody(tx.body);
   assertGas(tx.gas, 0n);
 
-  const verified = verifyEquivocationEvidence(state, net, body, apply.height);
+  // Pure verification first: nothing about the validator, the bond or the pool
+  // is touched until the evidence has been proven, and the proof itself is the
+  // same function every other caller runs.
+  const verified = verifyEquivocationEvidence(state, net, body, apply.height, ctx.evidence);
   if (!verified.ok) {
     reject(verified.code, `slash rejected: ${verified.message}`);
   }

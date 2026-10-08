@@ -34,6 +34,7 @@ import { encodeSlashBody } from '../../src/transactions/executors/slash.js';
 import { ErrCode, ProtocolError } from '../../src/protocol/errors.js';
 import { Writer } from '../../src/protocol/encoding.js';
 import { CONSENSUS_PARAMS, VALIDATOR_JAIL_SECONDS } from '../../src/protocol/params.js';
+import type { WorldState } from '../../src/blockchain/state.js';
 import { PARAMS_HASH } from '../../src/blockchain/state-root.js';
 import { PROTOCOL_VERSION } from '../../src/version.js';
 import { formatObs, parseObs } from '../../src/protocol/amount.js';
@@ -44,6 +45,7 @@ import {
   TxType,
   ValidatorOp,
   type Block,
+  type ConsensusEvidenceContext,
   type EquivocationEvidence,
   type FinalityVote,
   type ProposerEquivocationEvidence,
@@ -211,6 +213,35 @@ async function slashHarness(options: { backup?: boolean } = {}): Promise<{
   };
 }
 
+/**
+ * A historical context for evidence about an anchor this chain has not produced.
+ *
+ * A test that applies a state transition directly — a claim twenty thousand
+ * blocks out, a re-registration after it — has to supply the same kind of
+ * context a node would, or the evidence inside the block cannot be judged. This
+ * wraps the chain's real context and answers for ONE synthetic anchor, taking
+ * the committee from the state under test. Everything else, including the
+ * network identity and the genesis id, still comes from the chain: nothing about
+ * the accusation is made easier to accept than it would be on a real node.
+ */
+function voteContextFor(
+  h: Harness,
+  state: WorldState,
+  anchor: { height: number; hash: string },
+): ConsensusEvidenceContext {
+  const real = h.chain.consensusEvidenceContext();
+  const committee = finalityValidators(state).map((v) => ({ address: v.address, publicKey: v.publicKey }));
+  return {
+    ...real,
+    anchorFor: (hash) =>
+      hash === anchor.hash ? { height: anchor.height, timestamp: state.s.timestamp } : real.anchorFor(hash),
+    committeeFor: (parentHash, finalizedHeight) =>
+      parentHash === anchor.hash ? committee : real.committeeFor(parentHash, finalizedHeight),
+    isBootstrapTarget: (block, setHash, historical) =>
+      block.header.prevHash === anchor.hash ? false : real.isBootstrapTarget(block, setHash, historical),
+  };
+}
+
 const slashTx = (h: Harness, submitter: TestWallet, body: SlashBody): TxEnvelope =>
   h.sign(submitter, TxType.SLASH, encodeSlashBody(body), { gas: 0n });
 
@@ -258,13 +289,21 @@ function proposerEquivocation(h: Harness, validator: TestWallet): { evidence: Pr
 /**
  * Everything two finality votes need to be individually valid.
  *
- * The anchor is the block one below the current tip, so the votes are cast in a
- * round the accused validator could actually have taken part in: an offence
- * before its registration is a different registration's liability and is
- * deliberately refused (that is asserted on its own below).
+ * The anchor is the current tip, so the committee in force at the anchor is the
+ * committee the accused actually belonged to when it signed: a vote cast by an
+ * address that was not a member of the committee it names is not a valid
+ * consensus vote at all, and since 1.6.1 slash evidence is checked against the
+ * same canonical predicate as a vote received off the wire. An offence before
+ * the registration is a different registration's liability and is deliberately
+ * refused (that is asserted on its own below).
+ *
+ * The target block does not have to exist. The offence is proven by two
+ * signatures over conflicting blocks by a member of a committee every node can
+ * verify; a node that never received the equivocated block still has to be able
+ * to recognise the offence.
  */
 function voteTemplate(h: Harness, wallet: TestWallet) {
-  const anchorHeight = Math.max(1, h.chain.height - 1);
+  const anchorHeight = Math.max(1, h.chain.height);
   const anchorHash = h.chain.store.getCanonicalHashAtHeight(anchorHeight);
   if (!anchorHash) throw new Error('no canonical anchor block');
   const genesisId = genesisIdForState(h.chain.world, h.net);
@@ -468,6 +507,16 @@ describe('proposer equivocation', () => {
     const byAddress = new Map([[validator.address, validator], [second.address, second], [third.address, third]]);
     const poolBefore = h.chain.world.s.pool.balance;
 
+    // The offence is signed NOW, while the validator is an active member of the
+    // committee the votes name. That ordering matters: a vote is only a valid
+    // consensus vote when its signer belongs to the committee in force at the
+    // anchor, and the evidence is checked against the same canonical predicate
+    // that admission uses. What is asserted below is that being jailed for
+    // downtime afterwards does not shelter a signature conflict that was already
+    // committed — the two rules are independent, and netting them would let a
+    // validator buy immunity with downtime.
+    const { evidence } = voteEquivocation(h, validator);
+
     // Produce the next block in an exact round, by the wallet the rotation
     // schedules for it. The timestamp is passed explicitly so the round the
     // chain derives is the round the test intends, and the clock is kept close
@@ -512,12 +561,10 @@ describe('proposer equivocation', () => {
     expect(h.chain.world.s.pool.balance).toBe(poolBefore);
     expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
 
-    // Being offline is not slashable — but the jail does not shelter a signature
-    // conflict either. The bond is still escrowed, so a validator that signed
-    // two conflicting votes answers for them even while it is out of the
-    // committee for missing slots: the two rules are independent, and netting
-    // them would let a validator buy immunity with downtime.
-    const { evidence } = voteEquivocation(h, validator);
+    // Being offline is not slashable — but the jail does not shelter the
+    // signature conflict signed before it. The bond is still escrowed and the
+    // offence falls inside this registration's tenure, so the validator answers
+    // for it even while it is out of the committee for missing slots.
     const outsider = makeWallet();
     const scheduled = h.chain.scheduledProposerNow()!;
     const poolBeforeSlash = h.chain.world.s.pool.balance;
@@ -1022,7 +1069,7 @@ describe('the after-life of a slashed registration', () => {
     const liveNonce = h.chain.world.getAccount(validator.address)!.nonce;
     const claimHeight = h.chain.height + CONSENSUS_PARAMS.consensus.unbondingBlocks;
     const claimTx = h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.CLAIM_UNBONDED, 0n, validator.publicKey), { gas: 0n });
-    const claimed = applyBlock(h.chain.world, atHeight(h, claimHeight, [claimTx]), { net: h.net, skipRootCheck: true });
+    const claimed = applyBlock(h.chain.world, atHeight(h, claimHeight, [claimTx]), { net: h.net, skipRootCheck: true, evidence: h.chain.consensusEvidenceContext() });
 
     expect(claimed.state.getAccount(validator.address)!.balance - balanceBefore).toBe(SLASH);
     expect(claimed.state.getAccount(validator.address)!.validator).toBeUndefined();
@@ -1038,7 +1085,7 @@ describe('the after-life of a slashed registration', () => {
       gas: expectedGas(BOND),
       nonce: liveNonce + 1,
     });
-    const reregistered = applyBlock(claimed.state, atHeight(h, claimHeight + 1, [registerTx]), { net: h.net, skipRootCheck: true });
+    const reregistered = applyBlock(claimed.state, atHeight(h, claimHeight + 1, [registerTx]), { net: h.net, skipRootCheck: true, evidence: h.chain.consensusEvidenceContext() });
     expect(reregistered.state.getAccount(validator.address)!.validator).toMatchObject({ bond: BOND, status: 'ACTIVE' });
     expect(reregistered.state.s.pool.balance - poolBefore).toBe(expectedGas(BOND));
     expect(reregistered.state.s.metrics.totalSupply).toBe(supplyBefore);
@@ -1053,7 +1100,7 @@ describe('the after-life of a slashed registration', () => {
 
     const claimHeight = h.chain.height + CONSENSUS_PARAMS.consensus.unbondingBlocks;
     const claimTx = h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.CLAIM_UNBONDED, 0n, validator.publicKey), { gas: 0n });
-    const claimed = applyBlock(h.chain.world, atHeight(h, claimHeight, [claimTx]), { net: h.net, skipRootCheck: true });
+    const claimed = applyBlock(h.chain.world, atHeight(h, claimHeight, [claimTx]), { net: h.net, skipRootCheck: true, evidence: h.chain.consensusEvidenceContext() });
     expect(claimed.state.getAccount(validator.address)!.validator).toBeUndefined();
     expect(claimed.state.getAccount(validator.address)!.balance).toBeGreaterThan(0n);
 
@@ -1067,7 +1114,7 @@ describe('the after-life of a slashed registration', () => {
     const lateTx = h.sign(makeWallet(), TxType.SLASH, encodeSlashBody({ op: SlashOp.EQUIVOCATION, evidence: late.evidence }), { gas: 0n });
     let rejected: unknown;
     try {
-      applyBlock(claimed.state, atHeight(h, claimHeight + 1, [lateTx]), { net: h.net, skipRootCheck: true });
+      applyBlock(claimed.state, atHeight(h, claimHeight + 1, [lateTx]), { net: h.net, skipRootCheck: true, evidence: h.chain.consensusEvidenceContext() });
     } catch (error) {
       rejected = error;
     }
@@ -1086,12 +1133,12 @@ describe('the after-life of a slashed registration', () => {
     const liveNonce = h.chain.world.getAccount(validator.address)!.nonce;
     const claimHeight = h.chain.height + CONSENSUS_PARAMS.consensus.unbondingBlocks;
     const claimTx = h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.CLAIM_UNBONDED, 0n, validator.publicKey), { gas: 0n });
-    const claimed = applyBlock(h.chain.world, atHeight(h, claimHeight, [claimTx]), { net: h.net, skipRootCheck: true });
+    const claimed = applyBlock(h.chain.world, atHeight(h, claimHeight, [claimTx]), { net: h.net, skipRootCheck: true, evidence: h.chain.consensusEvidenceContext() });
     const registerTx = h.sign(validator, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, BOND, validator.publicKey), {
       gas: expectedGas(BOND),
       nonce: liveNonce + 1,
     });
-    const reregistered = applyBlock(claimed.state, atHeight(h, claimHeight + 1, [registerTx]), { net: h.net, skipRootCheck: true });
+    const reregistered = applyBlock(claimed.state, atHeight(h, claimHeight + 1, [registerTx]), { net: h.net, skipRootCheck: true, evidence: h.chain.consensusEvidenceContext() });
     const fresh = reregistered.state.getAccount(validator.address)!.validator!;
     expect(fresh).toMatchObject({ bond: BOND, status: 'ACTIVE', registeredAtHeight: claimHeight + 1 });
 
@@ -1102,7 +1149,7 @@ describe('the after-life of a slashed registration', () => {
     const stale = proposerEquivocation(h, validator);
     const staleOutcome = (() => {
       try {
-        applyBlock(reregistered.state, atHeight(h, claimHeight + 2, [slashTx(h, makeWallet(), stale.body)]), { net: h.net, skipRootCheck: true });
+        applyBlock(reregistered.state, atHeight(h, claimHeight + 2, [slashTx(h, makeWallet(), stale.body)]), { net: h.net, skipRootCheck: true, evidence: h.chain.consensusEvidenceContext() });
         return null;
       } catch (error) {
         return error as ProtocolError;
@@ -1117,12 +1164,32 @@ describe('the after-life of a slashed registration', () => {
     // votes signed inside it cost half of the fresh bond, exactly as for any
     // other registration. Registering again buys a clean slate, not immunity.
     const base = voteTemplate(h, validator);
-    const inTenure = { ...base, finalizedHeight: claimHeight + 2, finalizedHash: '41'.repeat(32), height: claimHeight + 3, round: 0 };
+    // An anchor this chain has not produced: the votes belong to a tenure that
+    // only exists in the state the test is applying. The evidence is therefore
+    // verified against a context that describes that anchor — the committee read
+    // from the state under test, not from whatever the chain tip holds.
+    const anchorHash = '41'.repeat(32);
+    const inTenure = {
+      ...base,
+      // The committee named by the vote is the committee of the state under
+      // test — the fresh registration — and not the one on the chain tip, where
+      // this validator is still the slashed, closed registration.
+      validatorSetHash: validatorSetHash(finalityValidators(reregistered.state)),
+      finalizedHeight: claimHeight + 2,
+      finalizedHash: anchorHash,
+      parentHash: anchorHash,
+      height: claimHeight + 3,
+      round: 0,
+    };
     const firstVote = signFinalityVote({ ...inTenure, blockHash: '42'.repeat(32) }, validator.privateKey);
     const secondVote = signFinalityVote({ ...inTenure, blockHash: '43'.repeat(32) }, validator.privateKey);
     const charged = applyBlock(reregistered.state, atHeight(h, claimHeight + 3, [
       slashTx(h, makeWallet(), { op: SlashOp.EQUIVOCATION, evidence: makeVoteEvidence(firstVote, secondVote) }),
-    ]), { net: h.net, skipRootCheck: true });
+    ]), {
+      net: h.net,
+      skipRootCheck: true,
+      evidence: voteContextFor(h, reregistered.state, { height: claimHeight + 2, hash: anchorHash }),
+    });
     expect(charged.state.s.slashes.size).toBe(2);
     expect(charged.state.s.metrics.totalSlashes).toBe(2);
     expect(charged.state.getAccount(validator.address)!.validator).toMatchObject({ bond: SLASH, status: 'SLASHED' });
