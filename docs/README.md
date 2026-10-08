@@ -15,6 +15,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | [mining.md](mining.md) | How OBS is issued, how a claim works, why your device clock is irrelevant |
 | [wallet.md](wallet.md) | Where keys live, what a backup actually is, what "non-custodial" costs you |
 | [security-model.md](security-model.md) | What is trusted, what is not, and the honest limitations |
+| [remediation-1.6.1.md](remediation-1.6.1.md) | The 1.6.0 → 1.6.1 consensus and slashing remediation: what changed, what was verified, and what remains open |
 | [faq.md](faq.md) | The questions people ask first, answered without marketing |
 | [removal-report.md](removal-report.md) | The mechanisms that were removed, and how to verify their absence yourself |
 
