@@ -5,6 +5,16 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+/**
+ * The operator's release keystore, when one is configured.
+ *
+ * Checked for blank as well as null: CI passes secrets through as empty strings
+ * when they are unset, and `file("")` fails with "path may not be null or empty
+ * string" — which reads like a build-system bug rather than the truth, that no
+ * signing key was supplied. Absent means the release build is emitted unsigned.
+ */
+val releaseKeystorePath: String? = System.getenv("OBSIDIAN_KEYSTORE")?.takeIf { it.isNotBlank() }
+
 android {
     namespace = "network.obsidian.mobile"
     compileSdk = 34
@@ -29,9 +39,8 @@ android {
         // keystore. Nothing is generated here and no key is ever committed: an
         // APK signed by a key the project itself created would prove nothing.
         create("release") {
-            val store = System.getenv("OBSIDIAN_KEYSTORE")
-            if (store != null) {
-                storeFile = file(store)
+            if (releaseKeystorePath != null) {
+                storeFile = file(releaseKeystorePath)
                 storePassword = System.getenv("OBSIDIAN_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("OBSIDIAN_KEY_ALIAS")
                 keyPassword = System.getenv("OBSIDIAN_KEY_PASSWORD")
@@ -51,7 +60,7 @@ android {
             // Signed only when the operator supplied a key; otherwise Gradle emits
             // an unsigned archive and CI publishes the debug APK instead, labelled
             // as such rather than pretending to be a production signature.
-            signingConfig = if (System.getenv("OBSIDIAN_KEYSTORE") != null) {
+            signingConfig = if (releaseKeystorePath != null) {
                 signingConfigs.getByName("release")
             } else {
                 null

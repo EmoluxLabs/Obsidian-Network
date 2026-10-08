@@ -150,7 +150,7 @@ jobs:
           fi
         env:
           # Present only when the operator configured release signing secrets.
-          OBSIDIAN_KEYSTORE: ${{ secrets.OBSIDIAN_KEYSTORE_PATH || '' }}
+          OBSIDIAN_KEYSTORE: ${{ secrets.OBSIDIAN_KEYSTORE_PATH }}
           OBSIDIAN_KEYSTORE_PASSWORD: ${{ secrets.OBSIDIAN_KEYSTORE_PASSWORD }}
           OBSIDIAN_KEY_ALIAS: ${{ secrets.OBSIDIAN_KEY_ALIAS }}
           OBSIDIAN_KEY_PASSWORD: ${{ secrets.OBSIDIAN_KEY_PASSWORD }}
