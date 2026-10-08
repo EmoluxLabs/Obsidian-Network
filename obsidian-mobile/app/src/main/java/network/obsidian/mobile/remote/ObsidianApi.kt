@@ -72,18 +72,16 @@ class ObsidianApi(
     suspend fun encode(body: JsonElement): Result<JsonElement> = postRaw("/tx/encode", body)
 
     /** POST /rpc — the JSON-RPC method gateway (getBlock, getTransaction, …). */
-    suspend fun rpc(method: String, params: Map<String, JsonElement> = emptyMap()): Result<JsonElement> {
-        val payload = json.encodeToString(RpcRequest.serializer(), RpcRequest(method = method, params = params))
-        return runCatching {
-            val text = execute(postRequest("/rpc", payload))
-            val parsed = json.parseToJsonElement(text)
-            parsed
-        }.recoverCatching { element ->
+    suspend fun rpc(method: String, params: Map<String, JsonElement> = emptyMap()): Result<JsonElement> =
+        runCatching {
+            val payload = json.encodeToString(RpcRequest.serializer(), RpcRequest(method = method, params = params))
+            val parsed = json.parseToJsonElement(execute(postRequest("/rpc", payload)))
             // A JSON-RPC error object is a legitimate answer, not a transport
-            // failure; surface it so the screen can say what went wrong.
-            throw ApiFailure(describeRpcError(element) ?: "RPC call failed")
+            // failure: turn it into a failure value here so a screen shows the
+            // node's own message instead of mistaking the envelope for data.
+            describeRpcError(parsed)?.let { throw ApiFailure(it) }
+            parsed
         }
-    }
 
     // ── internals ────────────────────────────────────────────────────────────
 
