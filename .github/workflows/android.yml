@@ -122,6 +122,18 @@ jobs:
           ./gradlew testDebugUnitTest --no-daemon 2>&1 | tee unit-tests.log || status=$?
           if [ "$status" -ne 0 ]; then
             /tmp/report.sh unit-tests.log Kotlin
+            # Name the individual failing tests. "There were failing tests"
+            # without a name is not actionable from here, and the XML results are
+            # the authoritative record of which assertion broke.
+            for f in app/build/test-results/testDebugUnitTest/*.xml; do
+              [ -e "$f" ] || continue
+              grep -B1 "<failure" "$f" | grep -oE 'testcase name="[^"]*" classname="[^"]*"' | while IFS= read -r t; do
+                echo "::error title=Failing test::${t}"
+              done
+              grep -A2 "<failure" "$f" | grep -oE 'message="[^"]*"' | head -3 | while IFS= read -r m; do
+                echo "::error title=Failure reason::${m}"
+              done
+            done
             exit "$status"
           fi
 
