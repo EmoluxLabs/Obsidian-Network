@@ -2,6 +2,7 @@ name: Desktop app release
 
 # Builds the Obsidian Node installers on Windows, macOS and Linux and publishes them as a GitHub Release.
 #   git tag desktop-v1.0.0 && git push origin desktop-v1.0.0   → builds and publishes release desktop-v1.0.0
+#   a tag like desktop-v1.0.0-rc.1 publishes a pre-release instead
 #   Actions → Desktop app release → Run workflow                → builds; installers are workflow artifacts only
 # (The tag prefix keeps these releases apart from the network's own v* release tags.)
 on:
@@ -90,7 +91,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist-all/* \
+          # desktop-v1.0.0-rc.1 style tags (a hyphen after the version) are published as pre-releases.
+          PRE=""
+          case "${GITHUB_REF_NAME}" in *-*-*) PRE="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" dist-all/* $PRE \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Obsidian Node ${GITHUB_REF_NAME#desktop-}" \
             --notes "Desktop installers for Windows, macOS and Linux. Verify a download with SHA256SUMS. See obsidian-node-desktop/DOWNLOAD.md for install steps and what to expect on first launch (these builds are not code-signed)."
