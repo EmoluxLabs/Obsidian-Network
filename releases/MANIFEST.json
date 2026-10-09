@@ -1,8 +1,8 @@
 {
   "product": "Obsidian Network",
   "version": "1.6.1",
-  "commit": "593d87298a312724cae3d8f9c2cdc13b597db28a",
-  "builtAt": "2026-10-08T01:21:31Z",
+  "commit": "3d2a25618b6c1b404eb31ff2a7fa3cf7e550dc3b",
+  "builtAt": "2026-10-09T17:19:37Z",
   "protocolVersion": "1.6.1",
   "paramsHash": "2dd76ca2b2305d725f3a975bfca04eb5",
   "forkChoice": "FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH",
@@ -60,47 +60,47 @@
   "assets": [
     {
       "name": "obsidian-cloudflare-1.6.1.tar.gz",
-      "bytes": 174319
+      "bytes": 175774
     },
     {
       "name": "obsidian-cloudflare-1.6.1.zip",
-      "bytes": 202696
+      "bytes": 205064
     },
     {
       "name": "obsidian-core-1.6.1.tar.gz",
-      "bytes": 739085
+      "bytes": 747203
     },
     {
       "name": "obsidian-core-1.6.1.zip",
-      "bytes": 948041
+      "bytes": 956753
     },
     {
       "name": "obsidian-interface-1.6.1.tar.gz",
-      "bytes": 1542528
+      "bytes": 1590273
     },
     {
       "name": "obsidian-interface-1.6.1.zip",
-      "bytes": 1726375
+      "bytes": 1766830
     },
     {
       "name": "obsidian-interface-selfhost-1.6.1.tar.gz",
-      "bytes": 1388266
+      "bytes": 1419218
     },
     {
       "name": "obsidian-interface-selfhost-1.6.1.zip",
-      "bytes": 1534851
+      "bytes": 1557864
     },
     {
       "name": "obsidian-network-source-1.6.1.tar.gz",
-      "bytes": 1130660
+      "bytes": 1473145
     },
     {
       "name": "obsidian-node-operator-1.6.1.tar.gz",
-      "bytes": 572720
+      "bytes": 575804
     },
     {
       "name": "obsidian-node-operator-1.6.1.zip",
-      "bytes": 738681
+      "bytes": 743001
     }
   ],
   "verification": "sha256sum -c SHA256SUMS, then compare the digests with the published release notes"
