@@ -10,6 +10,12 @@ says where to get it, how to check what you downloaded, and how to build it your
 > **[Releases page](https://github.com/EmoluxLabs/Obsidian-Network/releases)** next to the network's own `v*` releases
 > (look for **Obsidian Node desktop-v…**). If there is no such release yet, no installer has been published —
 > build from source (below) or run the workflow by hand.
+>
+> **Available now:** the pre-release
+> **[desktop-v1.0.0-rc.2](https://github.com/EmoluxLabs/Obsidian-Network/releases/tag/desktop-v1.0.0-rc.2)** — built by the
+> workflow on Windows, macOS and Linux runners, each package checked by `verify-package.mjs`. It is a release
+> candidate: the installers were built and checked from their files, but have not yet been launched on each OS by
+> a person, so treat first launches as a test and report problems.
 > **The installers are not code-signed** (no certificate has been bought). Your OS will warn you the
 > first time; the steps below show how to proceed safely and how to verify the file first.
 
@@ -29,7 +35,7 @@ The version in the name is the release tag without the `v`; the exact file names
 Download from the Releases page, or from a terminal with the GitHub CLI:
 
 ```bash
-TAG=desktop-v1.0.0     # the release you want; list them with: gh release list --repo EmoluxLabs/Obsidian-Network
+TAG=desktop-v1.0.0-rc.2     # the release you want; list them with: gh release list --repo EmoluxLabs/Obsidian-Network
 gh release download "$TAG" --repo EmoluxLabs/Obsidian-Network --pattern '*win-x64*'      # Windows files
 gh release download "$TAG" --repo EmoluxLabs/Obsidian-Network --pattern '*.AppImage'     # Linux AppImage
 gh release download "$TAG" --repo EmoluxLabs/Obsidian-Network --pattern 'SHA256SUMS'     # the checksum list
