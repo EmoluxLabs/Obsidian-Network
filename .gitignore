@@ -65,3 +65,5 @@ coverage/
 # because it held hand-written copies of web/vault.mjs and web/claim.mjs, and the
 # two had already drifted apart (the copies still called computeTxId with one
 # argument). One source, one bundle.
+obsidian-extension/release/
+obsidian-extension/node_modules

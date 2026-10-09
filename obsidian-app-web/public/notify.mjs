@@ -27,11 +27,27 @@ const POLL_MS = 60_000;
 let timer = null;
 let lastNotifiedAt = 0;
 
+/**
+ * A host that can watch while no page is open (the browser extension's service worker) takes over
+ * the whole feature: `ObsidianHost.notify = { permission, enable, disable, resume, note }`. It still
+ * asks the node whether a claim is allowed; it never decides that itself.
+ */
+const host = () => globalThis.ObsidianHost?.notify ?? null;
+
+/** What the user is told after turning alerts on, so the words match what actually happens. */
+export function limitNote() {
+  return (
+    host()?.note ??
+    'Claim alerts are on while this tab is open. Closing the tab stops them.'
+  );
+}
+
 export function isSupported() {
-  return typeof Notification !== 'undefined';
+  return host() ? true : typeof Notification !== 'undefined';
 }
 
 export function permission() {
+  if (host()) return host().permission();
   return isSupported() ? Notification.permission : 'unsupported';
 }
 
@@ -51,6 +67,7 @@ export function isEnabled() {
  * blocked, or unavailable in this browser.
  */
 export async function enable(address) {
+  if (host()) return host().enable(address);
   if (!isSupported()) return 'unsupported';
   if (Notification.permission === 'denied') return 'denied';
   if (Notification.permission !== 'granted') {
@@ -68,6 +85,7 @@ export async function enable(address) {
 }
 
 export function disable() {
+  if (host()) return host().disable();
   try {
     localStorage.removeItem(STATE_KEY);
   } catch {
@@ -138,5 +156,6 @@ export async function tick(address) {
  * account is known rather than on import.
  */
 export function resume(address) {
+  if (host()) return host().resume(address);
   if (isEnabled() && permission() === 'granted') start(address);
 }

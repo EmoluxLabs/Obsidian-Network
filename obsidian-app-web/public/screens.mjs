@@ -420,6 +420,7 @@ export const SCREENS = {
     ]
       .map(([k, t]) => `<div class="big" onclick="ObsidianGo('${k}')">${t}<span>›</span></div>`)
       .join('') +
+    hostMenuRows() +
     `<div class="lb">ACCOUNT</div>` +
     rows([
       ['SECOND FACTOR', s.account?.mfaEnabled ? 'ENABLED' : 'NOT ENABLED', s.account?.mfaEnabled ? 'ok' : 'mu'],
@@ -860,6 +861,24 @@ function prettyKind(kind) {
   return String(kind)
     .replace(/[_-]/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Extra Menu rows from an embedding host (the browser extension adds "Node", "Connection" and "Open in a
+ * tab"). On the web there is no host and this is empty. A host names a screen to open
+ * (`{ label, go }`) or one of its own handlers to call (`{ label, call }`); both are matched against a
+ * strict identifier pattern so a label or name can never carry markup into the page.
+ */
+function hostMenuRows() {
+  const items = globalThis.ObsidianHost?.menu;
+  if (!Array.isArray(items)) return '';
+  return items
+    .filter((item) => item && typeof item.label === 'string' && (/^[a-z]{2,20}$/.test(item.go ?? '') || /^Obsidian[A-Za-z]{2,40}$/.test(item.call ?? '')))
+    .map((item) => {
+      const action = item.go ? `ObsidianGo('${item.go}')` : `${item.call}()`;
+      return `<div class="big" onclick="${action}">${esc(item.label)}<span>›</span></div>`;
+    })
+    .join('');
 }
 
 function notifyLabel(permission) {

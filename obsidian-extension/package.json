@@ -1,0 +1,16 @@
+{
+  "name": "@obsidian/extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Obsidian Network browser extension (Chrome / Edge / Firefox, Manifest V3). A client of an Obsidian app server: no node, ledger, wallet format or RPC of its own.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "lint:webext": "npx --yes web-ext@8 lint --source-dir dist --warnings-as-errors=false"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

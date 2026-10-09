@@ -265,12 +265,26 @@ async function refreshMining() {
   return state.mining;
 }
 
+/**
+ * Tell an embedding host which public address this device holds (the browser extension's service worker
+ * needs it to ask the node about claim eligibility while the popup is closed). Only the address, which is
+ * public: no phrase, key or passphrase ever goes through here. No host on the web, so a no-op.
+ */
+function announceAddress() {
+  try {
+    globalThis.ObsidianHost?.walletAddress?.(state.walletAddress);
+  } catch {
+    /* a host's bookkeeping must never break the wallet */
+  }
+}
+
 async function refreshWallet() {
   const stored = state.walletAddress || (await walletAddress().catch(() => null));
   // The prefix is the network's: a cache written under another network is
   // re-encoded rather than shown as an address this node would reject.
   const address = await addressOnNetwork(stored, state.network?.network?.addressHrp).catch(() => stored);
   state.walletAddress = address || null;
+  announceAddress();
   await ensureQr();
   if (!address) {
     state.mining = null;
@@ -398,6 +412,20 @@ async function loadExplorer({ quiet = false } = {}) {
   repaint();
 }
 
+/**
+ * Someone who is already signed in is taken home, not shown the signed-out landing page.
+ *
+ * The design file arms a timer that sends the splash to the landing page 800 ms after load, whatever the session
+ * is, so a signed-in user reopening the app would otherwise be greeted with "START MINING" and a sign-up button.
+ * Wait out that timer, then correct it. Only splash and landing are moved: if the user has already gone
+ * somewhere on purpose (the explorer, say), that is left alone.
+ */
+async function landSignedInUsersHome() {
+  const wait = 900 - (typeof performance !== 'undefined' ? performance.now() : 900);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  if (state.account && (state.screen === 'splash' || state.screen === 'landing')) go('home');
+}
+
 async function boot() {
   state.appConfig = await getAppConfig().catch(() => null);
   if (state.appConfig && !state.appConfig.production) {
@@ -407,6 +435,7 @@ async function boot() {
   await refresh();
   render();
   notify.resume(state.walletAddress);
+  await landSignedInUsersHome();
   // Poll, never extrapolate: the height and the eligibility window are the node's
   // to state, and a page that invents movement between polls is lying about a chain.
   setInterval(() => {
@@ -758,6 +787,7 @@ function install() {
       }
       removeWallet();
       state.walletAddress = null;
+      announceAddress();
       state.mining = null;
       state.balance = null;
       state.history = null;
@@ -930,7 +960,7 @@ function install() {
       // Say the limit out loud rather than letting it look like a background
       // service: a closed tab cannot be woken, and pretending otherwise is the
       // kind of promise this project does not make.
-      setNotice('Claim alerts are on while this tab is open. Closing the tab stops them.');
+      setNotice(notify.limitNote());
     }
     render();
   };

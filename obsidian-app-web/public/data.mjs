@@ -23,6 +23,22 @@
 const JSON_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/json' };
 
 /**
+ * An optional embedding host, for the browser-extension build (obsidian-extension/).
+ *
+ * On the web this is undefined and nothing below changes: every request goes to this origin. An
+ * extension page has no origin of its own to serve /api from, so its host supplies the address of an
+ * Obsidian app server (the same server this file normally talks to) and says when it is ready:
+ *
+ *   ObsidianHost.ready          promise: settings loaded
+ *   ObsidianHost.apiBase()      the server origin, or throws when none is configured (nothing is sent)
+ *   ObsidianHost.timeoutMs      per-request deadline
+ *
+ * The host is a transport, not a source of data: paths, parsing and every figure shown still come from
+ * this file and the server.
+ */
+const host = () => globalThis.ObsidianHost ?? null;
+
+/**
  * Call this origin and surface the platform's own error wording.
  *
  * The server distinguishes cases the app cannot see — a spent invitation versus an
@@ -30,11 +46,15 @@ const JSON_HEADERS = { 'Content-Type': 'application/json', Accept: 'application/
  * rather than replaced with something generic.
  */
 async function call(path, { method = 'GET', body } = {}) {
-  const response = await fetch(path, {
+  const embedding = host();
+  if (embedding) await embedding.ready;
+  const response = await fetch((embedding ? embedding.apiBase() : '') + path, {
     method,
     headers: JSON_HEADERS,
-    credentials: 'same-origin',
+    // The session cookie belongs to the app server. From an extension page that is another origin.
+    credentials: embedding ? 'include' : 'same-origin',
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: embedding?.timeoutMs ? AbortSignal.timeout(embedding.timeoutMs) : undefined,
   });
   const text = await response.text();
   let data = null;

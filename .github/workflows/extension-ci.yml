@@ -1,0 +1,89 @@
+name: Extension CI
+
+# Obsidian Network browser extension (obsidian-extension/). It is assembled from the template ZIP (verified by
+# SHA-256), obsidian-app-web's modules and the wallet bundle built from obsidian-core, so a change to any of those
+# is checked here against the extension as well.
+on:
+  push:
+    branches: ['**']
+    tags: ['extension-v*']
+    paths:
+      - 'obsidian-extension/**'
+      - 'obsidian-app-web/**'
+      - 'obsidian-core/**'
+      - '.github/workflows/extension-ci.yml'
+  pull_request:
+    paths:
+      - 'obsidian-extension/**'
+      - 'obsidian-app-web/**'
+      - 'obsidian-core/**'
+      - '.github/workflows/extension-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: extension-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    name: Extension (app-web tests, build, tests, lint, package)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Build the core
+        working-directory: obsidian-core
+        run: npm ci && npm run build
+      - name: Install the platform (the web app's tests use its generated browser core)
+        working-directory: obsidian-interface
+        run: npm ci
+      - name: Web app tests (the extension reuses these modules)
+        working-directory: obsidian-app-web
+        run: npm ci && npm test
+      - name: Build the extension
+        working-directory: obsidian-extension
+        run: npm run build
+      - name: Extension tests (manifest, bridge, config, background, built package)
+        working-directory: obsidian-extension
+        run: npm test
+      - name: Lint with Mozilla web-ext (errors fail the job)
+        working-directory: obsidian-extension
+        run: npx --yes web-ext@8 lint --source-dir dist
+      - name: Package
+        working-directory: obsidian-extension
+        run: npm run package
+      - uses: actions/upload-artifact@v7
+        with:
+          name: obsidian-extension
+          path: |
+            obsidian-extension/release/*.zip
+            obsidian-extension/release/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish pre-release
+    # Hyphenated tags only (extension-v1.0.0-rc.1). A non-hyphenated tag is a deliberate release and is not automatic.
+    if: startsWith(github.ref, 'refs/tags/extension-v') && contains(github.ref_name, '-')
+    needs: extension
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: obsidian-extension
+          path: release
+      - name: Create the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" release/* \
+            --repo "${{ github.repository }}" --prerelease \
+            --title "Obsidian Network extension ${{ github.ref_name }}" \
+            --notes "Unsigned Manifest V3 build for Chrome, Edge and Firefox. Verify with the .sha256 file. Not store-signed; see obsidian-extension/README.md."
