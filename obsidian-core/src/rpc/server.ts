@@ -66,6 +66,9 @@ interface RateBucket {
 const MAX_BODY_BYTES = 512 * 1024;
 /** An oversized body is read and discarded up to this much, so the client gets its 413; past it the connection is cut. */
 const DRAIN_LIMIT_BYTES = 8 * 1024 * 1024;
+/** Page sizes for the name registry reads. */
+const NAMES_DEFAULT_LIMIT = 200;
+const NAMES_MAX_LIMIT = 500;
 
 /** Endpoints that take a request body. Every other route is a read and answers GET/HEAD only. */
 const POST_ONLY_PATHS: ReadonlySet<string> = new Set([
@@ -1246,19 +1249,37 @@ export class RpcServer {
     });
   }
 
+  /**
+   * The name registry, one page at a time.
+   *
+   * The registry is attacker-influenced (anyone who pays the fee adds a name), so no read may return all of it: `limit`
+   * is clamped to 1..500 (default 200), `offset` pages through it, and `prefix` narrows it. `count` stays the registry
+   * size, `matched` is how many names fit the filter, and `hasMore` says whether another page exists.
+   */
   private names(response: ServerResponse, url: URL): void {
     const owner = url.searchParams.get('owner');
-    const names = [...this.options.chain.world.s.names.values()]
-      .filter((record) => !owner || record.owner === owner)
-      .slice(0, 200)
-      .map((record) => ({
-        name: `${record.name}.obs`,
-        owner: maskAddress(record.owner),
-        address: record.address,
-        expiresAt: record.expiresAt,
-        registeredAtHeight: record.registeredAtHeight,
-      }));
-    this.json(response, 200, { names, count: this.options.chain.world.s.names.size });
+    const prefix = (url.searchParams.get('prefix') ?? '').toLowerCase().replace(/\.obs$/, '').slice(0, 64);
+    const limit = clampNumber(url.searchParams.get('limit'), NAMES_DEFAULT_LIMIT, 1, NAMES_MAX_LIMIT);
+    const offset = clampNumber(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
+    const registry = this.options.chain.world.s.names;
+    const matching = [...registry.values()].filter(
+      (record) => (!owner || record.owner === owner) && (!prefix || record.name.startsWith(prefix)),
+    );
+    const names = matching.slice(offset, offset + limit).map((record) => ({
+      name: `${record.name}.obs`,
+      owner: maskAddress(record.owner),
+      address: record.address,
+      expiresAt: record.expiresAt,
+      registeredAtHeight: record.registeredAtHeight,
+    }));
+    this.json(response, 200, {
+      names,
+      count: registry.size,
+      matched: matching.length,
+      offset,
+      limit,
+      hasMore: offset + names.length < matching.length,
+    });
   }
 
   private name(response: ServerResponse, rawName: string): void {
@@ -1678,8 +1699,21 @@ export class RpcServer {
           sourceCount: state.s.oracle.sourceCount,
           stale: state.s.oracle.stale,
         };
-      case 'getnames':
-        return [...state.s.names.keys()].map((name) => `${name}.obs`);
+      case 'getnames': {
+        // Bounded like GET /names: the registry grows with every paid registration, so a read never returns all of it.
+        const limit = clampNumber(params.limit, NAMES_DEFAULT_LIMIT, 1, NAMES_MAX_LIMIT);
+        const offset = clampNumber(params.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+        const prefix = typeof params.prefix === 'string' ? params.prefix.toLowerCase().replace(/\.obs$/, '').slice(0, 64) : '';
+        const names: string[] = [];
+        let seen = 0;
+        for (const name of state.s.names.keys()) {
+          if (prefix && !name.startsWith(prefix)) continue;
+          if (seen++ < offset) continue;
+          names.push(`${name}.obs`);
+          if (names.length >= limit) break;
+        }
+        return names;
+      }
       case 'submittransaction':
         throw new Error('use POST /tx/submit (raw signed transaction hex)');
       case 'getpeers':

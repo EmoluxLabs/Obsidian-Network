@@ -384,6 +384,47 @@ describe('transaction submission guardrails', () => {
     expect(((list.body as { result: unknown[] }).result).length).toBeLessThanOrEqual(500);
   });
 
+  it('the name registry is paged and bounded on every route that reads it (REST and JSON-RPC)', async () => {
+    const registry = chain.world.s.names;
+    const before = new Map(registry);
+    try {
+      const owner = addressFromPublicKey(generateKeyPair().publicKey, NET.addressHrp);
+      for (let i = 0; i < 1_200; i += 1) {
+        const name = `${i % 3 === 0 ? 'alpha' : 'beta'}${String(i).padStart(4, '0')}`;
+        registry.set(name, { name, owner, address: owner, registeredAtHeight: 1, registeredAt: 1, expiresAt: 2, transferCount: 0 });
+      }
+      const total = registry.size;
+      const first = (await get('/names')).body;
+      expect(first.names.length).toBe(200);
+      expect(first).toMatchObject({ count: total, offset: 0, limit: 200, hasMore: true });
+      const huge = (await get('/names?limit=99999999')).body;
+      expect(huge.names.length).toBe(500);
+      expect(huge.limit).toBe(500);
+      expect((await get('/names?limit=-3')).body.limit).toBe(1);
+      expect((await get('/names?limit=abc&offset=zzz')).body).toMatchObject({ limit: 200, offset: 0 });
+      // pages do not overlap and the last one says there is no more
+      const page2 = (await get('/names?limit=500&offset=500')).body;
+      expect(page2.names[0].name).not.toBe(huge.names[0].name);
+      const last = (await get(`/names?limit=500&offset=${total - 10}`)).body;
+      expect(last.names.length).toBe(10);
+      expect(last.hasMore).toBe(false);
+      // prefix narrows (and is honoured at all: it used to be ignored)
+      const alpha = (await get('/names?prefix=ALPHA&limit=500')).body;
+      expect(alpha.matched).toBe(400);
+      expect(alpha.names.every((n: { name: string }) => n.name.startsWith('alpha'))).toBe(true);
+      // JSON-RPC: bounded the same way, and a hostile prefix or offset is just an empty or clamped page
+      const rpc = async (params: unknown) => ((await post('/rpc', { jsonrpc: '2.0', id: 1, method: 'getnames', params })).body as { result: string[] }).result;
+      expect((await rpc({})).length).toBe(200);
+      expect((await rpc({ limit: 1e12 })).length).toBe(500);
+      expect((await rpc({ prefix: 'alpha', limit: 3 })).every((n) => n.startsWith('alpha'))).toBe(true);
+      expect((await rpc({ offset: 1e15 })).length).toBe(0);
+      expect((await rpc({ prefix: { $ne: 1 }, limit: 'x' })).length).toBe(200);
+    } finally {
+      registry.clear();
+      for (const [key, value] of before) registry.set(key, value);
+    }
+  });
+
   it('an oversized JSON-RPC body is 413, like every other route', async () => {
     const response = await post('/rpc', '{"jsonrpc":"2.0","method":"x","params":["' + 'a'.repeat(600 * 1024) + '"],"id":1}');
     expect(response.status).toBe(413);
