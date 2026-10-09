@@ -18,7 +18,14 @@ const SHOTS = process.env.SHOTS_DIR;
 if (SHOTS) (await import('node:fs')).mkdirSync(SHOTS, { recursive: true });
 const data = mkdtempSync(join(tmpdir(), 'obsnode-ui-'));
 const root = new URL('../../', import.meta.url).pathname;
-const bridge = spawn(process.execPath, [join(root, 'dist/dev/bridge.js'), '--port', String(PORT), '--data', data], { stdio: ['ignore', 'pipe', 'pipe'] });
+// The test network's mining gate issuer (protocol 1.7.0). Its PUBLIC key goes to the node the app starts, through the
+// one environment variable the app passes on; the private key stays here and only signs the funding claim.
+const { generateKeyPair } = await import(new URL('../../vendor/obsidian-core/dist/crypto/keys.js', import.meta.url).href);
+const gate = generateKeyPair('dobs');
+const bridge = spawn(process.execPath, [join(root, 'dist/dev/bridge.js'), '--port', String(PORT), '--data', data], {
+  stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, OBSIDIAN_MINING_GATE_PUBLIC_KEYS: gate.publicKey },
+});
 let bridgeLog = '';
 bridge.stdout.on('data', (d) => (bridgeLog += d));
 bridge.stderr.on('data', (d) => (bridgeLog += d));
@@ -184,7 +191,7 @@ try {
   });
 
   await step('wallet: fund by a direct mining claim, balance appears from the node', async () => {
-    const r = await claimDirect({ phrase, rpcUrl: rpc });
+    const r = await claimDirect({ phrase, rpcUrl: rpc, gate });
     assert.equal(r.res.accepted, true, JSON.stringify(r.res));
     for (let i = 0; i < 40; i += 1) {
       const b = (await api('wallet:balance')).data;

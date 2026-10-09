@@ -356,7 +356,10 @@ export class NodeSupervisor extends EventEmitter {
 }
 
 function minimalEnv(): NodeJS.ProcessEnv {
-  const keep = ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'LANG'];
+  // OBSIDIAN_MINING_GATE_PUBLIC_KEYS is PUBLIC configuration (protocol 1.7.0: the mining gate issuer keys a network commits in
+  // genesis). It is passed on so a network whose keys are not built into this release can be joined; the core validates it
+  // strictly, and a wrong list is a different genesis id, so the node refuses that chain rather than following a wrong one.
+  const keep = ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'LANG', 'OBSIDIAN_MINING_GATE_PUBLIC_KEYS'];
   const env: NodeJS.ProcessEnv = {};
   for (const key of keep) if (process.env[key] !== undefined) env[key] = process.env[key];
   return env;

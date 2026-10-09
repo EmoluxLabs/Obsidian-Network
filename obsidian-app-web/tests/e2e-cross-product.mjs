@@ -337,6 +337,9 @@ async function forgeClaim(w, label) {
   const mining = await data.getMiningStatus(w.address);
   const status = await data.getStatus();
   const nonce = await appWallet.getNonce(w.address);
+  // Someone who is not signed in, or whose wallet is not linked, is not given a certificate (that is the point), and
+  // then the claim goes without one.
+  const gate = await data.requestMiningCertificate(w.address, mining.nextClaimId).catch(() => undefined);
   const signed = signing.sign({
     wallet: signing.walletFromPhrase(w.phrase, HRP),
     chainId: net.chainId,
@@ -344,13 +347,16 @@ async function forgeClaim(w, label) {
     nonce,
     type: signing.TxType.MINING_CLAIM,
     gas: 0n,
-    body: signing.buildMiningBody({ claimId: mining.nextClaimId, claimSequence: mining.nextClaimSequence }),
+    // Protocol 1.7.0: without the gate certificate the chain would refuse this for THAT reason, and the test would
+    // prove nothing about the timing rules. So the signed-in account is given its certificate, as it would be to mine.
+    body: signing.buildMiningBody({ claimId: mining.nextClaimId, claimSequence: mining.nextClaimSequence, gate }),
     validUntil: status.lastBlockTimestamp + 600,
   });
   try {
     const result = await data.submitTransaction(signed.hex);
     return { sent: true, accepted: Boolean(result?.accepted ?? true), label };
   } catch (error) {
+    if (gate) assert.doesNotMatch(String(error.message), /gate|certificate/i, `the forged claim must be refused for the protocol's timing rules, not for a missing certificate: ${error.message}`);
     return { sent: true, accepted: false, reason: error.code ?? error.message, label };
   }
 }
