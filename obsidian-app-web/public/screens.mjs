@@ -194,7 +194,7 @@ export const SCREENS = {
       designField('em', 'GMAIL ADDRESS', 'email', 'you@gmail.com') +
       designField('pw', 'PASSWORD', 'password', `At least ${min} characters`) +
       designField('p2', 'CONFIRM PASSWORD', 'password') +
-      designField('rf', 'INVITATION CODE (REQUIRED)', 'text', 'OBS-XXXX-XXXX') +
+      designField('rf', 'INVITATION CODE (REQUIRED)', 'text', 'XXXX-XXXX-XXXX-XXXX') +
       errorLine(s) +
       noticeLine(s) +
       `<button class="btn p" style="margin-top:6px" onclick="ObsidianSignup()">CREATE ACCOUNT</button>` +

@@ -57,7 +57,7 @@ export async function hasWallet() {
  * The Wallet & Mining screens need it on first paint, and forcing a 600 KB
  * crypto bundle onto a visitor who only wants to look at the chain would be a
  * poor trade — so this reads the cache directly. `web/vault.mjs` owns the key;
- * tests/address-cache.test.mjs asserts the two copies of it agree.
+ * tests/design-contract.test.mjs asserts the two copies of it agree.
  */
 const ADDRESS_KEY = 'obsidian.address';
 

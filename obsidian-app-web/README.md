@@ -87,6 +87,13 @@ APP_URL=http://127.0.0.1:8790 npm run test:integration   # against a running app
 - `boot` — loads `real.mjs` as the page does and renders every screen
 - `bundle` — exercises the shipped bundle (skipped until `build:web` has run)
 
+`tests/e2e-auth.mjs` drives the account flow (register, MFA, sign-in, invites, link
+wallet) against a live platform started with a fresh data dir and
+`OBSIDIAN_GENESIS_INVITE_HASH`; run it with `GENESIS_CODE=… node tests/e2e-auth.mjs`.
+It consumes the genesis invitation, so it is not part of `npm test`. The platform's
+password rule also requires a digit, which `/api/auth/config` does not advertise; the
+app shows the server's message when it is refused.
+
 Verified end to end against a live devnet node: a claim, a payment and a `.obs`
 registration, each signed by this app's own code, accepted, included and reflected in
 balances.
