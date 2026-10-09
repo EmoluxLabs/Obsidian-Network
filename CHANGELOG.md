@@ -28,7 +28,7 @@ No consensus change. The params hash, genesis id and protocol/core versions are 
   front end), security headers and a CSP, a 1 MB body cap (413), and `APP_TRUST_PROXY` so the
   platform rate-limits each visitor instead of treating the whole web app as one client.
 - **obsidian-core RPC:** `POST /rpc` with `null`, an array or a scalar answered 500 and an oversize
-  body answered 400; they are now 400 and 413. `getblocks` clamps its limit to 1..500.
+  body answered 400; they are now 400 and 413. `getblocks` clamps its limit to 1..500. An oversize body is now read and discarded (up to 8 MB) instead of the request being destroyed, so the client receives its 413 instead of a connection reset.
 - **obsidian-node-desktop:** the external-link allowlist no longer accepts dot segments that
   GitHub resolves to another repository, and the `app://` handler answers 400 on a malformed
   percent sequence instead of throwing.

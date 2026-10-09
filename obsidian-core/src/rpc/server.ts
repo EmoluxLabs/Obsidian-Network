@@ -64,6 +64,8 @@ interface RateBucket {
 }
 
 const MAX_BODY_BYTES = 512 * 1024;
+/** An oversized body is read and discarded up to this much, so the client gets its 413; past it the connection is cut. */
+const DRAIN_LIMIT_BYTES = 8 * 1024 * 1024;
 
 /** Endpoints that take a request body. Every other route is a read and answers GET/HEAD only. */
 const POST_ONLY_PATHS: ReadonlySet<string> = new Set([
@@ -148,9 +150,6 @@ export class RpcServer {
     } catch (error) {
       const message = (error as Error).message;
       if (message === 'request body too large') {
-        // The rest of the oversized body is never read, so this connection cannot carry another request: say so, or a
-        // keep-alive client reuses it and gets a reset on its next call.
-        if (!response.headersSent) response.setHeader('Connection', 'close');
         this.json(response, 413, { error: message, code: 'ERR_BODY_TOO_LARGE' });
         return;
       }
@@ -292,15 +291,38 @@ export class RpcServer {
     response.end(body);
   }
 
-  private async readBody(request: IncomingMessage): Promise<string> {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    for await (const chunk of request) {
-      size += (chunk as Buffer).length;
-      if (size > MAX_BODY_BYTES) throw new Error('request body too large');
-      chunks.push(chunk as Buffer);
-    }
-    return Buffer.concat(chunks).toString('utf8');
+  /**
+   * Read the request body, up to MAX_BODY_BYTES.
+   *
+   * An oversized body rejects as soon as the limit is crossed so the caller can answer 413, but the request is NOT
+   * destroyed: the rest is read and thrown away. Destroying it (which `for await` does when its loop throws) resets
+   * the connection while the client is still uploading, and the client then sees `ECONNRESET` instead of the 413 — or on
+   * its next call over the same keep-alive connection. Only a body past DRAIN_LIMIT_BYTES is cut off.
+   */
+  private readBody(request: IncomingMessage): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      let tooLarge = false;
+      request.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (tooLarge) {
+          if (size > DRAIN_LIMIT_BYTES) request.destroy();
+          return;
+        }
+        if (size > MAX_BODY_BYTES) {
+          tooLarge = true;
+          chunks.length = 0;
+          reject(new Error('request body too large'));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      request.on('end', () => {
+        if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf8'));
+      });
+      request.on('error', (error) => reject(error));
+    });
   }
 
   /**

@@ -150,8 +150,8 @@ describe('RPC request limits', () => {
     const response = await post('/tx/submit', { tx: huge });
     expect(response.status).toBe(413);
     expect(response.body).toMatchObject({ code: 'ERR_BODY_TOO_LARGE' });
-    // the unread remainder of the body means this connection must not be reused
-    expect(response.headers.get('connection')).toBe('close');
+    // the connection is still good afterwards: the next request over it is answered, not reset
+    for (let i = 0; i < 3; i += 1) expect((await get('/status')).status).toBe(200);
   });
 
   it('rate limits a flood once the limit is configured', async () => {

@@ -230,8 +230,14 @@ const MAX_BODY_BYTES = 1_000_000;
 async function proxy(req, res, url) {
   const declared = Number(req.headers['content-length'] ?? 0);
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    // The body is never read, so this connection must not be reused for another request.
-    return send(res, 413, { error: 'request body too large', code: 'ERR_BODY_TOO_LARGE' }, { Connection: 'close' });
+    // Answer now, but keep reading and discard the rest: resetting a connection that is still uploading makes the client
+    // see ECONNRESET rather than this 413. A body that really is enormous is cut off instead of being drained.
+    if (declared > MAX_BODY_BYTES * 16) {
+      res.once('finish', () => req.destroy());
+      return send(res, 413, { error: 'request body too large', code: 'ERR_BODY_TOO_LARGE' }, { Connection: 'close' });
+    }
+    req.resume();
+    return send(res, 413, { error: 'request body too large', code: 'ERR_BODY_TOO_LARGE' });
   }
   const target = PLATFORM_URL.replace(/\/$/, '') + url.pathname + url.search;
   const headers = forwardHeaders(req);
