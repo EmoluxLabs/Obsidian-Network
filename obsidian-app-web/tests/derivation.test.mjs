@@ -22,8 +22,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { deriveWallet, isValidRecoveryPhrase } from '../../web/core/crypto/mnemonic.js';
-import { addressFromPublicKey } from '../../web/core/crypto/keys.js';
+import { deriveWallet, isValidRecoveryPhrase } from '../../obsidian-interface/web/core/crypto/mnemonic.js';
+import { addressFromPublicKey } from '../../obsidian-interface/web/core/crypto/keys.js';
 
 /** BIP-39's standard all-"abandon" phrase, so this vector is reproducible by
  *  anyone without inventing a secret of their own. */
