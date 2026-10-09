@@ -3,6 +3,7 @@
   "productName": "Obsidian Node",
   "version": "1.0.0",
   "description": "Obsidian Node — desktop application for running and operating an Obsidian Network node.",
+  "homepage": "https://github.com/EmoluxLabs/Obsidian-Network",
   "private": true,
   "license": "Apache-2.0",
   "author": "Emolux Labs",

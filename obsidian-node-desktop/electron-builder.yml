@@ -33,6 +33,9 @@ extraResources:
     filter:
       - "**/*"
 
+# Copies the core's node_modules into the package (electron-builder drops it from extraResources).
+afterPack: scripts/after-pack.cjs
+
 asar: true
 compression: normal
 npmRebuild: false
