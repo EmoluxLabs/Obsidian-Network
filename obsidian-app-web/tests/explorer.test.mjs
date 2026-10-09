@@ -29,7 +29,7 @@ const BLOCK = '37df46cdc9122699d208a14c08281a7592bd89f701aa4b901a5929148b656f44'
 
 const STATUS = {
   height: 216, headHash: 'ba'.repeat(32), genesisId: '1e7ca102f6720a7682e9a396958f2a17330dc001', chainId: 7780,
-  protocolVersion: '1.6.1', paramsHash: '2dd76ca2b2305d725f3a975bfca04eb5', peers: 0, lastBlockTimestamp: 1791542032,
+  protocolVersion: '1.7.0', paramsHash: 'bffeacb35532ba3df70cda8c27ed6c96', peers: 0, lastBlockTimestamp: 1791542032,
   finalizedHeight: 0, mempool: { transactions: 0, bytes: 0 },
   genesis: { allocationClaimed: true, allocationObs: '100000.000000000000000000', claimedAtHeight: 82 },
 };

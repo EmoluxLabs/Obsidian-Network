@@ -86,6 +86,18 @@ test('devnet: invite, start, use the invitation, stop — and the ports are free
   // A test network gets a generated passphrase, in its own file.
   assert.match(readFileSync(join(home, 'devnet', 'keystore.pass'), 'utf8'), /\S{20,}/);
 
+  // Protocol 1.7.0: the chain takes a claim only through the mining gate. A test network gets its own issuer key,
+  // encrypted, with its passphrase in its own file; the node is given the PUBLIC half and the interface the keystore.
+  const gateStore = join(home, 'devnet', 'gate', 'mining-gate.keystore.json');
+  assert.equal((statSync(gateStore).mode & 0o777).toString(8), '600', 'the encrypted issuer key is not world-readable');
+  const gateKeystore = JSON.parse(readFileSync(gateStore, 'utf8'));
+  assert.match(gateKeystore.publicKey, /^0[23][0-9a-f]{64}$/);
+  assert.ok(!/"privateKey"/.test(readFileSync(gateStore, 'utf8')), 'the private key is only ever stored encrypted');
+  const gated = (await get(`http://127.0.0.1:${ports.devnet.rpc}/mining/status?address=dobs13s4pgc4qczhgdjdmxhm8g9wf7e2ya66rrs0ff0`)).body;
+  assert.deepEqual(gated.gate.issuerKeys, [gateKeystore.publicKey], 'the node commits exactly the key the interface holds');
+  assert.equal(gated.gate.open, true);
+  assert.match(readFileSync(join(home, 'devnet', 'logs', 'interface.log'), 'utf8'), /mining gate issuer loaded/);
+
   const health = await get(`http://127.0.0.1:${ports.devnet.ui}/api/health`);
   assert.equal(health.body.network, 'devnet');
   assert.equal(health.body.healthyNodes, 1);

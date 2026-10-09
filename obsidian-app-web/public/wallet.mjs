@@ -23,6 +23,7 @@ import {
   submitTransaction,
   requestLinkChallenge,
   submitLinkProof,
+  requestMiningCertificate,
 } from './data.mjs';
 
 const BUNDLE_URL = '/js/obsidian.js';
@@ -209,6 +210,7 @@ async function run(name, requestPassphrase, args) {
     submit: (hex) => submitTransaction(hex),
     linkChallenge: requestLinkChallenge,
     linkSubmit: submitLinkProof,
+    getGateCertificate: requestMiningCertificate,
   };
   return bundle[name](deps, args);
 }

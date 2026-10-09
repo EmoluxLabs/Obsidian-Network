@@ -224,14 +224,27 @@ export async function submitClaim(deps) {
       }
       return { ok: true, mining };
     },
-    build(wallet, ctx, prepared) {
+    async build(wallet, ctx, prepared) {
       const mining = prepared?.mining ?? {};
+      // Protocol 1.7.0: the chain refuses a claim without a certificate from the mining gate. The platform issues it
+      // only to a signed-in, second-factor-confirmed account for the wallet linked to it, so a refusal here is the
+      // platform's answer, shown as it is — nothing is signed without one.
+      if (typeof deps.getGateCertificate !== 'function') {
+        return refusal('GATE_UNAVAILABLE', 'this app cannot request a mining certificate, so it cannot claim');
+      }
+      let gate;
+      try {
+        gate = await deps.getGateCertificate(wallet.address, mining.nextClaimId);
+      } catch (error) {
+        return refusal(error?.code || 'GATE_REFUSED', error?.message || 'the platform did not issue a mining certificate');
+      }
       return {
         type: TxType.MINING_CLAIM,
         gas: 0n,
         body: buildMiningBody({
           claimId: mining.nextClaimId,
           claimSequence: mining.nextClaimSequence,
+          gate,
         }),
       };
     },

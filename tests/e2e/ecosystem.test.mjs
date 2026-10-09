@@ -50,6 +50,9 @@ const ms = (base) => Math.round(base * SCALE);
 const children = [];
 const dirs = [];
 let lib; // the bundled browser code
+/** The mining gate issuer of this test network (protocol 1.7.0): the chain refuses a claim without its certificate. */
+let gate;
+let gateCore;
 let client;
 const wallets = {};
 
@@ -59,8 +62,8 @@ function scratch(label) {
   return dir;
 }
 
-function launch(label, entry, args, cwd) {
-  const child = spawn(process.execPath, [entry, ...args], { cwd, env: { ...process.env, OBSIDIAN_KEYSTORE_PASSPHRASE: PASSPHRASE }, stdio: ['ignore', 'pipe', 'pipe'] });
+function launch(label, entry, args, cwd, extraEnv = {}) {
+  const child = spawn(process.execPath, [entry, ...args], { cwd, env: { ...process.env, OBSIDIAN_KEYSTORE_PASSPHRASE: PASSPHRASE, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
   const record = { label, child, log: [], code: null };
   child.stdout.on('data', (chunk) => record.log.push(chunk.toString()));
   child.stderr.on('data', (chunk) => record.log.push(chunk.toString()));
@@ -159,9 +162,18 @@ before(async () => {
   lib = await import(pathToFileURL(outfile).href);
   client = new lib.ObsidianClient(UI_URL);
 
-  const node = launch('node', NODE_ENTRY, ['start', '--network', 'devnet', '--data-dir', scratch('node'), '--rpc-port', String(RPC), '--p2p-port', String(P2P), '--log-level', 'warn'], CORE);
+  gateCore = {
+    keys: await import(pathToFileURL(join(CORE, 'dist', 'crypto', 'keys.js')).href),
+    keystore: await import(pathToFileURL(join(CORE, 'dist', 'crypto', 'keystore.js')).href),
+    gate: await import(pathToFileURL(join(CORE, 'dist', 'mining', 'gate.js')).href),
+  };
+  gate = gateCore.keys.generateKeyPair('dobs');
+  const gateKeystore = join(scratch('gate'), 'gate.keystore.json');
+  gateCore.keystore.Keystore.write(gateKeystore, gate.privateKey, PASSPHRASE);
+
+  const node = launch('node', NODE_ENTRY, ['start', '--network', 'devnet', '--data-dir', scratch('node'), '--rpc-port', String(RPC), '--p2p-port', String(P2P), '--log-level', 'warn'], CORE, { OBSIDIAN_MINING_GATE_PUBLIC_KEYS: gate.publicKey });
   await waitFor(async () => (await get(`${NODE_URL}/status`)).body.height >= 1, ms(60_000), 'the node to make a block', node);
-  const ui = launch('interface', IFACE_ENTRY, ['--network', 'devnet', '--port', String(UI), '--nodes', NODE_URL, '--data-dir', scratch('ui')], IFACE);
+  const ui = launch('interface', IFACE_ENTRY, ['--network', 'devnet', '--port', String(UI), '--nodes', NODE_URL, '--data-dir', scratch('ui')], IFACE, { OBSIDIAN_GATE_KEYSTORE: gateKeystore, OBSIDIAN_GATE_KEYSTORE_PASSPHRASE: PASSPHRASE });
   await waitFor(async () => (await get(`${UI_URL}/api/health`)).body.healthyNodes === 1, ms(60_000), 'the interface to see the node', ui);
 
   wallets.miner = await lib.Wallet.create('dobs', PASSPHRASE, 'miner');
@@ -179,7 +191,13 @@ test('the first claim funds a wallet and designates it the treasury', { skip, ti
   // gate; the full signed-in flow is covered by obsidian-app-web/tests/e2e-cross-product.mjs). The chain itself
   // has no accounts, so the claim that funds this test wallet goes straight to the node, as the first claim on a
   // fresh devnet does for a real operator.
-  await assert.rejects(lib.operations.claim(client, miner), /sign in required/i, 'an anonymous browser cannot claim through the interface');
+  const platformCertificate = async (address, claimId) => {
+    const response = await fetch(`${UI_URL}/api/mining/certificate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ address, claimId }) });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    return body.gate;
+  };
+  await assert.rejects(lib.operations.claim(client, miner, platformCertificate), /sign in required/i, 'an anonymous browser cannot claim through the interface, or even get a certificate');
   // The same client code, pointed at the node's own RPC instead of the interface proxy.
   class DirectClient extends lib.ObsidianClient {
     async request(path, init) {
@@ -190,7 +208,12 @@ test('the first claim funds a wallet and designates it the treasury', { skip, ti
     }
   }
   const direct = new DirectClient(NODE_URL);
-  await done(miner, () => lib.operations.claim(direct, miner));
+  // The chain now enforces the gate itself: a claim sent straight to the node without a certificate is refused.
+  await assert.rejects(lib.operations.claim(direct, miner, async () => undefined), /MINING_GATE_REQUIRED|certificate/i, 'a direct claim without a certificate is refused by the node');
+  // This test holds the issuer key, so it signs the certificate itself (a real operator's platform does this for an account).
+  const issueDirect = async (address, claimId) =>
+    gateCore.gate.issueMiningGateCertificate(gate.privateKey, gate.publicKey, { networkId: 'obsidian-devnet-1', chainId: 7780, address, claimId }, Math.floor(Date.now() / 1000));
+  await done(miner, () => lib.operations.claim(direct, miner, issueDirect));
   const revenue = await client.revenue();
   assert.equal(revenue.treasury.designated, true);
   assert.equal(revenue.treasury.wallet, miner.address, 'the treasury is shown in full, and is the first miner');

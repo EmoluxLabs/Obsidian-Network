@@ -162,6 +162,14 @@ export const requestLinkChallenge = (address) =>
 export const submitLinkProof = ({ address, publicKey, signature }) =>
   call('/api/wallet/link', { method: 'POST', body: { address, publicKey, signature } });
 
+/**
+ * Since protocol 1.7.0 the chain refuses a mining claim that does not carry a certificate from the mining gate.
+ * The platform issues one — for ONE wallet and ONE claim id, valid for minutes — only to a signed-in account whose
+ * second factor is confirmed and whose linked wallet is `address`. Resolves to the certificate itself.
+ */
+export const requestMiningCertificate = async (address, claimId) =>
+  (await call('/api/mining/certificate', { method: 'POST', body: { address, claimId } })).gate;
+
 // ── chain data, through the platform's one read-through gateway ───────────────
 
 /**

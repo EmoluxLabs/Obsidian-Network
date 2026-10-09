@@ -76,6 +76,18 @@ const children = [];
 const dataDirs = [];
 const skip = process.env.SKIP_E2E === '1';
 let core;
+/** The test network's mining gate issuer. The chain refuses a claim without a certificate from it. */
+let gate;
+
+/** What the platform's gate would sign for a claim by `wallet` (the test holds the issuer key). */
+function certificateFor(wallet, claimId) {
+  return core.issueMiningGateCertificate(
+    gate.privateKey,
+    gate.publicKey,
+    { networkId: 'obsidian-devnet-1', chainId: CHAIN_ID, address: wallet.address, claimId },
+    Math.floor(Date.now() / 1000),
+  );
+}
 
 // ── node processes ───────────────────────────────────────────────────────────
 
@@ -97,7 +109,8 @@ function startNode(node) {
   if (node.seed) args.push('--seeds', node.seed);
   const child = spawn(process.execPath, args, {
     cwd: CORE,
-    env: { ...process.env, OBSIDIAN_KEYSTORE_PASSPHRASE: PASSPHRASE },
+    // Protocol 1.7.0: every node of the network commits the same mining gate issuer key (it is part of the genesis id).
+    env: { ...process.env, OBSIDIAN_KEYSTORE_PASSPHRASE: PASSPHRASE, OBSIDIAN_MINING_GATE_PUBLIC_KEYS: gate.publicKey },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const record = { child, log: [], node, code: null, signal: null, dataDir };
@@ -134,9 +147,10 @@ async function loadCore() {
     { parseObs },
     { usdMicroToSeals },
     { TxType, OnsOp, ValidatorOp },
-    { addressFromPublicKey },
+    { addressFromPublicKey, generateKeyPair },
     { encodeValidatorBody },
     { Keystore },
+    { issueMiningGateCertificate },
   ] = await Promise.all([
     import(join(CORE, 'dist', 'crypto', 'mnemonic.js')),
     import(join(CORE, 'dist', 'transactions', 'encode.js')),
@@ -151,12 +165,13 @@ async function loadCore() {
     import(join(CORE, 'dist', 'crypto', 'keys.js')),
     import(join(CORE, 'dist', 'transactions', 'executors', 'validator.js')),
     import(join(CORE, 'dist', 'crypto', 'keystore.js')),
+    import(join(CORE, 'dist', 'mining', 'gate.js')),
   ]);
   return {
     generateRecoveryPhrase, deriveWallet, signTransaction, encodeSignedTx,
     encodePaymentBody, encodeMiningBody, encodeOnsBody, encodeOracleBody,
     encodeValidatorBody, expectedGas, parseObs, usdMicroToSeals, TxType, OnsOp,
-    ValidatorOp, addressFromPublicKey, Keystore,
+    ValidatorOp, addressFromPublicKey, Keystore, generateKeyPair, issueMiningGateCertificate,
   };
 }
 
@@ -284,7 +299,7 @@ async function ensureMiner() {
         nonce: 0,
         type: core.TxType.MINING_CLAIM,
         gas: 0n,
-        body: core.encodeMiningBody({ claimId: mining.nextClaimId, claimSequence: mining.nextClaimSequence }),
+        body: core.encodeMiningBody({ claimId: mining.nextClaimId, claimSequence: mining.nextClaimSequence, gate: certificateFor(miner, mining.nextClaimId) }),
         validUntil: mining.protocolTime + 600,
         privateKeyHex: miner.privateKey,
         publicKeyHex: miner.publicKey,
@@ -385,6 +400,7 @@ before(async () => {
   assert.ok(existsSync(ENTRY), `build the core first: ${ENTRY} is missing (npm --prefix obsidian-core run build)`);
   await assertPortsFree();
   core = await loadCore();
+  gate = core.generateKeyPair('dobs');
   const started = NODES.map((node) => startNode(node));
   const [a, b, c] = started;
 
@@ -450,6 +466,35 @@ test('the first mining claim receives the 100,000 OBS genesis allocation', { ski
   }
 });
 
+test('a claim posted straight to a node without a gate certificate is refused, on every node', { skip, timeout: ms(120_000) }, async () => {
+  // The account system used to be enforced only by the platform, so this claim got in. Now the chain refuses it.
+  const stranger = newWallet();
+  const mining = (await get(`${rpc(A)}/mining/status?address=${stranger.address}`)).body;
+  assert.equal(mining.gate.open, true, 'the node says it commits an issuer key');
+  assert.deepEqual(mining.gate.issuerKeys, [gate.publicKey]);
+  const attempt = (body) =>
+    core.signTransaction({
+      protocolVersion: PROTOCOL_VERSION, chainId: CHAIN_ID, sender: stranger.address, nonce: 0, type: core.TxType.MINING_CLAIM, gas: 0n,
+      body, validUntil: mining.protocolTime + 600, privateKeyHex: stranger.privateKey, publicKeyHex: stranger.publicKey,
+    });
+  const bare = core.encodeMiningBody({ claimId: mining.nextClaimId, claimSequence: mining.nextClaimSequence });
+  // A certificate from a key the chain did not commit is no better.
+  const rogue = core.generateKeyPair('dobs');
+  const forged = core.encodeMiningBody({
+    claimId: mining.nextClaimId,
+    claimSequence: mining.nextClaimSequence,
+    gate: core.issueMiningGateCertificate(rogue.privateKey, rogue.publicKey, { networkId: 'obsidian-devnet-1', chainId: CHAIN_ID, address: stranger.address, claimId: mining.nextClaimId }, Math.floor(Date.now() / 1000)),
+  });
+  for (const node of [A, B, C]) {
+    for (const [what, body] of [['no certificate', bare], ['an uncommitted issuer', forged]]) {
+      const submitted = await submit(node, core.encodeSignedTx(attempt(body)));
+      assert.notEqual(submitted.status, 200, `${what} was accepted by ${node.name}: ${JSON.stringify(submitted.body)}`);
+      assert.match(JSON.stringify(submitted.body), /MINING_GATE/, `${node.name}: ${what}`);
+    }
+  }
+  assert.equal(BigInt((await balance(A, stranger.address)).balanceSeals ?? '0'), 0n, 'nothing was paid');
+});
+
 test('a second miner does not receive the genesis allocation', { skip, timeout: ms(120_000) }, async () => {
   const second = newWallet();
   // The protocol accepts one claim per wallet per block, so wait for a fresh slot.
@@ -465,7 +510,7 @@ test('a second miner does not receive the genesis allocation', { skip, timeout: 
     nonce: 0,
     type: core.TxType.MINING_CLAIM,
     gas: 0n,
-    body: core.encodeMiningBody({ claimId: ready.nextClaimId, claimSequence: ready.nextClaimSequence }),
+    body: core.encodeMiningBody({ claimId: ready.nextClaimId, claimSequence: ready.nextClaimSequence, gate: certificateFor(second, ready.nextClaimId) }),
     validUntil: ready.protocolTime + 600,
     privateKeyHex: second.privateKey,
     publicKeyHex: second.publicKey,

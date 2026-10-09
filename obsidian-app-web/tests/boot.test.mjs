@@ -84,7 +84,7 @@ const NETWORK = {
     displayName: 'OBS Devnet',
     isProduction: false,
   },
-  protocolVersion: '1.6.1',
+  protocolVersion: '1.7.0',
   genesisId: '1e7ca102f6720a7682e9a396958f2a17330dc001',
 };
 
@@ -93,7 +93,7 @@ const STATUS = {
   headHash: 'ab'.repeat(32),
   networkId: 'obsidian-devnet-1',
   chainId: 7780,
-  protocolVersion: '1.6.1',
+  protocolVersion: '1.7.0',
   lastBlockTimestamp: 1_791_540_204,
   finalizedHeight: 28,
   peers: 0,
@@ -103,7 +103,7 @@ const STATUS = {
 };
 
 const PARAMS = {
-  protocolVersion: '1.6.1',
+  protocolVersion: '1.7.0',
   mining: { claimIntervalSeconds: 14400, maxClaimsPerCycle: 6, cycleSeconds: 86400 },
   gas: { basisPoints: 2, maxGasObs: '0.010000000000000000' },
   ons: { registrationFeeObs: '0.050000000000000000', renewalFeeObs: '0.050000000000000000', termSeconds: 31536000, minLength: 3, maxLength: 63 },
@@ -264,7 +264,7 @@ test('the context carries the node’s address prefix, and refuses to guess one'
   const original = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     const path = decodeURIComponent(new URL(String(url), 'http://x').searchParams.get('path') ?? '');
-    if (path === '/network') return json(200, { network: { chainId: 7780 }, protocolVersion: '1.6.1' });
+    if (path === '/network') return json(200, { network: { chainId: 7780 }, protocolVersion: '1.7.0' });
     return original(url, init);
   };
   try {

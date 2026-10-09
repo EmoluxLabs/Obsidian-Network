@@ -44,7 +44,7 @@ function wallet() {
 
 function unsignedFor(address, chainId, extra = {}) {
   return {
-    protocolVersion: '1.6.1',
+    protocolVersion: '1.7.0',
     chainId,
     sender: address,
     nonce: 0,
@@ -152,7 +152,13 @@ test('a mining body decodes back to the claim id and sequence it was built from'
     }),
   });
   const decoded = decodeSignedTxFromBytes(bytes);
-  assert.deepEqual(decodeMiningBody(decoded.body), { claimId, claimSequence: 4, viaNodeId: undefined });
+  assert.deepEqual(decodeMiningBody(decoded.body), { claimId, claimSequence: 4, viaNodeId: undefined, gate: undefined });
+});
+
+test('a claim body carries the gate certificate through the encoder and back', () => {
+  const claimId = 'ab'.repeat(32);
+  const gate = { issuer: '02'.repeat(33), issuedAt: 1_700_000_000, signature: 'cd'.repeat(64) };
+  assert.deepEqual(decodeMiningBody(buildMiningBody({ claimId, claimSequence: 4, gate })), { claimId, claimSequence: 4, viaNodeId: undefined, gate });
 });
 
 test('gas must be a bigint: undefined would reach the u128 encoder as a crash', () => {

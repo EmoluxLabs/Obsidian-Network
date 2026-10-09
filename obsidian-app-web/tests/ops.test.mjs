@@ -75,7 +75,7 @@ function fakeNode(overrides = {}) {
     requestPassphrase: async () => PASSPHRASE,
     getContext: async () => ({
       chainId: 7777,
-      protocolVersion: '1.6.1',
+      protocolVersion: '1.7.0',
       protocolTime: 1_700_000_000,
     }),
     getNonce: async () => 7,
@@ -88,6 +88,7 @@ function fakeNode(overrides = {}) {
     }),
     getBalance: async () => ({ balanceSeals: (10n * OBS).toString(), nonce: 7 }),
     getName: async () => null,
+    getGateCertificate: async () => GATE,
     submit: async (hex, txId) => {
       sent.push({ hex, txId });
       return { accepted: true, txId };
@@ -96,12 +97,51 @@ function fakeNode(overrides = {}) {
   };
 }
 
+/** What the platform's mining gate would hand back for this wallet and claim. */
+const GATE = { issuer: '02'.repeat(33), issuedAt: 1_700_000_000, signature: 'ab'.repeat(64) };
+
 function decodeSent(hex) {
   const bytes = Uint8Array.from(Buffer.from(hex, 'hex'));
   return decodeSignedTxFromBytes(bytes);
 }
 
 // ── mining ───────────────────────────────────────────────────────────────────
+
+test('a claim carries the platform\'s certificate for this wallet and this claim id', async () => {
+  const asked = [];
+  const node = fakeNode({
+    getGateCertificate: async (address, claimId) => {
+      asked.push([address, claimId]);
+      return GATE;
+    },
+  });
+  const result = await submitClaim(node);
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(asked, [[ADDRESS, 'ab'.repeat(32)]]);
+  const { decodeMiningBody } = await import('../../obsidian-interface/web/core/transactions/executors/mining.js');
+  assert.deepEqual(decodeMiningBody(decodeSent(node.sent[0].hex).body).gate, GATE);
+});
+
+test('nothing is signed or submitted when the platform refuses the certificate', async () => {
+  const node = fakeNode({
+    getGateCertificate: async () => {
+      throw Object.assign(new Error('mining is closed on this account until you confirm two-factor authentication'), { code: 'ERR_MINING_NOT_ENABLED' });
+    },
+  });
+  const result = await submitClaim(node);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ERR_MINING_NOT_ENABLED');
+  assert.match(result.message, /two-factor/);
+  assert.equal(node.sent.length, 0);
+});
+
+test('an app that cannot ask for a certificate cannot claim, rather than sending a claim the chain refuses', async () => {
+  const node = fakeNode({ getGateCertificate: undefined });
+  const result = await submitClaim(node);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'GATE_UNAVAILABLE');
+  assert.equal(node.sent.length, 0);
+});
 
 test('a claim carries the account nonce, not the claim sequence', async () => {
   const node = fakeNode();
@@ -289,7 +329,7 @@ test('the sender address is derived under the node’s prefix, not the mainnet d
     getContext: async () => ({
       chainId: 7780,
       addressHrp: 'dobs',
-      protocolVersion: '1.6.1',
+      protocolVersion: '1.7.0',
       protocolTime: 1_700_000_000,
     }),
   });

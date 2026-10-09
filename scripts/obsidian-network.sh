@@ -39,6 +39,10 @@
 #   OBSIDIAN_PORT_OFFSET           add N to every port above (run a second copy)
 #   OBSIDIAN_NO_MINE=1             follow and validate only
 #   OBSIDIAN_NODE_ONLY=1           do not start the interface
+#   OBSIDIAN_MINING_GATE_PUBLIC_KEYS  the mining gate issuer public key(s) of this network (protocol 1.7.0); every
+#                                  node of one network needs the same list. Made for you on devnet/staging/testnet.
+#   OBSIDIAN_GATE_KEYSTORE (+ _PASSPHRASE_FILE)  the ENCRYPTED issuer key, for the interface (mainnet: yours)
+#   OBSIDIAN_NO_GATE_KEY=1         do not make a gate key on a test network (mining stays closed)
 #   OBSIDIAN_START_TIMEOUT         seconds to wait for the node (default 180; the interface gets two thirds)
 #
 # What your shell still remembers must not decide which network you are starting. So:
@@ -109,6 +113,9 @@ NODE_PID="$HOME_DIR/node.pid"
 UI_PID="$HOME_DIR/interface.pid"
 PASS_FILE="$HOME_DIR/keystore.pass"
 INVITE_FILE="$HOME_DIR/genesis-invite.hash"
+GATE_DIR="$HOME_DIR/gate"
+GATE_KEYSTORE_FILE="$GATE_DIR/mining-gate.keystore.json"
+GATE_PASS_FILE="$GATE_DIR/gate.pass"
 
 # ── where the built packages are ─────────────────────────────────────────────
 locate() {  # locate <marker file> <dir>...
@@ -209,6 +216,67 @@ resolve_passphrase() {
   say "generated a passphrase for this $NETWORK node at $PASS_FILE (fine for a test network)"
 }
 
+# The mining gate (protocol 1.7.0). The chain accepts a mining claim only with a certificate signed by an issuer key
+# whose PUBLIC half is committed in genesis, so every node of one network must be given the same public key(s), and
+# the interface holds the PRIVATE half, encrypted.
+#   - OBSIDIAN_MINING_GATE_PUBLIC_KEYS in the shell is what a node on another machine is given. It wins on mainnet.
+#   - On devnet/staging/testnet, when this script has made a key for the network, that key wins over the shell
+#     (a value left over from another network must not decide this one), and a first start makes one.
+#   - Mainnet never gets a generated key: the issuer key is the operators' power over who can mine, so they make it
+#     (node scripts/generate-mining-gate-key.mjs) on a machine they trust and give it here. Without one a mainnet
+#     node still runs, but no claim can be accepted, and the interface says mining is closed.
+# Sets GATE_PUBLIC_KEYS (for the node) and GATE_ENV (for the interface).
+resolve_gate() {
+  GATE_PUBLIC_KEYS=""
+  GATE_ENV=()
+  if [ -f "$GATE_KEYSTORE_FILE" ]; then
+    local mine; mine="$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf8')).publicKey||'')" "$GATE_KEYSTORE_FILE")"
+    [ -n "$mine" ] || die "the mining gate keystore $GATE_KEYSTORE_FILE has no public key; move it aside and start again"
+    if [ -n "${OBSIDIAN_MINING_GATE_PUBLIC_KEYS:-}" ] && [ "$OBSIDIAN_MINING_GATE_PUBLIC_KEYS" != "$mine" ]; then
+      say "ignoring OBSIDIAN_MINING_GATE_PUBLIC_KEYS from your shell: this $NETWORK uses the gate key made for it ($GATE_KEYSTORE_FILE)"
+    fi
+    GATE_PUBLIC_KEYS="$mine"
+    GATE_ENV=(OBSIDIAN_GATE_KEYSTORE="$GATE_KEYSTORE_FILE" OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE="$GATE_PASS_FILE")
+    return 0
+  fi
+  if [ -n "${OBSIDIAN_MINING_GATE_PUBLIC_KEYS:-}" ]; then
+    GATE_PUBLIC_KEYS="$OBSIDIAN_MINING_GATE_PUBLIC_KEYS"
+  elif [ "$NETWORK" != "mainnet" ] && [ -z "${OBSIDIAN_NO_GATE_KEY:-}" ] && [ -d "$NODE_DATA/chain" ]; then
+    # A chain that already exists was made under some gate list (possibly none). The list is part of the genesis id,
+    # so a key made now would make this node refuse its own chain. Never do that behind someone's back.
+    say "WARNING: this $NETWORK node already has a chain that was made without a gate key from this script, so none is made now"
+    say "   (a different key list is a different chain), and mining stays closed. To use a gate: give the list the chain was"
+    say "   made with (OBSIDIAN_MINING_GATE_PUBLIC_KEYS) and its keystore (OBSIDIAN_GATE_KEYSTORE), or start fresh:  $0 $NETWORK reset --yes"
+  elif [ "$NETWORK" != "mainnet" ] && [ -z "${OBSIDIAN_NO_GATE_KEY:-}" ]; then
+    need_core
+    mkdir -p "$GATE_DIR"; chmod 700 "$GATE_DIR" 2>/dev/null || true
+    ( umask 077; node -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('base64url'))" > "$GATE_PASS_FILE" )
+    GATE_PUBLIC_KEYS="$(cd "$CORE_DIR" && node --input-type=module -e "
+      import { generateKeyPair } from './dist/crypto/keys.js';
+      import { Keystore } from './dist/crypto/keystore.js';
+      import { readFileSync } from 'node:fs';
+      const hrp = { testnet: 'tobs', staging: 'sobs', devnet: 'dobs' }[process.argv[1]];
+      const pair = generateKeyPair(hrp);
+      Keystore.write(process.argv[2], pair.privateKey, readFileSync(process.argv[3], 'utf8').trim());
+      process.stdout.write(pair.publicKey);
+    " "$NETWORK" "$GATE_KEYSTORE_FILE" "$GATE_PASS_FILE")"
+    [ -n "$GATE_PUBLIC_KEYS" ] || die "could not make a mining gate key for $NETWORK"
+    GATE_ENV=(OBSIDIAN_GATE_KEYSTORE="$GATE_KEYSTORE_FILE" OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE="$GATE_PASS_FILE")
+    say "made a mining gate key for this $NETWORK (fine for a test network): $GATE_KEYSTORE_FILE"
+    say "   its public key, which EVERY node of this $NETWORK must be given (OBSIDIAN_MINING_GATE_PUBLIC_KEYS): $GATE_PUBLIC_KEYS"
+  else
+    say "WARNING: no mining gate key for $NETWORK. The node runs, but NO mining claim can be accepted until the operators make one"
+    say "   (node scripts/generate-mining-gate-key.mjs) and give the public key to every node (OBSIDIAN_MINING_GATE_PUBLIC_KEYS)"
+    say "   and the encrypted key to the interface (OBSIDIAN_GATE_KEYSTORE + OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE)."
+  fi
+  # An interface in front of a node whose key was given by hand needs the matching private half from the operator.
+  if [ -n "${OBSIDIAN_GATE_KEYSTORE:-}" ]; then
+    GATE_ENV=(OBSIDIAN_GATE_KEYSTORE="$OBSIDIAN_GATE_KEYSTORE")
+    [ -z "${OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE:-}" ] || GATE_ENV+=(OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE="$OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE")
+    [ -z "${OBSIDIAN_GATE_KEYSTORE_PASSPHRASE:-}" ] || GATE_ENV+=(OBSIDIAN_GATE_KEYSTORE_PASSPHRASE="$OBSIDIAN_GATE_KEYSTORE_PASSPHRASE")
+  fi
+}
+
 # Which Genesis Invitation hash the interface starts with, in this order:
 #   1. this network's own file (written by `invite`);
 #   2. a hash set for this command, if any;
@@ -266,12 +334,14 @@ cmd_start() {
   need_core
   mkdir -p "$NODE_DATA" "$LOG_DIR"
   chmod 700 "$HOME_DIR" 2>/dev/null || true
+  resolve_gate
 
   if alive "$NODE_PID"; then
     say "$NETWORK node is already running (pid $(cat "$NODE_PID"))"
     note_if_stale node "$NODE_PID" "$CORE_DIR/dist/index.js"
   else
     resolve_passphrase
+    export OBSIDIAN_MINING_GATE_PUBLIC_KEYS="$GATE_PUBLIC_KEYS"
     announce_seeds
     local args=(dist/index.js start --network "$NETWORK" --data-dir "$NODE_DATA" --rpc-port "$RPC" --p2p-port "$P2P")
     [ -z "${OBSIDIAN_NO_MINE:-}" ] || args+=(--no-mine)
@@ -294,7 +364,7 @@ cmd_start() {
     local hash="$INVITE_HASH"
     local args=(dist/server/main.js --network "$NETWORK" --port "$UI" --nodes "http://127.0.0.1:$RPC" --data-dir "$UI_DATA")
     say "starting the $NETWORK interface:  (cd $INTERFACE_DIR && node ${args[*]})"
-    (cd "$INTERFACE_DIR" && OBSIDIAN_GENESIS_INVITE_HASH="$hash" exec nohup node "${args[@]}" >>"$LOG_DIR/interface.log" 2>&1) &
+    (cd "$INTERFACE_DIR" && export OBSIDIAN_GENESIS_INVITE_HASH="$hash" && for kv in ${GATE_ENV[@]+"${GATE_ENV[@]}"}; do export "$kv"; done && exec nohup node "${args[@]}" >>"$LOG_DIR/interface.log" 2>&1) &
     echo $! > "$UI_PID"
     wait_for interface "http://127.0.0.1:$UI/api/health" "$UI_PID" $((START_TIMEOUT * 2 / 3))
     if [ -z "$hash" ]; then

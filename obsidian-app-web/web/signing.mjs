@@ -205,9 +205,12 @@ export function signingDigestFor(unsigned) {
  * address, the claim sequence and the last claim height, and publishes it on
  * /mining/status as `nextClaimId`. Inventing one locally produces a body every node
  * refuses with MINING_BAD_PROOF.
+ *
+ * `gate` (protocol 1.7.0) is the certificate the account platform issued for this wallet and this claim id:
+ * `{ issuer, issuedAt, signature }`. Without it every node refuses the claim (MINING_GATE_REQUIRED).
  */
-export function buildMiningBody({ claimId, claimSequence, viaNodeId }) {
-  return encodeMiningBody({ claimId, claimSequence, viaNodeId: viaNodeId ?? '' });
+export function buildMiningBody({ claimId, claimSequence, viaNodeId, gate }) {
+  return encodeMiningBody({ claimId, claimSequence, viaNodeId: viaNodeId ?? '', gate });
 }
 
 /** A PAYMENT body. `amount` is in seals, not OBS. */

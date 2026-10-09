@@ -38,13 +38,16 @@ const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon 
 const PASS = 'correct horse battery staple';
 const OTHER = 'dobs148qsr3gydeljr65y4yx38ffswfv2ny4ledmnpw';
 
-const CHAIN = { chainId: 7780, addressHrp: 'dobs', protocolVersion: '1.6.1', protocolTime: 1_791_542_000, nonce: 4 };
+const CHAIN = { chainId: 7780, addressHrp: 'dobs', protocolVersion: '1.7.0', protocolTime: 1_791_542_000, nonce: 4 };
 const MINING = {
   eligible: true,
   nextClaimId: 'a0c7f9eb927778a70632b57cc87b84e0959a12e7130904ca9b1d0be9bd78c72a',
   nextClaimSequence: 7,
   rewardPerClaimObs: '0.000166666666666666',
 };
+
+/** The certificate both products are given: one fixed answer, so a difference in the signed bytes can only be a difference in code. */
+const GATE = { issuer: '02'.repeat(33), issuedAt: 1_791_541_900, signature: 'ab'.repeat(64) };
 
 let platform = null;
 let tmp = null;
@@ -100,7 +103,8 @@ async function viaPlatform(name, input, answers = nodeAnswers()) {
       return { accepted: true, txId: 'x' };
     },
   };
-  await platform.operations[name](client, wallet, input);
+  // A claim's third argument is how the platform asks for its certificate; every other operation takes its input.
+  await platform.operations[name](client, wallet, name === 'claim' ? async () => GATE : input);
   assert.ok(submitted, `the platform submitted nothing for ${name}`);
   return submitted;
 }
@@ -119,6 +123,7 @@ async function viaApp(fn, input, answers = nodeAnswers()) {
     getMiningStatus: async () => answers.mining,
     getBalance: async () => answers.balance,
     getName: async () => null,
+    getGateCertificate: async () => GATE,
     submit: async (hex) => {
       submitted = hex;
       return { accepted: true, txId: 'x' };
