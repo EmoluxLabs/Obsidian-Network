@@ -153,9 +153,32 @@ function install() {
    * no session and no local balance. This reports the protocol's own eligibility and
    * does not submit, because submitting needs a signature this app cannot make.
    */
-  g.claim = () => {
-    er('Claiming is a signed MINING_CLAIM transaction. This app holds no key, so it ' +
-      'reports eligibility and submits nothing. Nothing has been credited.');
+  g.claim = async () => {
+    const { submitClaim } = await import('/js/claim.mjs');
+    const { loadVault } = await import('/js/vault.mjs');
+    let out;
+    try {
+      out = await submitClaim({
+        getEligibility: () => getMiningEligibility(),
+        loadVault,
+        requestPassphrase: () =>
+          Promise.resolve(prompt('Passphrase for the wallet on this device:')),
+        submit: (encoded, txId) =>
+          post('/api/rpc', { method: 'submittransaction', params: { raw: toHex(encoded) } })
+            .catch(() => post('/tx/submit', { raw: toHex(encoded) })),
+        chainId: 7777,
+        protocolVersion: '1.6.1',
+      });
+    } catch (error) {
+      er(String(error.message || error));
+      return;
+    }
+    if (!out.ok) { er(out.message); return; }
+    // Submitted is all this knows. Rendering "confirmed" here would claim something
+    // the response cannot establish.
+    g.setStatus('Claim submitted - ' + out.txId.slice(0, 16) + '... not yet confirmed.');
+    er('');
+    refreshMine();
   };
 
   g.startM = () => {
