@@ -29,5 +29,11 @@
   "main": "dist/server/index.js",
   "bin": {
     "obsidian-interface": "dist/server/main.js"
+  },
+  "dependencies": {
+    "@noble/curves": "1.6.0",
+    "@noble/hashes": "1.5.0",
+    "@scure/bip32": "1.5.0",
+    "@scure/bip39": "1.4.0"
   }
 }
