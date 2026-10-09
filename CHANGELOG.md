@@ -195,6 +195,19 @@ and this repository keeps one changelog entry: the release it ships.
   tag versions, the shortened key list or an undocumented route makes
   `tests/scripts/repo-consistency.test.mjs` fail.
 
+* **The node's RPC enforces the HTTP verb.** Reads answer `GET`/`HEAD`; the seven
+  body-carrying endpoints (`/tx/submit`, `/tx/simulate`, `/tx/encode`, `/tx/gas`,
+  `/wallet/balance`, `/wallet/quote`, `/rpc`) answer `POST` only; every other verb,
+  and a verb on the wrong kind of route, is `405` with an `Allow` header. Before,
+  a read endpoint answered `PUT`, `DELETE`, `PATCH` and `POST` exactly like `GET`.
+  This is an HTTP-layer change only: the params hash, genesis ids and every
+  consensus rule are untouched. A black-box probe of a live node (malformed and
+  oversized bodies, path abuse, header abuse, 300 idle sockets, a 400-request
+  burst, a 200-socket flood and a 16 MB frame at the P2P port) found nothing else.
+  The deployment guide's "submit transactions" examples, which called `POST`
+  routes with `GET` and named a route that does not exist, now show the real
+  calls, and its network table no longer labels a purpose column "Block time".
+
 ### Verification in this release
 
 * Core typecheck and build, interface typecheck and build, and the full core,

@@ -69,10 +69,10 @@ Reads (`GET`): `/health /status /params /version /genesis /supply /nodes /peers
 /oracle /validators /blocks /block/<hash> /tx/<id> /address/<address> /mempool
 /mining/schedule /mining/status /mining/claims /names /names/<name> /pot
 /revenue /nodes/registry /nodes/rewards /nodes/status/<nodeId> /finality
-/network /audit/decentralization /audit/compliance`.
+/network /wallet/<address>/next-nonce /metrics /audit/decentralization /audit/compliance`.
 
 Writes (`POST`): `/tx/submit /tx/simulate /tx/encode /tx/gas /wallet/balance
-/wallet/quote /wallet/<address>/next-nonce /rpc`.
+/wallet/quote /rpc`. Any other verb is refused with `405` and an `Allow` header.
 
 Three rules hold across all of them:
 

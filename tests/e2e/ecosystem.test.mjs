@@ -175,7 +175,22 @@ after(() => {
 
 test('the first claim funds a wallet and designates it the treasury', { skip, timeout: ms(120_000) }, async () => {
   const { miner, buyer } = wallets;
-  await done(miner, () => lib.operations.claim(client, miner));
+  // The interface refuses a mining claim from anyone who is not signed in with a linked wallet (the platform's
+  // gate; the full signed-in flow is covered by obsidian-app-web/tests/e2e-cross-product.mjs). The chain itself
+  // has no accounts, so the claim that funds this test wallet goes straight to the node, as the first claim on a
+  // fresh devnet does for a real operator.
+  await assert.rejects(lib.operations.claim(client, miner), /sign in required/i, 'an anonymous browser cannot claim through the interface');
+  // The same client code, pointed at the node's own RPC instead of the interface proxy.
+  class DirectClient extends lib.ObsidianClient {
+    async request(path, init) {
+      const response = await fetch(`${NODE_URL}${path}`, { ...init, headers: { 'content-type': 'application/json' } });
+      const payload = await response.json();
+      if (!response.ok) throw new lib.ChainError(payload.error, response.status, payload.code);
+      return payload;
+    }
+  }
+  const direct = new DirectClient(NODE_URL);
+  await done(miner, () => lib.operations.claim(direct, miner));
   const revenue = await client.revenue();
   assert.equal(revenue.treasury.designated, true);
   assert.equal(revenue.treasury.wallet, miner.address, 'the treasury is shown in full, and is the first miner');

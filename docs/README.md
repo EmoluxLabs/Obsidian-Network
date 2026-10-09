@@ -38,6 +38,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | [node-runner-rewards.md](node-runner-rewards.md) | The 90/10 ONS revenue split, registering a reward wallet, how uptime and participation are measured without self-reporting, and how payouts are settled |
 | [self-hosting.md](self-hosting.md) | Anyone running the interface: systemd, Docker, nginx, Cloudflare |
 | [trusted-domains.md](trusted-domains.md) | Which browser origins a node or interface answers: the project's own domain by default, how to add yours (exact origins and wildcards), what is refused |
+| [obsidian-mobile-blueprint.md](obsidian-mobile-blueprint.md) | Developers of the app interfaces: what the mobile design blueprint defines, and the five placeholder behaviours in it that must never be ported as blockchain facts |
 | [api.md](api.md) | Every RPC route, with the fields it returns |
 | [transaction-format.md](transaction-format.md) | Canonical encoding, signing, gas, and how to submit without the interface |
 | [release-process.md](release-process.md) | How a release is versioned, built, gated, signed and checked for peering compatibility |

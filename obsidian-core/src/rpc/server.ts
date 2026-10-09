@@ -65,6 +65,17 @@ interface RateBucket {
 
 const MAX_BODY_BYTES = 512 * 1024;
 
+/** Endpoints that take a request body. Every other route is a read and answers GET/HEAD only. */
+const POST_ONLY_PATHS: ReadonlySet<string> = new Set([
+  '/tx/submit',
+  '/tx/simulate',
+  '/tx/encode',
+  '/tx/gas',
+  '/wallet/balance',
+  '/wallet/quote',
+  '/rpc',
+]);
+
 /**
  * How many applied slashes `/validators` returns. The ledger in consensus state
  * grows by one entry per applied slash and is never truncated — that is the
@@ -326,6 +337,16 @@ export class RpcServer {
   private async route(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname.replace(/\/+$/, '') || '/';
     const method = request.method ?? 'GET';
+    // The verb is part of the API contract. Reads answer GET and HEAD only; the few
+    // mutating or body-carrying endpoints answer POST only. Anything else is refused
+    // before routing, so a read endpoint never silently accepts PUT/DELETE/PATCH and a
+    // write endpoint is never reachable by a verb a cache or proxy treats as safe.
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') {
+      return this.methodNotAllowed(response, 'GET, HEAD, POST, OPTIONS');
+    }
+    const postOnly = POST_ONLY_PATHS.has(path);
+    if (method === 'POST' && !postOnly) return this.methodNotAllowed(response, 'GET, HEAD, OPTIONS');
+    if (method !== 'POST' && postOnly) return this.methodNotAllowed(response, 'POST, OPTIONS');
     // Decode identifiers only after a registered route prefix has matched.
     const after = (prefix: string): string => decodeURIComponent(path.slice(prefix.length));
 
@@ -373,6 +394,11 @@ export class RpcServer {
     if (path === '/rpc' && method === 'POST') return this.jsonRpc(request, response);
 
     this.json(response, 404, { error: 'not found', code: 'ERR_NOT_FOUND', path });
+  }
+
+  private methodNotAllowed(response: ServerResponse, allow: string): void {
+    response.setHeader('Allow', allow);
+    this.json(response, 405, { error: 'method not allowed', code: 'ERR_METHOD_NOT_ALLOWED', allow });
   }
 
   // ── Read endpoints ────────────────────────────────────────────────────────

@@ -202,6 +202,33 @@ describe('RPC request limits', () => {
     expect(offenders, `unparseable bodies that did not answer 400:\n${offenders.join('\n')}`).toEqual([]);
   });
 
+  /**
+   * The HTTP verb is part of the contract. A read endpoint used to answer PUT, DELETE and
+   * PATCH exactly like GET, and a POST to a read endpoint was served too. Reads answer
+   * GET/HEAD, the body-carrying endpoints answer POST, everything else is 405 with Allow.
+   */
+  it('enforces the HTTP verb: reads are GET/HEAD, body endpoints are POST, nothing else is served', async () => {
+    for (const method of ['PUT', 'DELETE', 'PATCH']) {
+      const response = await fetch(`${base}/health`, { method });
+      expect(response.status, `${method} /health`).toBe(405);
+      expect(response.headers.get('allow')).toContain('GET');
+    }
+    const postToRead = await fetch(`${base}/health`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
+    expect(postToRead.status).toBe(405);
+    expect(postToRead.headers.get('allow')).toBe('GET, HEAD, OPTIONS');
+    const getToWrite = await get('/tx/submit');
+    expect(getToWrite.status).toBe(405);
+    expect(getToWrite.headers.get('allow')).toBe('POST, OPTIONS');
+    for (const route of ['/tx/submit', '/tx/simulate', '/tx/encode', '/tx/gas', '/wallet/balance', '/wallet/quote', '/rpc']) {
+      expect((await get(route)).status, `GET ${route}`).toBe(405);
+    }
+    // the reads and the writes themselves still work, and a trailing slash is the same route
+    expect((await get('/health')).status).toBe(200);
+    expect((await get('/health/')).status).toBe(200);
+    expect((await fetch(`${base}/health`, { method: 'HEAD' })).status).toBe(200);
+    expect((await post('/tx/submit/', {})).status).toBe(400);
+  });
+
   it('names the missing transaction type instead of trailing off', async () => {
     const empty = await post('/tx/encode', {});
     expect(empty.status).toBe(400);

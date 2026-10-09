@@ -124,12 +124,15 @@ node dist/index.js start --config config/mainnet.json   # equivalent, explicit
 Each network is fully isolated by its own chain id, genesis, ports and address
 prefix, so nodes on different networks physically cannot join each other:
 
-| Network | Chain id | RPC | P2P | Address prefix | Block time |
+| Network | Chain id | RPC | P2P | Address prefix | Purpose |
 |---|---|---|---|---|---|
 | mainnet | 7777 | 8630 | 8631 | `obs1` | production |
 | testnet | 7778 | 18630 | 18631 | `tobs1` | practice |
 | staging | 7779 | 28630 | 28631 | `sobs1` | pre-production |
-| devnet | 7780 | 38630 | 38631 | `dobs1` | 5 seconds |
+| devnet | 7780 | 38630 | 38631 | `dobs1` | throwaway, local development |
+
+Every network targets the same 5-second block time (`targetBlockSeconds`); it is a
+consensus parameter, not a per-network setting.
 
 The separation is enforced by **consensus**, not by which files you checked
 out. A testnet node handed mainnet's genesis rejects it at the handshake.
@@ -850,11 +853,12 @@ address is safe to share.
 Available routes, from `obsidian-core/src/rpc/server.ts`:
 
 ```bash
-curl -s localhost:38630/tx/encode    # build the canonical bytes to sign
-curl -s localhost:38630/tx/gas       # what gas a transfer would cost
-curl -s localhost:38630/tx/simulate  # dry run, changes nothing
-curl -s localhost:38630/tx/submit    # submit a signed transaction (POST)
-curl -s localhost:38630/next-nonce   # the next sequence number for an address
+# Body-carrying routes are POST only; every other route is a GET read. Any other verb is a 405.
+curl -s -X POST localhost:38630/tx/encode   -d '{"type":"PAYMENT","payload":{…}}'   # build the canonical bytes to sign
+curl -s -X POST localhost:38630/tx/gas      -d '{"amountObs":"12.5"}'               # what gas a transfer would cost
+curl -s -X POST localhost:38630/tx/simulate -d '{"tx":"<signed hex>"}'              # dry run, changes nothing
+curl -s -X POST localhost:38630/tx/submit   -d '{"tx":"<signed hex>"}'              # submit a signed transaction
+curl -s localhost:38630/wallet/obs1…/next-nonce                                      # the next sequence number for an address (GET)
 ```
 
 `docs/transaction-format.md` documents canonical encoding, signing and
