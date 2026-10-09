@@ -1,0 +1,69 @@
+# Packaging for Obsidian Node. Build with `npm run dist` (all targets of the host OS) or
+# `npm run dist:dir` (unpacked app, fastest way to smoke-test). Output: release/
+appId: org.emolux.obsidian.node
+productName: Obsidian Node
+copyright: Copyright © Emolux Labs
+directories:
+  output: release
+  buildResources: build-resources
+
+# What goes inside app.asar: the compiled app and its static renderer, nothing else.
+# dist/tests (unit tests) and dist/dev (browser bridge used only by the UI tests) are NOT shipped.
+files:
+  - package.json
+  - dist/main/**
+  - dist/core/**
+  - dist/shared/**
+  - dist/web/**
+  - "!dist/tests/**"
+  - "!dist/dev/**"
+  - "!**/*.map"
+  - "!**/*.d.ts"
+
+# The node host is started as a separate process (ELECTRON_RUN_AS_NODE) by file path, so it
+# cannot live inside the asar archive.
+asarUnpack:
+  - dist/main/node-host.js
+
+# The real obsidian-core node (staged by `npm run stage:core`), with its production
+# dependencies. Loaded from <resources>/obsidian-core at run time.
+extraResources:
+  - from: vendor/obsidian-core
+    to: obsidian-core
+    filter:
+      - "**/*"
+
+asar: true
+compression: normal
+npmRebuild: false
+electronLanguages:
+  - en-US
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  artifactName: Obsidian-Node-Setup-${version}-win-${arch}.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false   # chain data and the wallet vault must survive an uninstall
+portable:
+  artifactName: Obsidian-Node-Portable-${version}-win-${arch}.${ext}
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.finance
+  hardenedRuntime: true
+  artifactName: Obsidian-Node-${version}-mac-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Finance
+  maintainer: Emolux Labs
+  artifactName: Obsidian-Node-${version}-linux-${arch}.${ext}

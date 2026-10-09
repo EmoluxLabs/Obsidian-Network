@@ -29,6 +29,8 @@ decide a claim.
 ```
 obsidian-core/          the node: consensus, p2p, rpc, indexer, state machine, and its tests
 obsidian-interface/     the reader: HTTP server, browser wallet, 9 sites, and its tests
+obsidian-app-web/       the web app: shared account and claim state with the interface, browser wallet, explorer
+obsidian-node-desktop/  Obsidian Node, the desktop app (Electron) that runs the real core; see its DOWNLOAD.md
 cloudflare/             the edge: a worker that caches and proxies, and its tests
 docs/                   launch guide, protocol, mining, wallet, security, operators, API, report
 releases/               versioned archives, SHA256SUMS, MANIFEST.json

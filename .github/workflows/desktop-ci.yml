@@ -1,0 +1,48 @@
+name: Desktop app CI
+
+# Obsidian Node (obsidian-node-desktop/) runs the real obsidian-core node, staged from this same
+# repository. This job checks the app against the core in the same commit.
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'obsidian-node-desktop/**'
+      - 'obsidian-core/**'
+      - '.github/workflows/desktop-*.yml'
+  pull_request:
+    paths:
+      - 'obsidian-node-desktop/**'
+      - 'obsidian-core/**'
+      - '.github/workflows/desktop-*.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Obsidian Node (template, lint, typecheck, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Build the core
+        working-directory: obsidian-core
+        run: npm ci && npm run build
+      - name: Install the app (lockfile)
+        working-directory: obsidian-node-desktop
+        run: npm ci
+      - name: Stage core, verify template, lint, typecheck, test
+        working-directory: obsidian-node-desktop
+        run: |
+          npm run stage:core
+          npm run verify:template
+          npm run lint
+          npm run typecheck
+          npm test

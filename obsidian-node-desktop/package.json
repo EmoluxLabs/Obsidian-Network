@@ -1,0 +1,33 @@
+{
+  "name": "obsidian-node",
+  "productName": "Obsidian Node",
+  "version": "1.0.0",
+  "description": "Obsidian Node — desktop application for running and operating an Obsidian Network node.",
+  "private": true,
+  "license": "Apache-2.0",
+  "author": "Emolux Labs",
+  "type": "module",
+  "main": "dist/main/main.js",
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "scripts": {
+    "stage:core": "node scripts/stage-core.mjs",
+    "verify:template": "node scripts/verify-template.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "build": "node scripts/build.mjs",
+    "lint": "node scripts/lint.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 \"dist/tests/*.test.js\"",
+    "test:ui": "npm run build && node tests/ui/ui.e2e.mjs",
+    "start": "npm run build && electron .",
+    "dist": "npm run stage:core && npm run build && electron-builder --config electron-builder.yml",
+    "dist:dir": "npm run stage:core && npm run build && electron-builder --config electron-builder.yml --dir"
+  },
+  "devDependencies": {
+    "@electron/asar": "^3.4.1",
+    "@types/node": "22.18.13",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "typescript": "5.6.3"
+  }
+}

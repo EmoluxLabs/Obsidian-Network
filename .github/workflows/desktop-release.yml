@@ -1,0 +1,96 @@
+name: Desktop app release
+
+# Builds the Obsidian Node installers on Windows, macOS and Linux and publishes them as a GitHub Release.
+#   git tag desktop-v1.0.0 && git push origin desktop-v1.0.0   → builds and publishes release desktop-v1.0.0
+#   Actions → Desktop app release → Run workflow                → builds; installers are workflow artifacts only
+# (The tag prefix keeps these releases apart from the network's own v* release tags.)
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Build the core
+        working-directory: obsidian-core
+        run: npm ci && npm run build
+      - name: Verify (template, lint, typecheck, tests)
+        working-directory: obsidian-node-desktop
+        run: |
+          npm ci
+          npm run stage:core
+          npm run verify:template
+          npm run lint
+          npm run typecheck
+          npm test
+
+  package:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Build the core
+        working-directory: obsidian-core
+        run: npm ci && npm run build
+      - name: Package
+        working-directory: obsidian-node-desktop
+        run: |
+          npm ci
+          npm run dist -- --publish never
+      - name: Check the packaged app contains what it needs and nothing it should not
+        working-directory: obsidian-node-desktop
+        run: node scripts/verify-package.mjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: obsidian-node-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            obsidian-node-desktop/release/*.exe
+            obsidian-node-desktop/release/*.dmg
+            obsidian-node-desktop/release/*.AppImage
+            obsidian-node-desktop/release/*.deb
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist-all
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist-all
+        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist-all/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Obsidian Node ${GITHUB_REF_NAME#desktop-}" \
+            --notes "Desktop installers for Windows, macOS and Linux. Verify a download with SHA256SUMS. See obsidian-node-desktop/DOWNLOAD.md for install steps and what to expect on first launch (these builds are not code-signed)."
