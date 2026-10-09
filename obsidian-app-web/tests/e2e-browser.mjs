@@ -6,7 +6,8 @@
  * up through the real form and walks every screen with the real buttons:
  *
  *   sign up -> recovery codes -> MFA -> CREATE a wallet (24 words, 3-word proof) ->
- *   seal -> fund -> send -> register a name -> claim -> explorer -> own activity ->
+ *   seal -> RECEIVE QR (decoded from the screen) -> SCAN a QR into Send (camera, then
+ *   photo) -> fund -> send -> register a name -> claim -> explorer -> own activity ->
  *   menu (link address, invite) -> sign out -> sign in with an MFA code
  *
  * Every assertion reads what the user would read. A step that "passes" because a
@@ -22,6 +23,8 @@
  *   CHROME_PATH     a Chrome/Chromium binary; otherwise @sparticuz/chromium is tried
  *
  * Needs `puppeteer-core` (not a dependency of this package: `npm i --no-save puppeteer-core`).
+ * The camera is Chromium's fake device, fed a video of a QR code, so the scan is real
+ * (getUserMedia, the decoder, the verdict) without a person holding up a phone.
  */
 
 import { createHmac } from 'node:crypto';
@@ -57,6 +60,10 @@ async function chromePath() {
     process.exit(2);
   }
 }
+
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import jsQR from 'jsqr';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const stamp = Date.now().toString(36);
@@ -112,17 +119,65 @@ function totp(secret, at = Date.now()) {
   return String((h.readUInt32BE(o) & 0x7fffffff) % 1e6).padStart(6, '0');
 }
 
+
+// ── the QR fixtures: a valid address to scan, and one from another network ─────
+
+const bundle = await import(pathToFileURL(resolve(HERE, '../public/js/obsidian.js')).href);
+const appConfig = await (await fetch(`${APP}/app-config.json`)).json();
+const OTHER_PHRASE = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
+const SCAN_ADDRESS = bundle.walletFromPhrase(OTHER_PHRASE, appConfig.addressHrp).address;
+const WRONG_NETWORK_HRP = appConfig.addressHrp === 'obs' ? 'dobs' : 'obs';
+const WRONG_NETWORK_ADDRESS = bundle.walletFromPhrase(OTHER_PHRASE, WRONG_NETWORK_HRP).address;
+
+/** A short video of one QR code, in the only format Chromium's fake camera reads. */
+function qrVideo(text, file) {
+  const modules = bundle.qrModules(text);
+  const W = 640;
+  const H = 480;
+  const S = 9;
+  const Q = 4;
+  const Y = Buffer.alloc(W * H, 235);
+  const size = (modules.length + 2 * Q) * S;
+  const ox = (W - size) >> 1;
+  const oy = (H - size) >> 1;
+  modules.forEach((row, r) =>
+    row.forEach((dark, c) => {
+      if (!dark) return;
+      for (let y = 0; y < S; y += 1) for (let x = 0; x < S; x += 1) Y[(oy + (r + Q) * S + y) * W + ox + (c + Q) * S + x] = 16;
+    }),
+  );
+  const chroma = Buffer.alloc((W * H) / 4, 128);
+  const frames = [];
+  for (let i = 0; i < 10; i += 1) frames.push(Buffer.from('FRAME\n'), Y, chroma, chroma);
+  writeFileSync(file, Buffer.concat([Buffer.from(`YUV4MPEG2 W${W} H${H} F10:1 Ip A1:1 C420jpeg\n`), ...frames]));
+}
+const VIDEO = resolve(mkdtempSync(resolve(tmpdir(), 'obs-qr-')), 'scan.y4m');
+qrVideo(SCAN_ADDRESS, VIDEO);
+
 // ── the browser ──────────────────────────────────────────────────────────────
 
 const found = await chromePath();
 const browser = await puppeteer.launch({
   executablePath: found.path ?? found,
-  args: [...(found.args ?? []), '--no-sandbox'],
+  args: [
+    ...(found.args ?? []),
+    '--no-sandbox',
+    '--use-fake-device-for-media-stream',
+    '--use-fake-ui-for-media-stream',
+    `--use-file-for-fake-video-capture=${VIDEO}`,
+  ],
   headless: 'shell',
 });
 const page = await browser.newPage();
 await page.setViewport({ width: 430, height: 900 });
 page.on('dialog', (d) => d.accept());
+// Lets one scenario say "the camera is refused", to exercise the photo fallback.
+await page.evaluateOnNewDocument(() => {
+  const real = navigator.mediaDevices?.getUserMedia?.bind(navigator.mediaDevices);
+  if (!real) return;
+  navigator.mediaDevices.getUserMedia = (c) =>
+    window.__denyCamera ? Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })) : real(c);
+});
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -212,6 +267,102 @@ try {
   ok(stored.v1 && !stored.legacy, 'wallet: sealed in the platform-format vault (obsidian.vault.v1)');
   ok(!stored.all.includes(`${words[0]} ${words[1]}`), 'wallet: the phrase is not in storage in the clear');
 
+
+  // ── RECEIVE: the QR on screen is this wallet's address ─────────────────────
+  ok(await page.evaluate(() => Boolean(document.querySelector('#wallet-qr svg'))), 'receive: a QR code is shown after the wallet is made');
+  ok((await page.evaluate(() => document.getElementById('wallet-address')?.textContent)) === address, 'receive: the address is shown as text beside it');
+  const shown = await page.evaluate(async () => {
+    const svg = document.querySelector('#wallet-qr svg');
+    const img = new Image();
+    img.src = `data:image/svg+xml;base64,${btoa(new XMLSerializer().serializeToString(svg))}`;
+    await img.decode();
+    const size = 360;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const c = canvas.getContext('2d');
+    c.fillStyle = '#fff';
+    c.fillRect(0, 0, size, size);
+    c.drawImage(img, 0, 0, size, size);
+    return { size, data: Array.from(c.getImageData(0, 0, size, size).data) };
+  });
+  const decoded = jsQR(Uint8ClampedArray.from(shown.data), shown.size, shown.size)?.data;
+  ok(decoded === address, `receive: what is drawn scans back as the wallet's address (${decoded})`);
+  await page.screenshot({ path: resolve(tmpdir(), 'obs-receive.png') });
+
+  // ── SEND: scan a QR into the recipient ─────────────────────────────────────
+  await click('SEND');
+  await sleep(300);
+  ok(/SCAN WALLET QR/.test(await text()), 'send: there is a SCAN WALLET QR button');
+  // Clicked and checked in one step: the fake camera reads its code in well under a second.
+  ok(
+    await page.evaluate(() => {
+      document.getElementById('scan-wallet').click();
+      return Boolean(document.getElementById('scanner'));
+    }),
+    'scan: the scanner opens',
+  );
+  await page.waitForFunction(() => !document.getElementById('scanner'), { timeout: 15000 }).catch(() => {});
+  ok(await page.evaluate(() => !document.getElementById('scanner')), 'scan: it closes by itself once a code is read, so the camera is released');
+  ok((await page.evaluate(() => document.getElementById('to')?.value)) === SCAN_ADDRESS, `scan: the camera filled RECIPIENT with the scanned address (${SCAN_ADDRESS.slice(0, 12)}…)`);
+  ok((await page.evaluate(() => document.getElementById('am')?.value)) === '', 'scan: it did not touch the amount, and did not send anything');
+  ok(/filled in from the QR code/.test(await page.evaluate(() => document.getElementById('scn')?.textContent ?? '')), 'scan: the user is told to check the address');
+  await page.screenshot({ path: resolve(tmpdir(), 'obs-send-scanned.png') });
+
+  // Cancel leaves the field alone and releases the camera.
+  await type('to', 'keep-me.obs');
+  const cancelled = await page.evaluate(() => {
+    document.getElementById('scan-wallet').click();
+    const opened = Boolean(document.getElementById('scanner'));
+    document.getElementById('scanner-cancel').click();
+    return opened && !document.getElementById('scanner');
+  });
+  await sleep(1500); // long enough for a camera that was not released to have filled the field
+  ok(cancelled, 'scan: CANCEL closes it');
+  ok((await page.evaluate(() => document.getElementById('to')?.value)) === 'keep-me.obs', 'scan: and leaves the recipient as it was');
+  const live = await page.evaluate(async () => {
+    const t = [...document.querySelectorAll('video')].filter((v) => v.srcObject?.active);
+    return t.length;
+  });
+  ok(live === 0, 'scan: no camera stream is left running');
+
+  // No camera (denied): a photo of the code does the same job, and a wrong-network code is refused.
+  await page.evaluate(() => { window.__denyCamera = true; });
+  await page.evaluate(() => { const t = document.getElementById('to'); if (t) t.value = ''; });
+  await click('SCAN WALLET QR');
+  await sleep(600);
+  ok(/permission was denied/.test(await page.evaluate(() => document.getElementById('scanner-status')?.textContent ?? '')), 'scan: a refused camera says why and offers a photo');
+  const upload = (value) =>
+    page.evaluate(async (value) => {
+      const b = await import('/js/obsidian.js');
+      const mods = b.qrModules(value);
+      const S = 8;
+      const n = (mods.length + 8) * S;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = n;
+      const c = canvas.getContext('2d');
+      c.fillStyle = '#fff';
+      c.fillRect(0, 0, n, n);
+      c.fillStyle = '#000';
+      mods.forEach((row, r) => row.forEach((d, col) => d && c.fillRect((col + 4) * S, (r + 4) * S, S, S)));
+      const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      const dt = new DataTransfer();
+      dt.items.add(new File([blob], 'qr.png', { type: 'image/png' }));
+      const input = document.getElementById('scanner-file');
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, value);
+  await upload(WRONG_NETWORK_ADDRESS);
+  await sleep(1200);
+  const refusal = await page.evaluate(() => document.getElementById('scanner-status')?.textContent ?? '');
+  ok(new RegExp(`${WRONG_NETWORK_HRP}1`).test(refusal) && /never arrive/.test(refusal), `scan: another network's address is refused with a reason (${refusal.slice(0, 60)}…)`);
+  ok(await page.evaluate(() => Boolean(document.getElementById('scanner'))), 'scan: and the scanner stays open to try again');
+  await upload(SCAN_ADDRESS);
+  await sleep(1500);
+  ok((await page.evaluate(() => document.getElementById('to')?.value)) === SCAN_ADDRESS && (await page.evaluate(() => !document.getElementById('scanner'))), 'scan: a photo of a valid code fills the recipient');
+  await page.evaluate(() => { window.__denyCamera = false; });
+  await page.evaluate(() => window.ObsidianGo('wallet'));
+  await sleep(1500);
+
   // ── send, and a name: need funds ───────────────────────────────────────────
   if (FUNDER_PHRASE) {
     const funded = await fund(address, '5');
@@ -272,7 +423,9 @@ try {
   await click('SIGN & SUBMIT');
   await sleep(4500);
   ok(/Claim submitted/.test(await text()), 'mine: the claim reports submitted, "not yet confirmed"');
-  ok(/CLAIM SUBMITTED — WAITING FOR A BLOCK/.test(await text()), 'mine: the Claim button is held, so a second claim cannot be sent by accident');
+  // Held until a block has it — or, if a block already did, the next-claim countdown.
+  // Either way there is no live "SIGN & SUBMIT" button to press a second time.
+  ok(/CLAIM SUBMITTED — WAITING FOR A BLOCK|NEXT CLAIM IN/.test(await text()) && !/SIGN & SUBMIT CLAIM/.test(await text()), 'mine: the Claim button is not offered again, so a second claim cannot be sent by accident');
   await sleep(16000);
   await page.evaluate(() => window.ObsidianGo('mine'));
   await sleep(2500);

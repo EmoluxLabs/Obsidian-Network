@@ -39,7 +39,7 @@ check "the shell is served" 'OBSIDIAN NETWORK' "$shell"
 check "the real module is loaded, not the demo script alone" 'src="/real.mjs"' "$shell"
 check "the design file is served unmodified" '<div id="app">' "$shell"
 
-for module in real.mjs data.mjs screens.mjs wallet.mjs notify.mjs; do
+for module in real.mjs data.mjs screens.mjs explorer.mjs scanner.mjs wallet.mjs notify.mjs; do
   type=$(curl -s -o /dev/null -w '%{content_type}' "$APP/$module")
   check "$module is served as a module" 'javascript' "$type"
 done

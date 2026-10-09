@@ -84,6 +84,9 @@ import {
   walletKdf,
   setupWallet,
   newPhrase,
+  qrFor,
+  decodeFrame,
+  interpretScan,
   removeWallet,
   revealPhrase,
   claim,
@@ -91,6 +94,7 @@ import {
   registerName,
 } from './wallet.mjs';
 import { SCREENS, remainingSeconds, networkBanner } from './screens.mjs';
+import { scan } from './scanner.mjs';
 
 /** Screens that need a signed-in account. The chain itself is readable without one. */
 const ACCOUNT_SCREENS = new Set(['home', 'mine', 'menu']);
@@ -127,6 +131,7 @@ const state = {
   mfaRequired: false,
   ons: { query: '', result: null },
   setup: { mode: 'create', draft: null },
+  qr: null,
   wt: 'send',
   error: '',
   notice: '',
@@ -266,6 +271,7 @@ async function refreshWallet() {
   // re-encoded rather than shown as an address this node would reject.
   const address = await addressOnNetwork(stored, state.network?.network?.addressHrp).catch(() => stored);
   state.walletAddress = address || null;
+  await ensureQr();
   if (!address) {
     state.mining = null;
     state.balance = null;
@@ -281,6 +287,25 @@ async function refreshWallet() {
   state.history = history;
   state.ownNames = balance?.names ?? null;
   await refreshMining();
+}
+
+/**
+ * Draw the wallet's QR code, once per address. It encodes the address and nothing
+ * else, so there is nothing to keep secret and nothing to expire. A failure is
+ * remembered as a failure — the screen says so — rather than retried every repaint.
+ */
+async function ensureQr() {
+  const address = state.walletAddress;
+  if (!address) {
+    state.qr = null;
+    return;
+  }
+  if (state.qr?.address === address) return;
+  try {
+    state.qr = { address, svg: await qrFor(address) };
+  } catch {
+    state.qr = { address, svg: null, error: true };
+  }
 }
 
 async function refreshAccount() {
@@ -475,6 +500,36 @@ function install() {
     state.error = '';
     state.notice = '';
     render();
+    if (tab === 'receive') ensureQr().then(() => state.wt === 'receive' && render());
+  };
+
+  // Scan a wallet's RECEIVE code into the recipient field. The scan fills the field and
+  // nothing else: it never sets an amount and never sends.
+  g.ObsidianScan = async () => {
+    if (state.scanning) return;
+    state.scanning = true;
+    let verdict = null;
+    try {
+      verdict = await scan({
+        decode: decodeFrame,
+        interpret: (text) => interpretScan(text, { own: state.walletAddress }).catch((error) => ({ ok: false, message: explain(error) })),
+      });
+    } finally {
+      state.scanning = false;
+    }
+    if (!verdict) return;
+    const to = document.getElementById('to');
+    if (!to) return; // the user left the Send form while the camera was open
+    to.value = verdict.value;
+    const note = document.getElementById('scn');
+    if (note) {
+      note.className = 'ok';
+      note.textContent =
+        verdict.kind === 'name'
+          ? 'Name filled in from the QR code. The node resolves it when you send; check it is the one you expect.'
+          : 'Address filled in from the QR code. Check it matches who you mean to pay, then enter the amount.';
+    }
+    document.getElementById('am')?.focus();
   };
   g.ObsidianCopy = async (text) => {
     try {

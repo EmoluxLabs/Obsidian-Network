@@ -128,6 +128,28 @@ export async function newPhrase() {
   return generatePhrase();
 }
 
+/** The wallet's address as an SVG QR code. Only the address is encoded: no amount, no memo. */
+export async function qrFor(address) {
+  const { qrSvg } = await api();
+  return qrSvg(address, `Obsidian address ${address}`);
+}
+
+/** Read a QR from camera or photo pixels ({ data, width, height }): the text, or null. */
+export async function decodeFrame(image) {
+  const { decodeQr } = await api();
+  return decodeQr(image);
+}
+
+/**
+ * What a scanned string means for this wallet on this network — see readScanned.
+ * An address from another network, or one that fails its checksum, is refused.
+ */
+export async function interpretScan(text, { own } = {}) {
+  const { readScanned } = await api();
+  const { addressHrp } = await getContext();
+  return readScanned(text, { hrp: addressHrp, own });
+}
+
 /** Derive the address for a phrase without keeping it. Used by "check a phrase". */
 export async function addressForPhrase(phrase) {
   const { isValidPhrase, walletFromPhrase } = await api();

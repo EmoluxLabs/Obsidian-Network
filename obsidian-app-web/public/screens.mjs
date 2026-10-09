@@ -614,6 +614,8 @@ function sendPanel(s) {
   const gasNote = s.params?.gas ? `Gas is ${esc(s.params.gas.basisPoints / 100)}% of the amount, capped at ${esc(s.params.gas.maxGasObs)} OBS.` : '';
   return (
     designField('to', 'RECIPIENT', 'text', `${s.appConfig?.addressHrp ?? s.network?.network?.addressHrp ?? ''}1… or name.obs`) +
+    `<button class="btn" id="scan-wallet" style="margin-top:8px" onclick="ObsidianScan()">SCAN WALLET QR</button>` +
+    `<div id="scn" role="status" style="font-size:12.5px;line-height:1.5;margin-top:6px"></div>` +
     designField('am', 'AMOUNT (OBS)', 'text', '0.000000') +
     designField('mm', 'MEMO (OPTIONAL)', 'text', '') +
     designField('pp', 'VAULT PASSPHRASE', 'password', 'The passphrase you sealed this wallet with') +
@@ -626,11 +628,21 @@ function sendPanel(s) {
 
 function receivePanel(s) {
   if (!s.walletAddress) return unavailable('Set up a wallet on this device first.');
+  // The code is drawn from the address on screen, and only shown if it was drawn for
+  // exactly that address: a stale code for a previous wallet must never sit above a
+  // new address.
+  const qr = s.qr?.address === s.walletAddress ? s.qr : null;
   return (
     `<div class="card" style="margin-top:14px;padding:18px;text-align:center"><div class="lb" style="margin:0 0 10px">YOUR OBSIDIAN ADDRESS</div>` +
-    `<div class="m" style="word-break:break-all;font-size:13px">${esc(s.walletAddress)}</div></div>` +
+    (qr?.svg
+      ? `<div id="wallet-qr" style="width:min(70vw,230px);margin:0 auto 14px;border:1px solid var(--bd);border-radius:14px;overflow:hidden;background:#fff;line-height:0">${qr.svg}</div>` +
+        `<div class="mu" style="font-size:12px;margin:-4px 0 12px">Ask the sender to choose SCAN WALLET QR on their Send tab.</div>`
+      : qr?.error
+        ? `<div class="mu" style="font-size:12.5px;margin-bottom:12px">The QR code could not be drawn on this device. The address below is still correct.</div>`
+        : '') +
+    `<div class="m" id="wallet-address" style="word-break:break-all;font-size:13px">${esc(s.walletAddress)}</div></div>` +
     `<button class="btn p" onclick="ObsidianCopy('${esc(s.walletAddress)}')">COPY ADDRESS</button>` +
-    `<p class="mu" style="font-size:12.5px;margin-top:12px">This address is derived from the recovery phrase sealed on this device. Anyone who holds that phrase holds the funds.</p>`
+    `<p class="mu" style="font-size:12.5px;margin-top:12px">This code holds only your address, nothing else, and is safe to show. The address is derived from the recovery phrase sealed on this device. Anyone who holds that phrase holds the funds.</p>`
   );
 }
 

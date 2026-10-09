@@ -39,6 +39,8 @@ export {
   VALIDITY_SECONDS,
 } from './ops.mjs';
 
+export { qrModules, qrSvg, decodeQr, readScanned } from './qr.mjs';
+
 export { parseObs, formatObs } from '../../obsidian-interface/web/core/protocol/amount.js';
 
 export {

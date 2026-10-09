@@ -10,7 +10,7 @@ Obsidian Web platform's own API as its single backend. Keys never leave the brow
 | Sign up / sign in / recover | One account for the whole ecosystem | platform `/api/auth/*`: Gmail + password + invite + MFA, as the platform states it |
 | Home | Account at a glance: recovery codes (shown once), MFA, linked address | platform session, node |
 | Mine | Claim once per four hours; the claim is signed in the browser | the node's own eligibility (`/mining/status`), `/tx/submit` |
-| Wallet | Create a wallet (24 words, proven before sealing) or import one; send, receive, history | the node, signed on this device |
+| Wallet | Create a wallet (24 words, proven before sealing) or import one; **Receive** shows your address as a QR code; **Send** can scan someone's QR into the recipient; history | the node, signed on this device |
 | Explorer | Overview, blocks, claims, names, the reward pool, audit, search | the node, read-only, addresses masked, no balances, no address search |
 | ONS | Search, register and list `.obs` names | the node and a signed ONS transaction |
 | API | Run any public read the gateway allows and see the node's own answer | `/api/rpc?path=…` |
@@ -58,6 +58,8 @@ public/screens.mjs  the screens (they read the design's helpers by bare name)
 public/explorer.mjs the explorer's sections and detail pages
 public/data.mjs     reads from the platform; rejects HTML/garbage instead of showing "no data"
 public/wallet.mjs   bridge to the signing bundle (loaded lazily)
+public/scanner.mjs  the camera / photo QR scanner overlay
+web/qr.mjs          QR drawing and decoding, and what a scanned code may mean
 public/notify.mjs   claim-ready notifications
 web/                the bundle's source: signing, vault, protocol operations
 public/js/          GENERATED bundle (git-ignored): npm run build:web
@@ -125,7 +127,8 @@ Exit codes: `0` normal, `2` bad or missing configuration, `3` the platform is on
 different network. `GET /healthz` is the liveness/readiness probe.
 
 The app has no runtime dependencies. `build:web` needs `obsidian-core` and
-`obsidian-interface` installed (`npm ci` in each); `npm test` builds them if absent.
+`obsidian-interface` installed (`npm ci` in each, and in this directory for the QR
+libraries); `npm test` builds core if absent.
 
 ## Wallets and addresses
 
@@ -142,6 +145,32 @@ least 12 characters. The phrase is held in memory until sealed, never copied to 
 clipboard, never stored in the clear and never sent anywhere. Leaving the screen
 discards an unsealed phrase.
 
+## Receive and scan (this app only)
+
+**Receive** draws the wallet's address as a QR code (SVG, drawn in the browser) with the
+address as text and a copy button. The code holds the bare address and nothing else: no
+amount, no memo, nothing to keep secret.
+
+**Send → SCAN WALLET QR** opens the camera, reads another wallet's Receive code and fills
+the RECIPIENT field. That is all a scan does: it never sets an amount and never sends;
+the user still checks the address, enters the amount and unlocks with the passphrase.
+A scan is checked before it is used:
+
+- an address from another network is refused, naming both networks (`obs1…` in the
+  devnet app would never arrive);
+- an address that fails its checksum is refused (misread or altered);
+- your own address is refused; a `.obs` name is accepted; anything else (a URL, text) is refused;
+- scanning continues after a refusal, and the camera is released as soon as a code is
+  accepted, on Cancel, on Escape, and when the tab is hidden.
+
+The camera needs HTTPS (or `localhost`). Where it is missing, denied or absent, the same
+screen offers **Choose a photo** of the code, with the same checks.
+
+This lives only in this app. The Obsidian Web platform is unchanged. QR encoding and
+decoding come from two small libraries bundled into the browser build
+(`qrcode-generator`, MIT; `jsqr`, Apache-2.0), so run `npm ci` in this directory before
+`npm run build:web`. They are dev dependencies: the server still has none.
+
 ## Why the proxy
 
 The browser talks to one origin: one cookie jar, one CORS story, and the platform's
@@ -153,7 +182,7 @@ not the browser's) and `X-Forwarded-For` is appended to, never trusted.
 ## Tests
 
 ```sh
-npm test                 # 140+ tests, no network, no dependencies
+npm test                 # 165+ tests, no network, no dependencies
 APP_URL=http://127.0.0.1:38790 npm run test:integration   # against a running app + platform
 ```
 
@@ -165,6 +194,7 @@ APP_URL=http://127.0.0.1:38790 npm run test:integration   # against a running ap
 - `boot` — loads `real.mjs` as the page does, renders every screen, creates and seals a wallet, and runs the explorer search handler
 - `explorer` — sections, masking, no balances, no address search
 - `vault-interop` — the vault is the platform's format, in both directions
+- `qr` — an address drawn as a QR reads back as itself on all four networks (from the SVG that is displayed); what a scan may mean
 - `no-dead-ends` — no button without a function
 - `bundle` — exercises the shipped bundle (skipped until `build:web` has run)
 
@@ -172,7 +202,7 @@ Live tests (not part of `npm test`: they need a node, a platform and an app on o
 
 - `tests/e2e-auth.mjs` — the account flow against a platform started with a fresh data dir and `OBSIDIAN_GENESIS_INVITE_HASH`; consumes the genesis invitation (`GENESIS_CODE=… node tests/e2e-auth.mjs`).
 - `tests/e2e-cross-product.mjs` — accounts both ways, claims both ways, forged double claims, one transaction submitted twice, names (`APP_URL`, `PLATFORM_URL`, optionally `GENESIS_CODE`).
-- `tests/e2e-browser.mjs` — a real browser walks every screen with the real buttons (needs `puppeteer-core` and a Chrome; see the file header for `INVITE`, `FUNDER_PHRASE`, `CHROME_PATH`).
+- `tests/e2e-browser.mjs` — a real browser walks every screen with the real buttons (needs `puppeteer-core` and a Chrome; see the file header for `INVITE`, `FUNDER_PHRASE`, `CHROME_PATH`). It includes the QR flow, with Chromium's fake camera fed a video of a QR code.
 
 Verified against live devnet: a claim, a payment and a `.obs` registration, each signed
 by this app's own code, accepted, included and reflected in balances; the cross-product

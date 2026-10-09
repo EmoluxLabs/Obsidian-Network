@@ -412,3 +412,68 @@ test('searching a height reads that block', async () => {
   assert.ok(requested.slice(before).some((r) => decodeURIComponent(r).includes('/block/82')));
   assert.equal(real.state.ex.detail?.kind, 'block');
 });
+
+// ── receive shows a QR; send can scan one ────────────────────────────────────
+
+test('RECEIVE shows the wallet’s QR code and address, and the code reads back as that address', needsBundle, async () => {
+  const { decodeQr } = await import('../web/qr.mjs');
+  const { modulesFromSvg, rasterise } = await import('./helpers/qr-raster.mjs');
+  real.state.screen = 'wallet';
+  real.state.walletAddress = BY_NETWORK.dobs;
+  real.state.qr = null;
+  window.ObsidianWalletTab('receive');
+  for (let i = 0; i < 100 && !real.state.qr; i += 1) await new Promise((r) => setTimeout(r, 10));
+  await new Promise((r) => setTimeout(r, 20));
+
+  assert.match(app.innerHTML, /id="wallet-qr"/);
+  assert.match(app.innerHTML, /<svg /);
+  assert.ok(app.innerHTML.includes(BY_NETWORK.dobs), 'the address is shown in text beside the code');
+  assert.match(app.innerHTML, /COPY ADDRESS/);
+
+  const svg = /<svg [\s\S]*?<\/svg>/.exec(app.innerHTML)[0];
+  const image = rasterise(modulesFromSvg(svg));
+  assert.equal(decodeQr(image), BY_NETWORK.dobs, 'what is on screen scans as this address');
+});
+
+test('a QR drawn for one address is never shown above another', needsBundle, () => {
+  real.state.qr = { address: BY_NETWORK.obs, svg: '<svg id="stale"></svg>' };
+  real.state.walletAddress = BY_NETWORK.dobs;
+  real.state.wt = 'receive';
+  real.render();
+  assert.doesNotMatch(app.innerHTML, /id="stale"/);
+});
+
+test('SCAN WALLET QR is on the Send tab, and only there', needsBundle, () => {
+  real.state.walletAddress = BY_NETWORK.dobs;
+  real.state.wt = 'send';
+  real.render();
+  assert.match(app.innerHTML, /SCAN WALLET QR/);
+  assert.match(app.innerHTML, /onclick="ObsidianScan\(\)"/);
+  for (const tab of ['receive', 'setup']) {
+    real.state.wt = tab;
+    real.render();
+    assert.doesNotMatch(app.innerHTML, /SCAN WALLET QR/, `not on the ${tab} tab`);
+  }
+});
+
+test('a claim that was just submitted holds the Claim button instead of offering it again', () => {
+  real.state.walletAddress = BY_NETWORK.dobs;
+  real.state.mining = { eligible: true, secondsRemaining: 0 };
+  real.state.miningAt = Date.now();
+  real.state.screen = 'mine';
+
+  real.state.claimSentAt = null;
+  real.render();
+  assert.match(app.innerHTML, /SIGN &amp; SUBMIT CLAIM|SIGN & SUBMIT CLAIM/, 'offered before a claim is sent');
+
+  real.state.claimSentAt = Date.now();
+  real.render();
+  assert.match(app.innerHTML, /CLAIM SUBMITTED — WAITING FOR A BLOCK/);
+  assert.doesNotMatch(app.innerHTML, /SUBMIT CLAIM/, 'no button to press a second time');
+
+  real.state.claimSentAt = Date.now() - 120_000;
+  real.render();
+  assert.match(app.innerHTML, /SUBMIT CLAIM/, 'released again if no block ever took it');
+  real.state.claimSentAt = null;
+  real.state.mining = null;
+});
