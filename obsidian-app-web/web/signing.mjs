@@ -36,10 +36,13 @@ export function walletFromPhrase(phrase) {
   // change away from producing a different key for the same words, which is the
   // exact failure mode the platform's own wallet.ts documents.
   const wallet = deriveWallet(phrase.trim(), 0, 0);
+  // The wallet object exposes `privateKey`, not `privateKeyHex`, and carries its own
+  // `address`. Reading the names it actually has rather than the ones that sound
+  // right is what the signing vector now enforces.
   return {
-    address: addressFromPublicKey(wallet.publicKey),
+    address: wallet.address ?? addressFromPublicKey(wallet.publicKey),
     publicKey: wallet.publicKey,
-    privateKeyHex: wallet.privateKeyHex,
+    privateKeyHex: wallet.privateKey,
   };
 }
 
@@ -57,7 +60,7 @@ export function walletFromPhrase(phrase) {
 export function sign({ wallet, chainId, protocolVersion, nonce, type, gas, body, memo, validUntil }) {
   const envelope = signTransaction({
     sender: wallet.address,
-    privateKeyHex: wallet.privateKeyHex,
+    privateKeyHex: wallet.privateKeyHex,  // from walletFromPhrase above
     publicKeyHex: wallet.publicKey,
     chainId,
     protocolVersion,
