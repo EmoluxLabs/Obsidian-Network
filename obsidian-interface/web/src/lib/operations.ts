@@ -16,6 +16,7 @@
  */
 
 import { ObsidianClient } from './client.js';
+import { session } from './session.js';
 import { Wallet } from './wallet.js';
 import { parseObs, formatObs } from '../../core/protocol/amount.js';
 import { expectedGas } from '../../core/transactions/helpers.js';
@@ -71,10 +72,22 @@ export function gasFor(amount: bigint): bigint {
 }
 
 export const operations = {
-  /** Claim a mining reward. The browser clock is never used: the node supplies protocol time. */
-  async claim(client: ObsidianClient, wallet: Wallet): Promise<SubmitResult & { rewardObs: string }> {
+  /**
+   * Claim a mining reward. The browser clock is never used: the node supplies protocol time.
+   *
+   * Since protocol 1.7.0 the chain refuses a claim that does not carry a certificate from the mining gate, so the
+   * account platform is asked for one (it issues it only to a signed-in, second-factor-confirmed account for its own
+   * linked wallet) before the claim is signed. `requestCertificate` is a seam for tests.
+   */
+  async claim(
+    client: ObsidianClient,
+    wallet: Wallet,
+    requestCertificate: (address: string, claimId: string) => Promise<{ issuer: string; issuedAt: number; signature: string }> = (address, claimId) =>
+      session.miningCertificate(address, claimId),
+  ): Promise<SubmitResult & { rewardObs: string }> {
     const mining = await client.miningStatus(wallet.address);
     if (!mining.eligible) throw new Error(mining.reason ? `not eligible: ${mining.reason}` : 'not eligible yet');
+    const gate = await requestCertificate(wallet.address, mining.nextClaimId);
     const ctx = await context(client, wallet);
     const signed = wallet.sign({
       chainId: ctx.chainId,
@@ -82,7 +95,7 @@ export const operations = {
       type: TxType.MINING_CLAIM,
       nonce: ctx.nonce,
       gas: 0n,
-      body: encodeMiningBody({ claimId: mining.nextClaimId, claimSequence: mining.nextClaimSequence }),
+      body: encodeMiningBody({ claimId: mining.nextClaimId, claimSequence: mining.nextClaimSequence, gate }),
       validUntil: ctx.protocolTime + VALIDITY_SECONDS,
     });
     const result = await submit(client, signed);

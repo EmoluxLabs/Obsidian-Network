@@ -25,6 +25,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { AccountStore, provenWallet, type Account } from './store.js';
 import { newInviteCode, newSecret } from './auth.js';
 import { NodePool } from './nodes.js';
+import type { GateIssuer } from './gate-issuer.js';
 import { KeyedLimiter } from './rate-limit.js';
 import { interfaceNetwork, type NetworkName } from './networks.js';
 import { looksLikeGenesisCode } from './genesis-invite.js';
@@ -159,6 +160,11 @@ export interface InterfaceDependencies {
   pool: NodePool;
   config: InterfaceConfig;
   log: (level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Record<string, unknown>) => void;
+  /**
+   * The mining gate issuer: the key whose certificates the chain requires on every mining claim. Absent means
+   * certificates cannot be issued and mining stays closed (ERR_GATE_UNAVAILABLE).
+   */
+  gateIssuer?: GateIssuer;
   /** Test seam: how the transaction decoder is loaded. Defaults to `config.coreDir`. */
   loadCore?: () => Promise<TxCore>;
 }
@@ -291,6 +297,8 @@ export class InterfaceServer {
         }),
       config: this.config,
       log,
+      gateIssuer: dependencies.gateIssuer,
+      loadCore: dependencies.loadCore,
     };
 
     // Install the Genesis Invitation hash, if the operator configured one.
@@ -792,6 +800,16 @@ export class InterfaceServer {
         return;
       }
       this.json(response, 200, { linked: true, address, changed: linked.changed, account: publicAccount(linked.account) });
+      return;
+    }
+
+    // ── mining gate: the chain refuses a claim without a certificate; this is where a certificate is earned ──
+    //
+    // A certificate names ONE wallet and ONE claim id and lives for minutes, so it is only ever issued for the
+    // wallet linked to the signed-in, second-factor-confirmed account asking. It says nothing about WHEN the wallet
+    // may claim: that stays a rule of the chain, which refuses a claim that is not due.
+    if (path === '/api/mining/certificate' && request.method === 'POST') {
+      await this.mintGateCertificate(request, response);
       return;
     }
 
@@ -1425,21 +1443,12 @@ export class InterfaceServer {
 
     const account = this.requireSession(request, response);
     if (!account) return false;
-    const wallet = provenWallet(account);
-    if (!wallet) {
-      this.json(response, 403, {
-        error: 'link a wallet to your account before mining: open the account page and prove your wallet with a signature',
-        code: 'ERR_WALLET_NOT_LINKED',
-      });
+    const admission = this.miningAdmission(account);
+    if ('error' in admission) {
+      this.json(response, admission.status, { error: admission.error, code: admission.code });
       return false;
     }
-    if (account.miningEnabled !== true) {
-      this.json(response, 403, {
-        error: 'mining is closed on this account until you confirm two-factor authentication',
-        code: 'ERR_MINING_NOT_ENABLED',
-      });
-      return false;
-    }
+    const wallet = admission.wallet;
     // The claim must come from THE wallet of this account, and that wallet must belong to no other
     // account (the second check cannot fail while the store's rules hold; it is the belt to the braces).
     if (tx.sender !== wallet || this.dependencies.store.walletOwner(tx.sender) !== account.accountId) {
@@ -1453,6 +1462,69 @@ export class InterfaceServer {
     // last claim, the claim sequence, the cycle — belongs to consensus alone: the node accepts or
     // refuses the claim from chain state, and this server relays its answer unchanged.
     return true;
+  }
+
+  /**
+   * Why `account` may not mine right now, or the wallet it mines with. The same three rules gate the relay of a
+   * claim and the issue of its certificate, so the two can never disagree.
+   */
+  private miningAdmission(account: Account): { wallet: string } | { status: number; error: string; code: string } {
+    const wallet = provenWallet(account);
+    if (!wallet) {
+      return {
+        status: 403,
+        error: 'link a wallet to your account before mining: open the account page and prove your wallet with a signature',
+        code: 'ERR_WALLET_NOT_LINKED',
+      };
+    }
+    if (account.miningEnabled !== true) {
+      return { status: 403, error: 'mining is closed on this account until you confirm two-factor authentication', code: 'ERR_MINING_NOT_ENABLED' };
+    }
+    if (this.dependencies.store.walletOwner(wallet) !== account.accountId) {
+      return { status: 403, error: 'this wallet is not linked to your account', code: 'ERR_WALLET_MISMATCH' };
+    }
+    return { wallet };
+  }
+
+  /** POST /api/mining/certificate {address, claimId} → {gate}. */
+  private async mintGateCertificate(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!this.throttle(request, response, this.authLimiter, 'auth')) return;
+    const account = this.requireSession(request, response);
+    if (!account) return;
+    const body = await this.readJson<{ address?: unknown; claimId?: unknown }>(request);
+    const address = typeof body?.address === 'string' ? body.address.trim() : '';
+    const claimId = typeof body?.claimId === 'string' ? body.claimId.trim().toLowerCase() : '';
+    if (!/^[0-9a-f]{64}$/.test(claimId) || address.length === 0) {
+      this.json(response, 400, { error: 'a certificate request needs the wallet address and the 64-hex claim id', code: 'ERR_MALFORMED' });
+      return;
+    }
+    const admission = this.miningAdmission(account);
+    if ('error' in admission) {
+      this.json(response, admission.status, { error: admission.error, code: admission.code });
+      return;
+    }
+    if (address !== admission.wallet) {
+      this.json(response, 403, { error: 'a certificate can only be issued for the wallet linked to your account', code: 'ERR_WALLET_MISMATCH' });
+      return;
+    }
+    const issuer = this.dependencies.gateIssuer;
+    const network = this.config.network ? interfaceNetwork(this.config.network) : undefined;
+    if (!issuer || !network) {
+      this.json(response, 503, {
+        error: 'this platform has no mining gate key configured, so mining certificates cannot be issued and mining is closed',
+        code: 'ERR_GATE_UNAVAILABLE',
+      });
+      return;
+    }
+    try {
+      const issuedAt = Math.floor(Date.now() / 1000);
+      const gate = issuer.issue({ networkId: network.networkId, chainId: network.chainId, address, claimId }, issuedAt);
+      this.dependencies.log('info', 'mining certificate issued', { account: account.accountId, claimId });
+      this.json(response, 200, { gate, issuer: issuer.publicKey, issuedAt });
+    } catch (error) {
+      this.dependencies.log('error', 'mining certificate could not be issued', { error: (error as Error).message });
+      this.json(response, 503, { error: 'the mining gate could not issue a certificate right now', code: 'ERR_GATE_UNAVAILABLE' });
+    }
   }
 
   private requireSession(request: IncomingMessage, response: ServerResponse): ReturnType<AccountStore['getAccount']> {

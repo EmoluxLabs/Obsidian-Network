@@ -112,6 +112,20 @@ export const session = {
   invites(): Promise<{ invites: Array<{ code: string; createdAt: number; acceptedBy?: string }>; issued: number; limit: number }> {
     return api('/api/auth/invites');
   },
+  /**
+   * Ask the platform for the mining gate certificate the chain requires on a claim. The platform issues it only
+   * for the wallet linked to THIS signed-in, second-factor-confirmed account; it expires in minutes.
+   */
+  async miningCertificate(
+    address: string,
+    claimId: string,
+  ): Promise<{ issuer: string; issuedAt: number; signature: string }> {
+    const { gate } = await api<{ gate: { issuer: string; issuedAt: number; signature: string } }>('/api/mining/certificate', {
+      method: 'POST',
+      body: JSON.stringify({ address, claimId }),
+    });
+    return gate;
+  },
   createInvite(): Promise<{ invite: { code: string }; issued: number; limit: number }> {
     return api('/api/auth/invites', { method: 'POST', body: '{}' });
   },

@@ -23,6 +23,12 @@ import { InterfaceServer, WALLET_LINK_DOMAIN, type InterfaceConfig } from '../se
 import { loadInterfaceConfig } from '../server/config.js';
 import { AccountStore } from '../server/store.js';
 import { newGenesisInvitation } from '../server/genesis-invite.js';
+import { loadGateIssuer, gatePassphraseFromEnv, type GateIssuer } from '../server/gate-issuer.js';
+// The node's own keystore writer and the chain's own certificate verifier: the platform's issuer must interoperate with them.
+// @ts-expect-error — compiled core (built by `npm run build:core`), no declaration path from here
+import { Keystore } from '../../obsidian-core/dist/crypto/keystore.js';
+// @ts-expect-error — plain JS module
+import { assertMiningGate } from '../web/core/mining/gate.js';
 // The real compiled core (synced into web/core by `npm run build:core`): the
 // tests sign genuine transactions with it, and the server decodes them with the
 // same code.
@@ -51,6 +57,8 @@ interface Harness {
   poolCheck: () => Promise<void>;
   /** Every request the stub node received, as `METHOD /path`. */
   requests: string[];
+  /** The gate issuer this harness serves with (only when started with `gate: true`). */
+  gateIssuer?: GateIssuer;
   /** Make the server's transaction decoder fail to load, as if web/core were missing. */
   breakCore: () => void;
   close: () => Promise<void>;
@@ -151,7 +159,17 @@ function totpNow(secret: string, offsetSteps = 0): string {
   return String(truncated % 1_000_000).padStart(6, '0');
 }
 
-async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[]; dataDir?: string } = {}): Promise<Harness> {
+const GATE_PASSPHRASE = 'gate-test-passphrase-001';
+const GATE_PRIVATE_KEY = '33'.repeat(32);
+
+/** Write an encrypted issuer keystore the way `generate-mining-gate-key.mjs` does, and open it the way the platform does. */
+async function testGateIssuer(): Promise<{ issuer: GateIssuer; path: string }> {
+  const path = join(scratch(), 'gate.keystore.json');
+  Keystore.write(path, GATE_PRIVATE_KEY, GATE_PASSPHRASE);
+  return { issuer: await loadGateIssuer({ keystorePath: path, passphrase: GATE_PASSPHRASE, coreDir: REAL_CORE }), path };
+}
+
+async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[]; dataDir?: string; gate?: boolean } = {}): Promise<Harness> {
   // Every harness gets its own Genesis Invitation: the first account on a
   // deployment must present one, so the tests need the plaintext.
   const genesis = newGenesisInvitation();
@@ -258,7 +276,9 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
   };
 
   const store = new AccountStore({ dataDir: config.dataDir });
-  const server = new InterfaceServer({ config, store });
+  const gateIssuer = options.gate ? (await testGateIssuer()).issuer : undefined;
+  if (options.gate) config.network = 'devnet';
+  const server = new InterfaceServer({ config, store, gateIssuer });
   const port = await server.listen();
   const origin = `http://127.0.0.1:${port}`;
 
@@ -268,6 +288,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
     fakeNode,
     nodeUrl,
     genesisCode: genesis.code,
+    gateIssuer,
     mailbox,
     signIn: (name: string, signInOptions: { inviteCode?: string; password?: string; email?: string } = {}) =>
       fetch(`${origin}/api/auth/register`, {
@@ -295,7 +316,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
 
 const running: Harness[] = [];
 
-async function harness(options: { stubStatusFails?: number; nodeUrls?: string[] } = {}): Promise<Harness> {
+async function harness(options: { stubStatusFails?: number; nodeUrls?: string[]; gate?: boolean } = {}): Promise<Harness> {
   const created = await startHarness(options);
   running.push(created);
   return created;
@@ -1130,6 +1151,131 @@ describe('the mining gate', () => {
     const response = await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.mine));
     expect(response.status).toBe(503);
     expect(await code(response)).toBe('ERR_RELAY_UNAVAILABLE');
+  });
+});
+
+describe('the mining certificate (protocol 1.7.0: the chain refuses a claim without one)', () => {
+  const CLAIM_ID = 'ab'.repeat(32);
+  const ask = (h: Harness, body: unknown, cookie?: string) =>
+    fetch(`${h.origin}/api/mining/certificate`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify(body) });
+  const subject = (address: string, claimId = CLAIM_ID) => ({ networkId: 'obsidian-devnet-1', chainId: 7780, address, claimId });
+
+  async function account(h: Harness, steps: { link?: Keys; mfa?: boolean }) {
+    const created = await h.signIn('founder', { inviteCode: h.genesisCode });
+    const cookie = (created.headers.get('set-cookie') ?? '').split(';')[0]!;
+    if (steps.link) expect((await proveLink(h, cookie, steps.link)).status).toBe(200);
+    if (steps.mfa) {
+      const setup = (await (await fetch(`${h.origin}/api/auth/mfa/setup`, { method: 'POST', headers: jsonHeaders(cookie), body: '{}' })).json()) as { secret: string };
+      const confirmed = await fetch(`${h.origin}/api/auth/mfa/confirm`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({ totp: totpNow(setup.secret) }) });
+      expect(confirmed.status).toBe(200);
+    }
+    return cookie;
+  }
+  const code = async (response: Response) => ((await response.json()) as { code?: string }).code;
+
+  it('issues a certificate the chain accepts, for the linked wallet and that claim only', async () => {
+    const h = await harness({ gate: true });
+    const cookie = await account(h, { link: KEYS.mine, mfa: true });
+    const response = await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID }, cookie);
+    expect(response.status).toBe(200);
+    const { gate, issuer } = (await response.json()) as { gate: { issuer: string; issuedAt: number; signature: string }; issuer: string };
+    expect(issuer).toBe(h.gateIssuer!.publicKey);
+    // The chain's own verifier, with the chain's committed key list.
+    const keys = [h.gateIssuer!.publicKey];
+    expect(() => assertMiningGate(keys, gate, subject(KEYS.mine.address), gate.issuedAt + 5)).not.toThrow();
+    expect(() => assertMiningGate(keys, gate, subject(KEYS.other.address), gate.issuedAt + 5)).toThrow();
+    expect(() => assertMiningGate(keys, gate, subject(KEYS.mine.address, 'cd'.repeat(32)), gate.issuedAt + 5)).toThrow();
+    expect(() => assertMiningGate(keys, gate, subject(KEYS.mine.address), gate.issuedAt + 3600)).toThrow(/expired/);
+  });
+
+  it('issues nothing without a session', async () => {
+    const h = await harness({ gate: true });
+    const response = await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID });
+    expect(response.status).toBe(401);
+    expect(await code(await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID }, 'obsidian_session=forged'))).toBe('ERR_UNAUTHORIZED');
+  });
+
+  it('issues nothing before a wallet is linked, or before two-factor is confirmed', async () => {
+    const h = await harness({ gate: true });
+    const noWallet = await account(h, { mfa: true });
+    const refusedA = await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID }, noWallet);
+    expect(refusedA.status).toBe(403);
+    expect(await code(refusedA)).toBe('ERR_WALLET_NOT_LINKED');
+
+    const h2 = await harness({ gate: true });
+    const noMfa = await account(h2, { link: KEYS.mine });
+    const refusedB = await ask(h2, { address: KEYS.mine.address, claimId: CLAIM_ID }, noMfa);
+    expect(refusedB.status).toBe(403);
+    expect(await code(refusedB)).toBe('ERR_MINING_NOT_ENABLED');
+  });
+
+  it("issues nothing for a wallet that is not the account's own, including another account's wallet", async () => {
+    const h = await harness({ gate: true });
+    const cookie = await account(h, { link: KEYS.mine, mfa: true });
+    const other = await ask(h, { address: KEYS.other.address, claimId: CLAIM_ID }, cookie);
+    expect(other.status).toBe(403);
+    expect(await code(other)).toBe('ERR_WALLET_MISMATCH');
+    // A second account (no wallet, no MFA) cannot get a certificate for the first account's wallet either.
+    const guest = await secondAccount(h, cookie);
+    const stolen = await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID }, guest);
+    expect(stolen.status).toBe(403);
+    expect(await code(stolen)).toBe('ERR_WALLET_NOT_LINKED');
+  });
+
+  it('refuses a malformed request without signing anything', async () => {
+    const h = await harness({ gate: true });
+    const cookie = await account(h, { link: KEYS.mine, mfa: true });
+    for (const body of [{}, { address: KEYS.mine.address }, { address: KEYS.mine.address, claimId: 'xyz' }, { address: KEYS.mine.address, claimId: 'ab'.repeat(31) }, { address: 5, claimId: CLAIM_ID }, { claimId: CLAIM_ID }]) {
+      const response = await ask(h, body, cookie);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(await code(response)).toBe('ERR_MALFORMED');
+    }
+  });
+
+  it('fails closed when the platform has no gate key: 503, never a made-up certificate', async () => {
+    const h = await harness();
+    h.config.network = 'devnet';
+    const cookie = await account(h, { link: KEYS.mine, mfa: true });
+    const response = await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID }, cookie);
+    expect(response.status).toBe(503);
+    expect(await code(response)).toBe('ERR_GATE_UNAVAILABLE');
+  });
+
+  it('is POST only', async () => {
+    const h = await harness({ gate: true });
+    const response = await fetch(`${h.origin}/api/mining/certificate`);
+    expect(response.status).toBe(404);
+  });
+
+  it('opens the keystore only with the right passphrase and refuses a damaged or weakened one', async () => {
+    const { path } = await testGateIssuer();
+    const load = (passphrase: string, keystorePath = path) => loadGateIssuer({ keystorePath, passphrase, coreDir: REAL_CORE });
+    await expect(load('not-the-passphrase')).rejects.toThrow(/could not decrypt/);
+    await expect(load(GATE_PASSPHRASE, join(scratch(), 'missing.json'))).rejects.toThrow(/not found/);
+
+    const file = JSON.parse(readFileSync(path, 'utf8'));
+    const write = (mutate: (f: Record<string, any>) => void) => {
+      const copy = JSON.parse(JSON.stringify(file));
+      mutate(copy);
+      const target = join(scratch(), 'x.json');
+      writeFileSync(target, JSON.stringify(copy));
+      return target;
+    };
+    await expect(load(GATE_PASSPHRASE, write((f) => (f.kdfParams.N = 1024)))).rejects.toThrow(/outside the accepted range/);
+    await expect(load(GATE_PASSPHRASE, write((f) => (f.ciphertext = f.ciphertext.replace(/^../, (c: string) => (c === '00' ? '01' : '00')))))).rejects.toThrow(/could not decrypt/);
+    await expect(load(GATE_PASSPHRASE, write((f) => (f.publicKeyHash = '00'.repeat(32))))).rejects.toThrow(/integrity/);
+    await expect(load(GATE_PASSPHRASE, write((f) => (f.cipher = 'none')))).rejects.toThrow(/unsupported/);
+    const issuer = await load(GATE_PASSPHRASE);
+    expect(issuer.publicKey).toBe((keyPairFromPrivateKey(GATE_PRIVATE_KEY, 'dobs') as { publicKey: string }).publicKey);
+  });
+
+  it('takes the passphrase from the environment or a file, and rejects a short one', () => {
+    expect(gatePassphraseFromEnv({ OBSIDIAN_GATE_KEYSTORE_PASSPHRASE: 'short' })).toBeUndefined();
+    expect(gatePassphraseFromEnv({ OBSIDIAN_GATE_KEYSTORE_PASSPHRASE: GATE_PASSPHRASE })).toBe(GATE_PASSPHRASE);
+    const file = join(scratch(), 'pass');
+    writeFileSync(file, `${GATE_PASSPHRASE}\n`);
+    expect(gatePassphraseFromEnv({ OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE: file })).toBe(GATE_PASSPHRASE);
+    expect(gatePassphraseFromEnv({})).toBeUndefined();
   });
 });
 

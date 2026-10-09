@@ -27,6 +27,7 @@ import { PROTOCOL_VERSION } from '../web/core/version.js';
 import { CONSENSUS_PARAMS } from '../web/core/protocol/params.js';
 import { decodeSignedTxFromBytes } from '../web/core/transactions/encode.js';
 import { TxType } from '../web/core/protocol/types.js';
+import { decodeMiningBody } from '../web/core/transactions/executors/mining.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEVNET_CHAIN_ID = 7780;
@@ -97,13 +98,31 @@ describe('browser signing carries the node\u2019s protocol version', () => {
 
   it('signs a mining claim with the same version', async () => {
     const { client, submitted } = stubClient();
-    await operations.claim(client, wallet);
+    const asked: Array<[string, string]> = [];
+    const certificate = { issuer: '02'.repeat(33), issuedAt: 1_700_000_000, signature: 'ab'.repeat(64) };
+    await operations.claim(client, wallet, async (address, claimId) => {
+      asked.push([address, claimId]);
+      return certificate;
+    });
 
     const tx = decodeSignedTxFromBytes(submitted[0]!);
     expect(tx.type).toBe(TxType.MINING_CLAIM);
+    // The certificate is requested for THIS wallet and the claim id the node named, and rides inside the signed claim.
+    expect(asked).toEqual([[wallet.address, 'cd'.repeat(32)]]);
+    expect(decodeMiningBody(tx.body).gate).toEqual(certificate);
     expect(tx.protocolVersion).toBe(CONSENSUS_PARAMS.protocolVersion);
     // Claims never pay gas: the reward is issued, not transferred.
     expect(tx.gas).toBe(0n);
+  });
+
+  it('signs nothing when the platform refuses the certificate', async () => {
+    const { client, submitted } = stubClient();
+    await expect(
+      operations.claim(client, wallet, async () => {
+        throw new Error('mining is closed on this account until you confirm two-factor authentication');
+      }),
+    ).rejects.toThrow(/two-factor/);
+    expect(submitted).toHaveLength(0);
   });
 
   it('keeps the synced copy of the protocol version current', () => {

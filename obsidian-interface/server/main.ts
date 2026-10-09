@@ -7,6 +7,7 @@
  */
 
 import { InterfaceServer } from './index.js';
+import { gatePassphraseFromEnv, loadGateIssuer, type GateIssuer } from './gate-issuer.js';
 import {
   INTERFACE_USAGE,
   describeInterfaceConfig,
@@ -34,11 +35,40 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  const server = new InterfaceServer({ config: loaded.config });
+  // The mining gate key. A keystore that is configured but cannot be opened stops the start; no keystore at all
+  // starts the interface with mining closed (it says so on every certificate request and here).
+  let gateIssuer: GateIssuer | undefined;
+  const gateKeystore = process.env.OBSIDIAN_GATE_KEYSTORE?.trim();
+  if (gateKeystore) {
+    const passphrase = gatePassphraseFromEnv();
+    if (!passphrase) {
+      process.stderr.write('OBSIDIAN_GATE_KEYSTORE is set but OBSIDIAN_GATE_KEYSTORE_PASSPHRASE (or _FILE) is missing or shorter than 12 characters\n');
+      return 2;
+    }
+    try {
+      gateIssuer = await loadGateIssuer({ keystorePath: gateKeystore, passphrase, coreDir: loaded.config.coreDir });
+    } catch (error) {
+      process.stderr.write(`interface cannot start: ${(error as Error).message}\n`);
+      return 2;
+    }
+  }
+
+  const server = new InterfaceServer({ config: loaded.config, gateIssuer });
   const port = await server.listen();
   const described = describeInterfaceConfig(loaded);
   process.stdout.write(
     `${JSON.stringify({ ts: new Date().toISOString(), level: 'info', component: 'interface', message: 'ready', port, ...described })}\n`,
+  );
+  process.stdout.write(
+    `${JSON.stringify({
+      ts: new Date().toISOString(),
+      level: gateIssuer ? 'info' : 'warn',
+      component: 'interface',
+      message: gateIssuer
+        ? 'mining gate issuer loaded'
+        : 'no mining gate key (OBSIDIAN_GATE_KEYSTORE): certificates cannot be issued, so mining is closed',
+      ...(gateIssuer ? { gatePublicKey: gateIssuer.publicKey } : {}),
+    })}\n`,
   );
 
   let stopping = false;

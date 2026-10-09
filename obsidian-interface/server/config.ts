@@ -112,6 +112,13 @@ Environment:
   OBSIDIAN_INTERFACE_ALLOWED_ORIGINS, OBSIDIAN_INTERFACE_TRUST_OFFICIAL_DOMAINS,
   OBSIDIAN_INTERFACE_MAX_INVITES, OBSIDIAN_INTERFACE_TRUST_PROXY,
   OBSIDIAN_INTERFACE_LOG_LEVEL
+
+Mining gate (protocol 1.7.0 — the chain refuses a mining claim without a certificate from this key):
+  OBSIDIAN_GATE_KEYSTORE                  encrypted issuer keystore (node scripts/generate-mining-gate-key.mjs)
+  OBSIDIAN_GATE_KEYSTORE_PASSPHRASE       its passphrase (12+ characters), or
+  OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE  a root-owned 0600 file holding it
+  Without them the interface runs but cannot issue certificates, so mining is closed. Every node must list the
+  matching public key in OBSIDIAN_MINING_GATE_PUBLIC_KEYS.
 `;
 
 /**
