@@ -284,6 +284,20 @@ function defaultInterfaceAnswer(url: string): { status: number; body: unknown } 
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 
+/**
+ * Wait for a condition instead of sleeping a fixed time. Creating or opening a vault runs PBKDF2 at
+ * 600,000 rounds, which takes a few hundred milliseconds on a fast machine and several times that on
+ * a shared CI runner: a fixed sleep passed locally and failed there. This returns as soon as the
+ * condition holds and fails with the condition's own name only after a generous deadline.
+ */
+async function until(what: string, condition: () => boolean, timeoutMs = 20_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs} ms waiting for: ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 describe('landing page', () => {
   it('renders the product story with three product doors and the app download', async () => {
     respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
@@ -430,7 +444,8 @@ describe('mining is gated on the account, not on the browser', () => {
     await settle();
 
     document.querySelector<HTMLButtonElement>('#link-wallet')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 1500)); // PBKDF2 at 600,000 rounds, for real
+    // Unlocking the vault is PBKDF2 at 600,000 rounds, for real; the proof is posted after it.
+    await until('the signed proof to be posted', () => calls.some((call) => call.url.endsWith('/api/wallet/link')));
     expect(prompt).toHaveBeenCalledTimes(1);
 
     const challenge = calls.find((call) => call.url.includes('/api/wallet/link/challenge'));
@@ -461,7 +476,10 @@ describe('mining is gated on the account, not on the browser', () => {
     await import('../web/src/pages/mine.js');
     await settle();
     document.querySelector<HTMLButtonElement>('#link-wallet')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // The vault unlock (PBKDF2) comes first, then the challenge is fetched and refused as foreign:
+    // wait for the challenge, then give a signature a moment to (wrongly) appear.
+    await until('the challenge to be fetched', () => calls.some((call) => call.url.includes('/api/wallet/link/challenge')));
+    await new Promise((resolve) => setTimeout(resolve, 300));
     expect(calls.some((call) => call.url.endsWith('/api/wallet/link'))).toBe(false);
   });
 
@@ -601,7 +619,7 @@ describe('wallet page — keys stay in the browser', () => {
     confirm!.value = 'correct horse battery staple';
 
     document.querySelector<HTMLButtonElement>('#create')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await until('the new wallet to be shown', () => (document.querySelector<HTMLTextAreaElement>('#phrase')?.value ?? '') !== '');
 
     const phrase = document.querySelector<HTMLTextAreaElement>('#phrase')?.value ?? '';
     const privateKey = document.querySelector<HTMLInputElement>('#private-key')?.value ?? '';
@@ -661,7 +679,7 @@ describe('wallet addresses follow the connected network', () => {
     document.querySelector<HTMLInputElement>('#passphrase')!.value = 'correct horse battery staple';
     document.querySelector<HTMLInputElement>('#passphrase-confirm')!.value = 'correct horse battery staple';
     document.querySelector<HTMLButtonElement>('#create')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await until('the vault to be stored', () => window.localStorage.getItem('obsidian.vault.v1') !== null);
 
     const vault = JSON.parse(window.localStorage.getItem('obsidian.vault.v1') ?? '{}') as {
       address: string;
