@@ -1,10 +1,10 @@
 {
   "product": "Obsidian Network",
-  "version": "1.6.1",
-  "commit": "3d2a25618b6c1b404eb31ff2a7fa3cf7e550dc3b",
-  "builtAt": "2026-10-09T17:19:37Z",
-  "protocolVersion": "1.6.1",
-  "paramsHash": "2dd76ca2b2305d725f3a975bfca04eb5",
+  "version": "1.7.0",
+  "commit": "3a91e2b9c6efd4d83ff8a3ee99e5f41345332ef4",
+  "builtAt": "2026-10-09T22:38:36Z",
+  "protocolVersion": "1.7.0",
+  "paramsHash": "bffeacb35532ba3df70cda8c27ed6c96",
   "forkChoice": "FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH",
   "finality": {
     "voteType": "POT_FINALITY",
@@ -24,8 +24,8 @@
       "addressPrefix": "obs",
       "rpcPort": 8630,
       "p2pPort": 8631,
-      "genesisId": "56ec455d8afac5ef4f7d636ac03ef9e39bd5788f",
-      "genesisBlockHash": "74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3"
+      "genesisId": "2dc198e4e57cb482df4e0f89e3a28daaf427ccff",
+      "genesisBlockHash": "8ffcf7c18a5ba07b6a67fee4a373a62c62e9da612e7b66dcd9437597695b0475"
     },
     "testnet": {
       "networkId": "obsidian-testnet-1",
@@ -33,8 +33,8 @@
       "addressPrefix": "tobs",
       "rpcPort": 18630,
       "p2pPort": 18631,
-      "genesisId": "8f72479240845c55c7d21c07cbdcad5546af77a2",
-      "genesisBlockHash": "729ed6ec3c943fd2c5174f2f1739f470cb9d28a75df9201ba68489e9068e019c"
+      "genesisId": "148d1078d74e12cf31f32ab09e20e17f41f18fe1",
+      "genesisBlockHash": "ec25dab7ae493276ab3e00c6e4fd0168a5d66f64d1e45742b364af5a8f3f9720"
     },
     "staging": {
       "networkId": "obsidian-staging-1",
@@ -42,8 +42,8 @@
       "addressPrefix": "sobs",
       "rpcPort": 28630,
       "p2pPort": 28631,
-      "genesisId": "a52dd49ccb7fc259b7a0939a9c576d137ffd2e66",
-      "genesisBlockHash": "6a7873c339dcbbd2a15e2eeeee839ff6d61d2b63c5963c5f1e0f5ce09712affa"
+      "genesisId": "055b26992bbedf51b512bc856cb1244d5edfc3be",
+      "genesisBlockHash": "d60968950c97a64344f0e8ab44f657e8b1c3492266c9e80ea8e927fd422c824b"
     },
     "devnet": {
       "networkId": "obsidian-devnet-1",
@@ -51,56 +51,56 @@
       "addressPrefix": "dobs",
       "rpcPort": 38630,
       "p2pPort": 38631,
-      "genesisId": "1e7ca102f6720a7682e9a396958f2a17330dc001",
-      "genesisBlockHash": "47c21794f94217d415e4809cd2804b8d97892b891f11eea18e3ce1dc5316d247"
+      "genesisId": "8bce1839750dad5a63ffd66ab8584aa02c480910",
+      "genesisBlockHash": "00dcee4ad680542db0755a1ea962abaf8c482dd8bc545201f0b77ec28f22f525"
     }
   },
   "maximumSupplyObs": "21000000",
   "genesisAllocationObs": "100000",
   "assets": [
     {
-      "name": "obsidian-cloudflare-1.6.1.tar.gz",
-      "bytes": 175774
+      "name": "obsidian-cloudflare-1.7.0.tar.gz",
+      "bytes": 179587
     },
     {
-      "name": "obsidian-cloudflare-1.6.1.zip",
-      "bytes": 205064
+      "name": "obsidian-cloudflare-1.7.0.zip",
+      "bytes": 206714
     },
     {
-      "name": "obsidian-core-1.6.1.tar.gz",
-      "bytes": 747203
+      "name": "obsidian-core-1.7.0.tar.gz",
+      "bytes": 766658
     },
     {
-      "name": "obsidian-core-1.6.1.zip",
-      "bytes": 956753
+      "name": "obsidian-core-1.7.0.zip",
+      "bytes": 983107
     },
     {
-      "name": "obsidian-interface-1.6.1.tar.gz",
-      "bytes": 1590273
+      "name": "obsidian-interface-1.7.0.tar.gz",
+      "bytes": 1618512
     },
     {
-      "name": "obsidian-interface-1.6.1.zip",
-      "bytes": 1766830
+      "name": "obsidian-interface-1.7.0.zip",
+      "bytes": 1803268
     },
     {
-      "name": "obsidian-interface-selfhost-1.6.1.tar.gz",
-      "bytes": 1419218
+      "name": "obsidian-interface-selfhost-1.7.0.tar.gz",
+      "bytes": 1440597
     },
     {
-      "name": "obsidian-interface-selfhost-1.6.1.zip",
-      "bytes": 1557864
+      "name": "obsidian-interface-selfhost-1.7.0.zip",
+      "bytes": 1586788
     },
     {
-      "name": "obsidian-network-source-1.6.1.tar.gz",
-      "bytes": 1473145
+      "name": "obsidian-network-source-1.7.0.tar.gz",
+      "bytes": 3923233
     },
     {
-      "name": "obsidian-node-operator-1.6.1.tar.gz",
-      "bytes": 575804
+      "name": "obsidian-node-operator-1.7.0.tar.gz",
+      "bytes": 590194
     },
     {
-      "name": "obsidian-node-operator-1.6.1.zip",
-      "bytes": 743001
+      "name": "obsidian-node-operator-1.7.0.zip",
+      "bytes": 759801
     }
   ],
   "verification": "sha256sum -c SHA256SUMS, then compare the digests with the published release notes"
