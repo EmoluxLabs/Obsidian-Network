@@ -15,6 +15,8 @@ export interface AccountView {
   mfaEnabled: boolean;
   /** Mining opens only once password, recovery codes and MFA are all done. */
   miningEnabled: boolean;
+  /** True once a wallet is linked AND MFA is confirmed — what the server requires of a claim. */
+  miningReady?: boolean;
   recoveryCodesRemaining: number;
 }
 
@@ -111,7 +113,7 @@ export const session = {
   createInvite(): Promise<{ invite: { code: string }; issued: number; limit: number }> {
     return api('/api/auth/invites', { method: 'POST', body: '{}' });
   },
-  linkWallet(address: string): Promise<{ linked: boolean; address: string }> {
+  linkWallet(address: string): Promise<{ linked: boolean; address: string; account?: AccountView }> {
     return api('/api/wallet/link', { method: 'POST', body: JSON.stringify({ address }) });
   },
 };

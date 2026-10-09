@@ -11,7 +11,7 @@
 import { createServer, type Server } from 'node:http';
 import { createHmac } from 'node:crypto';
 import { connect } from 'node:net';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -23,6 +23,15 @@ import { InterfaceServer, type InterfaceConfig } from '../server/index.js';
 import { loadInterfaceConfig } from '../server/config.js';
 import { AccountStore } from '../server/store.js';
 import { newGenesisInvitation } from '../server/genesis-invite.js';
+// The real compiled core (synced into web/core by `npm run build:core`): the
+// tests sign genuine transactions with it, and the server decodes them with the
+// same code.
+// @ts-expect-error — plain JS module without a declaration file in the test tree
+import { signTransaction, encodeSignedTx } from '../web/core/transactions/encode.js';
+// @ts-expect-error — plain JS module
+import { keyPairFromPrivateKey } from '../web/core/crypto/keys.js';
+// @ts-expect-error — plain JS module
+import { TxType } from '../web/core/protocol/types.js';
 
 interface Harness {
   origin: string;
@@ -40,6 +49,10 @@ interface Harness {
   mailbox: (name: string) => string;
   /** Force a health sweep so the proxy has an opinion about the stub node. */
   poolCheck: () => Promise<void>;
+  /** Every request the stub node received, as `METHOD /path`. */
+  requests: string[];
+  /** Make the server's transaction decoder fail to load, as if web/core were missing. */
+  breakCore: () => void;
   close: () => Promise<void>;
 }
 
@@ -56,6 +69,32 @@ function mailbox(name: string): string {
   return `${name.toLowerCase().replace(/[^a-z0-9-]/g, '')}-tester@gmail.com`;
 }
 const TEST_PASSWORD = 'correct-horse-7-battery';
+
+const here2 = dirname(fileURLToPath(import.meta.url));
+const REAL_CORE = resolve(here2, '..', 'web', 'core');
+
+/** Two deterministic devnet wallets: the account's own, and somebody else's. */
+const KEYS = {
+  mine: keyPairFromPrivateKey('11'.repeat(32), 'dobs') as { address: string; publicKey: string; privateKey: string },
+  other: keyPairFromPrivateKey('22'.repeat(32), 'dobs') as { address: string; publicKey: string; privateKey: string },
+};
+
+/** A genuinely signed transaction, as hex, the way a wallet would send it. */
+function signedTxHex(type: number, signer: { address: string; publicKey: string; privateKey: string }, nonce = 0): string {
+  const tx = signTransaction({
+    sender: signer.address,
+    privateKeyHex: signer.privateKey,
+    publicKeyHex: signer.publicKey,
+    chainId: 7780,
+    protocolVersion: '1.0.0',
+    nonce,
+    type,
+    gas: 0n,
+    body: new Uint8Array([1, 2, 3]),
+    validUntil: 4_000_000_000,
+  });
+  return Buffer.from(encodeSignedTx(tx)).toString('hex');
+}
 
 /**
  * An independent RFC 6238 implementation, deliberately not imported from the
@@ -94,6 +133,10 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
   writeFileSync(join(siteRoot, 'app', 'index.html'), '<!doctype html><title>app</title>', 'utf8');
   writeFileSync(join(publicDir, 'index.html'), '<!doctype html><title>root</title>', 'utf8');
   writeFileSync(join(coreDir, 'protocol.js'), 'export const version = "1.3.0";\n', 'utf8');
+  // The directories the transaction decoder imports: linked, not copied.
+  for (const entry of ['transactions', 'protocol', 'crypto', 'economy', 'mining', 'consensus', 'genesis']) {
+    symlinkSync(join(REAL_CORE, entry), join(coreDir, entry), 'dir');
+  }
 
   const requests: string[] = [];
   let statusFailures = options.stubStatusFails ?? 0;
@@ -207,6 +250,12 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
       }),
     poolCheck: async () => {
       await server.pool.checkNow();
+    },
+    requests,
+    breakCore: () => {
+      const failed = Promise.reject(new Error('core is missing'));
+      failed.catch(() => undefined);
+      (server as unknown as { txCore: Promise<unknown> }).txCore = failed;
     },
     close: () => server.close(),
   };
@@ -664,7 +713,7 @@ describe('sessions', () => {
     expect(after.status).toBe(401);
   });
 
-  it('links an advisory wallet address but never stores key material', async () => {
+  it('links a wallet address but never stores key material', async () => {
     const h = await harness();
     const signedIn = await h.signIn('founder', { inviteCode: h.genesisCode });
     const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0]!;
@@ -672,13 +721,14 @@ describe('sessions', () => {
     const linked = await fetch(`${h.origin}/api/wallet/link`, {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ address: 'dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' }),
+      body: JSON.stringify({ address: KEYS.mine.address }),
     });
     expect(linked.status).toBe(200);
+    expect(await linked.json()).toMatchObject({ linked: true, address: KEYS.mine.address, account: { walletAddress: KEYS.mine.address } });
 
     const storeFile = join(h.config.dataDir, 'interface-accounts.json');
     const raw = (await import('node:fs')).readFileSync(storeFile, 'utf8');
-    expect(raw).toContain('dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');
+    expect(raw).toContain(KEYS.mine.address);
     expect(raw).not.toContain('privateKey');
   });
 });
@@ -873,7 +923,7 @@ describe('node proxy', () => {
     const response = await fetch(`${h.origin}/api/rpc?path=/tx/submit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tx: '00' }),
+      body: JSON.stringify({ tx: signedTxHex(TxType.PAYMENT, KEYS.mine) }),
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ accepted: true, txId: 'tx-from-fake-node' });
@@ -898,6 +948,191 @@ describe('node proxy', () => {
     });
     expect(response.status).toBe(413);
     expect(((await response.json()) as { code: string }).code).toBe('ERR_BODY_TOO_LARGE');
+  });
+});
+
+describe('the mining gate', () => {
+  const claim = (h: Harness, hex: string, cookie?: string) =>
+    fetch(`${h.origin}/api/rpc?path=/tx/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
+      body: JSON.stringify({ tx: hex }),
+    });
+  const code = async (response: Response) => ((await response.json()) as { code?: string }).code;
+  const submitsSeenByNode = (h: Harness) => h.requests.filter((r) => r === 'POST /tx/submit').length;
+
+  /** Register the founder; optionally link a wallet and confirm MFA. */
+  async function founder(h: Harness, steps: { link?: string; mfa?: boolean }) {
+    const created = await h.signIn('founder', { inviteCode: h.genesisCode });
+    const cookie = (created.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const json = { cookie, 'content-type': 'application/json' };
+    if (steps.link) {
+      const linked = await fetch(`${h.origin}/api/wallet/link`, { method: 'POST', headers: json, body: JSON.stringify({ address: steps.link }) });
+      expect(linked.status).toBe(200);
+    }
+    if (steps.mfa) {
+      const setup = (await (await fetch(`${h.origin}/api/auth/mfa/setup`, { method: 'POST', headers: json, body: '{}' })).json()) as { secret: string };
+      const confirmed = await fetch(`${h.origin}/api/auth/mfa/confirm`, { method: 'POST', headers: json, body: JSON.stringify({ totp: totpNow(setup.secret) }) });
+      expect(confirmed.status).toBe(200);
+    }
+    return cookie;
+  }
+
+  it('refuses a claim from a caller who is not signed in, and never reaches the node', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const before = submitsSeenByNode(h);
+    const response = await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.mine));
+    expect(response.status).toBe(401);
+    expect(await code(response)).toBe('ERR_UNAUTHORIZED');
+    expect(submitsSeenByNode(h)).toBe(before);
+  });
+
+  it('refuses a claim with a forged or stale session cookie', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const response = await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.mine), 'obsidian_session=not-a-real-session');
+    expect(response.status).toBe(401);
+  });
+
+  it('refuses a signed-in account that has no wallet linked', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const cookie = await founder(h, { mfa: true });
+    const before = submitsSeenByNode(h);
+    const response = await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.mine), cookie);
+    expect(response.status).toBe(403);
+    expect(await code(response)).toBe('ERR_WALLET_NOT_LINKED');
+    expect(submitsSeenByNode(h)).toBe(before);
+  });
+
+  it('refuses a linked account whose mining is still closed because MFA is not confirmed', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const cookie = await founder(h, { link: KEYS.mine.address });
+    const response = await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.mine), cookie);
+    expect(response.status).toBe(403);
+    expect(await code(response)).toBe('ERR_MINING_NOT_ENABLED');
+  });
+
+  it('refuses a claim signed by a wallet other than the linked one', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const cookie = await founder(h, { link: KEYS.mine.address, mfa: true });
+    const response = await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.other), cookie);
+    expect(response.status).toBe(403);
+    expect(await code(response)).toBe('ERR_WALLET_MISMATCH');
+  });
+
+  it('relays a claim from a signed-in, linked, MFA-confirmed account signing with its linked wallet', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const cookie = await founder(h, { link: KEYS.mine.address, mfa: true });
+    const before = submitsSeenByNode(h);
+    const response = await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.mine), cookie);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ accepted: true });
+    expect(submitsSeenByNode(h)).toBe(before + 1);
+  });
+
+  it('stops relaying claims the moment the session ends', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const cookie = await founder(h, { link: KEYS.mine.address, mfa: true });
+    await fetch(`${h.origin}/api/auth/logout`, { method: 'POST', headers: { cookie } });
+    expect((await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.mine), cookie)).status).toBe(401);
+  });
+
+  it('does not make payments or names depend on an account: only mining is gated', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    for (const type of [TxType.PAYMENT, TxType.ONS]) {
+      expect((await claim(h, signedTxHex(type, KEYS.mine))).status, `type ${type}`).toBe(200);
+    }
+  });
+
+  it('classifies by the decoded transaction, not by anything the caller says about it', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const hex = signedTxHex(TxType.MINING_CLAIM, KEYS.mine);
+    // Extra fields, different casing and a query string change nothing.
+    const variants: Array<[string, string]> = [
+      ['/api/rpc?path=/tx/submit&type=payment', JSON.stringify({ tx: hex, type: 'PAYMENT' })],
+      ['/api/rpc?path=%2Ftx%2Fsubmit', JSON.stringify({ tx: hex.toUpperCase() })],
+      ['/api/rpc?path=/tx/submit?x=1', JSON.stringify({ tx: hex, sender: 'someone' })],
+    ];
+    for (const [path, body] of variants) {
+      const response = await fetch(`${h.origin}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+      expect(response.status, path).toBe(401);
+    }
+  });
+
+  it('relays nothing it cannot classify', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const before = submitsSeenByNode(h);
+    for (const body of ['{}', 'not json', JSON.stringify({ tx: 'zz' }), JSON.stringify({ tx: '00' }), JSON.stringify({ tx: ['ab'] })]) {
+      const response = await fetch(`${h.origin}/api/rpc?path=/tx/submit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+      expect(response.status, body).toBe(400);
+      expect(await code(response), body).toBe('ERR_MALFORMED');
+    }
+    expect(submitsSeenByNode(h)).toBe(before);
+  });
+
+  it('forwards only the routes that take a POST, and no other verb', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    for (const route of ['/tx/simulate', '/tx/encode', '/tx/gas', '/rpc', '/names']) {
+      const response = await fetch(`${h.origin}/api/rpc?path=${encodeURIComponent(route)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      expect(response.status, route).toBe(400);
+    }
+    for (const method of ['PUT', 'DELETE', 'PATCH']) {
+      const response = await fetch(`${h.origin}/api/rpc?path=/names`, { method });
+      expect(response.status, method).toBe(405);
+    }
+  });
+
+  it('refuses to relay when the decoder is unavailable, rather than relaying unclassified', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    h.breakCore();
+    const response = await claim(h, signedTxHex(TxType.MINING_CLAIM, KEYS.mine));
+    expect(response.status).toBe(503);
+    expect(await code(response)).toBe('ERR_RELAY_UNAVAILABLE');
+  });
+});
+
+describe('linking a wallet', () => {
+  const link = (h: Harness, cookie: string | undefined, address: unknown) =>
+    fetch(`${h.origin}/api/wallet/link`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
+      body: JSON.stringify({ address }),
+    });
+
+  it('needs a session', async () => {
+    const h = await harness();
+    expect((await link(h, undefined, KEYS.mine.address)).status).toBe(401);
+  });
+
+  it('refuses text that only looks like an address', async () => {
+    const h = await harness();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    const forged = KEYS.mine.address.slice(0, -1) + (KEYS.mine.address.endsWith('q') ? 'p' : 'q');
+    for (const address of ['', 'hello', 'dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq', forged, 42, null, { a: 1 }]) {
+      const response = await link(h, cookie, address);
+      expect(response.status, String(address)).toBe(400);
+      expect(((await response.json()) as { code: string }).code).toBe('ERR_BAD_ADDRESS');
+    }
+  });
+
+  it('exposes whether the account is ready to mine, and only when both parts are in place', async () => {
+    const h = await harness();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    const me = async () => ((await (await fetch(`${h.origin}/api/auth/me`, { headers: { cookie } })).json()) as { account: { miningReady: boolean } }).account;
+    expect((await me()).miningReady).toBe(false);
+    await link(h, cookie, KEYS.mine.address);
+    expect((await me()).miningReady).toBe(false); // linked, but MFA is not confirmed
   });
 });
 
@@ -933,7 +1168,7 @@ describe('trusted origins', () => {
     const response = await call(h, '/api/rpc?path=%2Ftx%2Fsubmit', OFFICIAL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tx: 'ab'.repeat(40) }),
+      body: JSON.stringify({ tx: signedTxHex(TxType.PAYMENT, KEYS.mine) }),
     });
     expect(response.status).toBe(200);
     expect(response.headers.get('access-control-allow-origin')).toBe(OFFICIAL);

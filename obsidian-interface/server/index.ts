@@ -20,6 +20,7 @@
 import { OFFICIAL_PATTERNS, compileOrigins, originMatches } from './trusted-origins.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, statSync, createReadStream } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { AccountStore, type Account } from './store.js';
 import { newInviteCode, newSecret } from './auth.js';
@@ -108,11 +109,46 @@ export const DEFAULT_INTERFACE_CONFIG: InterfaceConfig = {
   logLevel: 'info',
 };
 
+/**
+ * The slice of the compiled core the server needs to tell WHAT a signed
+ * transaction is. It is loaded from the same synced `coreDir` the browser
+ * wallet runs, so the decoder here is the node's own decoder: there is no
+ * second parser whose idea of a transaction could differ from the chain's.
+ */
+export interface TxCore {
+  decodeSignedTxFromBytes(bytes: Uint8Array): { type: number; sender: string; chainId: number };
+  miningClaimType: number;
+  isValidAddress(address: string, hrp?: string): boolean;
+}
+
+async function loadTxCore(coreDir: string): Promise<TxCore> {
+  const load = (relative: string) => import(pathToFileURL(join(coreDir, relative)).href);
+  const [encode, types, keys] = await Promise.all([
+    load('transactions/encode.js'),
+    load('protocol/types.js'),
+    load('crypto/keys.js'),
+  ]);
+  return {
+    decodeSignedTxFromBytes: encode.decodeSignedTxFromBytes,
+    miningClaimType: types.TxType.MINING_CLAIM,
+    isValidAddress: keys.isValidAddress,
+  };
+}
+
+/**
+ * Node routes that accept a POST through the proxy. Everything else is a read:
+ * a POST to any other route is refused here instead of being forwarded, so the
+ * only write that crosses this server is a signed transaction.
+ */
+const PROXY_POST_ROUTES: ReadonlySet<string> = new Set(['/tx/submit', '/wallet/balance', '/wallet/quote']);
+
 export interface InterfaceDependencies {
   store: AccountStore;
   pool: NodePool;
   config: InterfaceConfig;
   log: (level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Record<string, unknown>) => void;
+  /** Test seam: how the transaction decoder is loaded. Defaults to `config.coreDir`. */
+  loadCore?: () => Promise<TxCore>;
 }
 
 /**
@@ -655,13 +691,21 @@ export class InterfaceServer {
       if (!this.throttle(request, response, this.authLimiter, 'auth')) return;
       const account = this.requireSession(request, response);
       if (!account) return;
-      const body = await this.readJson<{ address?: string }>(request);
-      if (!body?.address || !/^(obs|tobs|sobs|dobs)1[0-9a-z]{20,}$/.test(body.address)) {
-        this.json(response, 400, { error: 'a valid wallet address is required', code: 'ERR_BAD_ADDRESS' });
+      const body = await this.readJson<{ address?: unknown }>(request);
+      const address = typeof body?.address === 'string' ? body.address.trim() : '';
+      if (!(await this.isLinkableAddress(address))) {
+        const hrp = this.config.network ? interfaceNetwork(this.config.network).addressHrp : undefined;
+        this.json(response, 400, {
+          error: hrp
+            ? `a valid ${this.config.network} wallet address (${hrp}1…) is required`
+            : 'a valid wallet address is required',
+          code: 'ERR_BAD_ADDRESS',
+        });
         return;
       }
-      this.dependencies.store.setWalletAddress(account.accountId, body.address);
-      this.json(response, 200, { linked: true, address: body.address });
+      this.dependencies.store.setWalletAddress(account.accountId, address);
+      const updated = this.dependencies.store.getAccount(account.accountId) ?? account;
+      this.json(response, 200, { linked: true, address, account: publicAccount(updated) });
       return;
     }
 
@@ -1141,8 +1185,19 @@ export class InterfaceServer {
       return;
     }
 
+    if (request.method !== 'GET' && request.method !== 'HEAD' && request.method !== 'POST') {
+      this.json(response, 405, { error: `${request.method} is not accepted by the interface proxy`, code: 'ERR_REJECTED' });
+      return;
+    }
     const method = request.method === 'POST' ? 'POST' : 'GET';
+    if (method === 'POST' && !PROXY_POST_ROUTES.has(target)) {
+      this.json(response, 400, { error: `route "${target}" does not accept POST through the interface proxy`, code: 'ERR_REJECTED' });
+      return;
+    }
     const payload = method === 'POST' ? await this.readRaw(request) : undefined;
+    // The one write. A mining claim is admitted only for a signed-in account
+    // that has a wallet linked and signs with it; see admitSubmission().
+    if (method === 'POST' && target === '/tx/submit' && !(await this.admitSubmission(request, response, payload ?? ''))) return;
 
     const attempts = this.dependencies.pool.ordered();
     if (attempts.length === 0) {
@@ -1185,6 +1240,100 @@ export class InterfaceServer {
       }
     }
     this.json(response, 503, { error: `no healthy Obsidian node: ${lastError}`, code: 'ERR_NO_HEALTHY_NODE' });
+  }
+
+  private txCore?: Promise<TxCore>;
+
+  private core(): Promise<TxCore> {
+    if (!this.txCore) {
+      this.txCore = (this.dependencies.loadCore ?? (() => loadTxCore(this.config.coreDir)))();
+      // A failed load must not be remembered forever: the next request retries.
+      this.txCore.catch(() => {
+        this.txCore = undefined;
+      });
+    }
+    return this.txCore;
+  }
+
+  /** Is `address` a well-formed address of THIS interface's network? */
+  private async isLinkableAddress(address: string): Promise<boolean> {
+    if (!/^(obs|tobs|sobs|dobs)1[0-9a-z]{20,}$/.test(address)) return false;
+    const hrp = this.config.network ? interfaceNetwork(this.config.network).addressHrp : address.slice(0, address.indexOf('1'));
+    if (!address.startsWith(`${hrp}1`)) return false;
+    try {
+      return (await this.core()).isValidAddress(address, hrp);
+    } catch {
+      // Without the core the checksum cannot be verified; the shape and the
+      // network prefix were. A bad checksum can never sign a claim anyway.
+      return true;
+    }
+  }
+
+  /**
+   * Gate a transaction submission. Returns true when the request may be
+   * forwarded to a node; otherwise the answer has been sent.
+   *
+   * Mining is account-bound; paying and naming are not. So the transaction is
+   * decoded here — with the node's own decoder — and only a MINING_CLAIM needs:
+   *   1. a signed-in account (401),
+   *   2. a linked wallet (403 ERR_WALLET_NOT_LINKED),
+   *   3. MFA confirmed, which is what opens mining on an account (403),
+   *   4. the claim signed by that linked wallet, not by some other key (403).
+   * An undecodable body is refused here rather than forwarded: the node would
+   * refuse it too, and nothing that cannot be classified is relayed.
+   */
+  private async admitSubmission(request: IncomingMessage, response: ServerResponse, payload: string): Promise<boolean> {
+    let hex: unknown;
+    try {
+      hex = (JSON.parse(payload) as { tx?: unknown } | null)?.tx;
+    } catch {
+      hex = undefined;
+    }
+    if (typeof hex !== 'string' || hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) {
+      this.json(response, 400, { error: 'tx must be a hex-encoded signed transaction', code: 'ERR_MALFORMED' });
+      return false;
+    }
+    let core: TxCore;
+    try {
+      core = await this.core();
+    } catch (error) {
+      this.dependencies.log('error', 'transaction decoder unavailable', { error: (error as Error).message });
+      this.json(response, 503, { error: 'this interface cannot classify transactions right now; nothing was relayed', code: 'ERR_RELAY_UNAVAILABLE' });
+      return false;
+    }
+    let tx: { type: number; sender: string };
+    try {
+      tx = core.decodeSignedTxFromBytes(Buffer.from(hex, 'hex'));
+    } catch (error) {
+      this.json(response, 400, { error: `cannot decode transaction: ${(error as Error).message}`, code: 'ERR_MALFORMED' });
+      return false;
+    }
+    if (tx.type !== core.miningClaimType) return true;
+
+    const account = this.requireSession(request, response);
+    if (!account) return false;
+    if (!account.walletAddress) {
+      this.json(response, 403, {
+        error: 'link a wallet to your account before mining: open the account page and publish your wallet address',
+        code: 'ERR_WALLET_NOT_LINKED',
+      });
+      return false;
+    }
+    if (account.miningEnabled !== true) {
+      this.json(response, 403, {
+        error: 'mining is closed on this account until you confirm two-factor authentication',
+        code: 'ERR_MINING_NOT_ENABLED',
+      });
+      return false;
+    }
+    if (tx.sender !== account.walletAddress) {
+      this.json(response, 403, {
+        error: 'this claim is signed by a different wallet than the one linked to your account',
+        code: 'ERR_WALLET_MISMATCH',
+      });
+      return false;
+    }
+    return true;
   }
 
   private requireSession(request: IncomingMessage, response: ServerResponse): ReturnType<AccountStore['getAccount']> {
@@ -1275,6 +1424,8 @@ function publicAccount(account: NonNullable<ReturnType<AccountStore['getAccount'
     walletAddress: account.walletAddress,
     mfaEnabled: account.mfaEnabled === true,
     miningEnabled: account.miningEnabled === true,
+    // What the server enforces on a claim: a linked wallet AND confirmed MFA.
+    miningReady: Boolean(account.walletAddress) && account.miningEnabled === true,
     recoveryCodesRemaining: account.recoveryCodesRemaining ?? 0,
     // Never leaked: passwordHash, totpSecret, recoveryCodeHashes,
     // canonicalEmail (the uniqueness key is a server concern).

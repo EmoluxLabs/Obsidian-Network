@@ -1578,8 +1578,10 @@ master secret the signing key is derived from — see §G6 for the exact output.
 - Any passphrase protecting them
 
 Not in an API call, not in a log, not in analytics, not in browser storage you
-sync to a cloud. The account store on the server holds an *advisory* wallet
-address only, and the code comments mark it "never trusted".
+sync to a cloud. The account store on the server holds the wallet *address* only. It
+is what the platform checks a mining claim against: a claim is relayed only for a signed-in,
+MFA-confirmed account, and only when it is signed by the wallet linked to that account. The
+address grants no spending power.
 
 ### G4. Signing and submitting
 

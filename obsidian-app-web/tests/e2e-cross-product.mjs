@@ -43,6 +43,11 @@ const root = resolve(here, '..', '..');
 const APP = (process.env.APP_URL ?? 'http://127.0.0.1:38790').replace(/\/$/, '');
 const PLATFORM = (process.env.PLATFORM_URL ?? 'http://127.0.0.1:38788').replace(/\/$/, '');
 const GENESIS = process.env.GENESIS_CODE;
+// The platform now refuses a mining claim unless it comes from a signed-in account that is
+// MFA-confirmed and has the signing wallet linked. The claims part therefore needs such an
+// account: the accounts part creates one when GENESIS_CODE is set; otherwise pass the session
+// cookie of one as MINER_COOKIE (e.g. `obsidian_session=…`).
+let minerCookie = process.env.MINER_COOKIE ?? '';
 const PASS = 'correct horse battery staple';
 const STANDARD_PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 
@@ -227,6 +232,7 @@ if (GENESIS) {
   assert.equal(noCode.data?.code, 'ERR_MFA_REQUIRED', 'the platform asks for the code the app enrolled');
   const withCode = await api(PLATFORM, 'POST', '/api/auth/login', { email: one, password: pw, totp: totp(mfa.secret, Date.now() + 30000) });
   assert.equal(withCode.status, 200, JSON.stringify(withCode.data));
+  minerCookie = jars[PLATFORM].cookies; // account one: signed in, MFA confirmed — the account that mines below
   say(`app → platform:  the MFA secret enrolled in the app is accepted by the platform`);
 
   // a wrong password is wrong on both
@@ -247,6 +253,38 @@ if (GENESIS) {
 // ═════════════════════════════════════════════════════════════════════════════
 // 2–4. CLAIMS — one ledger
 // ═════════════════════════════════════════════════════════════════════════════
+
+// Both doors act for ONE account (they share the platform's session cookie, as they share its
+// accounts). A claim is accepted only from the wallet linked to that account, so each wallet is
+// linked before it claims — through the app's own `linkWallet`, the route its Account screen uses.
+if (!minerCookie) {
+  console.log('claims need a signed-in, MFA-confirmed account: set GENESIS_CODE (fresh platform) or MINER_COOKIE');
+  process.exit(2);
+}
+jars[APP].cookies = minerCookie;
+jars[PLATFORM].cookies = minerCookie;
+const linkFor = async (w) => {
+  const linked = await data.linkWallet(w.address);
+  assert.equal(linked.account?.walletAddress, w.address, 'the platform linked the wallet to the account');
+};
+
+// A signed-out caller cannot claim, whatever it holds: refused by the platform, and nothing on the ledger.
+{
+  const w = await freshWallet();
+  const saved = { app: jars[APP].cookies, platform: jars[PLATFORM].cookies };
+  jars[APP].cookies = '';
+  jars[PLATFORM].cookies = '';
+  const anonymous = await forgeClaim(w, 'signed out');
+  assert.equal(anonymous.accepted, false, 'a signed-out claim must be refused');
+  assert.equal(await ledgerCount(w.address), 0, 'nothing reached the ledger');
+  jars[APP].cookies = saved.app;
+  jars[PLATFORM].cookies = saved.platform;
+  // signed in, but the wallet is not linked to the account: refused as well
+  const unlinked = await forgeClaim(w, 'unlinked wallet');
+  assert.equal(unlinked.accepted, false, 'a claim from a wallet that is not linked must be refused');
+  assert.equal(await ledgerCount(w.address), 0, 'nothing reached the ledger');
+  say('gate:     signed out → refused; signed in with a wallet that is not linked → refused; nothing on the ledger');
+}
 
 /** A fresh random wallet, usable by both products. */
 async function freshWallet() {
@@ -289,6 +327,7 @@ async function forgeClaim(w, label) {
 // ── a claim through the PLATFORM first, then the app ─────────────────────────
 {
   const w = await freshWallet();
+  await linkFor(w);
   say(`wallet W1 ${w.address.slice(0, 14)}… (fresh, usable from both products)`);
 
   const first = await claimViaPlatform(w);
@@ -315,6 +354,7 @@ async function forgeClaim(w, label) {
 // ── a claim through the APP first, then the platform ─────────────────────────
 {
   const w = await freshWallet();
+  await linkFor(w);
   say(`wallet W2 ${w.address.slice(0, 14)}… (fresh)`);
 
   const first = await claimViaApp();
@@ -343,6 +383,7 @@ async function forgeClaim(w, label) {
 // ── both products at once ────────────────────────────────────────────────────
 {
   const w = await freshWallet();
+  await linkFor(w);
   say(`wallet W3 ${w.address.slice(0, 14)}… (fresh) — both products claim at the same instant`);
   const [a, b] = await Promise.allSettled([claimViaApp(), claimViaPlatform(w)]);
   const accepted = [a, b].filter((r) => r.status === 'fulfilled' && (r.value.ok ?? true) && r.value.txId);

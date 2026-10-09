@@ -543,3 +543,14 @@ form.stack { display: flex; flex-direction: column; gap: 14px; }
    line, with a note that says plainly what the file is. */
 .cta-row-app { margin-top: 14px; align-items: center; gap: 14px; flex-wrap: wrap; }
 .cta-note { font-size: 12.5px; color: var(--muted, #68707c); letter-spacing: 0.01em; }
+
+/* Mining gate: the page says which of the three requirements is still open. */
+[hidden] { display: none !important; }
+.gate-steps { list-style: none; margin: 14px 0; padding: 0; display: grid; gap: 6px; }
+.gate-steps li { font-size: 0.95rem; display: flex; align-items: center; gap: 10px; }
+/* Drawn, not typed: a check glyph is missing from some system fonts and the marker is the whole point. */
+.gate-steps li::before { content: ''; flex: none; width: 16px; height: 16px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--text-faint, #9aa3af); }
+.gate-steps .step-done::before { border-color: #2f855a; background: #2f855a radial-gradient(circle at 50% 50%, #fff 0 28%, transparent 30%); }
+.gate-steps .step-done { color: var(--text); }
+.gate-steps .step-todo { color: var(--text-dim); }
+.claim-card .as-link, .claim-card button.primary { margin-top: 6px; }

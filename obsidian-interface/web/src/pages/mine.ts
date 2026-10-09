@@ -5,12 +5,22 @@
  * eligible, how much it pays and which claim id is next. This page only asks,
  * signs and submits. It never uses the browser clock for eligibility, never
  * invents a claim id, and never retries in a way that could double-claim.
+ *
+ * Who may mine is decided by the server, which refuses a claim from anyone who
+ * is not signed in, has no linked wallet, has not confirmed MFA, or signs with
+ * a wallet other than the linked one. This page mirrors those rules so the
+ * user is told what is missing instead of meeting a refusal after signing:
+ *   signed out → no mining panels at all, only the way in;
+ *   signed in, no wallet linked → link (or create) one;
+ *   linked, MFA missing → finish MFA on the account page;
+ *   everything in place → the claim panel, for the LINKED wallet only.
  */
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient, type MiningStatus } from '../lib/client.js';
 import { Wallet, hrpOfAddress } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
+import { session, type AccountView } from '../lib/session.js';
 import { el, obs, duration, spinner, toast, kv, badge, table, short, when, rewardLine, rewardPerClaim } from '../lib/ui.js';
 
 const client = new ObsidianClient();
@@ -54,7 +64,6 @@ async function boot(): Promise<void> {
   } catch {
     networkHrp = undefined;
   }
-  drawWalletPanel();
   await refresh();
   window.setInterval(() => void tickTicker(), 1000);
 }
@@ -64,6 +73,7 @@ function drawWalletPanel(): void {
   const wrongNetwork = address !== undefined && networkHrp !== undefined && hrpOfAddress(address) !== networkHrp;
   walletPanel.replaceChildren(
     el('h2', {}, 'Signing wallet'),
+    ...(account?.walletAddress ? [el('p', { class: 'fineprint' }, 'Linked to your account — claims from any other wallet are refused.')] : []),
     ...(wrongNetwork
       ? [
           el(
@@ -86,7 +96,7 @@ function drawWalletPanel(): void {
           'div',
           {},
           el('p', {}, 'No wallet exists in this browser yet, so there is nothing to sign a claim with.'),
-          el('a', { class: 'primary as-link', href: '/wallet/#create' }, 'Create a wallet'),
+          el('a', { class: 'primary as-link', href: '/wallet/' }, 'Create a wallet'),
         ),
   );
 }
@@ -99,11 +109,132 @@ async function tickTicker(): Promise<void> {
   else void refresh();
 }
 
+/** The account the page is acting for; undefined when nobody is signed in. */
+let account: AccountView | undefined;
+
+/** Show only the gate: every other mining panel is emptied, not merely hidden. */
+function showGate(...children: Array<HTMLElement | string>): void {
+  status = undefined;
+  wallet = undefined;
+  claimPanel.replaceChildren(el('h2', {}, 'Mining'), ...children);
+  for (const panel of [schedulePanel, historyPanel, walletPanel]) panel.replaceChildren();
+  for (const panel of [schedulePanel, historyPanel, walletPanel]) panel.hidden = true;
+}
+
+function asLink(href: string, label: string): HTMLElement {
+  return el('a', { class: 'primary as-link', href }, label);
+}
+
+function stepList(done: { signedIn: boolean; wallet: boolean; mfa: boolean }): HTMLElement {
+  const row = (ok: boolean, text: string) => el('li', { class: ok ? 'step-done' : 'step-todo', 'aria-label': `${text}: ${ok ? 'done' : 'still to do'}` }, text);
+  return el(
+    'ul',
+    { class: 'gate-steps' },
+    row(done.signedIn, 'Sign in to your account'),
+    row(done.wallet, 'Link a wallet to your account'),
+    row(done.mfa, 'Confirm two-factor authentication'),
+  );
+}
+
+function linkButton(address: string, label: string): HTMLElement {
+  const button = el('button', { class: 'primary', type: 'button', id: 'link-wallet' }, label);
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      await session.linkWallet(address);
+      toast('Wallet linked to your account.', 'success');
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    } finally {
+      await refresh();
+    }
+  });
+  return button;
+}
+
 async function refresh(): Promise<void> {
+  account = await session.current();
+  const address = Wallet.storedAddress();
+
+  // 1. Signed out: nothing about mining is offered, and nothing is requested
+  //    from the chain on this person's behalf.
+  if (!account) {
+    showGate(
+      el('p', {}, 'Mining is for signed-in accounts. Sign in, link a wallet and confirm two-factor authentication to claim.'),
+      stepList({ signedIn: false, wallet: false, mfa: false }),
+      asLink('/app/', 'Sign in'),
+      el('p', { class: 'fineprint' }, 'Registration is invite-only. You can create a wallet without an account, but it cannot claim until it is linked to one.'),
+    );
+    return;
+  }
+
+  const linked = account.walletAddress;
+  const done = { signedIn: true, wallet: Boolean(linked), mfa: account.miningEnabled };
+
+  // 2. Signed in, no wallet linked yet.
+  if (!linked) {
+    const wrongNetwork = address !== undefined && networkHrp !== undefined && hrpOfAddress(address) !== networkHrp;
+    showGate(
+      el('p', {}, 'Connect a wallet to this account before mining. Claims are accepted only from the wallet linked to your account.'),
+      stepList(done),
+      ...(address && !wrongNetwork
+        ? [
+            kv([['Wallet in this browser', el('span', { class: 'mono' }, address)]]),
+            linkButton(address, 'Link this wallet to my account'),
+            el('p', { class: 'fineprint' }, 'Linking publishes only the address. The key stays encrypted in this browser and is never sent anywhere.'),
+          ]
+        : address
+          ? [
+              el('p', { class: 'error' }, `The wallet in this browser is a "${hrpOfAddress(address)}1" address; this network needs "${networkHrp}1". Re-derive it on the wallet page first.`),
+              asLink('/wallet/', 'Open the wallet'),
+            ]
+          : [el('p', {}, 'There is no wallet in this browser yet.'), asLink('/wallet/', 'Create a wallet')]),
+    );
+    return;
+  }
+
+  // 3. Wallet linked, MFA not confirmed: the server keeps mining closed.
+  if (!account.miningEnabled) {
+    showGate(
+      el('p', {}, 'Mining stays closed on this account until two-factor authentication is confirmed.'),
+      stepList(done),
+      kv([['Linked wallet', el('span', { class: 'mono' }, linked)]]),
+      asLink('/app/', 'Finish two-factor setup'),
+    );
+    return;
+  }
+
+  // 4. This browser holds a different wallet than the one linked: the claim
+  //    it would sign is refused by the server, so do not offer to sign it.
+  if (!address || address !== linked) {
+    showGate(
+      el('p', {}, 'Your account mines with its linked wallet only.'),
+      stepList(done),
+      kv([
+        ['Linked wallet', el('span', { class: 'mono' }, linked)],
+        ['Wallet in this browser', address ? el('span', { class: 'mono' }, address) : 'none'],
+      ]),
+      el(
+        'p',
+        {},
+        address
+          ? 'This browser holds a different wallet. Restore the linked wallet here with its recovery phrase, or move this account to this browser\'s wallet.'
+          : 'The linked wallet is not in this browser. Restore it here with its recovery phrase to claim.',
+      ),
+      asLink('/wallet/', 'Restore the linked wallet'),
+      ...(address && (networkHrp === undefined || hrpOfAddress(address) === networkHrp)
+        ? [linkButton(address, 'Link this browser\'s wallet instead')]
+        : []),
+    );
+    return;
+  }
+
+  // 5. Ready.
+  for (const panel of [schedulePanel, historyPanel, walletPanel]) panel.hidden = false;
+  drawWalletPanel();
   void loadSchedule();
   void loadHistory();
-  const address = Wallet.storedAddress();
-  if (address && networkHrp && hrpOfAddress(address) !== networkHrp) {
+  if (networkHrp && hrpOfAddress(address) !== networkHrp) {
     // Fail here, legibly, rather than letting the node refuse the claim with
     // "not a valid address for this network" after the user has signed it.
     claimPanel.replaceChildren(
@@ -111,15 +242,6 @@ async function refresh(): Promise<void> {
       el('p', { class: 'error' }, `The wallet in this browser is a "${hrpOfAddress(address)}1" address and this network only accepts "${networkHrp}1" addresses.`),
       el('p', {}, 'Re-derive the wallet for this network first. Your recovery phrase and keys do not change — only the address prefix does.'),
       el('a', { class: 'primary as-link', href: '/wallet/' }, 'Open the wallet'),
-    );
-    return;
-  }
-  if (!address) {
-    claimPanel.replaceChildren(
-      el('h2', {}, 'Claim'),
-      el('p', {}, 'Mining rewards are paid to a wallet address. Create one first — it takes a passphrase and a click, and the key never leaves this device.'),
-      el('a', { class: 'primary as-link', href: '/wallet/#create' }, 'Create wallet'),
-      el('p', { class: 'fineprint' }, 'Registration on this interface is invite-only. Creating a wallet needs no account at all.'),
     );
     return;
   }

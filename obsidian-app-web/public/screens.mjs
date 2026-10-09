@@ -555,6 +555,43 @@ function ring(s, seconds, ready) {
   );
 }
 
+/**
+ * What still stands between this account and a claim, or null when nothing does.
+ *
+ * The platform enforces the same three rules on the server — signed in (this screen is
+ * already behind sign-in), a wallet linked to the account, MFA confirmed — and accepts a
+ * claim only from the LINKED wallet. Showing them here is a courtesy, not the gate.
+ */
+function miningBlocker(s) {
+  const card = (title, text, button) =>
+    `<div class="card" style="margin-top:16px"><div class="lb" style="margin:0">${title}</div>` +
+    `<div class="mu" style="margin-top:6px;font-size:13.5px;line-height:1.5">${text}</div>${button}</div>`;
+  const account = s.account;
+  if (!account) return null;
+  if (!account.walletAddress) {
+    return card(
+      'LINK YOUR WALLET TO MINE',
+      'Mining is open only to a wallet linked to your account. Linking publishes this address only — the key stays on this device.',
+      `<button class="btn p" style="margin-top:10px" onclick="ObsidianLinkAddress()">${busy('LINK THIS ADDRESS TO MY ACCOUNT', s, 'link')}</button>`,
+    );
+  }
+  if (account.walletAddress !== s.walletAddress) {
+    return card(
+      'THIS ISN’T YOUR LINKED WALLET',
+      `Your account mines with <span class="m" style="word-break:break-all">${esc(account.walletAddress)}</span> only. Restore that wallet on this device, or link this one instead.`,
+      `<button class="btn" style="margin-top:10px" onclick="ObsidianLinkAddress()">${busy('LINK THIS WALLET INSTEAD', s, 'link')}</button>`,
+    );
+  }
+  if (!account.miningEnabled) {
+    return card(
+      'CONFIRM TWO-FACTOR TO MINE',
+      'Mining stays closed on your account until a second factor is confirmed.',
+      `<button class="btn p" style="margin-top:10px" onclick="ObsidianGo('menu')">OPEN ACCOUNT</button>`,
+    );
+  }
+  return null;
+}
+
 /** How long a submitted claim keeps the Claim button held, in ms. */
 export const CLAIM_SETTLE_MS = 90_000;
 
@@ -562,6 +599,10 @@ function claimPanel(s, m, seconds, ready) {
   if (!s.walletAddress) {
     return `<div class="card" style="margin-top:16px"><div class="row mu">This device holds no wallet yet. Set one up on the Wallet screen — claiming needs a signature, and only a key on this device can make one.</div></div>`;
   }
+  // The platform refuses a claim unless the account has this wallet linked and MFA confirmed,
+  // so say what is missing here instead of letting the user sign something that is refused.
+  const blocker = miningBlocker(s);
+  if (blocker) return blocker;
   if (!ready) {
     return (
       `<button class="btn p" disabled>● NEXT CLAIM IN ${esc(clock(seconds))}</button>` +

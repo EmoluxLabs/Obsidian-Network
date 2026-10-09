@@ -281,7 +281,7 @@ function defaultInterfaceAnswer(url: string): { status: number; body: unknown } 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 
 describe('landing page', () => {
-  it('renders the product story with exactly three calls to action', async () => {
+  it('renders the product story with three product doors and the app download', async () => {
     respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
     await import('../web/src/pages/landing.js');
     await settle();
@@ -292,8 +292,10 @@ describe('landing page', () => {
 
     // The scope rule the product owner set: a description page, not a button hub.
     const ctas = [...document.querySelectorAll('a.cta')].map((node) => node.textContent?.trim());
-    expect(ctas).toEqual(['Start Mining', 'Create Wallet', 'Explorer']);
-    expect(document.querySelectorAll('.cta-row a')).toHaveLength(3);
+    // Three product doors, then the Android download on its own line below them.
+    expect(ctas).toEqual(['Start Mining', 'Create Wallet', 'Explorer', 'Download Obsidian App']);
+    expect(document.querySelectorAll('.cta-row:not(.cta-row-app) a')).toHaveLength(3);
+    expect(document.querySelectorAll('.cta-row-app a')).toHaveLength(1);
   });
 
   it('reads the chain and shows live numbers instead of placeholders', async () => {
@@ -325,7 +327,132 @@ describe('landing page', () => {
     const stats = document.querySelector('#stats')?.textContent ?? '';
     expect(stats.toLowerCase()).toContain('could not read the chain');
     // The page still renders: an outage of a reader is not an outage of the project.
-    expect(document.querySelectorAll('a.cta')).toHaveLength(3);
+    expect(document.querySelectorAll('a.cta')).toHaveLength(4);
+  });
+});
+
+const MINER = 'dobs1dgd9d4n89k5hrfvu7ged7nfjz86dmsd3jnwz2e';
+const OTHER = 'dobs1w9jdkqpg5ls3sgds4nfgqwu7t9zwxqcfngsm38';
+
+function accountView(overrides: Record<string, unknown> = {}) {
+  return {
+    accountId: 'acc-1',
+    email: 'miner@gmail.com',
+    invitesIssued: 0,
+    mfaEnabled: true,
+    miningEnabled: true,
+    recoveryCodesRemaining: 10,
+    walletAddress: MINER,
+    ...overrides,
+  };
+}
+
+/** Put a wallet in this browser the way the wallet page does (address is all the mining page reads). */
+function storeWallet(address: string): void {
+  window.localStorage.setItem('obsidian.vault.v1', JSON.stringify({ address }));
+}
+
+/** The chain answers, and `/api/auth/me` answers with `account` (or 401 when undefined). */
+function serve(account: Record<string, unknown> | undefined): void {
+  respond = (url) => {
+    if (url.includes('/api/auth/me')) {
+      return account ? { status: 200, body: { account } } : { status: 401, body: { error: 'sign in required', code: 'ERR_UNAUTHORIZED' } };
+    }
+    return url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} };
+  };
+}
+
+/** A signed-in account with a linked wallet and MFA, and that wallet in this browser. */
+function readyMiner(): void {
+  serve(accountView());
+  storeWallet(MINER);
+}
+
+describe('mining is gated on the account, not on the browser', () => {
+  const panelText = () => document.querySelector('#claim')?.textContent ?? '';
+  const asked = (fragment: string) => calls.filter((call) => decodeURIComponent(call.url).includes(fragment));
+
+  it('offers a signed-out visitor nothing but the way in — even with a wallet in the browser', async () => {
+    serve(undefined);
+    storeWallet(MINER);
+    await import('../web/src/pages/mine.js');
+    await settle();
+
+    expect(document.querySelector('#claim-button'), 'no claim button').toBeNull();
+    expect(panelText()).toContain('Sign in');
+    expect(document.querySelector('#claim a[href="/app/"]')).toBeTruthy();
+    // Nothing else of the mining interface is on the page, and nothing was
+    // requested from the chain on this visitor's behalf.
+    for (const id of ['schedule', 'history', 'wallet']) {
+      const panel = document.getElementById(id)!;
+      expect(panel.hidden, `${id} hidden`).toBe(true);
+      expect(panel.textContent, `${id} empty`).toBe('');
+    }
+    expect(document.body.textContent).not.toContain(MINER);
+    expect(asked('/mining/status')).toHaveLength(0);
+    expect(asked('/mining/claims')).toHaveLength(0);
+  });
+
+  it('asks a signed-in account with no linked wallet to link one, and offers this browser\'s wallet', async () => {
+    serve(accountView({ walletAddress: undefined }));
+    storeWallet(MINER);
+    await import('../web/src/pages/mine.js');
+    await settle();
+
+    expect(document.querySelector('#claim-button')).toBeNull();
+    expect(panelText()).toContain('Connect a wallet');
+    const link = document.querySelector<HTMLButtonElement>('#link-wallet');
+    expect(link?.textContent).toContain('Link this wallet');
+    expect(asked('/mining/status')).toHaveLength(0);
+
+    // Clicking publishes exactly that address — the server decides whether it is acceptable.
+    link!.click();
+    await settle();
+    const post = calls.find((call) => call.url.includes('/api/wallet/link'));
+    expect(post?.init?.method).toBe('POST');
+    expect(JSON.parse(String(post?.init?.body))).toEqual({ address: MINER });
+  });
+
+  it('sends a signed-in account with no wallet anywhere to create one', async () => {
+    serve(accountView({ walletAddress: undefined }));
+    await import('../web/src/pages/mine.js');
+    await settle();
+    expect(document.querySelector('#claim-button')).toBeNull();
+    expect(document.querySelector('#claim a[href="/wallet/"]')).toBeTruthy();
+    expect(document.querySelector('#link-wallet')).toBeNull();
+  });
+
+  it('keeps a linked account closed until MFA is confirmed', async () => {
+    serve(accountView({ mfaEnabled: false, miningEnabled: false }));
+    storeWallet(MINER);
+    await import('../web/src/pages/mine.js');
+    await settle();
+    expect(document.querySelector('#claim-button')).toBeNull();
+    expect(panelText()).toContain('two-factor');
+    expect(document.querySelector('#claim a[href="/app/"]')).toBeTruthy();
+    expect(asked('/mining/status')).toHaveLength(0);
+  });
+
+  it('will not sign a claim with a wallet other than the linked one', async () => {
+    serve(accountView({ walletAddress: MINER }));
+    storeWallet(OTHER);
+    await import('../web/src/pages/mine.js');
+    await settle();
+    expect(document.querySelector('#claim-button')).toBeNull();
+    expect(panelText()).toContain('linked wallet only');
+    expect(panelText()).toContain(MINER);
+    expect(asked('/mining/status')).toHaveLength(0);
+  });
+
+  it('shows the claim panel only when signed in, linked, MFA-confirmed and holding the linked wallet', async () => {
+    readyMiner();
+    await import('../web/src/pages/mine.js');
+    await settle();
+    const button = document.querySelector<HTMLButtonElement>('#claim-button');
+    expect(button).toBeTruthy();
+    expect(button!.disabled).toBe(false);
+    expect(asked('/mining/status')[0]?.url).toContain(MINER);
+    expect(document.getElementById('schedule')!.hidden).toBe(false);
   });
 });
 
@@ -804,7 +931,7 @@ describe('Proof of Time in the interface', () => {
   });
 
   it('tells a miner which clock decides, on the mining page', async () => {
-    respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
+    readyMiner();
     await import('../web/src/pages/mine.js');
     await settle();
 

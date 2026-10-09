@@ -108,6 +108,9 @@ afterAll(async () => {
  * oracle) is answered by the node itself over TCP, and the page code under test
  * is the shipped browser module.
  */
+/** Set by a test that needs the mining page open: the account the stub server says is signed in. */
+let signedInAs: Record<string, unknown> | undefined;
+
 function installLiveFetch(): void {
   vi.stubGlobal('fetch', async (url: string | URL | Request, init?: RequestInit) => {
     const target = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
@@ -120,6 +123,9 @@ function installLiveFetch(): void {
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
+    }
+    if (target.includes('/api/auth/me') && signedInAs) {
+      return new Response(JSON.stringify({ account: signedInAs }), { status: 200, headers: { 'content-type': 'application/json' } });
     }
     if (target.includes('/api/auth/')) {
       return new Response(JSON.stringify({ error: 'sign in required', code: 'ERR_UNAUTHORIZED' }), {
@@ -142,6 +148,7 @@ beforeEach(() => {
   document.body.innerHTML = '<div id="app"></div>';
   window.localStorage.clear();
   window.location.hash = '';
+  signedInAs = undefined;
   installLiveFetch();
   // Without this the page module stays cached from the previous test, keeps its
   // module-scope DOM nodes (now detached) and renders into nothing.
@@ -237,6 +244,10 @@ describe('browser pages against a live node', () => {
   });
 
   it('mine shows the schedule the node computes, with a live countdown', async () => {
+    // The mining interface opens only for a signed-in account that has linked its wallet and confirmed MFA.
+    const address = 'dobs13s4pgc4qczhgdjdmxhm8g9wf7e2ya66rrs0ff0';
+    signedInAs = { accountId: 'a', email: 'm@gmail.com', invitesIssued: 0, mfaEnabled: true, miningEnabled: true, recoveryCodesRemaining: 10, walletAddress: address };
+    window.localStorage.setItem('obsidian.vault.v1', JSON.stringify({ address }));
     await import('../web/src/pages/mine.js');
     await settle();
 

@@ -294,10 +294,10 @@ function drawSignedIn(account: AccountView, config?: AuthConfig): void {
     ['Display name', account.displayName ?? '—'],
     ['Account id', el('span', { class: 'mono' }, account.accountId)],
     ['MFA', account.mfaEnabled ? badge('enabled', 'ok') : badge('not set up', 'warn')],
-    ['Mining', account.miningEnabled ? badge('open', 'ok') : badge('closed until MFA', 'warn')],
+    ['Mining', account.miningEnabled && account.walletAddress ? badge('open', 'ok') : badge(account.walletAddress ? 'closed until MFA' : account.miningEnabled ? 'closed until a wallet is linked' : 'closed until a wallet is linked and MFA is confirmed', 'warn')],
     ['Recovery codes left', `${account.recoveryCodesRemaining}`],
     ['Invites issued', `${account.invitesIssued} of ${config?.maxInvitesPerAccount ?? 5}`],
-    ['Linked wallet', account.walletAddress ? el('span', { class: 'mono' }, account.walletAddress) : 'none (optional)'],
+    ['Linked wallet', account.walletAddress ? el('span', { class: 'mono' }, account.walletAddress) : 'none — required before you can mine'],
   ];
   const actions = [out];
   if (!account.mfaEnabled) {
@@ -353,7 +353,7 @@ function drawWalletLink(account: AccountView): void {
   const address = Wallet.storedAddress();
   walletPanel.replaceChildren(
     el('h2', {}, 'Linked wallet'),
-    el('p', {}, 'Linking is optional and cosmetic: it lets this interface show which wallet you mine with. It grants no spending power, because the server never holds a key.'),
+    el('p', {}, 'Mining needs a linked wallet: this interface accepts a claim only from the wallet linked to your account. Linking publishes the address only; it grants no spending power, because the server never holds a key.'),
     address
       ? el('div', { class: 'row' },
           el('span', { class: 'mono' }, address),

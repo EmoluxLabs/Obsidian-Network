@@ -414,6 +414,12 @@ try {
   // ── mining: the claim is a real claim ──────────────────────────────────────
   await page.evaluate(() => window.ObsidianGo('mine'));
   await sleep(2500);
+  // The platform accepts a claim only from the wallet linked to the account, so an unlinked wallet is
+  // told to link first — and offered no passphrase field or sign button until it has.
+  ok(/LINK YOUR WALLET TO MINE/.test(await text()) && !/SIGN & SUBMIT CLAIM/.test(await text()), 'mine: before the wallet is linked, Mine asks for the link and offers no claim');
+  await click('LINK THIS ADDRESS');
+  await sleep(2500);
+  ok(/Address linked/.test(await text()) && !/LINK YOUR WALLET TO MINE/.test(await text()), 'mine: linking from the Mine screen opens it');
   ok(/READY TO CLAIM/.test(await text()), 'mine: a fresh wallet is READY TO CLAIM');
   await type('pp', 'not the right passphrase');
   await click('SIGN & SUBMIT');
@@ -453,9 +459,8 @@ try {
   // ── menu ───────────────────────────────────────────────────────────────────
   await page.evaluate(() => window.ObsidianGo('menu'));
   await sleep(2000);
-  await click('LINK THIS ADDRESS');
-  await sleep(2500);
-  ok(/Address linked/.test(await text()), 'menu: linking the address says so');
+  ok(!/LINK THIS ADDRESS TO MY ACCOUNT/.test(await text()), 'menu: the address is already linked, so it is not offered again');
+  ok(/LINKED ADDRESS/.test(await text()) && /MINING \| ENABLED/.test(await text()), 'menu: the account shows its linked address and that mining is enabled');
   await click('ISSUE AN INVITE');
   await sleep(1800);
   ok(/OPEN/.test(await text()) && /ISSUED \| 1 of 5/.test(await text()), 'menu: an invitation can be issued from the app');

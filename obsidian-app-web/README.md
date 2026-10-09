@@ -215,9 +215,11 @@ with `npm run start:testnet` and walked in the browser.
   refusals are covered by tests, but no mainnet node was run.
 - The browser vault is per origin; sharing one vault with the platform needs both served
   from one origin (a reverse proxy), which this repository does not configure.
-- MFA for mining is advisory everywhere. The platform's contract says mining requires
-  MFA (`mfaRequiredForMining`), and both products tell the user so and show
-  `MINING: ENABLED` once MFA is on, but a claim is authorised by the wallet's signature,
-  not by a session: neither this app nor the platform's `/tx/submit` proxy checks for
-  MFA before submitting. Enforcing it would be a change to the platform, not to this app.
+- Mining is now gated on the platform, and this app follows it: the platform relays a claim only
+  for a signed-in account that has a wallet linked and MFA confirmed, signed by that linked
+  wallet. The Mine screen says which step is missing and offers the link from there. One thing
+  is deliberately left open: an account may change its linked wallet (a lost device must not
+  lock an account out), and linking proves nothing about key ownership, so one account can
+  rotate through wallets. Closing that needs a policy (one wallet per account, or a signed
+  challenge plus a cooldown) and is a decision for the platform's owner.
 - No service worker; claim alerts work only while the page is open.
