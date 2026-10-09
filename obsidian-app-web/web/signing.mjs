@@ -30,7 +30,12 @@ export function walletFromPhrase(phrase) {
   if (!isValidRecoveryPhrase(phrase)) {
     throw new Error('That recovery phrase is not valid.');
   }
-  const wallet = deriveWallet(phrase.trim());
+  // Indices are passed explicitly rather than left to the default, matching how the
+  // web platform calls it. Verified that the defaults currently produce the same
+  // key - but a derivation that silently depends on a default is one upstream
+  // change away from producing a different key for the same words, which is the
+  // exact failure mode the platform's own wallet.ts documents.
+  const wallet = deriveWallet(phrase.trim(), 0, 0);
   return {
     address: addressFromPublicKey(wallet.publicKey),
     publicKey: wallet.publicKey,
