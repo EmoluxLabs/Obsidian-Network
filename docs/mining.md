@@ -46,7 +46,20 @@ Rejections you may see, and what they mean:
 | `ERR_MINING_CYCLE_LIMIT` | this wallet already claimed 6 times in the current cycle |
 | `ERR_MINING_CLAIMED` | this claim id (or sequence) was already claimed |
 | `ERR_MINING_UNKNOWN_WALLET` | the claim is not bound to a wallet with balance history — the wallet must exist first |
+| `ERR_MINING_GATE_REQUIRED` | the claim carries no gate certificate, or the chain commits no issuer key (so no claim can be accepted) |
+| `ERR_MINING_GATE_INVALID` | the certificate is expired, dated after the block, signed by a key the chain did not commit, or issued for another wallet, claim id or network |
 | `ERR_BAD_NONCE` / `REPLAY` | the same signed claim is being replayed, e.g. from a second tab |
+
+### The gate certificate (protocol 1.7.0)
+
+A claim is valid only with a certificate from the **mining gate**: a signature, by an issuer key committed in the
+genesis document, over `GATE|networkId|chainId|address|claimId|issuedAt`. The platform issues it
+(`POST /api/mining/certificate {address, claimId}`) to a signed-in, MFA-confirmed account whose one linked wallet is
+`address`, and the wallet puts it in the claim before signing. It is valid from 60 s before to 15 minutes after
+`issuedAt` (measured against the block that includes the claim), for that one claim id only. `GET /mining/status`
+reports `gate` (`open`, issuer keys, window). The chain still decides eligibility and timing from the wallet's own
+history; the gate decides only whether the claim came through the account system. Posting a claim straight to a node
+is refused with `ERR_MINING_GATE_REQUIRED`.
 
 ## 3. Replay and concurrency
 

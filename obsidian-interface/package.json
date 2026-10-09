@@ -1,6 +1,6 @@
 {
   "name": "@obsidian/interface",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "description": "Obsidian Interface — self-hostable, light, mobile-first web interface for the Obsidian Network (wallet, miner, explorer, ONS, node runners, audit).",
   "license": "Apache-2.0",
   "type": "module",

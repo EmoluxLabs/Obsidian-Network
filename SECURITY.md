@@ -78,17 +78,26 @@ stolen funds:
 * The node identity keystore signs metadata, heartbeats and attestations. It is
   not a wallet and should never hold funds.
 
-## Known design limit: the sign-up gate is the platform's, not the chain's
+## The mining sign-up gate is a consensus rule (protocol 1.7.0)
 
-Account sign-up, invitations, MFA and the "one wallet per account" rule are enforced by the
-Obsidian platform (`obsidian-interface`), and by the web app, extension and desktop app that talk
-to it. They are **not** consensus rules. The chain accepts a `MINING_CLAIM` from any key, so a
-person who submits a claim straight to a node's `/tx/submit` is not stopped by the account system
-(consensus still limits each key to one claim per window, and the platform refuses to link or
-claim with a wallet that is already tied to another account). Closing this would need a consensus
-change, which this project does not make outside a new-genesis release. Operators who want the
-account system to be the only door should not publish `/tx/submit` on a public node (see
-`rpcAllowSubmit` above) and should let only the platform reach it.
+Account sign-up, invitations, MFA and "one wallet per account" are enforced by the platform
+(`obsidian-interface`), and since 1.7.0 the chain enforces that **only the platform can open the door**: a
+`MINING_CLAIM` is valid only with a short-lived certificate signed by an issuer key committed in genesis. A claim
+posted straight to a node's `/tx/submit` is refused in the mempool, in block production, in block validation and in
+sync replay (`ERR_MINING_GATE_REQUIRED` / `ERR_MINING_GATE_INVALID`). The certificate names one network, one wallet and
+one claim id, expires in 15 minutes and is useless to anyone else. Timing and claim limits stay a pure function of the
+wallet's own history.
+
+What you must still do and know:
+
+* **The issuer key is the trust root.** Generate it yourself (`scripts/generate-mining-gate-key.mjs`), keep the private
+  half only in the platform's encrypted keystore, and give every node of a network the same
+  `OBSIDIAN_MINING_GATE_PUBLIC_KEYS`. No mainnet or testnet key is committed in this repository. A mainnet node without
+  keys accepts no claim, which is deliberate.
+* Whoever holds the key can certify any wallet, so one-account-one-wallet is exactly as strong as the key's custody.
+  The key list is part of the genesis id, so rotating it needs a new genesis.
+* Keep the platform's clock NTP-synced (certificates are valid from 60 s before to 15 min after their time).
+* The chain does not learn who an account is, and the platform alone decides whom to certify.
 
 See `docs/security-model.md` for the full trust boundaries and the limitations
 this project states openly rather than hides.

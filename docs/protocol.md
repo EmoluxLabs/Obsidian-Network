@@ -8,7 +8,7 @@ registry — as first-class chain state rather than as rows in a company databas
 * Chain id / network id: `7777` / `obsidian-mainnet-1` (plus testnet `7778`,
   staging `7779`, devnet `7780`)
 * Address prefix: `obs` (testnet `tobs`, staging `sobs`, devnet `dobs`)
-* Protocol version: `1.6.1`
+* Protocol version: `1.7.0`
 * Consensus: **Proof of Time (PoT)** — see [proof-of-time.md](proof-of-time.md)
 
 ## 1. Blocks

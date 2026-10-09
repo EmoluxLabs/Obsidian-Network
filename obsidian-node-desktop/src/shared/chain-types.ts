@@ -1,7 +1,7 @@
 /**
  * Shapes of the Obsidian Core RPC responses that the app reads.
  *
- * Every field here was verified against obsidian-core/src/rpc/server.ts (v1.6.1) and a
+ * Every field here was verified against obsidian-core/src/rpc/server.ts (v1.7.0) and a
  * running devnet node. Only fields the app uses are listed; the validators in
  * src/core/rpc-client.ts return exactly these fields and reject a response in which one
  * is missing or has the wrong type.

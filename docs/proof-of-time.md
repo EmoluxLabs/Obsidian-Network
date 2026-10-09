@@ -180,7 +180,7 @@ bounded recovery work. Votes and certificates do not trust wall-clock time.
 This gives checkpoint safety under the stated greater-than-two-thirds
 honest-membership assumption; it is not a blanket BFT, immutability, zero-reorg
 or production-readiness claim. Signed proposer and vote equivocation evidence is
-validated, bounded, persisted and gossiped, with no slashing in 1.6.1.
+validated, bounded, persisted and gossiped, with no slashing in 1.7.0.
 
 ---
 

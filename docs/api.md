@@ -38,7 +38,7 @@ Error shape is stable:
 | `GET /mining/schedule` | active miners, reward per day and per claim, floor state |
 | `GET /mining/status?address=` | eligibility, seconds remaining, next claim id and sequence, reward |
 | `GET /mining/claims?address=&limit=` | claims with sequence, reward, block, timestamp |
-| `GET /names?prefix=` | registered names |
+| `GET /names?prefix=&limit=&offset=` | registered names, paged: `limit` 1–500 (default 200), `offset`; reply has `matched`, `offset`, `limit`, `hasMore`, and `count` = registry size. JSON-RPC `getnames` takes the same fields |
 | `GET /names/<name>` | one ONS record |
 | `GET /wallet/<address>/next-nonce` | the next nonce to sign with for that address, and the height it was read at. It reads no balance; use `POST /wallet/balance` for that |
 | `GET /audit/decentralization` | ten yes/no questions (can one server, one interface or one administrator do X?) each answered with its evidence, plus the list of external dependencies and what each can and cannot affect |

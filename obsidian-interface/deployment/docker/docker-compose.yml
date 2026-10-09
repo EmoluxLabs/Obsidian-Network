@@ -15,7 +15,7 @@ services:
       # Repository root: the Dockerfile builds obsidian-core first.
       context: ../../..
       dockerfile: obsidian-interface/deployment/docker/Dockerfile
-    image: obsidian/interface:1.6.1
+    image: obsidian/interface:1.7.0
     restart: unless-stopped
     environment:
       # Which network this interface serves. Required, no default: it decides
@@ -33,6 +33,12 @@ services:
       # contains `$`, which the shell would otherwise expand:
       #   OBSIDIAN_GENESIS_INVITE_HASH='scrypt$...' docker compose up -d
       OBSIDIAN_GENESIS_INVITE_HASH: ${OBSIDIAN_GENESIS_INVITE_HASH:-}
+      # Mining gate (protocol 1.7.0). The platform signs a short-lived certificate for every claim and the node
+      # refuses a claim without one. Generate the pair with `node scripts/generate-mining-gate-key.mjs`, put the
+      # encrypted keystore in the interface-data volume and pass the passphrase (12+ characters) here. Without
+      # them nobody can mine. The matching PUBLIC key must be on every node (OBSIDIAN_MINING_GATE_PUBLIC_KEYS).
+      OBSIDIAN_GATE_KEYSTORE: ${OBSIDIAN_GATE_KEYSTORE:-}
+      OBSIDIAN_GATE_KEYSTORE_PASSPHRASE: ${OBSIDIAN_GATE_KEYSTORE_PASSPHRASE:-}
       # Where the interface keeps accounts, sessions and the redeemed invite.
       # It is a docker volume here, so the pass-through is explicit.
       OBSIDIAN_INTERFACE_DATA_DIR: ${OBSIDIAN_INTERFACE_DATA_DIR:-/data}

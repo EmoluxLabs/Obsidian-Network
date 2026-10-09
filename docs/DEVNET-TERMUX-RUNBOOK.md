@@ -47,14 +47,14 @@ because a browser resumes an interrupted download and `git` in Termux cannot.
 rm -rf ~/obsidian/src; mkdir -p ~/obsidian; cd ~/obsidian
 G="git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60"
 for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
-cd src && for f in SHA256SUMS obsidian-node-operator-1.6.1.tar.gz obsidian-interface-selfhost-1.6.1.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
+cd src && for f in SHA256SUMS obsidian-node-operator-1.7.0.tar.gz obsidian-interface-selfhost-1.7.0.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
 ls -l releases
 cd ~/obsidian/src/releases
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
-You must see three files listed, then `OK` for `obsidian-interface-selfhost-1.6.1.tar.gz` and
-`obsidian-node-operator-1.6.1.tar.gz` and nothing else. If any line says `FAILED`, or the answer is
+You must see three files listed, then `OK` for `obsidian-interface-selfhost-1.7.0.tar.gz` and
+`obsidian-node-operator-1.7.0.tar.gz` and nothing else. If any line says `FAILED`, or the answer is
 `no file was verified`, stop, delete `~/obsidian` and start again; do not run the code. (An archive
 you have not checked is a download, not a release.) Do not use GitHub's "Download ZIP": it leaves out
 `releases/`. To go further and have the archive re-run its own test suite, which takes a few minutes
@@ -63,7 +63,7 @@ on a phone, clone the whole project into its own folder (about 11 MB) and run th
 ```bash
 rm -rf ~/obsidian/full; git clone --depth 1 --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
 cd ~/obsidian/full
-./scripts/verify-release.sh releases/obsidian-node-operator-1.6.1.tar.gz
+./scripts/verify-release.sh releases/obsidian-node-operator-1.7.0.tar.gz
 ```
 
 ## 3. Unpack and install (internet — the last step that needs it)
@@ -74,8 +74,8 @@ script, the self-host archive is the built interface and the nine sites.
 ```bash
 mkdir -p ~/obsidian/run
 cd ~/obsidian/src/releases
-tar xzf obsidian-node-operator-1.6.1.tar.gz      -C ~/obsidian/run
-tar xzf obsidian-interface-selfhost-1.6.1.tar.gz -C ~/obsidian/run
+tar xzf obsidian-node-operator-1.7.0.tar.gz      -C ~/obsidian/run
+tar xzf obsidian-interface-selfhost-1.7.0.tar.gz -C ~/obsidian/run
 
 cd ~/obsidian/run/obsidian-core
 npm ci --omit=dev --fetch-retries=10
@@ -127,7 +127,7 @@ bash obsidian-network.sh devnet status
 network   : devnet   (data: /data/data/com.termux/files/home/obsidian-data/devnet)
 node : running, pid 4731, port 38630
 interface : running, pid 4759, port 38788
-chain     : obsidian-devnet-1 (chain id 7780, protocol 1.6.1)
+chain     : obsidian-devnet-1 (chain id 7780, protocol 1.7.0)
 height    : 40    peers: 0    syncing: false
 supply    : 0 seals
 interface : http://127.0.0.1:38788  accounts exist: false  genesis invitation: {"configured":true,"redeemed":false}
@@ -147,9 +147,9 @@ Fields that matter:
 |---|---|---|
 | `network` / `networkId` | `devnet` / `obsidian-devnet-1` | you are on devnet, not another chain |
 | `chainId` | `7780` | transactions commit to this; another network's are refused |
-| `genesisId` | `1e7ca102f6720a7682e9a396958f2a17330dc001` | the identity of this chain |
-| `paramsHash` | `2dd76ca2b2305d725f3a975bfca04eb5` | the consensus rules; a different value means different rules |
-| `coreVersion` / `protocolVersion` | `1.6.1` / `1.6.1` | |
+| `genesisId` | `8bce1839750dad5a63ffd66ab8584aa02c480910` | the identity of this chain |
+| `paramsHash` | `bffeacb35532ba3df70cda8c27ed6c96` | the consensus rules; a different value means different rules |
+| `coreVersion` / `protocolVersion` | `1.7.0` / `1.7.0` | |
 | `supplyOk` | `true` | the 21,000,000 OBS cap invariant holds |
 | `height` | climbing | the chain is alive |
 

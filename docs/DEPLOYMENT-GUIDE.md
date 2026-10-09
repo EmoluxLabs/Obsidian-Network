@@ -1,6 +1,6 @@
 # Obsidian Network — the complete beginner's deployment guide
 
-**Protocol 1.6.1 · written for someone with an Android phone and no prior coding experience.**
+**Protocol 1.7.0 · written for someone with an Android phone and no prior coding experience.**
 
 This guide is built from the actual repository. Every command in it was run
 against this code. Where the repository does not support something, it says
@@ -80,8 +80,8 @@ wrong one is how people ship old code.
 |---|---|---|
 | **The delivery branch** (`arena/414b663a-obsidian-network`) | The branch this release was delivered on: the full source tree, the built release archives in `releases/`, and these docs. Clone from it to install (the launch guide's commands do) and start new work from it. | Local devnet, private testnet and rehearsals; **mainnet from the archives**. |
 | **Default branch** | Whichever branch GitHub shows first (Settings → Branches); it is what a plain `git clone` checks out. GitHub refuses to delete the default branch, so if you want only the delivery branch to remain, **make it the default first**, then delete the others. | — |
-| **Release branch** | A branch frozen for a release, e.g. `release/1.6.1`, that only receives fixes. Optional: this repository does not use one. | Optional; see §B. |
-| **Git tag** | A permanent, immovable label on one exact commit, e.g. `v1.6.1`. Unlike a branch it never moves. The remote carries exactly one release tag, `v1.6.1`, on the commit the shipped archives were built from (§B6). | Tag first, then build the archive from the tag. |
+| **Release branch** | A branch frozen for a release, e.g. `release/1.7.0`, that only receives fixes. Optional: this repository does not use one. | Optional; see §B. |
+| **Git tag** | A permanent, immovable label on one exact commit, e.g. `v1.7.0`. Unlike a branch it never moves. The release tag for this version is created by the operator from the commit the shipped archives were built from (§B6); until you create `v1.7.0` the remote does not carry it. | Tag first, then build the archive from the tag. |
 | **Release archive** | The `.zip`/`.tar.gz` files in `releases/`, built by `scripts/package-releases.sh`, each listed in `SHA256SUMS`. This is what `docs/mainnet-launch.md` says to launch from. | **Mainnet. Always.** |
 | **Deployed node** | A running `obsidian-core` process with a data directory. It is not code, it is a live thing holding chain state. | — |
 | **Frontend deployment** | The static site folders (`landing/`, `mine/`, …) served by the interface, a static host, or Cloudflare Pages. | — |
@@ -156,7 +156,7 @@ out. A testnet node handed mainnet's genesis rejects it at the handshake.
 | You want | Use | Why |
 |---|---|---|
 | Run a different network | `--network <name>` | Already built in, isolated by consensus |
-| A frozen, named version | **A tag** (`v1.6.1`) | Immutable; cannot drift |
+| A frozen, named version | **A tag** (`v1.7.0`) | Immutable; cannot drift |
 | Something to deploy | **A release archive** from `releases/` | Checksummed, matches a commit |
 | Ongoing work | This work branch | One place where change happens |
 | A long-lived fix line | a `release/<line>` branch, only if needed | Optional; see §B |
@@ -188,7 +188,7 @@ cd ~/Obsidian-Network
 git checkout arena/414b663a-obsidian-network
 git pull origin arena/414b663a-obsidian-network
 
-for b in main develop staging testnet devnet release/1.6.1; do
+for b in main develop staging testnet devnet release/1.7.0; do
   git branch -f "$b" arena/414b663a-obsidian-network
   git push -u origin "$b"
 done
@@ -322,12 +322,12 @@ node scripts/check-invariants.mjs
 Expect one line of this form (N is however many invariants this release checks):
 
 ```
-protocol 1.6.1: all N invariants hold.
+protocol 1.7.0: all N invariants hold.
 ```
 
 Any other output means a consensus constant has changed. Stop.
 
-### A9. Verify protocol 1.6.1 and PARAMS_HASH
+### A9. Verify protocol 1.7.0 and PARAMS_HASH
 
 Start a throwaway devnet node, ask it what it is, then stop it.
 
@@ -346,8 +346,8 @@ curl -s localhost:38630/status
 
 `curl` fetches a web address and prints the result. Expect to see:
 
-- `"protocolVersion":"1.6.1"`
-- `"paramsHash":"2dd76ca2b2305d725f3a975bfca04eb5"`
+- `"protocolVersion":"1.7.0"`
+- `"paramsHash":"bffeacb35532ba3df70cda8c27ed6c96"`
 
 Stop the node with **Ctrl+C** in the first terminal.
 
@@ -364,8 +364,8 @@ node dist/index.js genesis init --network mainnet
 This prints a JSON document. Deterministically, every time, it contains:
 
 ```json
-"genesisId": "56ec455d8afac5ef4f7d636ac03ef9e39bd5788f",
-"genesisHash": "74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3"
+"genesisId": "2dc198e4e57cb482df4e0f89e3a28daaf427ccff",
+"genesisHash": "8ffcf7c18a5ba07b6a67fee4a373a62c62e9da612e7b66dcd9437597695b0475"
 ```
 
 To see just those two lines:
@@ -391,7 +391,7 @@ Expect 11 lines, each ending `OK`.
 Then verify an archive properly:
 
 ```bash
-../scripts/verify-release.sh obsidian-core-1.6.1.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.7.0.tar.gz --with-tests
 ```
 
 This checks the digest, extracts to a temporary folder (never over your work),
@@ -534,9 +534,9 @@ you would have built before tagging. The point of tagging first is that the
 archives can then name an immutable commit instead of "whatever was checked out
 that afternoon".
 
-**Tag the commit you actually deploy.** `v1.6.1` exists on the remote and points
-at the commit the shipped archives were built from; the next release tags its own
-commit the same way.
+**Tag the commit you actually deploy.** `v1.7.0` is **not** created by this repository's commits: the remote carries only an earlier
+release's tag. Create `v1.7.0` yourself on the commit the shipped archives were built from
+(see `MANIFEST.json`), and tag every later release the same way.
 
 ```bash
 cd ~/Obsidian-Network
@@ -553,22 +553,22 @@ Confirm the version the tag is claiming. The script reads it from
 `obsidian-core/package.json` and aborts if the interface disagrees:
 
 ```bash
-node -p "require('./obsidian-core/package.json').version"     # -> 1.6.1
+node -p "require('./obsidian-core/package.json').version"     # -> 1.7.0
 ```
 
 Create and push the tag:
 
 ```bash
-git tag -a v1.6.1 -m "Obsidian Network 1.6.1 - protocol 1.6.1, committed finality bootstrap, ONS 90/10"
-git push origin v1.6.1
+git tag -a v1.7.0 -m "Obsidian Network 1.7.0 - protocol 1.7.0, committed finality bootstrap, ONS 90/10"
+git push origin v1.7.0
 ```
 
 `-a` makes an *annotated* tag, which records who made it and when. Verify it
 landed on the commit you meant:
 
 ```bash
-git show --stat v1.6.1 | head -5
-git rev-parse v1.6.1^{commit}
+git show --stat v1.7.0 | head -5
+git rev-parse v1.7.0^{commit}
 git rev-parse arena/414b663a-obsidian-network
 ```
 
@@ -577,7 +577,7 @@ The last two commands must print the **same** commit id.
 ### B6b. Rebuild the archives from the tag
 
 Because the tag points at the commit you are already standing on, you do **not**
-need to check the tag out — and you should not, because `git checkout v1.6.1`
+need to check the tag out — and you should not, because `git checkout v1.7.0`
 puts you in "detached HEAD", a state that confuses beginners and makes any
 accidental commit hard to find. Just build where you are:
 
@@ -597,7 +597,7 @@ cd ~/Obsidian-Network
    the counts back from the runs themselves.
 6. Produces the archives with `git archive`, so what you download is exactly
    what was committed.
-7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-1.6.1.md`.
+7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-1.7.0.md`.
 
 Expect it to take several minutes; the cluster test alone starts three real
 nodes. It is the slow step on purpose.
@@ -625,12 +625,12 @@ Confirm the manifest names the tagged commit:
 grep -i commit MANIFEST.json
 ```
 
-It must show the same id as `git rev-parse v1.6.1^{commit}`.
+It must show the same id as `git rev-parse v1.7.0^{commit}`.
 
 Then verify an archive the way a stranger would, including running its tests:
 
 ```bash
-../scripts/verify-release.sh obsidian-core-1.6.1.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.7.0.tar.gz --with-tests
 ```
 
 This exits non-zero on a digest mismatch or an unlisted archive, so it is safe
@@ -639,7 +639,7 @@ to use as a gate in a script.
 Finally, read the generated notes:
 
 ```bash
-head -20 RELEASE-NOTES-1.6.1.md
+head -20 RELEASE-NOTES-1.7.0.md
 ```
 
 The test counts in there are **counted live during packaging**, not typed by
@@ -653,7 +653,7 @@ The archives changed, so the repository is now dirty again:
 cd ~/Obsidian-Network
 git status
 git add releases
-git commit -m "Rebuild 1.6.1 release archives from tag v1.6.1"
+git commit -m "Rebuild 1.7.0 release archives from tag v1.7.0"
 git push origin arena/414b663a-obsidian-network
 ```
 
@@ -667,8 +667,8 @@ git push origin arena/414b663a-obsidian-network
 Tags are meant to be permanent, but nothing is published yet, so:
 
 ```bash
-git tag -d v1.6.1                  # delete locally
-git push origin :refs/tags/v1.6.1  # delete on GitHub
+git tag -d v1.7.0                  # delete locally
+git push origin :refs/tags/v1.7.0  # delete on GitHub
 ```
 
 Then tag again. **Once other people have pulled a tag, never move it** - move a
@@ -735,7 +735,7 @@ not for mainnet.
 with their timestamps removed):
 
 ```
-{"level":"info","message":"chain ready","network":"devnet","chainId":7780,"height":0,"genesisId":"1e7ca102f6720a7682e9a396958f2a17330dc001"}
+{"level":"info","message":"chain ready","network":"devnet","chainId":7780,"height":0,"genesisId":"8bce1839750dad5a63ffd66ab8584aa02c480910"}
 {"level":"info","message":"p2p listening","host":"0.0.0.0","port":38631}
 {"level":"info","message":"rpc listening","host":"127.0.0.1","port":38630}
 {"level":"info","message":"obsidian core ready","network":"devnet","rpc":"http://127.0.0.1:38630","mining":true}
@@ -835,7 +835,7 @@ for p in 38630 38640 38650; do
 done
 ```
 
-All three must print `2dd76ca2b2305d725f3a975bfca04eb5`.
+All three must print `bffeacb35532ba3df70cda8c27ed6c96`.
 
 ### C9. Create a wallet
 
@@ -1287,10 +1287,10 @@ of this. What follows is the same sequence with more explanation for a beginner.
 |---|---|
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
-| Genesis id | `56ec455d8afac5ef4f7d636ac03ef9e39bd5788f` |
-| Genesis hash | `74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3` |
-| Protocol version | `1.6.1` |
-| PARAMS_HASH | `2dd76ca2b2305d725f3a975bfca04eb5` |
+| Genesis id | `2dc198e4e57cb482df4e0f89e3a28daaf427ccff` |
+| Genesis hash | `8ffcf7c18a5ba07b6a67fee4a373a62c62e9da612e7b66dcd9437597695b0475` |
+| Protocol version | `1.7.0` |
+| PARAMS_HASH | `bffeacb35532ba3df70cda8c27ed6c96` |
 | RPC / P2P port | 8630 / 8631 |
 | Address prefix | `obs1` |
 | Max supply | 21,000,000 OBS |
@@ -1318,8 +1318,8 @@ inside the state transition.
 ```bash
 cd releases
 sha256sum -c SHA256SUMS
-../scripts/verify-release.sh obsidian-node-operator-1.6.1.tar.gz
-../scripts/verify-release.sh obsidian-core-1.6.1.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-node-operator-1.7.0.tar.gz
+../scripts/verify-release.sh obsidian-core-1.7.0.tar.gz --with-tests
 ```
 
 The operator package ships `dist/` without tests, so `--with-tests` reports
@@ -1337,7 +1337,7 @@ different jurisdictions. Provision each per §D3–D8 with `--network mainnet`.
 node dist/index.js start --config config/mainnet.json
 ```
 
-Expect `height=0` and `genesisId=56ec455d8afac5ef4f7d636ac03ef9e39bd5788f`.
+Expect `height=0` and `genesisId=2dc198e4e57cb482df4e0f89e3a28daaf427ccff`.
 
 Confirm the state is genuinely empty:
 
@@ -1494,7 +1494,7 @@ compile the server.
 - `obsidian-interface/dist/` (the server), unless you are hosting statics only
 
 The ready-made bundle of exactly this is the release archive
-`obsidian-interface-selfhost-1.6.1.tar.gz`.
+`obsidian-interface-selfhost-1.7.0.tar.gz`.
 
 ### F3. Where they should live
 
@@ -1886,7 +1886,7 @@ Follow `docs/node-operator.md`; this is the short version.
 
 1. **Hardware**: §D1 above.
 2. **OS**: Linux. Install Node.js 20.10+.
-3. **Install**: clone and build, or use `obsidian-node-operator-1.6.1.tar.gz`
+3. **Install**: clone and build, or use `obsidian-node-operator-1.7.0.tar.gz`
    (built `dist/`, deployment recipes, docs, `verify-release.sh`,
    `check-invariants.mjs`).
 4. **Keys**: `node dist/index.js keygen`. Set
@@ -2456,7 +2456,7 @@ server; the third logs in. After that, no password.
 
 ```bash
 # phone -> server
-scp releases/obsidian-node-operator-1.6.1.tar.gz user@server:/home/user/
+scp releases/obsidian-node-operator-1.7.0.tar.gz user@server:/home/user/
 
 # server -> phone
 scp user@server:/home/user/node-key.json.backup ~/storage/shared/
@@ -2560,9 +2560,9 @@ ssh user@your-server-ip
 ### N6. Deploy
 
 ```bash
-scp releases/obsidian-node-operator-1.6.1.tar.gz user@server:/home/user/
+scp releases/obsidian-node-operator-1.7.0.tar.gz user@server:/home/user/
 ssh user@server
-tar -xzf obsidian-node-operator-1.6.1.tar.gz
+tar -xzf obsidian-node-operator-1.7.0.tar.gz
 cd obsidian-core && npm ci --omit=dev
 ```
 
@@ -2571,9 +2571,9 @@ Then follow §D6–D8.
 ### N7. Frontend deployment
 
 ```bash
-scp releases/obsidian-interface-selfhost-1.6.1.tar.gz user@server:/home/user/
+scp releases/obsidian-interface-selfhost-1.7.0.tar.gz user@server:/home/user/
 ssh user@server
-tar -xzf obsidian-interface-selfhost-1.6.1.tar.gz
+tar -xzf obsidian-interface-selfhost-1.7.0.tar.gz
 cd obsidian-interface && npm ci --omit=dev
 ```
 
@@ -2625,14 +2625,14 @@ curl -s https://rpc1.example.org/status
 - [ ] `node scripts/check-invariants.mjs` → every invariant holds
 
 **Protocol**
-- [ ] `/status` reports `protocolVersion: 1.6.1`
-- [ ] PARAMS_HASH `2dd76ca2b2305d725f3a975bfca04eb5` on **every** node
+- [ ] `/status` reports `protocolVersion: 1.7.0`
+- [ ] PARAMS_HASH `bffeacb35532ba3df70cda8c27ed6c96` on **every** node
 - [ ] `genesis init` deterministic across two machines
-- [ ] Mainnet genesis id `56ec455d8afac5ef4f7d636ac03ef9e39bd5788f`
+- [ ] Mainnet genesis id `2dc198e4e57cb482df4e0f89e3a28daaf427ccff`
 - [ ] Height 0 supply is 0; `invariantOk: true`
 
 **Release**
-- [ ] Tag created (e.g. `v1.6.1`) and pushed
+- [ ] Tag created (e.g. `v1.7.0`) and pushed
 - [ ] Archives built from the tag
 - [ ] `sha256sum -c SHA256SUMS` → 11 OK
 - [ ] `verify-release.sh ... --with-tests` passes
@@ -2710,7 +2710,7 @@ An honest comparison, with the evidence.
   advance inside the container, and confirms stopping the interface does not
   stop consensus.
 - **A mainnet node started from this build** reports height 0, supply 0,
-  `invariantOk: true` and the 1.6.1 genesis id, and refuses a substituted
+  `invariantOk: true` and the 1.7.0 genesis id, and refuses a substituted
   bootstrap committee.
 - **Release archives** are reproducible and checksum-verified (11 OK).
 - Removed features stay removed, asserted at runtime.
@@ -2746,8 +2746,8 @@ An honest comparison, with the evidence.
 4. **Sign-in has never run at scale with real users.** The Gmail/password/MFA
    flow is covered end-to-end over real HTTP, including canonical-address
    dedupe, TOTP replay and recovery-code reuse, but it has not met a crowd.
-5. **No launch has run from a tagged release.** `v1.6.1` is the first tag this
-   repository has ever carried, and no mainnet has been started from it — or from
+5. **No launch has run from a tagged release.** `v1.7.0` has not been tagged yet
+   (the remote carries only an earlier release's tag), and no mainnet has been started from a tag — or from
    anything before it.
 6. **One operator.** Mainnet needs three independent operators; you currently
    have one person. This is organisational, not technical, and it is the

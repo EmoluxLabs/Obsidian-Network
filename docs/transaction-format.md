@@ -39,7 +39,7 @@ OBSIDIAN:RELEASE:v1      release signatures
 ## 2. Envelope
 
 ```
-protocolVersion : string   e.g. "1.6.1"
+protocolVersion : string   e.g. "1.7.0"
 chainId         : u32      7777 mainnet / 7778 / 7779 / 7780
 sender          : string   bech32m address
 nonce           : u64      next nonce for the account
@@ -111,7 +111,7 @@ import { formatObs, parseObs } from './obsidian-core/dist/protocol/amount.js';
 import { expectedGas } from './obsidian-core/dist/transactions/helpers.js';
 const amount = parseObs('10');
 const tx = signTransaction({
-  protocolVersion: '1.6.1', chainId: 7780,
+  protocolVersion: '1.7.0', chainId: 7780,
   sender: 'dobs1…', nonce: 1, type: 1,
   gas: expectedGas(amount),
   body: encodePaymentBody({ to: 'dobs1…', amount }),

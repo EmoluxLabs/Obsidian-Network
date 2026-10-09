@@ -29,7 +29,7 @@ async function setup() {
   const wallet = await wallets.importPhrase('devnet', PHRASE, PASS);
   const fake: Fake = { submitted: [], simulated: [], simulateResult: { valid: true, error: null }, submitBehaviour: 'ok', network: 'devnet', chainId: core.networks.NETWORKS.devnet.chainId };
   const client: any = {
-    health: async () => ({ network: fake.network, chainId: fake.chainId, protocolVersion: '1.6.1', syncing: false, height: 5 }),
+    health: async () => ({ network: fake.network, chainId: fake.chainId, protocolVersion: '1.7.0', syncing: false, height: 5 }),
     pot: async () => ({ protocolTime: 1_800_000_000 }),
     status: async () => ({ lastBlockTimestamp: 1_800_000_000, height: 5 }),
     nextNonce: async () => 0,

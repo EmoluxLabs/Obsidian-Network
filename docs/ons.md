@@ -60,7 +60,7 @@ curl -s http://127.0.0.1:8630/names/obsidian.obs | jq
 }
 ```
 
-`GET /names` lists registered names with a `prefix` filter, so a client can
+`GET /names` lists registered names with a `prefix` filter and `limit`/`offset` paging (at most 500 per page), so a client can
 implement search without an index of its own.
 
 ## 4. Renewal and expiry

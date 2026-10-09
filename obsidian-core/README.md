@@ -67,7 +67,7 @@ document, genesis id and parameter hash must all match.
 
 Reads (`GET`): `/health /status /params /version /genesis /supply /nodes /peers
 /oracle /validators /blocks /block/<hash> /tx/<id> /address/<address> /mempool
-/mining/schedule /mining/status /mining/claims /names /names/<name> /pot
+/mining/schedule /mining/status /mining/claims /names (limit, offset, prefix) /names/<name> /pot
 /revenue /nodes/registry /nodes/rewards /nodes/status/<nodeId> /finality
 /network /wallet/<address>/next-nonce /metrics /audit/decentralization /audit/compliance`.
 

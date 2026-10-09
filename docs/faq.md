@@ -43,9 +43,8 @@ head's timestamp. If your device clock is wrong, the display is wrong — the cl
 is not.
 
 **Do I need an account to mine, or to have a wallet?**
-No. Wallets and mining need a wallet, not an account. Accounts exist only to gate
-invites on the interface (5 per account, enforced by the server). Where an
-operator does run accounts, signing up is a Gmail address, a password, an invite
+Wallets need only a wallet. **Mining needs an account**: since protocol 1.7.0 a mining claim is valid only with a short-lived certificate that the platform issues to a signed-in, MFA-confirmed account whose single linked wallet is the claiming wallet. Accounts also gate
+invites on the interface (5 per account, enforced by the server). Signing up is a Gmail address, a password, an invite
 code and then TOTP multi-factor — no third-party login, no email verification,
 and no password reset. The recovery codes shown once at registration are the
 only way back into an account, which is why the page insists you write them down.

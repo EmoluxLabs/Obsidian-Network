@@ -149,14 +149,9 @@ ignored.
 
 Measured on this tree by running a chain (`chain.status()`), not transcribed:
 
-| Identity | 1.6.0 | 1.6.1 |
-| --- | --- | --- |
-| params hash | `4a2883b210c4a7ae…` | **`2dd76ca2b2305d725f3a975bfca04eb5`** |
-| mainnet genesis id | `3a7ced6f7e6a14f4…` | **`56ec455d8afac5ef4f7d636ac03ef9e39bd5788f`** |
-| mainnet genesis block hash | — | **`74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3`** |
-| testnet genesis id | `95a85596046aa989…` | **`8f72479240845c55c7d21c07cbdcad5546af77a2`** |
-| staging genesis id | `c5ae0bbfb755e1bc…` | **`a52dd49ccb7fc259b7a0939a9c576d137ffd2e66`** |
-| devnet genesis id | `bf2b4dff2671e2e5…` | **`1e7ca102f6720a7682e9a396958f2a17330dc001`** |
+The 1.6.1 identity values were superseded by protocol 1.7.0, which changed the params hash and every genesis
+identity (the mining gate keys are committed in genesis). The live values are the ones `genesis init --network <name>`
+prints and the CHANGELOG records; they are deliberately not repeated here, so this report cannot drift from them.
 
 The genesis `note` text still names the previous release. It is part of the
 committed document, so editing it would move the genesis id again for no
@@ -298,8 +293,8 @@ Run against this tree:
 | `obsidian-core` (vitest) | every file passes, nothing skipped |
 | `obsidian-interface` (vitest) | every file passes |
 | script suites (`node --test`) | all pass — consistency, edge, helper, cluster, ecosystem, networks, quickstart, signing, soak, invite |
-| `scripts/check-invariants.mjs` | every invariant holds, on protocol 1.6.1 |
-| `scripts/verify-release.sh` | `obsidian-core-1.6.1.tar.gz` verified |
+| `scripts/check-invariants.mjs` | every invariant holds (re-run on every release) |
+| `scripts/verify-release.sh` | the release archive verified |
 
 Counts are deliberately not written here: a number in a document goes stale the
 moment a test is added, and this repository's own gate rejects it. Each runner

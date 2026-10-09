@@ -12,10 +12,10 @@ before it has users than after.
 |---|---|
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
-| Genesis id | `56ec455d8afac5ef4f7d636ac03ef9e39bd5788f` |
-| Genesis hash | `74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3` |
-| Protocol version | `1.6.1` |
-| Params hash | `2dd76ca2b2305d725f3a975bfca04eb5` — published at `/params`; must be identical on every node |
+| Genesis id | `2dc198e4e57cb482df4e0f89e3a28daaf427ccff` |
+| Genesis hash | `8ffcf7c18a5ba07b6a67fee4a373a62c62e9da612e7b66dcd9437597695b0475` |
+| Protocol version | `1.7.0` |
+| Params hash | `bffeacb35532ba3df70cda8c27ed6c96` — published at `/params`; must be identical on every node |
 | Default RPC port | 8630 |
 | Default p2p port | 8631 |
 | Address prefix | `obs1` |
@@ -33,10 +33,23 @@ derived deterministically from the genesis document and the consensus
 parameters; if they differ, the two machines are not running the same protocol
 and must not be peered.
 
-**Protocol 1.6.1 activation is genesis-bound.** It rejects 1.5.x peers and data
+**Protocol 1.7.0 activation is genesis-bound.** It rejects 1.6.x and older peers and data
 directories; there is no rolling upgrade or automatic state migration. Use this
-runbook only for an unstarted network. If a value-bearing 1.4.x mainnet exists,
-stop: a separately reviewed migration design is required before 1.6.1 is used.
+runbook only for an unstarted network. If a value-bearing older mainnet exists,
+stop: a separately reviewed migration design is required before 1.7.0 is used.
+
+**Before genesis you must create the mining gate key.** Mining claims are valid only with a certificate signed by an
+issuer key committed in genesis (see [mining.md](mining.md)). No mainnet key is committed in this repository, and a
+node without one accepts no claim. On a machine you trust:
+
+```bash
+node scripts/generate-mining-gate-key.mjs        # prints the public key; keep the encrypted keystore private
+export OBSIDIAN_MINING_GATE_PUBLIC_KEYS=<public key>   # the SAME value on every node of the network
+```
+
+Give the keystore to the platform only (`OBSIDIAN_GATE_KEYSTORE`, `OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE`). The keys
+are part of the genesis id, so the id in the table below is for a document with **no** keys; your network's id is
+whatever your node prints, and it must be the same on every node. Keep the platform's clock NTP-synced.
 
 ---
 
@@ -74,10 +87,10 @@ Never launch from a working copy. Launch from a signed release archive.
 sha256sum -c SHA256SUMS
 
 # the artifact you will actually run
-../scripts/verify-release.sh obsidian-node-operator-1.6.1.tar.gz
+../scripts/verify-release.sh obsidian-node-operator-1.7.0.tar.gz
 
 # the same code with its test suite attached, which the operator package omits
-../scripts/verify-release.sh obsidian-core-1.6.1.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.7.0.tar.gz --with-tests
 ```
 
 Expected: every archive reports `OK`, and the verifier prints the package
@@ -96,11 +109,11 @@ who produced them, because anyone who can edit the archive can edit
 `SHA256SUMS` beside it. The signed path is:
 
 ```bash
-../scripts/verify-release.sh obsidian-node-operator-1.6.1.tar.gz --signature-only
+../scripts/verify-release.sh obsidian-node-operator-1.7.0.tar.gz --signature-only
 ```
 
 That checks the detached signature against the publisher key in
-`keys/release-key.pub` and stops there. **The 1.6.1 archives in this repository
+`keys/release-key.pub` and stops there. **The 1.7.0 archives in this repository
 are unsigned**: no publisher key exists in the workspace that built them, so the
 command above reports that there is no signature to check rather than a success.
 Do not announce a launch on unsigned archives — generate the publisher key
@@ -238,7 +251,7 @@ Expect, in the log:
 
 ```
 chain ready   network=mainnet chainId=7777 height=0
-              genesisId=56ec455d8afac5ef4f7d636ac03ef9e39bd5788f
+              genesisId=2dc198e4e57cb482df4e0f89e3a28daaf427ccff
 obsidian core ready   maxSupplyObs=21000000000000000000000000
 ```
 

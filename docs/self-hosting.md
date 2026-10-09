@@ -33,7 +33,14 @@ npm run verify     # typecheck + build + test in one shot
 OBSIDIAN_NODE_URLS=http://127.0.0.1:18630,http://node2.example:18630
 OBSIDIAN_INTERFACE_HOST=127.0.0.1
 OBSIDIAN_INTERFACE_TRUST_PROXY=false
+# Mining gate (protocol 1.7.0): the platform signs a short-lived certificate for every claim.
+OBSIDIAN_GATE_KEYSTORE=/etc/obsidian/testnet/gate.keystore.json
+OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE=/etc/obsidian/testnet/gate.pass
 ```
+
+The matching **public** key goes to every node of the network as `OBSIDIAN_MINING_GATE_PUBLIC_KEYS`; create the pair
+with `node scripts/generate-mining-gate-key.mjs`. Without a keystore nobody can mine, and a node with no key accepts no
+claim.
 
 With the template unit (`obsidian-interface@testnet`) the network and data directory come from the
 instance name, so the file holds only the rest. With the plain `obsidian-interface.service` add
@@ -96,7 +103,7 @@ docker build -f obsidian-interface/deployment/docker/Dockerfile -t obsidian/inte
 docker run -d --rm -p 127.0.0.1:18788:8788 \
   -e OBSIDIAN_INTERFACE_NETWORK=testnet \
   -e OBSIDIAN_NODE_URLS=http://host.docker.internal:18630 --add-host host.docker.internal:host-gateway \
-  obsidian/interface:1.6.1
+  obsidian/interface:1.7.0
 
 # nginx in front (TLS + cache), see deployment/nginx/obsidian-interface.conf
 ```

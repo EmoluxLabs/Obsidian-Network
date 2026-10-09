@@ -112,6 +112,8 @@ The arrow never points backwards. Concretely:
 | Replayed TOTP code | the consumed step is recorded; the same code is refused afterwards | `obsidian-interface/tests/identity.test.ts` |
 | Reused recovery code | codes are stored only as scrypt hashes and removed the moment one matches | `obsidian-interface/tests/server.test.ts` |
 | Invite farming | 5 invites per account enforced in the store, not the page | `tests/server.test.ts` |
+| Mining claim posted straight to a node, skipping the account system | consensus (1.7.0): a `MINING_CLAIM` needs a certificate from a genesis-committed issuer key, bound to one network, wallet and claim id, valid ~15 min; checked in the mempool, producer, validator and replay; no committed key means no claim | `obsidian-core/tests/security/mining-gate.test.ts`, `tests/e2e/ecosystem.test.mjs` |
+| Unbounded name-registry read | `/names` and `getnames` page at most 500 records | `obsidian-core/tests/security/rpc-hardening.test.ts` |
 | Replayed mining claim | unique `claimId` + per-wallet sequence + nonce + one claim per wallet per block | `obsidian-core/tests/security/protocol-security.test.ts` |
 | Mined transaction re-mined | spent transaction id and advanced sequence | same |
 | Gas underpayment | deterministic `expectedGas` equality check | `tests/security/protocol-security.test.ts` |

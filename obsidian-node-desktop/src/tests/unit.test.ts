@@ -77,7 +77,7 @@ test('settings: defaults validate, bad values are refused, changes report restar
   }
 });
 
-const goodHealth = { status: 'ok', coreVersion: '1.6.1', protocolVersion: '1.6.1', network: 'devnet', networkId: 'x', chainId: 7780, genesisId: 'g', paramsHash: 'p', height: 1, headHash: 'h', peers: 0, syncing: false, supplyOk: true, uptimeSeconds: 3, timestamp: 5 };
+const goodHealth = { status: 'ok', coreVersion: '1.7.0', protocolVersion: '1.7.0', network: 'devnet', networkId: 'x', chainId: 7780, genesisId: 'g', paramsHash: 'p', height: 1, headHash: 'h', peers: 0, syncing: false, supplyOk: true, uptimeSeconds: 3, timestamp: 5 };
 
 function fakeFetch(handler: (url: string) => { status?: number; body?: string; delay?: number; headers?: Record<string, string> } | Error): typeof fetch {
   return (async (input: any, init: any) => {

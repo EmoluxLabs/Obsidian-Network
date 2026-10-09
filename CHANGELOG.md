@@ -7,13 +7,66 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.6.1 that is `2dd76ca2b2305d725f3a975bfca04eb5`.
+a node running it. For 1.7.0 that is `bffeacb35532ba3df70cda8c27ed6c96` (see the note in 1.7.0 about gate keys).
 
 ---
 
-## Unreleased — security audit of the app server, web app, extension, desktop app and node RPC
+## [1.7.0] — 2026-10-09
 
-No consensus change. The params hash, genesis id and protocol/core versions are unchanged.
+**Consensus-breaking, new-genesis release for a pre-launch network.** Protocol and core version are `1.7.0`,
+the params hash is `bffeacb35532ba3df70cda8c27ed6c96`, and the genesis snapshot format is 4. A 1.7.0 node rejects
+1.6.x peers at the handshake and refuses a 1.6.x data directory; there is no migration, so this is for an
+unstarted network (or a disposable one that is reset on purpose).
+
+The mainnet genesis of a document that commits **no** gate keys has id `2dc198e4e57cb482df4e0f89e3a28daaf427ccff`
+and block hash `8ffcf7c18a5ba07b6a67fee4a373a62c62e9da612e7b66dcd9437597695b0475`. **A real network commits its
+issuer keys in genesis, so its id is different from these**; read the id from `GET /health` on your own node.
+
+### The sign-up gate is now a consensus rule
+
+Before, the account system (sign-up, invitation, MFA, one wallet per account) was enforced only by the platform,
+so anyone could post a `MINING_CLAIM` straight to a node's `/tx/submit`. That door is closed.
+
+- A `MINING_CLAIM` must carry a **certificate** signed by an issuer key committed in genesis
+  (`miningGateKeys`). The signature covers `GATE|networkId|chainId|address|claimId|issuedAt` under the new domain
+  `OBSIDIAN:MINING_GATE:v1`, so it is bound to one network, one wallet and one claim id (which is replay-protected,
+  so a certificate cannot be reused or moved). It is valid from 60 s before to 15 min after `issuedAt`, measured
+  against the including block's protocol time, so a leaked certificate is nearly worthless and an account that is
+  disabled stops mining within minutes.
+- The check runs in the mempool, block production, block validation and sync replay, before every other claim
+  check. A block with an ungated claim is invalid. Eligibility and timing are unchanged and remain a pure function
+  of the wallet's own history; the issuer decides **who may be certified**, never **when** a wallet may claim.
+- The issuer public keys are part of the genesis id and of every state root, so nodes with different lists do not
+  peer, and a node cannot be quietly pointed at another list. A chain that commits no key **fails closed**: no claim
+  is accepted.
+- The platform issues certificates with `POST /api/mining/certificate {address, claimId}` only to a signed-in,
+  MFA-confirmed account whose single linked wallet is that address. Its private key lives in an encrypted keystore
+  (`OBSIDIAN_GATE_KEYSTORE`, `OBSIDIAN_GATE_KEYSTORE_PASSPHRASE[_FILE]`), never in the repository.
+- Browser, extension, desktop app and `scripts/obsidian-network.sh` request a certificate before signing a claim.
+  The script generates a devnet/staging issuer key on first start.
+- **Mainnet and testnet keys are deliberately not committed.** Generate them with
+  `node scripts/generate-mining-gate-key.mjs` on a machine you trust and set the same
+  `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` on every node of that network (or commit them in
+  `obsidian-core/src/genesis/gate-keys.ts` and rebuild). Without keys a mainnet node accepts no claim.
+- Not solved, stated plainly: the issuer key is a trust root. Whoever holds it can certify any wallet, so the
+  one-account and one-wallet rules are as strong as that key's custody. The key list is in genesis, so rotating it
+  needs a new genesis. The platform clock must be NTP-synced (window −60 s/+900 s), and while the platform is down
+  nobody can start a claim.
+
+### Name registry reads are bounded
+
+`GET /names` and JSON-RPC `getnames` took no limit and returned the whole registry. They now accept `limit`
+(1–500, default 200), `offset` and `prefix`; the REST reply adds `matched`, `offset`, `limit` and `hasMore` and keeps
+`count` as the registry size.
+
+### Other changes in this release
+
+- `obsidian-node-desktop`: the supervisor passes `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` (public configuration, and only
+  from the app's own environment) to the node it supervises.
+- New tests: `rpc-hardening` and `mining-gate` (core), gate issuance in `obsidian-interface`, and gated flows in
+  `tests/e2e`, `tests/scripts`, the app-web, desktop and extension end-to-end suites.
+
+### Security audit of the app server, web app, extension, desktop app and node RPC
 
 - **obsidian-app-web: unauthenticated remote crash fixed.** `GET /%E0%A4%A` threw inside the
   request handler and stopped the process. Malformed URLs now answer 400 and the server survives.
@@ -34,7 +87,6 @@ No consensus change. The params hash, genesis id and protocol/core versions are 
   percent sequence instead of throwing.
 - New tests: `tests/e2e-adversarial.mjs` (app-web), `tests/server-hardening.test.mjs`,
   `rpc-hardening` additions, and the extension's `tests/ui/hostile.e2e.mjs`.
-- Documented the sign-up gate's design limit in `SECURITY.md`.
 
 ---
 

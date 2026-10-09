@@ -131,7 +131,7 @@ async function drawRegister(): Promise<void> {
 
 async function loadRecent(): Promise<void> {
   try {
-    const { names } = await client.names();
+    const { names } = await client.names('', { limit: 25 });
     recentPanel.replaceChildren(
       el('h2', {}, 'Registered names'),
       names.length === 0

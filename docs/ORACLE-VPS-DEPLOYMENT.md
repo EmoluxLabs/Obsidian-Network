@@ -288,7 +288,7 @@ git clone --depth 1 --branch arena/414b663a-obsidian-network https://github.com/
 
 ```bash
 # on the phone/laptop, in the folder holding the cloned repository's releases/
-scp releases/obsidian-node-operator-1.6.1.tar.gz releases/obsidian-interface-selfhost-1.6.1.tar.gz \
+scp releases/obsidian-node-operator-1.7.0.tar.gz releases/obsidian-interface-selfhost-1.7.0.tar.gz \
     releases/SHA256SUMS ubuntu@YOUR_PUBLIC_IP:~/
 ```
 
@@ -300,8 +300,8 @@ Then verify and install (for A the archives are in `~/obsidian-src/releases`; fo
 cd ~/obsidian-src/releases            # for option B: cd ~
 sha256sum -c SHA256SUMS 2>&1 | grep -E 'node-operator|interface-selfhost'     # both must say OK
 
-sudo tar xzf obsidian-node-operator-1.6.1.tar.gz      -C /opt/obsidian --no-same-owner
-sudo tar xzf obsidian-interface-selfhost-1.6.1.tar.gz -C /opt/obsidian --no-same-owner
+sudo tar xzf obsidian-node-operator-1.7.0.tar.gz      -C /opt/obsidian --no-same-owner
+sudo tar xzf obsidian-interface-selfhost-1.7.0.tar.gz -C /opt/obsidian --no-same-owner
 sudo chown -R root:root /opt/obsidian
 cd /opt/obsidian/obsidian-core && sudo npm ci --omit=dev --no-audit --no-fund
 ```

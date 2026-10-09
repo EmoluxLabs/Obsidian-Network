@@ -638,8 +638,13 @@ export class ObsidianClient {
     return this.request('/tx/submit', { method: 'POST', body: JSON.stringify({ tx }) });
   }
 
-  names(prefix = ''): Promise<{ names: NameSummary[]; count: number }> {
-    return this.request(`/names${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ''}`);
+  /** One page of the name registry. The node returns at most 500 records per call (default 200); `hasMore` says to ask again. */
+  names(prefix = '', page: { limit?: number; offset?: number } = {}): Promise<{ names: NameSummary[]; count: number; matched?: number; offset?: number; limit?: number; hasMore?: boolean }> {
+    const q: string[] = [];
+    if (prefix) q.push(`prefix=${encodeURIComponent(prefix)}`);
+    if (page.limit !== undefined) q.push(`limit=${encodeURIComponent(String(page.limit))}`);
+    if (page.offset !== undefined) q.push(`offset=${encodeURIComponent(String(page.offset))}`);
+    return this.request(`/names${q.length ? `?${q.join('&')}` : ''}`);
   }
 
   name(name: string): Promise<NameRecord> {

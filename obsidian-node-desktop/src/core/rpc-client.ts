@@ -2,7 +2,7 @@
  * Typed client for the Obsidian Core RPC.
  *
  * This is the only module that talks to the node. It adds no routes of its own: every
- * path below exists in obsidian-core/src/rpc/server.ts (checked against v1.6.1 and a
+ * path below exists in obsidian-core/src/rpc/server.ts (checked against v1.7.0 and a
  * running node). It
  *   - bounds every request with a timeout and a response-size limit,
  *   - classifies failures (unavailable / timeout / http / malformed / too-large) so the UI
