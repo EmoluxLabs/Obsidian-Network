@@ -59,3 +59,7 @@ coverage/
 # The Android client's Kotlin packages are source, not build output. A generic
 # pattern above (`data/`) matched network/obsidian/mobile/data/ and the files
 # were silently left out of a commit, so CI compiled without them. Source trees
+
+# The web app serves these directly; they are committed source, not build output.
+!obsidian-app-web/public/js/
+!obsidian-app-web/public/js/**
