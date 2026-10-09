@@ -18,6 +18,8 @@ import {
   getBalance,
   getMiningStatus,
   getName,
+  getAppConfig,
+  MIN_PASSPHRASE_LENGTH,
   submitTransaction,
 } from './data.mjs';
 
@@ -104,15 +106,26 @@ export async function walletKdf() {
 export async function setupWallet({ phrase, passphrase }) {
   const { isValidPhrase, walletFromPhrase, createVault, saveVault, saveWalletAddress } = await api();
   if (!isValidPhrase(phrase)) throw new Error('That recovery phrase is not valid.');
-  if (!passphrase || passphrase.length < 8) {
-    throw new Error('Choose a passphrase of at least 8 characters. It encrypts the phrase on this device.');
+  if (!passphrase || passphrase.length < MIN_PASSPHRASE_LENGTH) {
+    throw new Error(
+      `Choose a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters. It encrypts the phrase on this device.`,
+    );
   }
   const { addressHrp } = await getContext();
   const wallet = walletFromPhrase(phrase, addressHrp);
-  const vault = await createVault(String(phrase).trim(), passphrase);
+  const vault = await createVault(String(phrase).trim(), passphrase, addressHrp);
   saveVault(vault);
   saveWalletAddress(wallet.address);
   return { address: wallet.address };
+}
+
+/**
+ * A new recovery phrase. The caller holds it in memory only until it is sealed or
+ * discarded; this module neither stores nor sends it.
+ */
+export async function newPhrase() {
+  const { generatePhrase } = await api();
+  return generatePhrase();
 }
 
 /** Derive the address for a phrase without keeping it. Used by "check a phrase". */
@@ -196,6 +209,18 @@ export async function getContext() {
     // Not defaulted to 'obs': on any other network that would sign for, and display,
     // an address the node rejects as invalid.
     throw new Error('the node did not report its address prefix');
+  }
+  // The one place every signature and every derived address passes through, so the
+  // one place the app's network is held against the node's. A testnet app in front of
+  // a mainnet node would otherwise sign mainnet transactions without a word.
+  const identity = await getAppConfig().catch(() => null);
+  if (!identity) {
+    throw new Error('This app could not confirm which network it is, so it will not sign. Nothing was signed.');
+  }
+  if (Number(chainId) !== identity.chainId || addressHrp !== identity.addressHrp) {
+    throw new Error(
+      `This is the ${identity.network} app, but the node it reached is on chain ${chainId} (${addressHrp}1…). Nothing was signed.`,
+    );
   }
   return {
     chainId: Number(chainId),

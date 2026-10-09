@@ -29,7 +29,8 @@
  * Nothing is estimated, extrapolated or defaulted into looking plausible.
  */
 
-import { sealsToObs, formatDuration, formatTime, normaliseName } from './data.mjs';
+import { sealsToObs, formatDuration, formatTerm, formatTime, normaliseName, MIN_PASSPHRASE_LENGTH } from './data.mjs';
+import { explorerScreen } from './explorer.mjs';
 
 // ── the design's own helpers ─────────────────────────────────────────────────
 
@@ -97,9 +98,40 @@ function header(s, title) {
 }
 
 function networkLabel(s) {
-  const name = s.network?.network?.name ?? s.status?.network ?? s.config?.network;
+  // The app's own declared network comes first: it is what this deployment IS, and
+  // the node's answer is what it is being checked against.
+  const name = s.appConfig?.network ?? s.network?.network?.name ?? s.status?.network ?? s.config?.network;
   if (!name) return 'LIVE';
   return String(name).replace(/[-_]/g, ' ').toUpperCase();
+}
+
+const NETWORK_BANNERS = {
+  testnet: ['#FFF4D6', '#7A5800', 'TESTNET — test coins with no value. Not the real network.'],
+  staging: ['#EEE8FF', '#4A2FA0', 'STAGING — pre-release network. Coins have no value.'],
+  devnet: ['#E3F0FF', '#134B8A', 'DEVNET — development network. Coins have no value and the chain may be reset.'],
+};
+
+/**
+ * The strip across the top that says which network this is.
+ *
+ * Mainnet gets none: it is the default people assume, and the point of the strip is to
+ * interrupt that assumption everywhere else. A node on a different chain than the app
+ * gets a red strip on any network, because signing is refused until it is resolved.
+ */
+export function networkBanner(s) {
+  const app = s.appConfig;
+  if (!app) return '';
+  const node = s.network?.network;
+  if (node && (Number(node.chainId) !== app.chainId || node.addressHrp !== app.addressHrp)) {
+    return `<div role="alert" style="background:#FDECEA;color:#A12626;font-size:12px;font-weight:700;letter-spacing:.04em;padding:10px 14px;border-radius:12px;margin-bottom:12px">WRONG NETWORK — this is the ${esc(
+      app.network.toUpperCase(),
+    )} app but its node is on chain ${esc(node.chainId)}. Signing is disabled.</div>`;
+  }
+  const banner = NETWORK_BANNERS[app.network];
+  if (!banner) return '';
+  return `<div style="background:${banner[0]};color:${banner[1]};font-size:11.5px;font-weight:700;letter-spacing:.04em;padding:10px 14px;border-radius:12px;margin-bottom:12px">${esc(
+    banner[2],
+  )}</div>`;
 }
 
 /** A "the node has not answered" panel. Never a fabricated figure. */
@@ -135,13 +167,29 @@ function busy(label, s, key) {
 
 // ── screens ──────────────────────────────────────────────────────────────────
 
+/** Reads a developer can run from the API screen. All are public and address-masked. */
+export const API_READS = [
+  ['/status', 'STATUS'],
+  ['/network', 'NETWORK'],
+  ['/params', 'PARAMS'],
+  ['/supply', 'SUPPLY'],
+  ['/pot', 'PROOF OF TIME'],
+  ['/blocks?limit=3', 'BLOCKS'],
+  ['/mining/schedule', 'MINING'],
+  ['/mining/claims?limit=3', 'CLAIMS'],
+  ['/names?limit=3', 'NAMES'],
+  ['/validators', 'VALIDATORS'],
+  ['/mempool', 'MEMPOOL'],
+  ['/nodes/rewards', 'REWARDS'],
+];
+
 export const SCREENS = {
   /** The design's splash is pure animation and fabricates nothing, so it is kept. */
   splash: () => (typeof V !== 'undefined' && V.splash ? V.splash() : ''),
 
   landing: (s) =>
     `<div class="hd"><div style="display:flex;align-items:center;gap:10px">${designLogo(38)}<b style="font-size:13px;letter-spacing:.18em">OBSIDIAN NETWORK</b></div>` +
-    `<button class="btn" style="width:48px;height:48px;margin:0;border-radius:14px" onclick="ObsidianToggleMenu()" aria-label="Menu">☰</button></div>` +
+    `<button class="btn" style="width:48px;height:48px;margin:0;border-radius:14px" onclick="ObsidianToggleMenu()" aria-label="Menu"><svg width="20" height="14" viewBox="0 0 20 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 1h18M1 7h18M1 13h18"/></svg></button></div>` +
     (s.menu
       ? `<div class="card" style="margin-bottom:10px">${[
           ['explorer', 'EXPLORER'],
@@ -240,6 +288,8 @@ export const SCREENS = {
   home: (s) =>
     header(s, 'OBSIDIAN NETWORK') +
     `<h1 style="font-size:24px">Welcome back${s.account?.displayName ? `, ${esc(s.account.displayName)}` : ''}.</h1>` +
+    (s.error ? errorLine(s) : '') +
+    noticeLine(s) +
     (s.recoveryCodes?.length
       ? `<div class="card" style="margin-top:14px;padding:16px"><div class="lb" style="margin:0 0 8px">YOUR RECOVERY CODES — SHOWN ONCE</div>` +
         `<div class="m" style="font-size:13px;line-height:1.9">${s.recoveryCodes.map(esc).join('<br>')}</div>` +
@@ -278,6 +328,8 @@ export const SCREENS = {
         s.balance ? sealsToObs(s.balance.balanceSeals, 6) : '—',
       )}</div></div>` +
       ring(s, seconds, ready) +
+      (s.error ? errorLine(s) : '') +
+      noticeLine(s) +
       (m
         ? claimPanel(s, m, seconds, ready)
         : `<div class="card" style="margin-top:16px"><div class="row mu">${
@@ -317,44 +369,16 @@ export const SCREENS = {
     designNav('wallet'),
 
   explorer: (s) =>
-    header(s, 'EXPLORER') +
-    designField('q', '', 'text', 'Block height, transaction id or address') +
-    `<button class="btn p" style="margin-top:10px" onclick="ObsidianSearch()">SEARCH</button>` +
-    errorLine(s) +
-    (s.search ? searchResult(s) : '') +
-    `<div class="card" style="margin-top:14px">` +
-    `<div class="row"><span>BLOCK HEIGHT</span><b class="m">${orDash(s.status?.height, (h) => `#${Number(h).toLocaleString()}`)}</b></div>` +
-    `<div class="row"><span>PROTOCOL</span><b class="m">${esc(orDash(s.status?.protocolVersion ?? s.params?.protocolVersion))}</b></div>` +
-    `<div class="row"><span>NETWORK</span><b>${esc(orDash(s.network?.network?.name ?? s.status?.network))}</b></div>` +
-    `<div class="row"><span>MEMPOOL</span><b class="m">${esc(orDash(s.status?.mempoolSize))}</b></div>` +
-    `</div>` +
-    `<div class="lb">LATEST BLOCKS</div>` +
-    (s.blocks?.blocks?.length
-      ? `<div class="card">${s.blocks.blocks
-          .slice(0, 8)
-          .map(
-            (b) =>
-              `<div class="row" onclick="ObsidianSearch('${esc(b.height)}')" style="cursor:pointer"><div><b class="m">#${Number(
-                b.height,
-              ).toLocaleString()}</b><div class="m mu" style="font-size:12px;margin-top:3px">${esc(
-                short(b.hash),
-              )}</div></div><span class="pill">${b.transactionCount ?? b.txCount ?? 0} TX</span></div>`,
-          )
-          .join('')}</div>`
-      : unavailable('The node has not returned any blocks.')) +
-    `<div class="lb">LATEST MINING CLAIMS</div>` +
-    (s.claims?.claims?.length
-      ? `<div class="card">${s.claims.claims
-          .slice(0, 8)
-          .map(
-            (c) =>
-              `<div class="row"><div><b class="m">${esc(short(c.txId))}</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(
-                short(c.miner),
-              )} · height ${esc(c.height)}</div></div><b class="m ok">+${esc(c.rewardObs)}</b></div>`,
-          )
-          .join('')}</div>`
-      : unavailable('No mining claims have been indexed yet.')) +
-    (s.account ? designNav('explorer') : `<button class="btn" onclick="ObsidianGo('landing')">‹ BACK</button>`),
+    explorerScreen(s, {
+      header,
+      designField,
+      designNav,
+      esc,
+      errorLine,
+      unavailable,
+      rows,
+      orDash,
+    }),
 
   ons: (s) =>
     (s.account ? header(s, 'ONS') : designBack('landing')) +
@@ -364,10 +388,11 @@ export const SCREENS = {
       orDash(s.params?.ons?.registrationFeeObs, (v) => `${v} OBS`),
     )}</b></div>` +
     `<div class="row"><span>RENEWAL FEE</span><b class="m">${esc(orDash(s.params?.ons?.renewalFeeObs, (v) => `${v} OBS`))}</b></div>` +
-    `<div class="row"><span>TERM</span><b>${esc(orDash(s.params?.ons?.termSeconds, formatDuration))}</b></div></div>` +
+    `<div class="row"><span>TERM</span><b>${esc(orDash(s.params?.ons?.termSeconds, formatTerm))}</b></div></div>` +
     designField('nm', 'NAME', 'text', 'Search an Obsidian name...') +
     `<button class="btn p" style="margin-top:10px" onclick="ObsidianNameSearch()">SEARCH</button>` +
     errorLine(s) +
+    noticeLine(s) +
     (s.ons?.result ? nameResult(s) : '') +
     `<div class="lb">YOUR NAMES</div>` +
     (s.ownNames?.length
@@ -382,6 +407,8 @@ export const SCREENS = {
 
   menu: (s) =>
     header(s, 'MENU') +
+    (s.error ? errorLine(s) : '') +
+    noticeLine(s) +
     `<div class="card" style="padding:16px;margin-bottom:6px"><b>${esc(s.account?.email || '')}</b>` +
     `<div class="mu m" style="font-size:12px;margin-top:4px">${esc(
       s.walletAddress || 'No wallet on this device',
@@ -438,38 +465,58 @@ export const SCREENS = {
     `<button class="btn" style="color:var(--er);border-color:#E7C9C9;margin-top:24px" onclick="ObsidianSignOut()">SIGN OUT</button>` +
     designNav('menu'),
 
-  api: (s) =>
-    (s.account ? header(s, 'API') : designBack('landing')) +
-    `<h1 style="font-size:26px">OBSIDIAN DEVELOPER</h1>` +
-    `<p class="mu" style="line-height:1.55">Every read on this page came through one gateway. Node routes are proxied at <span class="m">/api/rpc?path=…</span>, and only a published allowlist of routes is forwarded.</p>` +
-    `<div class="lb">READ THE CHAIN</div>` +
-    `<pre class="m" style="background:var(--ob);color:#E3C877;border-radius:18px;padding:18px;font-size:12.5px;overflow:auto;line-height:1.6">${esc(
-      [
-        `curl "${
-          typeof location !== 'undefined' ? location.origin : ''
-        }/api/rpc?path=%2Fstatus"`,
-        '',
-        `{\n  "height": ${s.status?.height ?? 0},\n  "network": "${s.status?.network ?? ''}",\n  "chainId": ${
-          s.status?.chainId ?? 0
-        },\n  "protocolVersion": "${s.status?.protocolVersion ?? ''}"\n}`,
-      ].join('\n'),
-    )}</pre>` +
-    `<div class="lb">MINING ELIGIBILITY</div>` +
-    `<pre class="m" style="background:var(--ob);color:#E3C877;border-radius:18px;padding:18px;font-size:12.5px;overflow:auto;line-height:1.6">${esc(
-      `curl "${
-        typeof location !== 'undefined' ? location.origin : ''
-      }/api/rpc?path=${encodeURIComponent(`/mining/status?address=${s.walletAddress ?? 'obs1…'}`)}"`,
-    )}</pre>` +
-    `<div class="lb">ACCOUNTS</div>` +
-    rows([
-      ['GET  /api/auth/config', 'the server’s own sign-up rules'],
-      ['GET  /api/auth/me', 'the signed-in account, or 401'],
-      ['POST /api/auth/register', 'Gmail + password + invitation'],
-      ['POST /api/auth/login', 'add totp once MFA is enabled'],
-      ['POST /api/wallet/link', 'attach an address to the account'],
-    ].map(([a, b]) => [a, `<span class="m" style="font-size:12.5px">${esc(b)}</span>`])) +
-    `<p class="mu" style="font-size:12.5px;margin-top:14px">Transaction submission is a signed call to <span class="m">/api/rpc?path=%2Ftx%2Fsubmit</span> carrying <span class="m">{ "tx": "&lt;hex&gt;" }</span>. The bytes must come from the canonical encoder; nothing in this app invents them.</p>` +
-    (s.account ? designNav('menu') : ''),
+  api: (s) => {
+    const origin = typeof location !== 'undefined' ? location.origin : '';
+    const net = s.network?.network;
+    const hrp = net?.addressHrp;
+    const sample = s.walletAddress ?? (hrp ? `${hrp}1…` : '<your address>');
+    const t = s.apiTry;
+    return (
+      (s.account ? header(s, 'API') : designBack('landing')) +
+      `<h1 style="font-size:26px">OBSIDIAN DEVELOPER</h1>` +
+      `<p class="mu" style="line-height:1.55">Every read in this app came through one gateway: <span class="m">/api/rpc?path=…</span>. Only a published allowlist of node routes is forwarded. Run any of them below and see the node’s own answer.</p>` +
+      `<div class="lb">THIS DEPLOYMENT</div>` +
+      rows([
+        ['BASE URL', `<span class="m" style="font-size:12px">${esc(origin || '—')}</span>`],
+        ['NETWORK', esc(orDash(net?.displayName ?? net?.name)), ''],
+        ['CHAIN ID', esc(orDash(net?.chainId)), 'm'],
+        ['ADDRESS PREFIX', esc(orDash(hrp, (v) => `${v}1…`)), 'm'],
+        ['PROTOCOL', esc(orDash(s.status?.protocolVersion)), 'm'],
+      ]) +
+      `<div class="lb">TRY A READ</div>` +
+      `<div style="display:flex;flex-wrap:wrap;gap:8px">${API_READS.map(
+        ([route, label]) =>
+          `<button class="btn ${t?.route === route ? 'p' : ''}" style="width:auto;margin:0;height:38px;padding:0 12px;font-size:11px;letter-spacing:.06em" onclick="ObsidianApiTry('${esc(
+            route,
+          )}')">${esc(label)}</button>`,
+      ).join('')}</div>` +
+      (t
+        ? `<div class="mu m" style="font-size:12px;margin-top:12px;word-break:break-all">GET ${esc(origin)}/api/rpc?path=${esc(
+            encodeURIComponent(t.route),
+          )}</div><pre class="m" style="background:var(--ob);color:${
+            t.error ? '#F2A5A5' : '#E3C877'
+          };border-radius:18px;padding:18px;font-size:12px;overflow:auto;max-height:340px;line-height:1.5;margin-top:8px">${esc(
+            t.loading ? 'asking the node…' : t.error ? t.error : JSON.stringify(t.body, null, 2),
+          )}</pre>`
+        : '') +
+      `<div class="lb">MINING ELIGIBILITY</div>` +
+      `<pre class="m" style="background:var(--ob);color:#E3C877;border-radius:18px;padding:18px;font-size:12.5px;overflow:auto;line-height:1.6">${esc(
+        `curl "${origin}/api/rpc?path=${encodeURIComponent(`/mining/status?address=${sample}`)}"`,
+      )}</pre>` +
+      `<div class="lb">ACCOUNTS</div>` +
+      rows(
+        [
+          ['GET  /api/auth/config', 'the server’s own sign-up rules'],
+          ['GET  /api/auth/me', 'the signed-in account, or 401'],
+          ['POST /api/auth/register', 'Gmail + password + invitation'],
+          ['POST /api/auth/login', 'add totp once MFA is enabled'],
+          ['POST /api/wallet/link', 'attach an address to the account'],
+        ].map(([a, b]) => [a, `<span class="m" style="font-size:12.5px">${esc(b)}</span>`]),
+      ) +
+      `<p class="mu" style="font-size:12.5px;margin-top:14px;line-height:1.5">Transaction submission is a signed POST to <span class="m">/api/rpc?path=%2Ftx%2Fsubmit</span> carrying <span class="m">{ "tx": "&lt;hex&gt;" }</span>. The bytes must come from the canonical encoder; nothing in this app invents them.</p>` +
+      (s.account ? designNav('menu') : '')
+    );
+  },
 };
 
 // ── panels ───────────────────────────────────────────────────────────────────
@@ -508,6 +555,9 @@ function ring(s, seconds, ready) {
   );
 }
 
+/** How long a submitted claim keeps the Claim button held, in ms. */
+export const CLAIM_SETTLE_MS = 90_000;
+
 function claimPanel(s, m, seconds, ready) {
   if (!s.walletAddress) {
     return `<div class="card" style="margin-top:16px"><div class="row mu">This device holds no wallet yet. Set one up on the Wallet screen — claiming needs a signature, and only a key on this device can make one.</div></div>`;
@@ -520,10 +570,19 @@ function claimPanel(s, m, seconds, ready) {
       }</p>`
     );
   }
+  // A claim that has been sent but not yet put in a block still reads "eligible": the
+  // node's answer only changes once a block holds it. Offering the button again would
+  // just invite a second claim that the chain would refuse, so it is held for a while.
+  if (s.claimSentAt && Date.now() - s.claimSentAt < CLAIM_SETTLE_MS) {
+    return (
+      `<button class="btn p" disabled>● CLAIM SUBMITTED — WAITING FOR A BLOCK</button>` +
+      `<p class="mu" style="font-size:12.5px;text-align:center;margin-top:10px">Your claim is with the node. This screen updates when a block includes it.</p>`
+    );
+  }
   return (
     `<div class="lb" style="margin:10px 0 0">UNLOCK TO SIGN</div>` +
     designField('pp', 'VAULT PASSPHRASE', 'password', 'The passphrase you sealed this wallet with') +
-    `<button class="btn p" onclick="ObsidianClaim()">${busy('SIGN &amp; SUBMIT CLAIM', s, 'claim')}</button>` +
+    `<button class="btn p" onclick="ObsidianClaim()">${busy('SIGN & SUBMIT CLAIM', s, 'claim')}</button>` +
     `<p class="mu" style="font-size:12px;margin-top:10px;text-align:center">The claim is signed on this device and submitted to a node. Admission to the mempool is not a confirmation.</p>`
   );
 }
@@ -554,14 +613,14 @@ function sendPanel(s) {
   }
   const gasNote = s.params?.gas ? `Gas is ${esc(s.params.gas.basisPoints / 100)}% of the amount, capped at ${esc(s.params.gas.maxGasObs)} OBS.` : '';
   return (
-    designField('to', 'RECIPIENT', 'text', 'obs1… or name.obs') +
+    designField('to', 'RECIPIENT', 'text', `${s.appConfig?.addressHrp ?? s.network?.network?.addressHrp ?? ''}1… or name.obs`) +
     designField('am', 'AMOUNT (OBS)', 'text', '0.000000') +
     designField('mm', 'MEMO (OPTIONAL)', 'text', '') +
     designField('pp', 'VAULT PASSPHRASE', 'password', 'The passphrase you sealed this wallet with') +
     `<p class="mu" style="font-size:12.5px;margin-top:10px">Available ${esc(
       s.balance ? sealsToObs(s.balance.balanceSeals, 6) : '—',
     )} OBS. ${gasNote}</p>` +
-    `<button class="btn p" style="margin-top:4px" onclick="ObsidianSend()">${busy('SIGN &amp; SEND', s, 'send')}</button>`
+    `<button class="btn p" style="margin-top:4px" onclick="ObsidianSend()">${busy('SIGN & SEND', s, 'send')}</button>`
   );
 }
 
@@ -588,13 +647,62 @@ function setupPanel(s) {
       `<button class="btn" style="color:var(--er);border-color:#E7C9C9" onclick="ObsidianRemoveWallet()">REMOVE WALLET FROM THIS DEVICE</button>`
     );
   }
+  const mode = s.setup?.mode ?? 'create';
+  const tab = (key, label) =>
+    `<button class="btn ${mode === key ? 'p' : ''}" style="margin:0;height:42px;font-size:11px;letter-spacing:.08em" onclick="ObsidianSetupMode('${key}')">${label}</button>`;
   return (
-    `<p class="mu" style="line-height:1.55">A wallet is a BIP-39 recovery phrase, encrypted on this device with a passphrase you choose. It is what signs a mining claim or a payment — the platform never sees it.</p>` +
-    designField('ph', 'RECOVERY PHRASE', 'text', '12 or 24 words, separated by spaces') +
-    designField('pp', 'NEW PASSPHRASE', 'password', 'At least 8 characters') +
+    `<p class="mu" style="line-height:1.55">A wallet is a 24-word recovery phrase, encrypted on this device with a passphrase you choose. It is what signs a mining claim or a payment — the platform never sees it, and nobody can recover it for you.</p>` +
+    `<div style="display:flex;gap:12px;margin-top:12px">${tab('create', 'CREATE NEW')}${tab('import', 'I HAVE A PHRASE')}</div>` +
+    (mode === 'import' ? importPanel(s) : createPanel(s))
+  );
+}
+
+function sealFields(s, label) {
+  return (
+    designField('pp', 'NEW PASSPHRASE', 'password', `At least ${MIN_PASSPHRASE_LENGTH} characters`) +
     designField('p2', 'CONFIRM PASSPHRASE', 'password') +
-    `<button class="btn p" onclick="ObsidianSetupWallet()">${busy('SEAL WALLET ON THIS DEVICE', s, 'setup')}</button>` +
-    `<p class="mu" style="font-size:12.5px;margin-top:12px">Write the phrase down before you seal it. This app can show it again, but it cannot recover it for you.</p>`
+    `<button class="btn p" onclick="ObsidianSetupWallet()">${busy(label, s, 'setup')}</button>`
+  );
+}
+
+function importPanel(s) {
+  return (
+    designField('ph', 'RECOVERY PHRASE', 'text', '12 or 24 words, separated by spaces') +
+    sealFields(s, 'SEAL WALLET ON THIS DEVICE') +
+    `<p class="mu" style="font-size:12.5px;margin-top:12px">Use this to bring in a wallet made on the Obsidian Web platform or anywhere else: the same words give the same wallet in every Obsidian product.</p>`
+  );
+}
+
+/**
+ * Create a wallet: generate, show, prove it was written down, then seal.
+ *
+ * The proof is three random words typed back. A phrase that is shown once and sealed
+ * straight away is a phrase most people never write down, and a wallet whose phrase
+ * was never written down is lost the first time this device is.
+ */
+function createPanel(s) {
+  const draft = s.setup?.draft;
+  if (!draft) {
+    return (
+      `<div class="card" style="margin-top:14px;padding:18px"><div class="lb" style="margin:0 0 8px">BEFORE YOU START</div>` +
+      `<p class="mu" style="font-size:13.5px;line-height:1.6;margin:0">You will be shown 24 words. Write them on paper, in order, and keep the paper somewhere only you can reach. Anyone who sees them can take everything in this wallet. There is no reset, and no support desk can bring them back.</p></div>` +
+      `<button class="btn p" onclick="ObsidianGeneratePhrase()">${busy('GENERATE MY RECOVERY PHRASE', s, 'generate')}</button>`
+    );
+  }
+  const words = draft.words
+    .map(
+      (w, i) =>
+        `<div style="padding:8px 10px;border:1px solid var(--bd);border-radius:10px;background:#fff"><span class="mu" style="font-size:11px">${String(i + 1).padStart(2, '0')}</span> <b class="m" style="font-size:14px">${esc(w)}</b></div>`,
+    )
+    .join('');
+  return (
+    `<div class="lb">YOUR RECOVERY PHRASE — WRITE IT DOWN NOW</div>` +
+    `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">${words}</div>` +
+    `<p class="mu" style="font-size:12.5px;line-height:1.55;margin-top:12px">This is the only time it is shown unprompted. It is held in this page’s memory and is not stored until you seal it below.</p>` +
+    `<div class="lb">PROVE YOU WROTE IT DOWN</div>` +
+    draft.check.map((n, i) => designField(`cw${i}`, `WORD #${n}`, 'text', '')).join('') +
+    sealFields(s, 'SEAL WALLET ON THIS DEVICE') +
+    `<button class="btn" onclick="ObsidianDiscardPhrase()">DISCARD AND START OVER</button>`
   );
 }
 
@@ -636,65 +744,6 @@ function nameResult(s) {
   );
 }
 
-function searchResult(s) {
-  const r = s.search;
-  if (r.kind === 'block') {
-    const b = r.block;
-    return (
-      `<div class="lb">BLOCK</div>` +
-      rows([
-        ['HEIGHT', `#${Number(b.summary?.height ?? b.height).toLocaleString()}`, 'm'],
-        ['HASH', esc(short(b.hash ?? b.summary?.hash)), 'm'],
-        ['PRODUCER', esc(short(b.header?.producer ?? b.summary?.producer)), 'm'],
-        ['TIME', esc(formatTime(b.summary?.timestamp ?? b.header?.timestamp))],
-        ['TRANSACTIONS', esc(b.transactions?.length ?? b.summary?.txCount ?? b.summary?.transactionCount ?? 0), 'm'],
-        ['CONFIRMATIONS', esc(orDash(b.confirmations)), 'm'],
-      ])
-    );
-  }
-  if (r.kind === 'transaction') {
-    const t = r.transaction;
-    return (
-      `<div class="lb">TRANSACTION</div>` +
-      rows([
-        ['ID', esc(short(t.txId)), 'm'],
-        ['TYPE', esc(t.typeName ?? t.type), 'm'],
-        ['SENDER', esc(short(t.sender)), 'm'],
-        ['RECIPIENT', esc(short(t.recipient)) || '—', 'm'],
-        ['AMOUNT', esc(orDash(t.amount, (v) => `${v} OBS`)), 'm'],
-        ['GAS', esc(orDash(t.gas, (v) => `${v} OBS`)), 'm'],
-        ['STATUS', esc(t.status ?? ''), String(t.status).toLowerCase() === 'confirmed' ? 'ok' : ''],
-        ['HEIGHT', esc(orDash(t.height)), 'm'],
-      ])
-    );
-  }
-  if (r.kind === 'address') {
-    const a = r.address;
-    return (
-      `<div class="lb">ADDRESS</div>` +
-      rows([
-        ['ADDRESS', esc(short(s.query)), 'm'],
-        ['TRANSACTIONS', esc(a.counts?.transactions ?? 0), 'm'],
-        ['MINING CLAIMS', esc(a.counts?.miningClaims ?? 0), 'm'],
-      ]) +
-      (a.transactions?.length
-        ? `<div class="card" style="margin-top:10px">${a.transactions
-            .slice(0, 10)
-            .map(
-              (t) =>
-                `<div class="row"><div><b class="m">${esc(short(t.txId))}</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(
-                  formatTime(t.timestamp),
-                )}</div></div><b class="m ${String(t.kind).includes('credit') ? 'ok' : ''}">${esc(
-                  orDash(t.amount, (v) => `${v} OBS`),
-                )}</b></div>`,
-            )
-            .join('')}</div>`
-        : unavailable('No transactions have been indexed for this address.'))
-    );
-  }
-  return '';
-}
-
 function activity(s, limit) {
   const txs = s.history?.transactions ?? [];
   if (!txs.length) {
@@ -709,7 +758,7 @@ function activity(s, limit) {
     .map((t) => {
       const incoming = typeof t.kind === 'string' && /credit|reward|received/i.test(t.kind);
       const amount = t.amount ? `${incoming ? '+' : ''}${t.amount} OBS` : '—';
-      return `<div class="row" onclick="ObsidianSearch('${esc(t.txId)}')" style="cursor:pointer"><div><b>${
+      return `<div class="row" onclick="ObsidianExOpen('tx','${esc(t.txId)}')" style="cursor:pointer"><div><b>${
         t.kind ? esc(prettyKind(t.kind)) : 'Transaction'
       }</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(short(t.txId))} · ${esc(
         formatTime(t.timestamp),

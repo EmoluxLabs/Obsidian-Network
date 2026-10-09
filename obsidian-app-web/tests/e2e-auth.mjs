@@ -2,7 +2,7 @@
 /**
  * Live account flow, driven through the app's own data layer (public/data.mjs).
  *
- *   APP_URL=http://127.0.0.1:8790 GENESIS_CODE=OBS-GENESIS-XXXX-XXXX-XXXX-XXXX \
+ *   APP_URL=http://127.0.0.1:38790 GENESIS_CODE=OBS-GENESIS-XXXX-XXXX-XXXX-XXXX \
  *     node tests/e2e-auth.mjs
  *
  * Needs a platform with a fresh data dir and OBSIDIAN_GENESIS_INVITE_HASH set to the
@@ -15,7 +15,7 @@
 import { createHmac } from 'node:crypto';
 import assert from 'node:assert/strict';
 
-const APP = process.env.APP_URL ?? 'http://127.0.0.1:8790';
+const APP = process.env.APP_URL ?? 'http://127.0.0.1:38790';
 const CODE = process.env.GENESIS_CODE;
 if (!CODE) {
   console.error('set GENESIS_CODE to the genesis invitation the platform was started with');

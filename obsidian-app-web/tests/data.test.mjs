@@ -20,6 +20,7 @@ import {
   sealsToObs,
   parseObs,
   formatDuration,
+  formatTerm,
   formatTime,
   normaliseName,
   getMiningStatus,
@@ -95,6 +96,9 @@ test('parseObs refuses what the protocol cannot represent', () => {
 test('durations and times are formatted, and absent ones are marked', () => {
   assert.equal(formatDuration(14400), '4h');
   assert.equal(formatDuration(0), '0s');
+  assert.equal(formatTerm(31536000), '365 days (1 year)');
+  assert.equal(formatTerm(86400 * 30), '30 days');
+  assert.equal(formatTerm(14400), '4h');
   assert.equal(formatDuration(null), '0s');
   assert.equal(formatTime(0), '—');
   assert.equal(formatTime(undefined), '—');

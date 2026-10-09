@@ -61,7 +61,7 @@ const OBS = 10n ** 18n;
 let sealedVault = null;
 
 before(async () => {
-  sealedVault = await createVault(PHRASE, PASSPHRASE);
+  sealedVault = await createVault(PHRASE, PASSPHRASE, 'dobs');
   saveVault(sealedVault);
 });
 

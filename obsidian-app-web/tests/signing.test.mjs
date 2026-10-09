@@ -220,3 +220,14 @@ test('retargeting refuses a string that is not an address', () => {
   const broken = BY_HRP.obs.slice(0, -1) + (BY_HRP.obs.endsWith('q') ? 'p' : 'q');
   assert.throws(() => retargetAddress(broken, 'dobs'));
 });
+
+test('a generated phrase is 24 valid words, different every time, and yields a usable address', async () => {
+  const { generatePhrase, isValidPhrase, walletFromPhrase } = await import('../web/signing.mjs');
+  const a = generatePhrase();
+  const b = generatePhrase();
+  assert.equal(a.split(' ').length, 24, '256 bits of entropy is 24 words');
+  assert.notEqual(a, b);
+  assert.equal(isValidPhrase(a), true, 'the checksum is valid');
+  const wallet = await walletFromPhrase(a, 'dobs');
+  assert.match(wallet.address, /^dobs1[0-9a-z]+$/);
+});

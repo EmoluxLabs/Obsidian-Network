@@ -37,6 +37,7 @@
  *     claims otherwise is a lie with a switch on it.
  */
 
+import { emptyExplorer } from './explorer.mjs';
 import {
   authConfig,
   register,
@@ -49,10 +50,21 @@ import {
   invites,
   issueInvite,
   linkWallet,
+  getAppConfig,
+  MIN_PASSPHRASE_LENGTH,
   getStatus,
   getNetwork,
   getParams,
   getBlocks,
+  getPot,
+  getSupply,
+  getValidators,
+  getMempool,
+  getAudit,
+  getNodeRewards,
+  getNodes,
+  getNames,
+  readRoute,
   getBlock,
   getTransaction,
   getAddressHistory,
@@ -71,13 +83,14 @@ import {
   addressOnNetwork,
   walletKdf,
   setupWallet,
+  newPhrase,
   removeWallet,
   revealPhrase,
   claim,
   send,
   registerName,
 } from './wallet.mjs';
-import { SCREENS, remainingSeconds } from './screens.mjs';
+import { SCREENS, remainingSeconds, networkBanner } from './screens.mjs';
 
 /** Screens that need a signed-in account. The chain itself is readable without one. */
 const ACCOUNT_SCREENS = new Set(['home', 'mine', 'menu']);
@@ -93,6 +106,7 @@ const state = {
   screen: 'splash',
   menu: false,
   account: null,
+  appConfig: null,
   config: null,
   status: null,
   network: null,
@@ -102,8 +116,8 @@ const state = {
   miningAt: null,
   balance: null,
   history: null,
-  blocks: null,
-  claims: null,
+  ex: emptyExplorer(),
+  apiTry: null,
   ownNames: null,
   invites: null,
   recoveryCodes: null,
@@ -111,9 +125,8 @@ const state = {
   vaultKdf: null,
   mfa: null,
   mfaRequired: false,
-  search: null,
-  query: '',
   ons: { query: '', result: null },
+  setup: { mode: 'create', draft: null },
   wt: 'send',
   error: '',
   notice: '',
@@ -146,11 +159,11 @@ function render() {
   const app = document.getElementById('app');
   if (!app) return;
   const screen = SCREENS[state.screen];
-  app.innerHTML = screen
+  app.innerHTML = networkBanner(state) + (screen
     ? screen(state)
     : `<div class="hd"><b style="letter-spacing:.18em">OBSIDIAN</b></div>` +
       `<div class="card" style="margin-top:20px"><div class="row mu">That screen does not exist.</div></div>` +
-      `<button class="btn" onclick="ObsidianGo('landing')">‹ BACK</button>`;
+      `<button class="btn" onclick="ObsidianGo('landing')">‹ BACK</button>`);
   startCountdown();
 }
 
@@ -158,7 +171,14 @@ function render() {
 function repaint() {
   const active = document.activeElement;
   const typing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
-  if (!typing) render();
+  if (typing) return;
+  // A form with something typed into it is not repainted either, even when its field
+  // is not focused: a background refresh must not erase a half-written payment or the
+  // words someone is copying back from paper.
+  const app = document.getElementById('app');
+  const filled = app?.querySelectorAll?.('input, textarea');
+  if (filled && [...filled].some((el) => el.value)) return;
+  render();
 }
 
 /**
@@ -178,8 +198,15 @@ function go(target) {
   state.notice = '';
   state.menu = false;
   state.busy = null;
+  // A phrase that was generated but never sealed does not survive leaving the screen.
+  state.setup.draft = null;
+  if (state.screen === 'wallet' && !state.walletAddress) state.wt = 'setup';
   window.scrollTo(0, 0);
   render();
+  // A screen that reads the chain asks for it on arrival. Waiting for the next
+  // 15-second poll left the explorer reading "the node has not returned any blocks"
+  // for a visitor looking at a healthy chain.
+  if (state.screen === 'explorer') loadExplorer().catch(() => {});
 }
 
 /**
@@ -273,29 +300,84 @@ async function refresh() {
   ]);
   state.status = status;
   state.network = network;
+  // A node that has stopped answering must not leave its last answers on screen as
+  // if they were current: a stale height beside "OFFLINE" is an invented chain.
+  if (!status) state.ex.data = {};
 
   await refreshAccount();
   await refreshWallet();
 
-  const needsExplorer = state.screen === 'explorer' || Boolean(state.search);
-  const [blocks, claims, params, schedule] = await Promise.all([
-    needsExplorer ? getBlocks(12).catch(() => null) : null,
-    needsExplorer && state.walletAddress ? getMiningClaims(state.walletAddress, 8).catch(() => null) : null,
+  const [params, schedule] = await Promise.all([
     state.params ? null : getParams().catch(() => null),
     state.schedule ? null : getMiningSchedule().catch(() => null),
   ]);
-  if (needsExplorer) {
-    state.blocks = blocks;
-    state.claims = claims;
-  }
   if (params) state.params = params;
   if (schedule) state.schedule = schedule;
+
+  // The explorer shows the chain, not this wallet, so it is refreshed on its own
+  // schedule rather than as part of the wallet refresh.
+  if (state.screen === 'explorer') await loadExplorer({ quiet: true });
 
   state.invites = state.account ? await invites().catch(() => null) : null;
   repaint();
 }
 
+/**
+ * Load whatever the open explorer view needs.
+ *
+ * Each tab reads its own routes, and one route failing blanks only its own panel:
+ * a node that serves /supply but not /pot still shows the supply. The result is
+ * written only if the user is still looking at the tab it was fetched for, so a
+ * slow answer cannot paint over a different view.
+ */
+async function loadExplorer({ quiet = false } = {}) {
+  const ex = state.ex;
+  if (ex.detail) return;
+  const tab = ex.tab;
+  if (!quiet) {
+    ex.loading = true;
+    delete ex.errors[tab];
+    repaint();
+  }
+  const ask = (promise) => promise.then((value) => value, () => null);
+  let data = null;
+  if (tab === 'overview') {
+    const [status, supply, pot, mempool] = await Promise.all([ask(getStatus()), ask(getSupply()), ask(getPot()), ask(getMempool())]);
+    if (status) state.status = status;
+    data = status || supply || pot ? { status, supply, pot, mempool } : null;
+  } else if (tab === 'blocks') {
+    data = await ask(getBlocks(25));
+  } else if (tab === 'claims') {
+    data = await ask(getMiningClaims(undefined, 25));
+  } else if (tab === 'names') {
+    data = await ask(getNames('', 25));
+  } else if (tab === 'network') {
+    const [nodes, validators, mempool, rewards, audit] = await Promise.all([
+      ask(getNodes()),
+      ask(getValidators()),
+      ask(getMempool()),
+      ask(getNodeRewards()),
+      ask(getAudit('decentralization')),
+    ]);
+    data = nodes || validators || mempool || rewards || audit ? { nodes, validators, mempool, rewards, audit } : null;
+  }
+  if (state.ex !== ex || ex.tab !== tab) return;
+  ex.loading = false;
+  if (data) {
+    ex.data[tab] = data;
+    delete ex.errors[tab];
+  } else {
+    delete ex.data[tab];
+    ex.errors[tab] = 'The node did not answer. Nothing here is guessed in its place.';
+  }
+  repaint();
+}
+
 async function boot() {
+  state.appConfig = await getAppConfig().catch(() => null);
+  if (state.appConfig && !state.appConfig.production) {
+    document.title = `Obsidian Network — ${state.appConfig.network.toUpperCase()}`;
+  }
   state.config = await authConfig().catch(() => null);
   await refresh();
   render();
@@ -334,9 +416,17 @@ function explain(error) {
  * an empty string and every claim fails as a wrong passphrase.
  */
 async function withBusy(key, fn) {
+  // What was typed, so that an error does not cost the user their input. Passwords and
+  // passphrases are never carried over: they are asked for again.
+  const screen = state.screen;
+  const typed = [...document.querySelectorAll('#app input, #app textarea')]
+    .filter((el) => el.id && el.type !== 'password' && el.value)
+    .map((el) => [el.id, el.value]);
   state.busy = key;
   state.error = '';
-  repaint();
+  // A deliberate action: its fields were read before this point, so it repaints
+  // unconditionally to show the busy state (the quiet background refresh does not).
+  render();
   try {
     await fn();
   } catch (error) {
@@ -344,6 +434,12 @@ async function withBusy(key, fn) {
   } finally {
     state.busy = null;
     render();
+    if (state.error && state.screen === screen) {
+      for (const [id, value] of typed) {
+        const el = document.getElementById(id);
+        if (el && !el.value) el.value = value;
+      }
+    }
   }
 }
 
@@ -424,6 +520,7 @@ function install() {
     const email = field('em').trim();
     const password = field('pw');
     const totp = field('mf').trim() || undefined;
+    let keepPassword = false;
     return withBusy('signin', async () => {
       if (!email || !password) return setError('Enter your email and password.');
       try {
@@ -438,13 +535,20 @@ function install() {
         // and the platform says which one it is.
         if (error?.code === 'ERR_MFA_REQUIRED') {
           state.mfaRequired = true;
+          keepPassword = true;
           setError('Enter the code from your authenticator app.');
         } else {
           setError(explain(error));
         }
-        const pw = document.getElementById('pw');
-        if (pw) pw.value = '';
       }
+    }).then(() => {
+      // The repaint emptied the form. Keep the address so a typo in the password, or the
+      // extra code, does not mean typing it again; keep the password only for the
+      // second-factor step, where it was right.
+      if (state.screen !== 'signin') return;
+      const put = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+      put('em', email);
+      if (keepPassword) put('pw', password);
     });
   };
 
@@ -473,6 +577,9 @@ function install() {
     withBusy('mfa', async () => {
       state.mfa = (await mfaSetup()) ?? null;
       setError('');
+      // The secret and the code field live on the Menu screen; started from Home, the
+      // user is taken to them rather than left looking at a button that did nothing.
+      if (state.mfa) state.screen = 'menu';
     });
 
   g.ObsidianMfaConfirm = () => {
@@ -526,19 +633,51 @@ function install() {
   };
 
   // ── the wallet on this device ──────────────────────────────────────────────
+  g.ObsidianSetupMode = (mode) => {
+    state.setup = { mode: mode === 'import' ? 'import' : 'create', draft: null };
+    state.error = '';
+    render();
+  };
+
+  g.ObsidianGeneratePhrase = () =>
+    withBusy('generate', async () => {
+      const words = (await newPhrase()).trim().split(/\s+/);
+      // Three distinct positions to prove the phrase was written down, chosen by the
+      // browser's CSPRNG and shown in order.
+      const picks = new Set();
+      while (picks.size < 3) picks.add(1 + (crypto.getRandomValues(new Uint32Array(1))[0] % words.length));
+      state.setup = { mode: 'create', draft: { words, check: [...picks].sort((a, b) => a - b) } };
+    });
+
+  g.ObsidianDiscardPhrase = () => {
+    state.setup = { mode: 'create', draft: null };
+    state.error = '';
+    render();
+  };
+
   g.ObsidianSetupWallet = () => {
-    const phrase = field('ph');
+    const importing = state.setup.mode === 'import';
+    const draft = state.setup.draft;
+    const phrase = importing ? field('ph') : draft?.words.join(' ') ?? '';
+    const proof = draft ? draft.check.map((_, i) => field(`cw${i}`)) : [];
     const passphrase = field('pp');
     const confirm = field('p2');
     return withBusy('setup', async () => {
-      if (!passphrase || passphrase.length < 8) {
-        return setError('Choose a passphrase of at least 8 characters.');
+      if (!importing) {
+        if (!draft) return setError('Generate a recovery phrase first.');
+        const right = draft.check.every((n, i) => proof[i].trim().toLowerCase() === draft.words[n - 1]);
+        // Deliberately does not say which word was wrong.
+        if (!right) return setError('Those words do not match the phrase above. Check what you wrote down.');
+      }
+      if (!passphrase || passphrase.length < MIN_PASSPHRASE_LENGTH) {
+        return setError(`Choose a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters.`);
       }
       if (passphrase !== confirm) return setError('Passphrases do not match.');
       const { address } = await setupWallet({ phrase, passphrase });
+      state.setup = { mode: 'create', draft: null };
       state.walletAddress = address;
       state.wt = 'receive';
-      setNotice('Wallet sealed on this device. Write the phrase down if you have not already.');
+      setNotice('Wallet sealed on this device. Keep the paper with your phrase safe: it is the only backup.');
       await refreshWallet();
     });
   };
@@ -571,6 +710,7 @@ function install() {
     return withBusy('claim', async () => {
       const result = await claim(() => passphrase);
       if (!result.ok) return setError(result.message);
+      state.claimSentAt = Date.now();
       setNotice(`Claim submitted — ${result.txId.slice(0, 16)}… — not yet confirmed.`);
       await refreshMining();
     });
@@ -617,31 +757,95 @@ function install() {
   };
 
   // ── explorer ───────────────────────────────────────────────────────────────
+  g.ObsidianExTab = (tab) => {
+    state.ex.tab = tab;
+    state.ex.detail = null;
+    state.error = '';
+    render();
+    loadExplorer().catch(() => {});
+  };
+
+  g.ObsidianExClose = () => {
+    state.ex.detail = null;
+    state.error = '';
+    render();
+    loadExplorer({ quiet: true }).catch(() => {});
+  };
+
+  /** Open a block, a transaction or a name from a list or a link. */
+  g.ObsidianExOpen = async (kind, value) => {
+    state.error = '';
+    // Opened from another screen — a transaction in your own activity, say — it is
+    // shown in the explorer, which is where a transaction's detail lives.
+    if (state.screen !== 'explorer') state.screen = 'explorer';
+    try {
+      if (kind === 'block') {
+        state.ex.detail = { kind: 'block', block: await getBlock(value) };
+      } else if (kind === 'tx') {
+        state.ex.detail = { kind: 'transaction', transaction: await getTransaction(value) };
+      } else if (kind === 'name') {
+        state.ex.detail = { kind: 'name', record: await getName(value) };
+      }
+      window.scrollTo(0, 0);
+    } catch (error) {
+      setError(explain(error));
+    }
+    render();
+  };
+
+  /**
+   * Search by height, block id, transaction id or name — and nothing else.
+   *
+   * An address is deliberately not searchable. Looking up an arbitrary wallet's
+   * activity is the one thing the platform's own explorer refuses to do, and an
+   * explorer here that did it would turn a privacy rule into a per-product choice.
+   */
   g.ObsidianSearch = async (preset) => {
-    const query = preset !== undefined ? String(preset) : field('q').trim();
-    if (!query) return setError('Enter a block height, a transaction id or an address.');
-    state.query = query;
-    state.search = null;
+    const query = preset !== undefined ? String(preset).trim() : field('q').trim();
+    if (!query) {
+      setError('Enter a block height, a block or transaction id, or a name ending in .obs.');
+      return render();
+    }
     setError('');
+    if (/^(obs|tobs|sobs|dobs)1[0-9a-z]{10,}$/i.test(query)) {
+      setError(
+        'Addresses are not searchable here, by design: an explorer that looks up a wallet turns the chain into a surveillance tool. Your own activity is on the WALLET screen.',
+      );
+      return render();
+    }
+    state.busy = 'search';
     render();
     try {
       if (/^\d+$/.test(query)) {
-        state.search = { kind: 'block', block: await getBlock(query) };
-      } else if (/^(obs|tobs|sobs|dobs)1[0-9a-z]{20,}$/.test(query)) {
-        state.search = { kind: 'address', address: await getAddressHistory(query, 20) };
+        state.ex.detail = { kind: 'block', block: await getBlock(query) };
       } else if (/^[0-9a-f]{64}$/i.test(query)) {
-        state.search = { kind: 'transaction', transaction: await getTransaction(query) };
+        // The two id kinds look alike. Ask for a transaction first, then a block.
+        try {
+          state.ex.detail = { kind: 'transaction', transaction: await getTransaction(query.toLowerCase()) };
+        } catch {
+          state.ex.detail = { kind: 'block', block: await getBlock(query.toLowerCase()) };
+        }
       } else if (/\.obs$/i.test(query)) {
-        // A name resolves to an address on the chain, and this app shows which
-        // address rather than quietly searching for something else.
-        const record = await getName(query.toLowerCase());
-        state.search = { kind: 'address', address: await getAddressHistory(record.address, 20) };
+        state.ex.detail = { kind: 'name', record: await getName(query.toLowerCase()) };
       } else {
-        setError('That is not a block height, a transaction id or an address.');
+        setError('That is not a block height, a block or transaction id, or a .obs name.');
       }
+      if (state.ex.detail) window.scrollTo(0, 0);
     } catch (error) {
-      state.search = null;
       setError(explain(error));
+    }
+    state.busy = null;
+    render();
+  };
+
+  // ── developer reads ────────────────────────────────────────────────────────
+  g.ObsidianApiTry = async (route) => {
+    state.apiTry = { route, loading: true };
+    render();
+    try {
+      state.apiTry = { route, body: await readRoute(route) };
+    } catch (error) {
+      state.apiTry = { route, error: explain(error) };
     }
     render();
   };
@@ -674,10 +878,6 @@ function install() {
     state.notify = notify.permission();
     setNotice('Claim alerts off.');
     render();
-  };
-
-  g.ObsidianRefresh = () => {
-    refresh().catch(() => {});
   };
 
   // A wallet already on this device: read what the vault was sealed with, so the

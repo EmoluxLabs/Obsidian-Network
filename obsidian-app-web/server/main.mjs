@@ -27,12 +27,33 @@ import { stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NETWORK_NAMES, networkFor, publicConfig, verifyPlatform } from './networks.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(here, '..', 'public');
 
-const PORT = Number(process.env.APP_PORT ?? 8790);
+/**
+ * Which network this deployment is. Required, never defaulted: there is deliberately
+ * no network an app silently becomes. See server/networks.mjs.
+ */
+let NETWORK = null;
+let NETWORK_ERROR = null;
+try {
+  NETWORK = networkFor(process.env.OBSIDIAN_APP_NETWORK);
+} catch (error) {
+  NETWORK_ERROR = error instanceof Error ? error.message : String(error);
+}
+
+const PORT = Number(process.env.APP_PORT ?? NETWORK?.appPort ?? 8790);
 const HOST = process.env.APP_HOST ?? '0.0.0.0';
+const RECHECK_MS = Number(process.env.APP_NETWORK_RECHECK_MS ?? 30_000);
+
+/**
+ * The last answer to "is the platform on the network this app claims to be?".
+ * `pending` until the first check; `unreachable` and `unverified` are tolerated
+ * (an outage is not a mismatch); `mismatch` is not, and closes the API.
+ */
+let verification = { state: 'pending', detail: 'not checked yet' };
 
 /**
  * The Obsidian Web platform. Required rather than defaulted: an app that silently
@@ -43,12 +64,16 @@ const PLATFORM_URL = process.env.OBSIDIAN_PLATFORM_URL;
 
 const USAGE = `Obsidian app server
 
-  APP_PORT              port to listen on            (default 8790)
-  APP_HOST              address to bind              (default 0.0.0.0)
-  OBSIDIAN_PLATFORM_URL origin of the Obsidian Web platform, e.g.
+  OBSIDIAN_APP_NETWORK  ${NETWORK_NAMES.join(' | ')}        (required, no default)
+  OBSIDIAN_PLATFORM_URL origin of the Obsidian Web platform FOR THAT NETWORK, e.g.
                         https://obsidian.example  (required)
+  APP_PORT              port to listen on   (default per network:
+                        mainnet 8790, testnet 18790, staging 28790, devnet 38790)
+  APP_HOST              address to bind              (default 0.0.0.0)
+  APP_NETWORK_RECHECK_MS  how often the platform's network is re-verified (default 30000)
 
 Serves ./public and proxies /api/* to the platform. Holds no session state.
+Refuses to start in front of a platform that reports a different network.
 `;
 
 const TYPES = {
@@ -197,10 +222,28 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   if (url.pathname === '/healthz') {
-    return send(res, 200, { ok: true, platform: PLATFORM_URL ?? null });
+    return send(res, verification.state === 'mismatch' ? 503 : 200, {
+      ok: verification.state !== 'mismatch',
+      platform: PLATFORM_URL ?? null,
+      network: NETWORK?.name ?? null,
+      verification: verification.state,
+      detail: verification.detail,
+    });
+  }
+
+  // The app's own identity, for the browser. Never cached: a deployment that moved
+  // networks must not keep telling browsers it is still the old one.
+  if (url.pathname === '/app-config.json') {
+    return send(res, 200, publicConfig(NETWORK, verification), { 'Cache-Control': 'no-store' });
   }
 
   if (url.pathname.startsWith('/api/')) {
+    if (verification.state === 'mismatch') {
+      return send(res, 503, {
+        error: `this app is the ${NETWORK.name} app, but its platform is not on ${NETWORK.name}: ${verification.detail}`,
+        code: 'ERR_NETWORK_MISMATCH',
+      });
+    }
     if (!PLATFORM_URL) {
       return send(res, 503, {
         error: 'this app has no platform configured',
@@ -222,6 +265,14 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   process.exit(0);
 }
 
+if (!NETWORK) {
+  process.stderr.write(
+    `OBSIDIAN_APP_NETWORK is not usable: ${NETWORK_ERROR}.\n` +
+    'Refusing to start. An app that guesses its network can sign for the wrong chain.\n\n' + USAGE,
+  );
+  process.exit(2);
+}
+
 if (!PLATFORM_URL) {
   process.stderr.write(
     'OBSIDIAN_PLATFORM_URL is not set. Refusing to start: the app would render\n' +
@@ -230,13 +281,41 @@ if (!PLATFORM_URL) {
   process.exit(2);
 }
 
+async function recheck() {
+  const before = verification.state;
+  verification = await verifyPlatform(PLATFORM_URL, NETWORK);
+  if (verification.state !== before) {
+    process.stderr.write(`network check: ${before} -> ${verification.state} (${verification.detail})\n`);
+  }
+}
+
+await recheck();
+if (verification.state === 'mismatch') {
+  process.stderr.write(
+    `Refusing to start: this is the ${NETWORK.name} app, but ${PLATFORM_URL} reports a\n` +
+    `different network (${verification.detail}).\n` +
+    'Point OBSIDIAN_PLATFORM_URL at the platform for this network, or change OBSIDIAN_APP_NETWORK.\n',
+  );
+  process.exit(3);
+}
+
 server.listen(PORT, HOST, () => {
   process.stdout.write(
     `Obsidian app  http://${HOST}:${PORT}\n` +
-    `  platform    ${PLATFORM_URL}\n` +
+    `  network     ${NETWORK.name} (chain ${NETWORK.chainId}, prefix ${NETWORK.addressHrp}1)\n` +
+    `  platform    ${PLATFORM_URL}  [${verification.state}: ${verification.detail}]\n` +
     `  public      ${PUBLIC_DIR}\n`,
   );
+  if (verification.state !== 'ok') {
+    process.stderr.write(
+      `WARNING: the platform's network could not be confirmed (${verification.state}). ` +
+      'It is checked again every ' + Math.round(RECHECK_MS / 1000) + 's, and the API closes if it turns out to be wrong.\n',
+    );
+  }
 });
+
+// A platform can be repointed after this process started. Keep asking.
+setInterval(() => recheck().catch(() => {}), RECHECK_MS).unref();
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => server.close(() => process.exit(0)));

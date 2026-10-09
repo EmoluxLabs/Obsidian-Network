@@ -69,7 +69,7 @@ async function startApp(env) {
   const port = await freePort();
   const child = spawn(process.execPath, [SERVER], {
     cwd: appWeb,
-    env: { ...process.env, APP_PORT: String(port), APP_HOST: '127.0.0.1', ...env },
+    env: { ...process.env, OBSIDIAN_APP_NETWORK: 'devnet', APP_PORT: String(port), APP_HOST: '127.0.0.1', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   children.push(child);
@@ -237,7 +237,7 @@ test('the server refuses to start with no platform configured', async () => {
   const port = await freePort();
   const child = spawn(process.execPath, [SERVER], {
     cwd: appWeb,
-    env: { ...process.env, APP_PORT: String(port), OBSIDIAN_PLATFORM_URL: '' },
+    env: { ...process.env, OBSIDIAN_APP_NETWORK: 'devnet', APP_PORT: String(port), OBSIDIAN_PLATFORM_URL: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   children.push(child);

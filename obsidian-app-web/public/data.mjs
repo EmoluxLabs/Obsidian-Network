@@ -65,6 +65,35 @@ async function call(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+/**
+ * The shortest passphrase that may seal a wallet on this device. The platform's own
+ * MIN_VAULT_PASSPHRASE_LENGTH, and the same as its account-password minimum:
+ * tests/vault-interop.test.mjs fails if the two ever differ.
+ */
+export const MIN_PASSPHRASE_LENGTH = 12;
+
+// ── this deployment's own identity ───────────────────────────────────────────
+
+let appConfigCache = null;
+
+/**
+ * Which network THIS app is, as its own server declares it (`/app-config.json`).
+ *
+ * This is the app's identity and is deliberately not read from the node: the node is
+ * the thing being checked against it. Only a successful answer is remembered, so an
+ * app that could not be identified at load time tries again rather than staying
+ * unidentified — and anything that signs refuses until it has an identity.
+ */
+export async function getAppConfig() {
+  if (appConfigCache) return appConfigCache;
+  const config = await call('/app-config.json');
+  if (!Number.isInteger(config.chainId) || typeof config.addressHrp !== 'string' || !config.network) {
+    throw new Error('this app could not determine which network it is');
+  }
+  appConfigCache = config;
+  return config;
+}
+
 // ── accounts ─────────────────────────────────────────────────────────────────
 
 /**
@@ -129,6 +158,9 @@ function rpcPath(route, query) {
 const read = (route, query) => call(rpcPath(route, query));
 const write = (route, body) => call(rpcPath(route), { method: 'POST', body });
 
+/** Run any allowlisted read and return the node's own JSON. Used by the API screen. */
+export const readRoute = (route) => call(`/api/rpc?path=${encodeURIComponent(route)}`);
+
 export const getStatus = () => read('/status');
 export const getParams = () => read('/params');
 export const getNetwork = () => read('/network');
@@ -171,11 +203,32 @@ export const getMiningStatus = (address) =>
 
 export const getMiningSchedule = () => read('/mining/schedule');
 
+/**
+ * Mining claims. With a miner, that address's own claims; without one, the chain's
+ * latest claims from every miner, which the node masks before they leave it.
+ */
 export const getMiningClaims = (miner, limit = 20) =>
-  read('/mining/claims', `miner=${encodeURIComponent(miner)}&limit=${encodeURIComponent(limit)}`);
+  read(
+    '/mining/claims',
+    `${miner ? `miner=${encodeURIComponent(miner)}&` : ''}limit=${encodeURIComponent(limit)}`,
+  );
 
-export const getNames = (prefix = '') =>
-  read('/names', prefix ? `prefix=${encodeURIComponent(prefix)}` : '');
+// ── what the explorer reads ──────────────────────────────────────────────────
+// Each of these is a public, address-masked node route. None answers "how much
+// does this wallet hold", and the explorer never asks (docs/explorer.md, rule 1).
+
+/** Proof of Time state: difficulty, time-rate, the authoritative clock. */
+export const getPot = () => read('/pot');
+export const getValidators = () => read('/validators');
+export const getMempool = () => read('/mempool');
+/** The node's answers to "can anyone shut this down / mint / censor", with evidence. */
+export const getAudit = (kind) => read(`/audit/${encodeURIComponent(kind)}`);
+/** Node-runner reward pool and its settlement schedule. */
+export const getNodeRewards = () => read('/nodes/rewards');
+export const getNodeRegistry = () => read('/nodes/registry');
+
+export const getNames = (prefix = '', limit = 20) =>
+  read('/names', `${prefix ? `prefix=${encodeURIComponent(prefix)}&` : ''}limit=${encodeURIComponent(limit)}`);
 
 export const getName = (name) => read(`/names/${encodeURIComponent(name)}`);
 
@@ -317,6 +370,16 @@ export function formatDuration(seconds) {
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
   return [h && `${h}h`, m && `${m}m`, (s || (!h && !m)) && `${s}s`].filter(Boolean).join(' ');
+}
+
+/** A registration term, in the unit a person thinks in: 31,536,000 s is 365 days, not 8760h. */
+export function formatTerm(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (total >= 86400 && total % 86400 === 0) {
+    const d = total / 86400;
+    return d % 365 === 0 ? `${d} days (${d / 365} year${d / 365 === 1 ? '' : 's'})` : `${d} days`;
+  }
+  return formatDuration(total);
 }
 
 /** A protocol timestamp as a local time string, or an em dash when there is none. */

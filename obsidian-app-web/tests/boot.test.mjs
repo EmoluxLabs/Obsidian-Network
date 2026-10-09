@@ -67,6 +67,7 @@ globalThis.document = {
   body: { appendChild() {}, removeChild() {} },
   getElementById: (id) => elements.get(id) ?? null,
   querySelector: () => null,
+  querySelectorAll: () => [],
   addEventListener() {},
   createElement: () => ({ style: {}, select() {}, remove() {} }),
   execCommand: () => true,
@@ -135,10 +136,14 @@ function json(status, body) {
 globalThis.fetch = async (url, init = {}) => {
   const target = String(url);
   requested.push(`${init.method ?? 'GET'} ${target}`);
+  if (target === '/app-config.json') {
+    return json(200, { network: 'devnet', networkId: 'obsidian-devnet-1', chainId: 7780, addressHrp: 'dobs', production: false, verified: true, verification: 'ok' });
+  }
   if (target.startsWith('/api/auth/config')) return json(200, CONFIG);
   if (target.startsWith('/api/auth/me')) return json(401, { error: 'sign in required', code: 'ERR_UNAUTHORIZED' });
   if (target.startsWith('/api/rpc')) {
     const path = decodeURIComponent(new URL(target, 'http://x').searchParams.get('path') ?? '');
+    if (path === '/block/82') return json(200, { height: 82, hash: 'ab'.repeat(32), transactions: [] });
     if (path === '/status') return json(200, STATUS);
     if (path === '/network') return json(200, NETWORK);
     if (path === '/params') return json(200, PARAMS);
@@ -190,7 +195,7 @@ test('no request leaves the page’s own origin', () => {
   // localhost: every URL is relative.
   for (const entry of requested) {
     const url = entry.split(' ')[1];
-    assert.match(url, /^\/api\//, `${entry} is not a relative /api call`);
+    assert.match(url, /^\/(api\/|app-config\.json$)/, `${entry} is not one of this origin's own routes`);
   }
 });
 
@@ -309,4 +314,101 @@ test('the nonce is read from the dedicated route under the name it is sent as', 
   } finally {
     globalThis.fetch = original;
   }
+});
+
+
+// ── creating a wallet ────────────────────────────────────────────────────────
+
+function typeInto(values) {
+  for (const [id, value] of Object.entries(values)) elements.set(id, { value });
+}
+
+function clearFields() {
+  for (const id of [...elements.keys()]) if (id !== 'app') elements.delete(id);
+}
+
+test('a person with no wallet is offered CREATE first, and the phrase is shown only after asking', needsBundle, async () => {
+  localStorage.removeItem('obsidian.vault.v1');
+  localStorage.removeItem('obsidian.address');
+  real.state.walletAddress = null;
+  real.state.wt = 'setup';
+  real.state.setup = { mode: 'create', draft: null };
+  real.state.screen = 'wallet';
+  real.render();
+  assert.match(app.innerHTML, /CREATE NEW/);
+  assert.match(app.innerHTML, /GENERATE MY RECOVERY PHRASE/);
+  assert.doesNotMatch(app.innerHTML, /WORD #/, 'nothing to prove before a phrase exists');
+
+  await window.ObsidianGeneratePhrase();
+  const { words, check } = real.state.setup.draft;
+  assert.equal(words.length, 24, 'a 256-bit phrase is 24 words');
+  assert.equal(check.length, 3);
+  assert.equal(new Set(check).size, 3, 'three different positions');
+  assert.deepEqual([...check], [...check].sort((a, b) => a - b), 'asked in order');
+  assert.ok(check.every((n) => n >= 1 && n <= 24));
+  for (const n of check) assert.match(app.innerHTML, new RegExp(`WORD #${n}\\b`));
+  assert.ok(words.every((w) => app.innerHTML.includes(`>${w}<`)), 'all 24 words are on screen');
+  assert.equal(JSON.stringify([...store.entries()]).includes(words[0] + ' ' + words[1]), false, 'nothing is stored yet');
+});
+
+test('the phrase is not sealed until the words are proven, and the refusal does not say which was wrong', needsBundle, async () => {
+  const { words, check } = real.state.setup.draft;
+  typeInto({ cw0: words[check[0] - 1], cw1: 'wrong', cw2: words[check[2] - 1], pp: 'a long vault passphrase 42', p2: 'a long vault passphrase 42' });
+  await window.ObsidianSetupWallet();
+  assert.match(real.state.error, /do not match/);
+  assert.doesNotMatch(real.state.error, new RegExp(`#?${check[1]}\\b`), 'it does not point at the wrong word');
+  assert.equal(localStorage.getItem('obsidian.vault.v1'), null, 'nothing was sealed');
+  assert.ok(real.state.setup.draft, 'the phrase is kept so the person can try again');
+});
+
+test('a short passphrase is refused even with the right words', needsBundle, async () => {
+  const { words, check } = real.state.setup.draft;
+  typeInto({ cw0: words[check[0] - 1], cw1: words[check[1] - 1], cw2: words[check[2] - 1], pp: 'short', p2: 'short' });
+  await window.ObsidianSetupWallet();
+  assert.match(real.state.error, /at least 12/);
+  assert.equal(localStorage.getItem('obsidian.vault.v1'), null);
+});
+
+test('the right words and a passphrase seal exactly the phrase that was shown', needsBundle, async () => {
+  const wallet = await import('../public/wallet.mjs');
+  const { words, check } = real.state.setup.draft;
+  const shown = words.join(' ');
+  typeInto({ cw0: words[check[0] - 1].toUpperCase(), cw1: words[check[1] - 1], cw2: words[check[2] - 1], pp: 'a long vault passphrase 42', p2: 'a long vault passphrase 42' });
+  await window.ObsidianSetupWallet();
+  assert.equal(real.state.error, '');
+  assert.match(real.state.walletAddress, /^dobs1/, 'a devnet address, from the connected network');
+  assert.equal(real.state.setup.draft, null, 'the phrase is dropped from memory once sealed');
+  assert.ok(localStorage.getItem('obsidian.vault.v1'), 'sealed in the platform’s vault format');
+  assert.equal(JSON.stringify([...store.entries()]).includes(words[0]), false, 'the phrase is not in storage in the clear');
+  assert.equal(await wallet.addressForPhrase(shown), real.state.walletAddress, 'the address belongs to the phrase that was shown');
+  clearFields();
+});
+
+test('leaving the wallet screen drops a phrase that was never sealed', needsBundle, async () => {
+  localStorage.removeItem('obsidian.vault.v1');
+  localStorage.removeItem('obsidian.address');
+  real.state.walletAddress = null;
+  real.state.setup = { mode: 'create', draft: null };
+  await window.ObsidianGeneratePhrase();
+  assert.ok(real.state.setup.draft);
+  real.go('explorer');
+  assert.equal(real.state.setup.draft, null);
+  real.go('wallet');
+  assert.equal(real.state.wt, 'setup', 'with no wallet the Wallet screen opens on creation, not an empty Send form');
+});
+
+// ── the explorer's search ────────────────────────────────────────────────────
+
+test('searching a pasted address is refused and never asks the node about it', async () => {
+  const before = requested.length;
+  await window.ObsidianSearch(BY_NETWORK.dobs);
+  assert.match(real.state.error, /not searchable/);
+  assert.equal(requested.slice(before).some((r) => /address|wallet/.test(r)), false);
+});
+
+test('searching a height reads that block', async () => {
+  const before = requested.length;
+  await window.ObsidianSearch('82');
+  assert.ok(requested.slice(before).some((r) => decodeURIComponent(r).includes('/block/82')));
+  assert.equal(real.state.ex.detail?.kind, 'block');
 });

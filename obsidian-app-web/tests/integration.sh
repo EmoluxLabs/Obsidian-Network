@@ -9,7 +9,7 @@
 # a dead platform into an empty 200 would pass a "does it respond" test and fail all
 # of these.
 set -uo pipefail
-APP="${APP_URL:?set APP_URL to the running app, e.g. http://127.0.0.1:8799}"
+APP="${APP_URL:?set APP_URL to the running app, e.g. http://127.0.0.1:38790 (devnet)}"
 fail=0
 
 # Pattern matching, not `grep -q` in a pipeline. The shell is a quarter of a
@@ -86,7 +86,7 @@ fi
 # ── the one that matters most ────────────────────────────────────────────────
 # A dead platform must be loud, never a plausible empty.
 DEAD_PORT="${DEAD_PORT:-8798}"
-OBSIDIAN_PLATFORM_URL=http://127.0.0.1:1 APP_PORT="$DEAD_PORT" \
+OBSIDIAN_APP_NETWORK="${OBSIDIAN_APP_NETWORK:-devnet}" OBSIDIAN_PLATFORM_URL=http://127.0.0.1:1 APP_PORT="$DEAD_PORT" \
   node "$(dirname "$0")/../server/main.mjs" >/dev/null 2>&1 &
 dead_pid=$!
 sleep 2

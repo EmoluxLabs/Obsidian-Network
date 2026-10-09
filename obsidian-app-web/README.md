@@ -5,20 +5,49 @@ Obsidian Web platform's own API as its single backend. Keys never leave the brow
 
 ## What it does
 
-| Screen | Backed by |
-| --- | --- |
-| Sign up / sign in / recover | platform `/api/auth/*` — Gmail + password + invite + MFA, as the server states it |
-| Home | account, invites, recovery codes (shown once), MFA, linked address |
-| Mine | the node's own eligibility (`/mining/status`); claims are signed in the browser and submitted to `/tx/submit` |
-| Wallet | balance, history, send (payment), receive, wallet set-up on this device |
-| Explorer | blocks, transactions, addresses and `.obs` names, straight from the node |
-| ONS | name lookup, registration, renewal, address update, transfer |
-| API | the routes the proxy exposes |
+| Screen | What it is for | Backed by |
+| --- | --- | --- |
+| Sign up / sign in / recover | One account for the whole ecosystem | platform `/api/auth/*`: Gmail + password + invite + MFA, as the platform states it |
+| Home | Account at a glance: recovery codes (shown once), MFA, linked address | platform session, node |
+| Mine | Claim once per four hours; the claim is signed in the browser | the node's own eligibility (`/mining/status`), `/tx/submit` |
+| Wallet | Create a wallet (24 words, proven before sealing) or import one; send, receive, history | the node, signed on this device |
+| Explorer | Overview, blocks, claims, names, the reward pool, audit, search | the node, read-only, addresses masked, no balances, no address search |
+| ONS | Search, register and list `.obs` names | the node and a signed ONS transaction |
+| API | Run any public read the gateway allows and see the node's own answer | `/api/rpc?path=…` |
+| Menu | MFA enrolment, invitations, link an address, claim alerts, sign out | platform `/api/auth/*`, `/api/wallet/link` |
 
 Every figure comes from the platform or the node. A value not yet answered renders as
 `—`; nothing is defaulted, estimated or invented. The design's own demo behaviours
 (`claim`, `send`, `buy`, `startM`, `onsq`, the `TAKEN`/`PRICE`/`RATE` constants, the
-Edge Node screen) are unreachable.
+Edge Node screen) are unreachable, and `tests/no-dead-ends.test.mjs` fails if a screen
+calls a handler that does not exist, a handler nothing can reach, or a screen that is
+not there.
+
+## One ecosystem
+
+This app and the Obsidian Web platform are two front ends on **one** backend: the
+platform's account store (`/api/auth/*`) and the node's ledger.
+
+- **Accounts.** The app has no account system of its own; it calls the platform's. An
+  account made here signs in on the platform and the other way round, with the same
+  password, the same MFA secret, the same recovery codes and the same invitations
+  (a spent invitation is spent in both).
+- **Claims.** A claim is a signed `MINING_CLAIM` transaction. The app and the platform
+  build **byte-identical** bytes from the same phrase (`tests/parity.test.mjs`), so a
+  claim from either is the same claim on the ledger. The chain, not either front end,
+  prevents a double claim: each claim id is single-use, a wallet gets one claim per
+  block and one per four-hour interval. Both front ends ask the node "may this wallet
+  claim?" before signing, and the node refuses a second claim even if one is forged.
+  The app additionally holds its Claim button after you submit, since the node's
+  answer does not change until a block holds the claim.
+- **Names.** ONS names are on-chain; a name taken through one product is taken in both.
+- **Wallet vault.** The browser vault is the platform's own format (`obsidian.vault.v1`,
+  PBKDF2-SHA256 600,000, AES-GCM, passphrase of at least 12). Browsers keep storage
+  per origin, so two products share a vault only when served from one origin; across
+  origins the recovery phrase moves a wallet, and gives the same address in both.
+
+`tests/e2e-cross-product.mjs` proves all of this against a live node, platform and app
+(27 checks, including a forged double claim and the same transaction submitted twice).
 
 ## Layout
 
@@ -26,12 +55,15 @@ Edge Node screen) are unreachable.
 public/index.html   the design, byte-for-byte unchanged
 public/real.mjs     module entry: replaces the design's render/go, wires every handler
 public/screens.mjs  the screens (they read the design's helpers by bare name)
+public/explorer.mjs the explorer's sections and detail pages
 public/data.mjs     reads from the platform; rejects HTML/garbage instead of showing "no data"
 public/wallet.mjs   bridge to the signing bundle (loaded lazily)
 public/notify.mjs   claim-ready notifications
 web/                the bundle's source: signing, vault, protocol operations
 public/js/          GENERATED bundle (git-ignored): npm run build:web
-server/main.mjs     dependency-free static server + /api proxy
+server/main.mjs     dependency-free static server + /api proxy + network guard
+server/networks.mjs the four networks, and the check that the platform is on this one
+scripts/start.mjs   the per-network entry point behind `npm run start:<network>`
 ```
 
 The design binds `render`/`go` as function declarations, so they are properties of
@@ -41,29 +73,74 @@ getting it wrong leaves the page rendering normally while running the demo.
 
 ## Running it
 
+One deployment serves **one network**. Pick the script for the network:
+
 ```sh
 npm run build:web                      # builds core, syncs it, bundles the browser code
-OBSIDIAN_PLATFORM_URL=http://127.0.0.1:8788 npm start
+
+npm run start:devnet                   # :38790, platform defaults to http://127.0.0.1:38788
+npm run start:staging                  # :28790, platform defaults to http://127.0.0.1:28788
+npm run start:testnet                  # :18790, platform defaults to http://127.0.0.1:18788
+OBSIDIAN_PLATFORM_URL=https://platform.example npm run start:mainnet   # :8790
 ```
 
-`OBSIDIAN_PLATFORM_URL` is required; without it the server exits with code 2.
+Mainnet has **no** default platform: a production app is told, on purpose, which
+platform it fronts, and refuses to start without it.
+
+| Network | Chain | Prefix | Node RPC / P2P | Platform | This app |
+| --- | --- | --- | --- | --- | --- |
+| mainnet | 7777 | `obs1` | 8630 / 8631 | 8788 | 8790 |
+| testnet | 7778 | `tobs1` | 18630 / 18631 | 18788 | 18790 |
+| staging | 7779 | `sobs1` | 28630 / 28631 | 28788 | 28790 |
+| devnet | 7780 | `dobs1` | 38630 / 38631 | 38788 | 38790 |
+
+Running `node server/main.mjs` directly also works, with `OBSIDIAN_APP_NETWORK` set.
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `OBSIDIAN_PLATFORM_URL` | Origin of the Obsidian Web platform | required |
-| `APP_PORT` | Port to listen on | `8790` |
+| `OBSIDIAN_APP_NETWORK` | `mainnet`, `testnet`, `staging` or `devnet` | **required** (set by `start:<network>`) |
+| `OBSIDIAN_PLATFORM_URL` | Origin of the Obsidian Web platform | **required** (defaulted by non-mainnet `start:` scripts) |
+| `APP_PORT` | Port to listen on | the network's port, above |
 | `APP_HOST` | Address to bind | `0.0.0.0` |
+| `APP_NETWORK_RECHECK_MS` | How often the platform's network is re-verified | `30000` |
+
+What makes the four deployments different, and impossible to cross:
+
+- **At start** the server asks the platform which network it follows (`/api/auth/config`
+  and the node's `/network`: name, network id, chain id and address prefix) and **exits 3**
+  if any of it disagrees with the network it was told it is. No variable and no
+  default can make a testnet app front a mainnet platform.
+- **While running** it re-checks every 30 s. If the platform changes network, `/api/*`
+  answers `503 ERR_NETWORK_MISMATCH` and `/healthz` answers 503, so a load balancer
+  takes it out. An unreachable platform is *not* a mismatch: it is reported, not fatal.
+- **In the browser** the identity comes from `/app-config.json` (never from the
+  platform it is checking). Signing is refused on a mismatch; addresses carry the
+  network's prefix; non-mainnet apps show a coloured banner and a title suffix
+  (`Obsidian Network — TESTNET`), and a red WRONG NETWORK strip appears if the node's
+  chain differs from the app's.
+- **Accounts and ledgers are separate**: each network has its own node, its own platform
+  and its own account store. Nothing is shared between them but code.
+
+Exit codes: `0` normal, `2` bad or missing configuration, `3` the platform is on a
+different network. `GET /healthz` is the liveness/readiness probe.
 
 The app has no runtime dependencies. `build:web` needs `obsidian-core` and
 `obsidian-interface` installed (`npm ci` in each); `npm test` builds them if absent.
 
-## Networks and addresses
+## Wallets and addresses
 
 The address prefix belongs to the network: `obs` (mainnet), `tobs`, `sobs`, `dobs`.
-One phrase gives one key and a different address on each. The app reads the prefix
-from the node (`/network` → `addressHrp`) and never guesses it; an address cached
-under another network is re-encoded in place, with no passphrase. If the node does not
-report a prefix, signing is refused.
+One phrase gives one key and a different address on each. The app takes the prefix from
+its network configuration and checks it against the node's (`/network` → `addressHrp`),
+and never guesses; an address cached under another network is re-encoded in place, with
+no passphrase. If the node does not report a prefix, signing is refused.
+
+**Creating a wallet** generates a 24-word phrase in the browser (256 bits of entropy,
+from the same core as the platform), shows it once, asks for three words chosen at
+random to prove it was written down, and only then seals it under a passphrase of at
+least 12 characters. The phrase is held in memory until sealed, never copied to the
+clipboard, never stored in the clear and never sent anywhere. Leaving the screen
+discards an unsealed phrase.
 
 ## Why the proxy
 
@@ -76,30 +153,41 @@ not the browser's) and `X-Forwarded-For` is appended to, never trusted.
 ## Tests
 
 ```sh
-npm test                 # 90+ tests, no network, no dependencies
-APP_URL=http://127.0.0.1:8790 npm run test:integration   # against a running app + platform
+npm test                 # 140+ tests, no network, no dependencies
+APP_URL=http://127.0.0.1:38790 npm run test:integration   # against a running app + platform
 ```
 
-- `derivation`, `signing` — the canonical derivation and signature, per network prefix
+- `derivation`, `signing`, `parity` — the canonical derivation and signature per network prefix, and byte-identical transactions with the platform
 - `ops` — claim/payment/ONS sequencing against a fake node and a real vault
 - `data`, `server` — the wire contract and the proxy, over real sockets
+- `networks` — the four networks pinned to core's and the platform's tables; the exit codes; the start scripts
 - `design-contract` — the promises the app makes about the design it does not edit
-- `boot` — loads `real.mjs` as the page does and renders every screen
+- `boot` — loads `real.mjs` as the page does, renders every screen, creates and seals a wallet, and runs the explorer search handler
+- `explorer` — sections, masking, no balances, no address search
+- `vault-interop` — the vault is the platform's format, in both directions
+- `no-dead-ends` — no button without a function
 - `bundle` — exercises the shipped bundle (skipped until `build:web` has run)
 
-`tests/e2e-auth.mjs` drives the account flow (register, MFA, sign-in, invites, link
-wallet) against a live platform started with a fresh data dir and
-`OBSIDIAN_GENESIS_INVITE_HASH`; run it with `GENESIS_CODE=… node tests/e2e-auth.mjs`.
-It consumes the genesis invitation, so it is not part of `npm test`. The platform's
-password rule also requires a digit, which `/api/auth/config` does not advertise; the
-app shows the server's message when it is refused.
+Live tests (not part of `npm test`: they need a node, a platform and an app on one network):
 
-Verified end to end against a live devnet node: a claim, a payment and a `.obs`
-registration, each signed by this app's own code, accepted, included and reflected in
-balances.
+- `tests/e2e-auth.mjs` — the account flow against a platform started with a fresh data dir and `OBSIDIAN_GENESIS_INVITE_HASH`; consumes the genesis invitation (`GENESIS_CODE=… node tests/e2e-auth.mjs`).
+- `tests/e2e-cross-product.mjs` — accounts both ways, claims both ways, forged double claims, one transaction submitted twice, names (`APP_URL`, `PLATFORM_URL`, optionally `GENESIS_CODE`).
+- `tests/e2e-browser.mjs` — a real browser walks every screen with the real buttons (needs `puppeteer-core` and a Chrome; see the file header for `INVITE`, `FUNDER_PHRASE`, `CHROME_PATH`).
+
+Verified against live devnet: a claim, a payment and a `.obs` registration, each signed
+by this app's own code, accepted, included and reflected in balances; the cross-product
+run and the browser walk; and a complete testnet stack (node, platform, app) started
+with `npm run start:testnet` and walked in the browser.
 
 ## Not done
 
-- No browser-driven test: the suite stubs the DOM, so layout and CSS are unverified here.
-- No service worker; notifications work only while the page is open.
-- Mainnet has not been exercised, only devnet.
+- Mainnet has not been exercised, only devnet and testnet. `start:mainnet` and its
+  refusals are covered by tests, but no mainnet node was run.
+- The browser vault is per origin; sharing one vault with the platform needs both served
+  from one origin (a reverse proxy), which this repository does not configure.
+- MFA for mining is advisory everywhere. The platform's contract says mining requires
+  MFA (`mfaRequiredForMining`), and both products tell the user so and show
+  `MINING: ENABLED` once MFA is on, but a claim is authorised by the wallet's signature,
+  not by a session: neither this app nor the platform's `/tx/submit` proxy checks for
+  MFA before submitting. Enforcing it would be a change to the platform, not to this app.
+- No service worker; claim alerts work only while the page is open.

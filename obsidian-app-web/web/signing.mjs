@@ -20,6 +20,7 @@
 
 import {
   deriveWallet,
+  generateRecoveryPhrase,
   isValidRecoveryPhrase,
 } from '../../obsidian-interface/web/core/crypto/mnemonic.js';
 import { addressFromPublicKey } from '../../obsidian-interface/web/core/crypto/keys.js';
@@ -36,6 +37,15 @@ import { encodeMiningBody } from '../../obsidian-interface/web/core/transactions
 import { encodePaymentBody } from '../../obsidian-interface/web/core/transactions/executors/payment.js';
 import { encodeOnsBody } from '../../obsidian-interface/web/core/transactions/executors/ons.js';
 import { expectedGas } from '../../obsidian-interface/web/core/transactions/helpers.js';
+
+/**
+ * A new 24-word recovery phrase, from the canonical generator (256 bits of entropy,
+ * the platform's own choice). The randomness is the browser's CSPRNG; nothing here
+ * stores, sends or logs the result — that is the caller's to hold in memory and seal.
+ */
+export function generatePhrase() {
+  return generateRecoveryPhrase();
+}
 
 /** True for a phrase the canonical BIP-39 word list accepts. */
 export function isValidPhrase(phrase) {

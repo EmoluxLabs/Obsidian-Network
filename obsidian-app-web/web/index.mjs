@@ -16,6 +16,7 @@
 export {
   isValidPhrase,
   walletFromPhrase,
+  generatePhrase,
   retargetAddress,
   sign,
   signingDigestFor,
@@ -51,4 +52,5 @@ export {
   PassphraseError,
   PBKDF2_ITERATIONS,
   KDF,
+  MIN_PASSPHRASE_LENGTH,
 } from './vault.mjs';

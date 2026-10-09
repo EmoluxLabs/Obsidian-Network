@@ -85,7 +85,7 @@ test('the bundle derives the pinned address', options, () => {
 });
 
 test('the bundle seals and opens a real vault', options, async () => {
-  const vault = await obsidian.createVault(PHRASE, 'correct horse battery staple');
+  const vault = await obsidian.createVault(PHRASE, 'correct horse battery staple', 'dobs');
   obsidian.saveVault(vault);
   assert.equal(await obsidian.openVault(vault, 'correct horse battery staple'), PHRASE);
   assert.equal(obsidian.loadVault().ciphertext, vault.ciphertext);
