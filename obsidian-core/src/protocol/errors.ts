@@ -46,6 +46,10 @@ export enum ErrCode {
   EVIDENCE_LIMIT = 'ERR_EVIDENCE_LIMIT',
   MINING_BAD_PROOF = 'ERR_MINING_BAD_PROOF',
   MINING_CLAIM_REPLAY = 'ERR_MINING_CLAIM_REPLAY',
+  /** The claim carries no gate certificate, or the chain has no gate keys at all. */
+  MINING_GATE_REQUIRED = 'ERR_MINING_GATE_REQUIRED',
+  /** The gate certificate is malformed, expired, from an unknown issuer, or does not match this claim. */
+  MINING_GATE_INVALID = 'ERR_MINING_GATE_INVALID',
 
   // Genesis
   GENESIS_ALREADY_CLAIMED = 'ERR_GENESIS_ALREADY_CLAIMED',
@@ -150,6 +154,8 @@ export const ERR_MESSAGES: Record<ErrCode, string> = {
   [ErrCode.EVIDENCE_LIMIT]: 'This block carries more equivocation evidence than one block may hold; the report stays pending for a later block.',
   [ErrCode.MINING_BAD_PROOF]: 'Mining claim proof failed verification.',
   [ErrCode.MINING_CLAIM_REPLAY]: 'This mining claim has already been accepted.',
+  [ErrCode.MINING_GATE_REQUIRED]: 'A mining claim must carry a certificate from the mining gate (a signed-in, verified account).',
+  [ErrCode.MINING_GATE_INVALID]: 'The mining gate certificate is not valid for this claim.',
   [ErrCode.GENESIS_ALREADY_CLAIMED]: 'The Genesis Allocation has already been claimed by another wallet.',
   [ErrCode.GENESIS_NOT_ELIGIBLE]: 'This wallet is not eligible for the Genesis Allocation.',
   [ErrCode.UNKNOWN_TX_TYPE]: 'Unknown transaction type for this protocol version.',

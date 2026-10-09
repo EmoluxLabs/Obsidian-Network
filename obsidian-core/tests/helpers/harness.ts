@@ -15,7 +15,7 @@ import type { WorldState } from '../../src/blockchain/state.js';
 import { buildBlock, blockHash, encodeBlock, decodeBlock } from '../../src/blockchain/block.js';
 import { signTransaction } from '../../src/transactions/encode.js';
 import { generateRecoveryPhrase, deriveWallet } from '../../src/crypto/mnemonic.js';
-import { addressFromPublicKey, generateKeyPair, nodeIdFromPublicKey, signDigest } from '../../src/crypto/keys.js';
+import { addressFromPublicKey, generateKeyPair, keyPairFromPrivateKey, nodeIdFromPublicKey, signDigest } from '../../src/crypto/keys.js';
 import { sha256, toHex, utf8 } from '../../src/crypto/hash.js';
 import { DOMAIN } from '../../src/protocol/domains.js';
 import { NodeRegistryOp } from '../../src/protocol/types.js';
@@ -34,6 +34,7 @@ import { PARAMS_HASH } from '../../src/blockchain/state-root.js';
 import { PROTOCOL_VERSION } from '../../src/version.js';
 import { encodePaymentBody } from '../../src/transactions/executors/payment.js';
 import { encodeMiningBody, computeClaimId } from '../../src/transactions/executors/mining.js';
+import { issueMiningGateCertificate } from '../../src/mining/gate.js';
 import { encodeOracleBody } from '../../src/transactions/executors/oracle.js';
 import { encodeOnsBody } from '../../src/transactions/executors/ons.js';
 import { encodeValidatorBody } from '../../src/transactions/executors/validator.js';
@@ -44,6 +45,14 @@ import { expectedGas } from '../../src/transactions/helpers.js';
 import { formatObs, parseObs } from '../../src/protocol/amount.js';
 
 export const DEVNET = getNetwork('devnet');
+
+/**
+ * The test mining gate issuer. A fixed key (so genesis ids in tests are reproducible) that exists only in tests; the
+ * harness commits its public half in every genesis it builds, exactly as a real network commits the platform's key.
+ */
+export const GATE_ISSUER = keyPairFromPrivateKey('11'.repeat(32));
+/** A second issuer that is NOT committed by any harness chain: its certificates must be refused. */
+export const FOREIGN_GATE_ISSUER = keyPairFromPrivateKey('22'.repeat(32));
 
 export interface TestWallet {
   address: string;
@@ -120,7 +129,7 @@ export interface Harness {
   close(): void;
 }
 
-export async function createHarness(options: { network?: string; producer?: TestWallet; bootstrapValidatorPublicKeys?: string[] } = {}): Promise<Harness> {
+export async function createHarness(options: { network?: string; producer?: TestWallet; bootstrapValidatorPublicKeys?: string[]; miningGatePublicKeys?: string[] } = {}): Promise<Harness> {
   const net = options.network ? getNetwork(options.network) : DEVNET;
   const dir = mkdtempSync(join(tmpdir(), 'obsidian-test-'));
   const producer = options.producer ?? makeWallet(net);
@@ -138,6 +147,7 @@ export async function createHarness(options: { network?: string; producer?: Test
       // what an operator-supplied list goes through.
       bootstrapValidatorPublicKeys: options.bootstrapValidatorPublicKeys
         ?? [...committedBootstrapValidatorKeys(net)],
+      miningGatePublicKeys: options.miningGatePublicKeys ?? [GATE_ISSUER.publicKey],
     },
     enforceProposerRotation: true,
   });
@@ -324,7 +334,7 @@ export function signedPayment(
 
 /** Sign a mining claim (always zero gas: mining is free by protocol rule). */
 export function signedClaim(harness: Harness, wallet: TestWallet, protocolTime?: number): TxEnvelope {
-  return harness.sign(wallet, TxType.MINING_CLAIM, miningBody(harness, wallet), { gas: 0n, protocolTime });
+  return harness.sign(wallet, TxType.MINING_CLAIM, miningBody(harness, wallet, { protocolTime }), { gas: 0n, protocolTime });
 }
 
 /** Branch point for `makeBlockOn`, taken from the canonical chain. */
@@ -374,14 +384,33 @@ export function paymentGas(amount: bigint | string): bigint {
   return expectedGas(typeof amount === 'string' ? parseObs(amount) : amount);
 }
 
-export function miningBody(harness: Harness, wallet: TestWallet): Uint8Array {
+export function miningBody(
+  harness: Harness,
+  wallet: TestWallet,
+  options: { protocolTime?: number; gate?: 'none' | 'foreign' | { issuedAt: number } } = {},
+): Uint8Array {
   const account = harness.chain.world.getAccount(wallet.address);
   const sequence = account?.mining?.claimSequence ?? 1;
   const lastHeight = account?.mining?.lastClaimHeight ?? 0;
+  const claimId = computeClaimId(harness.net.chainId, wallet.address, sequence, lastHeight);
+  const subject = { networkId: harness.net.networkId, chainId: harness.net.chainId, address: wallet.address, claimId };
+  const issuedAt = typeof options.gate === 'object' ? options.gate.issuedAt : (options.protocolTime ?? harness.chain.protocolTime);
+  const issuer = options.gate === 'foreign' ? FOREIGN_GATE_ISSUER : GATE_ISSUER;
   return encodeMiningBody({
-    claimId: computeClaimId(harness.net.chainId, wallet.address, sequence, lastHeight),
+    claimId,
     claimSequence: sequence,
+    gate: options.gate === 'none' ? undefined : issueMiningGateCertificate(issuer.privateKey, issuer.publicKey, subject, issuedAt),
   });
+}
+
+/** A gate certificate from the committed test issuer for an arbitrary (wallet, claim id): for tests that forge the rest. */
+export function gateFor(harness: Harness, address: string, claimId: string, issuedAt?: number) {
+  return issueMiningGateCertificate(
+    GATE_ISSUER.privateKey,
+    GATE_ISSUER.publicKey,
+    { networkId: harness.net.networkId, chainId: harness.net.chainId, address, claimId },
+    issuedAt ?? harness.chain.protocolTime,
+  );
 }
 
 export function oracleBody(source: string, priceUsdMicro: bigint, observedAt: number, idSeed: string): Uint8Array {

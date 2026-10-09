@@ -9,13 +9,16 @@
 import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
-export const CORE_VERSION = '1.6.1';
+export const CORE_VERSION = '1.7.0';
 
 /** Consensus protocol version implemented by this build. */
-export const PROTOCOL_VERSION = '1.6.1';
+export const PROTOCOL_VERSION = '1.7.0';
 
 /**
  * Current lossless consensus-state snapshot format.
+ *
+ * 4 adds the committed mining-gate issuer keys (`miningGateKeys`); a 1.6.1 snapshot has none, and reading it as
+ * "no keys" would be harmless but reading a 1.7 chain from it would not be meaningful, so it is refused.
  *
  * 3 adds the committed validator-mode indicator (`validatorModeEstablished`) and
  * the time-based jail term (`jailedUntilTime`). A snapshot written by 1.6.0 has
@@ -23,7 +26,7 @@ export const PROTOCOL_VERSION = '1.6.1';
  * reading an old snapshot as a new one would hand a bootstrapped chain back to
  * permissionless production.
  */
-export const STATE_SNAPSHOT_VERSION = 3;
+export const STATE_SNAPSHOT_VERSION = 4;
 
 /** Wire/peer protocol version. */
 export const WIRE_PROTOCOL_VERSION = 1;
@@ -32,11 +35,14 @@ export const WIRE_PROTOCOL_VERSION = 1;
  * Minimum Obsidian Core version permitted to peer with this build.
  * Peers below this version are rejected during handshake (hard fork guard).
  *
+ * 1.7.0 gates MINING_CLAIM behind a certificate signed by a genesis-committed issuer key, so a 1.6.1 peer (which
+ * accepts claims from any key) is rejected: the two cannot agree on a chain.
+ *
  * 1.6.1 changes consensus rules (validator admission mode, time-based jailing,
  * slash liability window, evidence budgets), so a 1.6.0 peer is rejected: two
  * nodes that share a protocol id but not a rule set cannot agree on a chain.
  */
-export const MIN_CORE_VERSION = '1.6.1';
+export const MIN_CORE_VERSION = '1.7.0';
 
 /**
  * Build identifier — deterministic hash of the release identity triple.

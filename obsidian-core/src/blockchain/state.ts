@@ -53,6 +53,7 @@ export function emptyGenesisState(): GenesisState {
     treasuryWallet: '',
     amount: CONSENSUS_PARAMS.genesisAllocation,
     bootstrapValidatorKeys: [],
+    miningGateKeys: [],
   };
 }
 
@@ -224,7 +225,11 @@ export class WorldState {
       protocolVersion: this.s.protocolVersion,
       timestamp: this.s.timestamp,
       accounts: Object.fromEntries([...this.s.accounts.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
-      genesis: { ...this.s.genesis, bootstrapValidatorKeys: [...this.s.genesis.bootstrapValidatorKeys] },
+      genesis: {
+        ...this.s.genesis,
+        bootstrapValidatorKeys: [...this.s.genesis.bootstrapValidatorKeys],
+        miningGateKeys: [...this.s.genesis.miningGateKeys],
+      },
       names: Object.fromEntries([...this.s.names.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
       oracle: { ...this.s.oracle, observations: { ...this.s.oracle.observations } },
       pool: { ...this.s.pool, recentDistributions: this.s.pool.recentDistributions.map((c) => ({ ...c })) },
@@ -254,7 +259,19 @@ export class WorldState {
       snapshot.protocolVersion,
     );
     for (const [k, v] of Object.entries(snapshot.accounts)) s.accounts.set(k, cloneAccount(v));
-    s.genesis = { ...snapshot.genesis, bootstrapValidatorKeys: [...(snapshot.genesis.bootstrapValidatorKeys ?? [])] };
+    // Fail closed, like the validator-mode indicator below: a snapshot without the gate keys is from a build
+    // that predates the gate, and silently reading it as "no keys" would hide that it is the wrong format.
+    if (!Array.isArray(snapshot.genesis.miningGateKeys)) {
+      throw new Error(
+        `state snapshot is missing miningGateKeys (format ${snapshot.snapshotVersion ?? 'unknown'}); ` +
+          `this build requires snapshot format ${STATE_SNAPSHOT_VERSION}`,
+      );
+    }
+    s.genesis = {
+      ...snapshot.genesis,
+      bootstrapValidatorKeys: [...(snapshot.genesis.bootstrapValidatorKeys ?? [])],
+      miningGateKeys: [...snapshot.genesis.miningGateKeys],
+    };
     for (const [k, v] of Object.entries(snapshot.names)) s.names.set(k, { ...v });
     s.oracle = { ...snapshot.oracle, observations: { ...snapshot.oracle.observations } };
     s.pool = { ...snapshot.pool, recentDistributions: snapshot.pool.recentDistributions.map((c) => ({ ...c })) };

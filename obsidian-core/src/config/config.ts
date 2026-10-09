@@ -25,6 +25,8 @@ export interface NodeConfig {
 
   /** Public secp256k1 keys committed into this network's fresh genesis. */
   bootstrapValidatorPublicKeys: string[];
+  /** Mining gate issuer public keys (staging/devnet/private chains; mainnet/testnet commit theirs in the source). */
+  miningGatePublicKeys: string[];
 
   // ── Local operation ───────────────────────────────────────────────────────
   nodeName: string;
@@ -95,6 +97,7 @@ export interface LoadedConfig {
 export const DEFAULT_CONFIG: NodeConfig = {
   network: 'mainnet',
   bootstrapValidatorPublicKeys: [],
+  miningGatePublicKeys: [],
   nodeName: 'obsidian-node',
   dataDir: './data',
   keystorePath: './data/node-key.json',
@@ -291,6 +294,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Partial<Nod
   };
   set('network', env.OBSIDIAN_NETWORK, (v) => v as NetworkName);
   set('bootstrapValidatorPublicKeys', env.OBSIDIAN_BOOTSTRAP_VALIDATOR_PUBLIC_KEYS, (v) => asList(v, []));
+  set('miningGatePublicKeys', env.OBSIDIAN_MINING_GATE_PUBLIC_KEYS, (v) => asList(v, []));
   set('nodeName', env.OBSIDIAN_NODE_NAME, (v) => v);
   set('dataDir', env.OBSIDIAN_DATA_DIR, (v) => v);
   set('keystorePath', firstSet(env, 'OBSIDIAN_KEYSTORE_PATH', ENV_ALIASES.OBSIDIAN_KEYSTORE_PATH!), (v) => v);

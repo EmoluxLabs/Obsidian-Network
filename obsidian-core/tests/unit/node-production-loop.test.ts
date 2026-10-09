@@ -227,6 +227,7 @@ describe('N-01 the production decision comes from committed state', () => {
         timestamp: h.chain.genesisDocument.timestamp,
         note: h.chain.genesisDocument.note,
         bootstrapValidatorPublicKeys: h.chain.genesisDocument.bootstrapValidatorPublicKeys ?? [],
+        miningGatePublicKeys: h.chain.genesisDocument.miningGatePublicKeys ?? [],
       },
       enforceProposerRotation: true,
     });

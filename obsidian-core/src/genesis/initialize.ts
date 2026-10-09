@@ -27,6 +27,7 @@ import { PROTOCOL_VERSION } from '../version.js';
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import type { GenesisDocument } from '../blockchain/chain.js';
 import { committedBootstrapValidatorKeys } from './bootstrap-keys.js';
+import { committedMiningGateKeys } from './gate-keys.js';
 
 /**
  * Canonical mainnet genesis document. The timestamp is the Obsidian mainnet
@@ -99,10 +100,50 @@ export function resolveBootstrapValidatorKeys(
   return committed;
 }
 
-export function genesisDocumentFor(net: NetworkDefinition, bootstrapKeys: readonly string[] = []): GenesisDocument {
+export function normalizeMiningGatePublicKeys(keys: readonly string[]): string[] {
+  if (!Array.isArray(keys)) throw new Error('miningGatePublicKeys must be an array of compressed public keys');
+  if (keys.length > CONSENSUS_PARAMS.miningGate.maxIssuers) {
+    throw new Error(`mining gate set exceeds ${CONSENSUS_PARAMS.miningGate.maxIssuers} keys`);
+  }
+  const normalized = keys.map((raw) => {
+    if (typeof raw !== 'string') throw new Error('mining gate public keys must be strings');
+    const key = raw.trim().toLowerCase();
+    if (!/^0[23][0-9a-f]{64}$/.test(key)) throw new Error('mining gate keys must be lowercase compressed secp256k1 public keys');
+    try { secp256k1.ProjectivePoint.fromHex(key).assertValidity(); }
+    catch { throw new Error(`mining gate key is not a valid secp256k1 point: ${key}`); }
+    return key;
+  });
+  if (new Set(normalized).size !== normalized.length) throw new Error('mining gate public keys must be unique');
+  return normalized.sort();
+}
+
+/**
+ * Resolve the mining gate issuer keys for a network. Same rule as the bootstrap committee: a committed list is the
+ * only list (an operator may repeat it, never replace it); a network without one uses what the operator supplies; and
+ * an empty result is legal but means no claim can be accepted.
+ */
+export function resolveMiningGateKeys(net: NetworkDefinition, requested: readonly string[] = []): string[] {
+  const committed = normalizeMiningGatePublicKeys(committedMiningGateKeys(net));
+  const provided = normalizeMiningGatePublicKeys(requested);
+  if (committed.length === 0) return provided;
+  if (provided.length === 0) return committed;
+  if (provided.join(',') !== committed.join(',')) {
+    throw new Error(
+      `${net.name} commits a fixed mining gate issuer set (${committed.length} keys); refusing to start with a different one.`,
+    );
+  }
+  return committed;
+}
+
+export function genesisDocumentFor(
+  net: NetworkDefinition,
+  bootstrapKeys: readonly string[] = [],
+  miningGateKeys: readonly string[] = [],
+): GenesisDocument {
   const bootstrapValidatorPublicKeys = resolveBootstrapValidatorKeys(net, bootstrapKeys);
+  const miningGatePublicKeys = resolveMiningGateKeys(net, miningGateKeys);
   if (net.name === 'mainnet') {
-    return { ...MAINNET_GENESIS_DOCUMENT, bootstrapValidatorPublicKeys };
+    return { ...MAINNET_GENESIS_DOCUMENT, bootstrapValidatorPublicKeys, miningGatePublicKeys };
   }
   return {
     networkId: net.networkId,
@@ -111,6 +152,7 @@ export function genesisDocumentFor(net: NetworkDefinition, bootstrapKeys: readon
     timestamp: MAINNET_GENESIS_DOCUMENT.timestamp,
     note: `Obsidian ${net.name} genesis. No monetary value.`,
     bootstrapValidatorPublicKeys,
+    miningGatePublicKeys,
   };
 }
 
@@ -119,7 +161,7 @@ export function genesisId(document: GenesisDocument, net: NetworkDefinition): st
   return toHex(
     domainHash(
       DOMAIN.GENESIS_ID,
-      utf8(`${document.networkId}|${document.chainId}|${document.protocolVersion}|${document.timestamp}|${net.addressHrp}|${normalizeBootstrapValidatorPublicKeys(document.bootstrapValidatorPublicKeys ?? []).join(',')}`),
+      utf8(`${document.networkId}|${document.chainId}|${document.protocolVersion}|${document.timestamp}|${net.addressHrp}|${normalizeBootstrapValidatorPublicKeys(document.bootstrapValidatorPublicKeys ?? []).join(',')}|gate:${normalizeMiningGatePublicKeys(document.miningGatePublicKeys ?? []).join(',')}`),
     ),
   ).slice(0, 40);
 }
@@ -153,14 +195,23 @@ export function buildGenesisBlock(document: GenesisDocument, net: NetworkDefinit
 }
 
 /** The initial world state: zero accounts, zero supply, nothing minted. */
-export function createGenesisState(block: Block, net: NetworkDefinition, bootstrapKeys: readonly string[] = []): WorldState {
+export function createGenesisState(
+  block: Block,
+  net: NetworkDefinition,
+  bootstrapKeys: readonly string[] = [],
+  miningGateKeys: readonly string[] = [],
+): WorldState {
   void net;
   const state = new WorldState();
   state.s.chainId = block.header.chainId;
   state.s.protocolVersion = block.header.protocolVersion;
   state.s.height = block.header.height;
   state.s.timestamp = block.header.timestamp;
-  state.s.genesis = { ...emptyGenesisState(), bootstrapValidatorKeys: normalizeBootstrapValidatorPublicKeys(bootstrapKeys) };
+  state.s.genesis = {
+    ...emptyGenesisState(),
+    bootstrapValidatorKeys: normalizeBootstrapValidatorPublicKeys(bootstrapKeys),
+    miningGateKeys: normalizeMiningGatePublicKeys(miningGateKeys),
+  };
   state.s.metrics.totalSupply = 0n;
   return state;
 }
@@ -187,6 +238,7 @@ function createGenesisStateForDocument(document: GenesisDocument, net: NetworkDe
     },
     net,
     document.bootstrapValidatorPublicKeys ?? [],
+    document.miningGatePublicKeys ?? [],
   );
 }
 

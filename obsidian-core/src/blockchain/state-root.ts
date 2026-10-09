@@ -136,6 +136,10 @@ function encodeGenesis(w: Writer, g: GenesisState): void {
   const bootstrapKeys = [...g.bootstrapValidatorKeys].sort();
   w.u32(bootstrapKeys.length);
   for (const publicKey of bootstrapKeys) w.string(publicKey);
+  // The gate keys decide who may mine, so they are committed in every state root, not just in the genesis id.
+  const gateKeys = [...g.miningGateKeys].sort();
+  w.u32(gateKeys.length);
+  for (const publicKey of gateKeys) w.string(publicKey);
 }
 
 function encodeName(w: Writer, n: OnsRecord): void {

@@ -24,6 +24,7 @@ import type { MiningClaimBody, TxEnvelope } from '../../protocol/types.js';
 import { assertMiningEligibility, alignedCycleStart } from '../../mining/rules.js';
 import { claimRewardForActiveMiners } from '../../mining/schedule.js';
 import { awardGenesisAllocation } from '../../genesis/rules.js';
+import { assertMiningGate } from '../../mining/gate.js';
 import type { ExecutorContext } from '../types.js';
 import { minBig } from '../../protocol/amount.js';
 
@@ -35,8 +36,21 @@ export function decodeMiningBody(body: Uint8Array): MiningClaimBody {
   const claimId = r.string();
   const claimSequence = r.u32();
   const viaNodeId = r.string();
+  const gateIssuer = r.string();
+  const gateIssuedAt = r.u64();
+  const gateSignature = r.string();
   r.ensureConsumed();
-  return { claimId, claimSequence, viaNodeId: viaNodeId.length ? viaNodeId : undefined };
+  // Absent means all three are empty. A half-present certificate is a malformed body, not a missing one.
+  const absent = gateIssuer.length === 0 && gateSignature.length === 0 && gateIssuedAt === 0n;
+  if (!absent && (gateIssuer.length === 0 || gateSignature.length === 0 || gateIssuedAt === 0n || gateIssuedAt > BigInt(Number.MAX_SAFE_INTEGER))) {
+    reject(ErrCode.MALFORMED, 'the gate certificate in this claim is incomplete');
+  }
+  return {
+    claimId,
+    claimSequence,
+    viaNodeId: viaNodeId.length ? viaNodeId : undefined,
+    gate: absent ? undefined : { issuer: gateIssuer, issuedAt: Number(gateIssuedAt), signature: gateSignature },
+  };
 }
 
 export function encodeMiningBody(body: MiningClaimBody): Uint8Array {
@@ -44,6 +58,9 @@ export function encodeMiningBody(body: MiningClaimBody): Uint8Array {
   w.string(body.claimId);
   w.u32(body.claimSequence);
   w.string(body.viaNodeId ?? '');
+  w.string(body.gate?.issuer ?? '');
+  w.u64(BigInt(body.gate?.issuedAt ?? 0));
+  w.string(body.gate?.signature ?? '');
   return w.finish();
 }
 
@@ -77,6 +94,21 @@ export function executeMiningClaim(ctx: ExecutorContext, tx: TxEnvelope): { gasB
   }
   const decoded = decodeMiningBody(tx.body);
   const protocolTime = apply.timestamp;
+
+  // ── The gate comes first: a claim that did not come through the account system is refused before anything else
+  // about it is examined, and with a reason that says so. The certificate names this wallet and this exact claim id;
+  // that the id is the canonical one for the wallet's state is checked below, as before.
+  assertMiningGate(
+    state.s.genesis.miningGateKeys,
+    decoded.gate,
+    {
+      networkId: net.networkId,
+      chainId,
+      address: tx.sender,
+      claimId: decoded.claimId,
+    },
+    protocolTime,
+  );
 
   const account = state.getAccount(tx.sender);
   const eligibility = assertMiningEligibility(

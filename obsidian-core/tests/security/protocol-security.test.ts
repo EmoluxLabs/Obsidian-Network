@@ -22,8 +22,10 @@ import { encodePaymentBody, decodePaymentBody } from '../../src/transactions/exe
 import { expectedGas } from '../../src/transactions/helpers.js';
 import { maskAddress } from '../../src/indexer/indexer.js';
 import { signTransaction } from '../../src/transactions/encode.js';
+import { decodeMiningBody, encodeMiningBody } from '../../src/transactions/executors/mining.js';
 import {
   createHarness,
+  gateFor,
   makeWallet,
   miningBody,
   rewindMiningTimer,
@@ -341,8 +343,20 @@ describe('mining race and replay protection (spec §21, §23)', () => {
     const stolen = h.sign(attacker, TxType.MINING_CLAIM, miningBody(h, victim), { gas: 0n });
     const outcome = h.tryBlock([stolen]);
     expect(outcome.accepted).toBe(false);
-    expect([ErrCode.MINING_BAD_PROOF, ErrCode.MINING_NOT_ELIGIBLE]).toContain(outcome.code);
+    // The victim's certificate names the victim's wallet, so the gate refuses it before the proof is even looked at.
+    expect([ErrCode.MINING_GATE_INVALID, ErrCode.MINING_BAD_PROOF, ErrCode.MINING_NOT_ELIGIBLE]).toContain(outcome.code);
     expect(h.chain.world.getAccount(attacker.address)?.balance ?? 0n).toBe(0n);
+  });
+
+  it('proof binding holds on its own: even with a valid certificate for the attacker, the victim\'s claim id is refused', async () => {
+    const { h } = await fundedHarness();
+    const attacker = makeWallet();
+    const victim = makeWallet();
+    const victimsBody = decodeMiningBody(miningBody(h, victim));
+    const forged = encodeMiningBody({ ...victimsBody, gate: gateFor(h, attacker.address, victimsBody.claimId) });
+    const outcome = h.tryBlock([h.sign(attacker, TxType.MINING_CLAIM, forged, { gas: 0n })]);
+    expect(outcome.accepted).toBe(false);
+    expect(outcome.code).toBe(ErrCode.MINING_BAD_PROOF);
   });
 });
 

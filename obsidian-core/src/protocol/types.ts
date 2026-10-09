@@ -197,6 +197,21 @@ export interface MiningClaimBody {
   claimSequence: number;
   /** Hash of the node the claim was submitted through (audit only). */
   viaNodeId?: string;
+  /**
+   * Mining gate certificate. Consensus REQUIRES it: a claim without a valid one is rejected, so the account system
+   * (sign-in, MFA, one wallet per account) is the only door to mining, not just the platform's own endpoint.
+   */
+  gate?: MiningGateCertificate;
+}
+
+/** A short-lived statement, signed by a genesis-committed issuer key, that ONE wallet may make ONE specific claim. */
+export interface MiningGateCertificate {
+  /** Compressed public key of the issuer; must be one of the keys committed in genesis. */
+  issuer: string;
+  /** Protocol time (seconds) at which the issuer signed. Valid for `miningGate.certificateTtlSeconds` after it. */
+  issuedAt: number;
+  /** Compact signature (128 hex) over the certificate message. */
+  signature: string;
 }
 
 // ── Validators ───────────────────────────────────────────────────────────────
@@ -460,6 +475,8 @@ export interface GenesisState {
   amount: bigint;
   /** Public keys committed by the fresh genesis as the initial finality set. */
   bootstrapValidatorKeys: string[];
+  /** Issuer keys committed by genesis whose certificates open the mining gate. Empty means no claim is possible. */
+  miningGateKeys: string[];
 }
 
 export interface OnsRecord {

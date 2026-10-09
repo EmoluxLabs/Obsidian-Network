@@ -23,6 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { ErrCode } from '../../src/protocol/errors.js';
+import { PROTOCOL_VERSION } from '../../src/version.js';
 import { SlashOp, TxType, ValidatorOp } from '../../src/protocol/types.js';
 import { encodeSlashBody, slashEvidenceBytes } from '../../src/transactions/executors/slash.js';
 import { expectedGas } from '../../src/transactions/helpers.js';
@@ -248,7 +249,7 @@ describe('the flood: a thousand reports from a thousand addresses', () => {
         id: `tx-${index}`,
         version: 1,
         chainId: 7777,
-        protocolVersion: '1.6.1',
+        protocolVersion: PROTOCOL_VERSION,
         type: TxType.SLASH,
         sender: sender.address,
         nonce: 0,

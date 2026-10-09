@@ -82,7 +82,7 @@ async function bootNode(options: StartOptions, lock: DataDirLock): Promise<NodeR
   logger.info('node identity ready', { nodeId, keystore: config.keystorePath });
 
   // ── Chain ────────────────────────────────────────────────────────────────
-  const genesisDocument = genesisDocumentFor(net, config.bootstrapValidatorPublicKeys);
+  const genesisDocument = genesisDocumentFor(net, config.bootstrapValidatorPublicKeys, config.miningGatePublicKeys);
   const chain = new ChainManager({
     dataDir: config.dataDir,
     net,
@@ -98,6 +98,14 @@ async function bootNode(options: StartOptions, lock: DataDirLock): Promise<NodeR
     head: chain.tip?.hash,
     genesisId: genesisIdentifier,
   });
+
+  if (chain.world.s.genesis.miningGateKeys.length === 0) {
+    logger.warn(
+      'this chain commits no mining gate issuer key: the node runs and verifies blocks, but NO mining claim can be ' +
+        'accepted. Set OBSIDIAN_MINING_GATE_PUBLIC_KEYS (the same list on every node) or commit the keys in genesis/gate-keys.ts.',
+      { network: net.name },
+    );
+  }
 
   const indexer = new Indexer(config.dataDir);
   // The index is a cache of the chain, so it can be wrong in exactly three ways:
@@ -367,7 +375,7 @@ export async function validateDataDir(loaded: LoadedConfig): Promise<{ ok: boole
     const chain = new ChainManager({
       dataDir: config.dataDir,
       net,
-      genesisDocument: genesisDocumentFor(net, config.bootstrapValidatorPublicKeys),
+      genesisDocument: genesisDocumentFor(net, config.bootstrapValidatorPublicKeys, config.miningGatePublicKeys),
     });
     await chain.init();
     return chain.verifyIntegrity();

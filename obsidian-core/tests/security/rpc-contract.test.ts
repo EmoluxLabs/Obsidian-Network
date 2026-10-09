@@ -19,6 +19,8 @@ import { getNetwork } from '../../src/protocol/networks.js';
 import { PROTOCOL_VERSION } from '../../src/version.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { genesisId as computeGenesisId } from '../../src/genesis/initialize.js';
+import { GATE_ISSUER } from '../helpers/harness.js';
+import { issueMiningGateCertificate } from '../../src/mining/gate.js';
 
 const NET = getNetwork('devnet');
 let dir: string;
@@ -32,7 +34,7 @@ beforeAll(async () => {
   chain = new ChainManager({
     dataDir: dir,
     net: NET,
-    genesisDocument: { networkId: NET.networkId, chainId: NET.chainId, protocolVersion: PROTOCOL_VERSION, timestamp: 1_767_225_600, note: 'rpc contract suite' },
+    genesisDocument: { networkId: NET.networkId, chainId: NET.chainId, protocolVersion: PROTOCOL_VERSION, timestamp: 1_767_225_600, note: 'rpc contract suite', miningGatePublicKeys: [GATE_ISSUER.publicKey] },
   });
   await chain.init();
   config = { ...DEFAULT_CONFIG, network: 'devnet', rpcPort: 0, rpcHost: '127.0.0.1', rpcCorsOrigins: [], rpcRateLimitPerMinute: 0, dataDir: dir };
@@ -184,7 +186,16 @@ describe('one pending transaction per sender and nonce', () => {
         nonce: 0,
         type: TxType.MINING_CLAIM,
         gas: 0n,
-        body: encodeMiningBody({ claimId: computeClaimId(NET.chainId, keys.address, 1, 0), claimSequence: 1 }),
+        body: encodeMiningBody({
+          claimId: computeClaimId(NET.chainId, keys.address, 1, 0),
+          claimSequence: 1,
+          gate: issueMiningGateCertificate(
+            GATE_ISSUER.privateKey,
+            GATE_ISSUER.publicKey,
+            { networkId: NET.networkId, chainId: NET.chainId, address: keys.address, claimId: computeClaimId(NET.chainId, keys.address, 1, 0) },
+            chain.protocolTime,
+          ),
+        }),
         validUntil: chain.protocolTime + validUntilOffset,
       });
     const first = build(300);

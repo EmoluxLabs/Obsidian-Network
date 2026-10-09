@@ -293,7 +293,7 @@ async function main(): Promise<void> {
         return;
       }
       const loaded = loadFromCli(options, { requireExplicitNetwork: true });
-      const document = genesisDocumentFor(loaded.net, loaded.config.bootstrapValidatorPublicKeys);
+      const document = genesisDocumentFor(loaded.net, loaded.config.bootstrapValidatorPublicKeys, loaded.config.miningGatePublicKeys);
       const block = buildGenesisBlock(document, loaded.net);
       process.stdout.write(
         `${JSON.stringify(

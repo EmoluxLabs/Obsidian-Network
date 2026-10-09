@@ -63,8 +63,30 @@ export const CONSENSUS_PARAMS = {
    * These are rule changes, so the protocol version moves to 1.6.1 and the
    * parameter hash changes with them: two nodes cannot share a protocol
    * identity and disagree about the rules.
+   *
+   * 1.7.0 closes the account bypass: a MINING_CLAIM must carry a certificate from a genesis-committed issuer key
+   * (see `miningGate` below), and the gate keys are part of the genesis id and of every state root. No economic rule
+   * moves. A 1.6.1 node cannot peer with a 1.7.0 node.
    */
-  protocolVersion: '1.6.1',
+  protocolVersion: '1.7.0',
+
+  /**
+   * MINING GATE (1.7.0). A MINING_CLAIM is valid only with a certificate from an issuer key committed in genesis
+   * (`GenesisState.miningGateKeys`). The issuer is the account platform: it signs a certificate for one wallet and one
+   * claim only after the account behind that wallet is signed in, second-factor confirmed and linked to it. Without
+   * this, anyone could skip the account system by submitting a claim straight to a node.
+   *
+   * The chain decides nothing about WHO an account is, and the issuer decides nothing about WHEN a wallet may claim:
+   * eligibility stays a pure function of the wallet's own claim history and the block time.
+   */
+  miningGate: {
+    /** A certificate is valid for this long after `issuedAt`, so a leaked one expires and a revoked account stops. */
+    certificateTtlSeconds: 15 * 60,
+    /** How far ahead of the including block's time an issuer's clock may be. */
+    clockSkewSeconds: 60,
+    /** Most issuer keys a genesis may commit. */
+    maxIssuers: 8,
+  },
 
   // ── Proof of Time (PoT) ───────────────────────────────────────────────────
   /**

@@ -41,6 +41,11 @@ tmp/
 bootstrap-keys/*
 !bootstrap-keys/README.md
 
+# ── Mining gate issuer keystores (generated, never committed) ─────────────────
+# `node scripts/generate-mining-gate-key.mjs` writes the ENCRYPTED private key here.
+gate-keys/
+*.keystore.json
+
 # ── Release artefacts ────────────────────────────────────────────────────────
 # The released archives, digests and manifest ARE committed: the whole point of
 # this project's release story is that a reader can download the exact bytes and

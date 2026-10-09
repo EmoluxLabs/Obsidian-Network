@@ -107,7 +107,7 @@ function validVote(h: Harness, validator: TestWallet, target?: Block): FinalityV
     protocolVersion: PROTOCOL_VERSION,
     networkId: h.net.networkId,
     chainId: h.net.chainId,
-    genesisId: genesisId(genesisDocumentFor(h.net, h.chain.world.s.genesis.bootstrapValidatorKeys), h.net),
+    genesisId: genesisId(genesisDocumentFor(h.net, h.chain.world.s.genesis.bootstrapValidatorKeys, h.chain.world.s.genesis.miningGateKeys), h.net),
     paramsHash: PARAMS_HASH,
     type: 'POT_FINALITY' as const,
     finalizedHeight: anchorHeight,
@@ -144,14 +144,14 @@ describe('A — the published identity moves as one thing', () => {
     // A build that ships a new rule set under an old protocol version is the
     // exact failure this file exists to prevent, so the three versions that a
     // peer compares are asserted to be the same string.
-    expect(CORE_VERSION).toBe('1.6.1');
-    expect(PROTOCOL_VERSION).toBe('1.6.1');
-    expect(MIN_CORE_VERSION).toBe('1.6.1');
+    expect(CORE_VERSION).toBe('1.7.0');
+    expect(PROTOCOL_VERSION).toBe('1.7.0');
+    expect(MIN_CORE_VERSION).toBe('1.7.0');
     expect(CONSENSUS_PARAMS.protocolVersion).toBe(PROTOCOL_VERSION);
     // The state shape changed (the validator-mode indicator, the jail term), so
     // the snapshot format changed with it: an old snapshot is refused below
     // rather than read as if it described the new state.
-    expect(STATE_SNAPSHOT_VERSION).toBe(3);
+    expect(STATE_SNAPSHOT_VERSION).toBe(4);
     // Computed, not declared. A hand-edited hash would let the rules change
     // without the identity changing, which is the whole attack.
     expect(PARAMS_HASH).toBe(computeParamsHash(CONSENSUS_PARAMS));
@@ -310,9 +310,9 @@ describe('E — genesis and snapshot identity follow the version', () => {
     expect(document.protocolVersion).toBe(PROTOCOL_VERSION);
     // Published identity, measured on this build: the id is a function of the
     // document, so moving the protocol version moves the chain.
-    expect(genesisId(document, mainnet)).toBe('56ec455d8afac5ef4f7d636ac03ef9e39bd5788f');
+    expect(genesisId(document, mainnet)).toBe('2dc198e4e57cb482df4e0f89e3a28daaf427ccff');
     expect(genesisId({ ...document, protocolVersion: '1.6.0' }, mainnet)).toBe(
-      '3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c',
+      '9a104f428d447e4c916fccf2c8b5c0bef4827d4f',
     );
     // The genesis BLOCK commits the parameter hash in its state, so the hash
     // differs too: a node cannot restore 1.6.0 state and call it 1.6.1.
@@ -345,9 +345,10 @@ describe('F — a mixed-version network cannot form', () => {
     // them here asserts the rule the handshake enforces: a 1.6.0 peer is
     // rejected, a 1.6.1 peer is not, and a newer one is not mistaken for a peer.
     expect(compareVersions('1.6.0', PROTOCOL_VERSION)).not.toBe(0);
-    expect(compareVersions('1.6.1', PROTOCOL_VERSION)).toBe(0);
-    expect(compareVersions('1.6.0', MIN_CORE_VERSION)).toBeLessThan(0);
-    expect(compareVersions('1.6.1', MIN_CORE_VERSION)).toBe(0);
-    expect(compareVersions('1.7.0', CORE_VERSION)).toBeGreaterThan(0);
+    expect(compareVersions('1.6.1', PROTOCOL_VERSION)).not.toBe(0); // accepts claims from any key: a different rule set
+    expect(compareVersions('1.7.0', PROTOCOL_VERSION)).toBe(0);
+    expect(compareVersions('1.6.1', MIN_CORE_VERSION)).toBeLessThan(0);
+    expect(compareVersions('1.7.0', MIN_CORE_VERSION)).toBe(0);
+    expect(compareVersions('1.8.0', CORE_VERSION)).toBeGreaterThan(0);
   });
 });

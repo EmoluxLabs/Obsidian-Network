@@ -148,7 +148,7 @@ export function slashSumsBack(amount: bigint, remaining: bigint, bond: bigint): 
  */
 export function genesisIdForState(state: WorldState, net: NetworkDefinition): string | null {
   try {
-    return genesisId(genesisDocumentFor(net, state.s.genesis.bootstrapValidatorKeys), net);
+    return genesisId(genesisDocumentFor(net, state.s.genesis.bootstrapValidatorKeys, state.s.genesis.miningGateKeys), net);
   } catch {
     return null;
   }

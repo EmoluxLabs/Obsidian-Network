@@ -70,8 +70,15 @@ import {
 } from '../consensus/proposer.js';
 import { encodeSignedTx, validateTxStructure } from '../transactions/encode.js';
 import { decodeSlashBody } from '../transactions/executors/slash.js';
-import { buildGenesisBlock, createGenesisState, genesisId, normalizeBootstrapValidatorPublicKeys } from '../genesis/initialize.js';
+import {
+  buildGenesisBlock,
+  createGenesisState,
+  genesisId,
+  normalizeBootstrapValidatorPublicKeys,
+  normalizeMiningGatePublicKeys,
+} from '../genesis/initialize.js';
 import { committedBootstrapValidatorKeys } from '../genesis/bootstrap-keys.js';
+import { committedMiningGateKeys } from '../genesis/gate-keys.js';
 import { assertNetworkSafety } from '../protocol/networks.js';
 import { CORE_VERSION, PROTOCOL_VERSION, STATE_SNAPSHOT_VERSION } from '../version.js';
 import { FinalityStore, type FinalityIdentity, type PersistedFinalityState } from '../storage/finality-store.js';
@@ -122,6 +129,8 @@ export interface GenesisDocument {
   note: string;
   /** Sorted compressed validator public keys committed by the genesis state. */
   bootstrapValidatorPublicKeys?: string[];
+  /** Sorted compressed issuer public keys whose certificates open the mining gate (see mining/gate.ts). */
+  miningGatePublicKeys?: string[];
 }
 
 export interface AddBlockResult {
@@ -231,6 +240,16 @@ export class ChainManager extends EventEmitter {
     // network with a committed bootstrap committee must be started with exactly
     // that committee. `genesisDocumentFor` already resolves it, so this catches
     // a caller that assembles a GenesisDocument by hand.
+    const committedGate = committedMiningGateKeys(options.net);
+    if (committedGate.length > 0) {
+      const supplied = normalizeMiningGatePublicKeys(options.genesisDocument.miningGatePublicKeys ?? []);
+      if (supplied.join(',') !== normalizeMiningGatePublicKeys(committedGate).join(',')) {
+        throw new Error(
+          `${options.net.name} commits a fixed mining gate issuer set; refusing to start with ` +
+            `${supplied.length === 0 ? 'an empty' : 'a different'} set.`,
+        );
+      }
+    }
     const committed = committedBootstrapValidatorKeys(options.net);
     if (committed.length > 0) {
       const supplied = normalizeBootstrapValidatorPublicKeys(options.genesisDocument.bootstrapValidatorPublicKeys ?? []);
@@ -266,7 +285,12 @@ export class ChainManager extends EventEmitter {
       });
       this.store.putBlock(genesisBlock);
       this.store.setCanonical([this.store.getIndexEntry(genesisHash)!]);
-      this.state = createGenesisState(genesisBlock, this.options.net, this.options.genesisDocument.bootstrapValidatorPublicKeys ?? []);
+      this.state = createGenesisState(
+        genesisBlock,
+        this.options.net,
+        this.options.genesisDocument.bootstrapValidatorPublicKeys ?? [],
+        this.options.genesisDocument.miningGatePublicKeys ?? [],
+      );
       this.initializeFinality(genesisHash,genesisIdentifier);
       this.persistCheckpoint(true);
       this.emit('ready', { genesisHash, genesisId: genesisIdentifier });
@@ -309,7 +333,12 @@ export class ChainManager extends EventEmitter {
       const genesisBlock = buildGenesisBlock(this.options.genesisDocument, this.options.net);
       this.store.putBlock(genesisBlock);
       this.store.setCanonical([this.store.getIndexEntry(blockHash(genesisBlock.header))!]);
-      this.state = createGenesisState(genesisBlock, this.options.net, this.options.genesisDocument.bootstrapValidatorPublicKeys ?? []);
+      this.state = createGenesisState(
+        genesisBlock,
+        this.options.net,
+        this.options.genesisDocument.bootstrapValidatorPublicKeys ?? [],
+        this.options.genesisDocument.miningGatePublicKeys ?? [],
+      );
       this.initializeFinality(blockHash(genesisBlock.header),this.genesisId);
       this.persistCheckpoint(true);
       return;
@@ -1308,7 +1337,12 @@ export class ChainManager extends EventEmitter {
       if (cursor.height === 0) {
         const genesisBlock = this.store.getBlockByHash(cursor.hash);
         if (!genesisBlock) throw new Error('genesis block missing from storage: the data directory is corrupt');
-        base = createGenesisState(genesisBlock, this.options.net, this.options.genesisDocument.bootstrapValidatorPublicKeys ?? []);
+        base = createGenesisState(
+        genesisBlock,
+        this.options.net,
+        this.options.genesisDocument.bootstrapValidatorPublicKeys ?? [],
+        this.options.genesisDocument.miningGatePublicKeys ?? [],
+      );
         break;
       }
       path.push(cursor);

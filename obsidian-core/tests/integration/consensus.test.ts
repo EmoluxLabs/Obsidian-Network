@@ -24,6 +24,7 @@ import {
   advance,
   createHarness,
   forkParent,
+  gateFor,
   makeWallet,
   miningBody,
   miningEligibility,
@@ -244,7 +245,7 @@ describe('mining claims (spec §17–§27)', () => {
     const bob = makeWallet();
     advance(h, 1);
     const forged = h.tryBlock(
-      [h.sign(bob, TxType.MINING_CLAIM, encodeMiningBody({ claimId: 'ab'.repeat(32), claimSequence: 1 }), { gas: 0n })],
+      [h.sign(bob, TxType.MINING_CLAIM, encodeMiningBody({ claimId: 'ab'.repeat(32), claimSequence: 1, gate: gateFor(h, bob.address, 'ab'.repeat(32)) }), { gas: 0n })],
       { simulate: false },
     );
     expect(forged.accepted).toBe(false);
@@ -259,9 +260,16 @@ describe('mining claims (spec §17–§27)', () => {
     rewindMiningTimer(h, bob.address);
     const skipped = h.tryBlock(
       [
-        h.sign(bob, TxType.MINING_CLAIM, encodeMiningBody({ claimId: computeClaimId(h.net.chainId, bob.address, 9, 2), claimSequence: 9 }), {
-          gas: 0n,
-        }),
+        h.sign(
+          bob,
+          TxType.MINING_CLAIM,
+          encodeMiningBody({
+            claimId: computeClaimId(h.net.chainId, bob.address, 9, 2),
+            claimSequence: 9,
+            gate: gateFor(h, bob.address, computeClaimId(h.net.chainId, bob.address, 9, 2)),
+          }),
+          { gas: 0n },
+        ),
       ],
       { simulate: false },
     );
@@ -627,8 +635,8 @@ describe('multi-node convergence (spec §111)', () => {
 
     const script: Array<{ height: number; build: (h: Harness) => ReturnType<typeof signedPayment> | null }> = [
       { height: 1, build: () => null },
-      { height: 2, build: (h) => h.sign(alice, TxType.MINING_CLAIM, miningBody(h, alice), { gas: 0n, protocolTime: GENESIS_TS + 2 }) },
-      { height: 3, build: (h) => h.sign(bob, TxType.MINING_CLAIM, miningBody(h, bob), { gas: 0n, protocolTime: GENESIS_TS + 3 }) },
+      { height: 2, build: (h) => h.sign(alice, TxType.MINING_CLAIM, miningBody(h, alice, { protocolTime: GENESIS_TS + 2 }), { gas: 0n, protocolTime: GENESIS_TS + 2 }) },
+      { height: 3, build: (h) => h.sign(bob, TxType.MINING_CLAIM, miningBody(h, bob, { protocolTime: GENESIS_TS + 3 }), { gas: 0n, protocolTime: GENESIS_TS + 3 }) },
       {
         height: 4,
         build: (h) => signedPayment(h, alice, bob.address, parseObs('1'), { protocolTime: GENESIS_TS + 4 }),
@@ -676,7 +684,7 @@ describe('multi-node convergence (spec §111)', () => {
     blocks.push(first.produce([], { timestamp: GENESIS_TS + 1 }));
     blocks.push(
       first.produce(
-        [first.sign(alice, TxType.MINING_CLAIM, miningBody(first, alice), { gas: 0n, protocolTime: GENESIS_TS + 2 })],
+        [first.sign(alice, TxType.MINING_CLAIM, miningBody(first, alice, { protocolTime: GENESIS_TS + 2 }), { gas: 0n, protocolTime: GENESIS_TS + 2 })],
         { timestamp: GENESIS_TS + 2 },
       ),
     );

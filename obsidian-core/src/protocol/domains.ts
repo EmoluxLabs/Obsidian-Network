@@ -40,6 +40,8 @@ export const DOMAIN = {
   FINALITY_VOTE: 'OBSIDIAN:POT_FINALITY_VOTE:v1',
   /** Canonical hash of the finality validator committee. */
   FINALITY_VALIDATOR_SET: 'OBSIDIAN:FINALITY_VALIDATOR_SET:v1',
+  /** Mining gate certificate: an issuer key vouches that one wallet may make one specific claim. */
+  MINING_GATE: 'OBSIDIAN:MINING_GATE:v1',
   /** Canonical identity of equivocation evidence. */
   EQUIVOCATION_EVIDENCE: 'OBSIDIAN:EQUIVOCATION_EVIDENCE:v1',
 } as const;

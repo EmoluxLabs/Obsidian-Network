@@ -558,6 +558,7 @@ export class RpcServer {
         reductionPercentPerStep: CONSENSUS_PARAMS.mining.reductionBasisPointsPerStep / 100,
         reductionStepMiners: CONSENSUS_PARAMS.mining.reductionStepMiners,
         activeMinerWindowSeconds: CONSENSUS_PARAMS.mining.activeMinerWindowSeconds,
+        gate: this.gateSummary(),
       },
       gas: {
         basisPoints: CONSENSUS_PARAMS.gas.basisPoints,
@@ -613,7 +614,7 @@ export class RpcServer {
   }
 
   private genesis(response: ServerResponse): void {
-    const document = genesisDocumentFor(this.options.net, this.options.config.bootstrapValidatorPublicKeys);
+    const document = genesisDocumentFor(this.options.net, this.options.config.bootstrapValidatorPublicKeys, this.options.config.miningGatePublicKeys);
     const genesisBlock = this.options.chain.getBlockByHeight(0);
     this.json(response, 200, {
       document,
@@ -1229,7 +1230,20 @@ export class RpcServer {
       totalClaims: account?.mining?.totalClaims ?? 0,
       totalRewardObs: formatObs(account?.mining?.totalReward ?? 0n),
       note: 'Eligibility is computed by the protocol. A device clock cannot change it.',
+      /** Consensus also requires a gate certificate on every claim; with no issuer key committed, no claim is possible. */
+      gate: this.gateSummary(),
     });
+  }
+
+  private gateSummary(): { required: true; open: boolean; issuerKeys: string[]; certificateTtlSeconds: number; clockSkewSeconds: number } {
+    const issuerKeys = [...this.options.chain.world.s.genesis.miningGateKeys];
+    return {
+      required: true,
+      open: issuerKeys.length > 0,
+      issuerKeys,
+      certificateTtlSeconds: CONSENSUS_PARAMS.miningGate.certificateTtlSeconds,
+      clockSkewSeconds: CONSENSUS_PARAMS.miningGate.clockSkewSeconds,
+    };
   }
 
   private miningClaims(response: ServerResponse, url: URL): void {

@@ -126,11 +126,13 @@ describe('committed bootstrap committees', () => {
     // derived from the document, never written down by hand. This assertion
     // makes either change a deliberate act instead of an edit that slips by.
     //   1.6.0: 3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c
+    //   1.7.0: the mining gate issuer set joined the id, so every network's id moved. The value below is the base
+    //          identity (no issuer key committed yet); a live network's id also includes its issuer keys.
     //   1.6.1: the value below, moved by PROTOCOL_VERSION alone (the committee,
     //          the genesis instant and the note are untouched).
-    expect(shipped).toBe('56ec455d8afac5ef4f7d636ac03ef9e39bd5788f');
+    expect(shipped).toBe('2dc198e4e57cb482df4e0f89e3a28daaf427ccff');
     expect(genesisId({ ...genesisDocumentFor(mainnet), protocolVersion: '1.6.0' }, mainnet))
-      .toBe('3a7ced6f7e6a14f40fc310d9a5de6d834b5cbd4c');
+      .toBe('9a104f428d447e4c916fccf2c8b5c0bef4827d4f');
   });
 
   it('refuses to start a committed network with a different committee', async () => {
