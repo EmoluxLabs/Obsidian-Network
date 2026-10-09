@@ -90,23 +90,14 @@ so anyone could post a `MINING_CLAIM` straight to a node's `/tx/submit`. That do
 
 ---
 
-## [1.6.1] — 2026-10-08
+### Carried forward unchanged from 1.6.1
 
-**Consensus-breaking, new-genesis release for a pre-launch network.** Params hash
-is `2dd76ca2b2305d725f3a975bfca04eb5`; mainnet genesis id is
-`56ec455d8afac5ef4f7d636ac03ef9e39bd5788f` and genesis block hash is
-`74e7dee44e8b579ac3048a716a480311bcd858b1740a1b6f99f1cda6b33dace3` (all three
-printed by `GET /health` on a running node). A 1.6.1 node rejects 1.6.0 peers at
-the handshake, refuses a 1.6.0 data directory, and does not migrate a 1.6.0
-chain: the genesis identity moved, so this release is for an unstarted network.
-
-1.6.1 exists because a 1.6.0 follow-up fixed a slashing-liability rule *without
-moving the protocol identity*. A node that applies the new rule and a node that
-does not would compute different state roots under the same version string, and
-nothing — no handshake, no genesis check, no state-root comparison — could tell
-them apart. That release was never launched; this one re-issues the same rules
-under a new identity. Everything 1.6.0 established is carried below unchanged,
-and this repository keeps one changelog entry: the release it ships.
+This repository keeps one changelog entry: the release it ships. 1.7.0 carries every rule of 1.6.1 unchanged and adds
+the two changes above; the 1.6.1 identity values (params hash, genesis ids) were superseded and are not repeated.
+1.6.1 itself was a consensus-breaking new-genesis release: it rejected 1.6.0 peers and data directories, and it
+existed because a slashing-liability rule had been fixed *without moving the protocol identity*, which would have let
+two nodes compute different state roots under one version string. The full account is in
+[docs/remediation-1.6.1.md](docs/remediation-1.6.1.md).
 
 ### 1.6.1 consensus and slashing remediation
 
@@ -314,5 +305,7 @@ and this repository keeps one changelog entry: the release it ships.
 * **No signed release.** `releases/` carries no `SHA256SUMS.asc`;
   `scripts/verify-release.sh` prints `UNSIGNED RELEASE` rather than passing
   quietly, and `docs/release-process.md` §5 states the operational requirement.
-* No automatic migration from 1.6.0, and no mainnet value transfer: a 1.6
+* No automatic migration from 1.6.x, and no mainnet value transfer: a 1.7
   network starts from its own genesis.
+* **No mainnet or testnet mining-gate key.** Operators generate their own; until one is configured a node of that
+  network accepts no mining claim.
