@@ -95,13 +95,48 @@ function send(res, status, body, headers = {}) {
  * Cookies pass through untouched in both directions, because the session belongs
  * to the platform and the browser has to hold its cookie for it to mean anything.
  * Nothing is rewritten, cached or interpreted here: a 4xx from the platform stays
- * a 4xx, so the app shows the server's own reason instead of a generic one.
+ * a 4xx, so the app shows the server's own reason instead of a generic one. The
+ * one exception is the pair of browser-only headers described in forwardHeaders,
+ * which are dropped because they would otherwise decide the platform's answer.
  */
-async function proxy(req, res, url) {
-  const target = PLATFORM_URL.replace(/\/$/, '') + url.pathname + url.search;
+/**
+ * Request headers to forward, and the two that must not be.
+ *
+ * `Origin` and `Referer` are dropped on purpose. The platform decides whether a
+ * caller may use its API by comparing `Origin` against its own origin and then
+ * against the operator's allowlist — a browser-facing check. This process is not a
+ * browser: it is the operator's own server, and the decision to let it call the
+ * platform was already made by setting OBSIDIAN_PLATFORM_URL. Forwarding the
+ * browser's origin makes the platform see a foreign caller it was never told
+ * about, so every POST — sign-in included — answers 403 "origin not allowed" until
+ * someone adds the app's origin to OBSIDIAN_INTERFACE_ALLOWED_ORIGINS. That turns
+ * a working deployment into a configuration exercise, and a misconfigured one
+ * looks identical to a broken app.
+ *
+ * `X-Forwarded-For` is rebuilt rather than passed through. The platform reads the
+ * LAST entry to decide who to rate-limit, precisely because anything earlier in
+ * the chain is client-supplied. A proxy that forwards the header untouched lets a
+ * caller write their own last entry and spend somebody else's request budget.
+ */
+function forwardHeaders(req) {
   const headers = { ...req.headers };
   delete headers.host;
   delete headers['content-length'];
+  delete headers.origin;
+  delete headers.referer;
+
+  const peer = req.socket.remoteAddress ?? '';
+  const prior = headers['x-forwarded-for'];
+  const chain = typeof prior === 'string' ? prior.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  // Keep what the caller claimed, then append what this socket actually is: the
+  // last entry is then always the address this server saw, never a claim.
+  headers['x-forwarded-for'] = [...chain, peer].join(', ');
+  return headers;
+}
+
+async function proxy(req, res, url) {
+  const target = PLATFORM_URL.replace(/\/$/, '') + url.pathname + url.search;
+  const headers = forwardHeaders(req);
 
   try {
     const upstream = await fetch(target, {

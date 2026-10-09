@@ -60,6 +60,8 @@ coverage/
 # pattern above (`data/`) matched network/obsidian/mobile/data/ and the files
 # were silently left out of a commit, so CI compiled without them. Source trees
 
-# The web app serves these directly; they are committed source, not build output.
-!obsidian-app-web/public/js/
-!obsidian-app-web/public/js/**
+# obsidian-app-web's bundle is generated output too: `npm run build:web` writes
+# public/js/obsidian.js from web/. A negation used to re-include that directory
+# because it held hand-written copies of web/vault.mjs and web/claim.mjs, and the
+# two had already drifted apart (the copies still called computeTxId with one
+# argument). One source, one bundle.

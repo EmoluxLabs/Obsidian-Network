@@ -1,36 +1,52 @@
 # Obsidian app (web)
 
 The Obsidian client as a web app. It uses the supplied HTML design verbatim and the
-Obsidian Web platform's own API as its single backend.
+Obsidian Web platform's own API as its single backend. Keys never leave the browser.
 
-## Status — read this before trusting anything here
+## What it does
 
-**This is a foundation, not a finished app.** What exists today:
+| Screen | Backed by |
+| --- | --- |
+| Sign up / sign in / recover | platform `/api/auth/*` — Gmail + password + invite + MFA, as the server states it |
+| Home | account, invites, recovery codes (shown once), MFA, linked address |
+| Mine | the node's own eligibility (`/mining/status`); claims are signed in the browser and submitted to `/tx/submit` |
+| Wallet | balance, history, send (payment), receive, wallet set-up on this device |
+| Explorer | blocks, transactions, addresses and `.obs` names, straight from the node |
+| ONS | name lookup, registration, renewal, address update, transfer |
+| API | the routes the proxy exposes |
 
-- `server/main.mjs` — a dependency-free server that serves `./public` and proxies
-  `/api/*` to the platform. **Written and verified**: it refuses to start with no
-  platform configured, boots when one is set, answers `/healthz`, and serves the
-  shell with a 200.
+Every figure comes from the platform or the node. A value not yet answered renders as
+`—`; nothing is defaulted, estimated or invented. The design's own demo behaviours
+(`claim`, `send`, `buy`, `startM`, `onsq`, the `TAKEN`/`PRICE`/`RATE` constants, the
+Edge Node screen) are unreachable.
 
-What does **not** exist yet:
+## Layout
 
-- **`public/index.html` is an unmodified copy of the supplied design file.** It
-  still contains everything that file labels as demo data: the hardcoded
-  `VALID` invitation list, `claim()` adding to a local balance with no transaction,
-  the unverified sign-in, and the invented `TAKEN` / `FEE` / `PRICE` constants.
-  **None of it talks to a real backend.** Treat it as the design source, not as the
-  app.
-- No data layer, no signing, no notifications, no service worker.
+```
+public/index.html   the design, byte-for-byte unchanged
+public/real.mjs     module entry: replaces the design's render/go, wires every handler
+public/screens.mjs  the screens (they read the design's helpers by bare name)
+public/data.mjs     reads from the platform; rejects HTML/garbage instead of showing "no data"
+public/wallet.mjs   bridge to the signing bundle (loaded lazily)
+public/notify.mjs   claim-ready notifications
+web/                the bundle's source: signing, vault, protocol operations
+public/js/          GENERATED bundle (git-ignored): npm run build:web
+server/main.mjs     dependency-free static server + /api proxy
+```
+
+The design binds `render`/`go` as function declarations, so they are properties of
+`window` and replaceable; `V`, `S`, `hdr`, `nav` are `const` and are not. `real.mjs`
+never reads them off `window` — `tests/design-contract.test.mjs` pins this, because
+getting it wrong leaves the page rendering normally while running the demo.
 
 ## Running it
 
 ```sh
-OBSIDIAN_PLATFORM_URL=https://your-platform.example npm start
+npm run build:web                      # builds core, syncs it, bundles the browser code
+OBSIDIAN_PLATFORM_URL=http://127.0.0.1:8788 npm start
 ```
 
-It refuses to start without `OBSIDIAN_PLATFORM_URL`. That is deliberate: an app with
-no backend renders empty states everywhere and looks broken rather than
-misconfigured, and the failure message is more useful than the blank screen.
+`OBSIDIAN_PLATFORM_URL` is required; without it the server exits with code 2.
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
@@ -38,13 +54,45 @@ misconfigured, and the failure message is more useful than the blank screen.
 | `APP_PORT` | Port to listen on | `8790` |
 | `APP_HOST` | Address to bind | `0.0.0.0` |
 
+The app has no runtime dependencies. `build:web` needs `obsidian-core` and
+`obsidian-interface` installed (`npm ci` in each); `npm test` builds them if absent.
+
+## Networks and addresses
+
+The address prefix belongs to the network: `obs` (mainnet), `tobs`, `sobs`, `dobs`.
+One phrase gives one key and a different address on each. The app reads the prefix
+from the node (`/network` → `addressHrp`) and never guesses it; an address cached
+under another network is re-encoded in place, with no passphrase. If the node does not
+report a prefix, signing is refused.
+
 ## Why the proxy
 
-The browser talks to one origin only. That means one cookie jar, one CORS story, one
-place a failure can come from — and the platform's address never reaches the client,
-so a deployed app cannot be repointed by editing its JavaScript.
+The browser talks to one origin: one cookie jar, one CORS story, and the platform's
+address never reaches the client. The server holds no account state and no keys. A 4xx
+stays a 4xx; an unreachable platform is `ERR_PLATFORM_UNREACHABLE` (502), never an
+empty 200. `Origin`/`Referer` are not forwarded (this server is the platform's client,
+not the browser's) and `X-Forwarded-For` is appended to, never trusted.
 
-The server holds no account state, no keys and no session of its own. It is a pipe.
-A 4xx from the platform stays a 4xx, so the app shows the server's own reason instead
-of a generic one. An unreachable platform is reported as `ERR_PLATFORM_UNREACHABLE`
-rather than turned into an empty 200 that would render as a chain with no data.
+## Tests
+
+```sh
+npm test                 # 90+ tests, no network, no dependencies
+APP_URL=http://127.0.0.1:8790 npm run test:integration   # against a running app + platform
+```
+
+- `derivation`, `signing` — the canonical derivation and signature, per network prefix
+- `ops` — claim/payment/ONS sequencing against a fake node and a real vault
+- `data`, `server` — the wire contract and the proxy, over real sockets
+- `design-contract` — the promises the app makes about the design it does not edit
+- `boot` — loads `real.mjs` as the page does and renders every screen
+- `bundle` — exercises the shipped bundle (skipped until `build:web` has run)
+
+Verified end to end against a live devnet node: a claim, a payment and a `.obs`
+registration, each signed by this app's own code, accepted, included and reflected in
+balances.
+
+## Not done
+
+- No browser-driven test: the suite stubs the DOM, so layout and CSS are unverified here.
+- No service worker; notifications work only while the page is open.
+- Mainnet has not been exercised, only devnet.

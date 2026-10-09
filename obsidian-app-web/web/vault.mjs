@@ -24,6 +24,21 @@
 const PBKDF2_ITERATIONS = 600_000;
 const KDF = 'PBKDF2-SHA256';
 const STORAGE_KEY = 'obsidian.vault';
+const ADDRESS_KEY = 'obsidian.address';
+
+/**
+ * Thrown when a passphrase does not open a vault.
+ *
+ * Typed because the caller has to tell two failures apart. "That passphrase is
+ * wrong" is the user's problem to fix; a signing error is not, and reporting the
+ * second as the first would send someone hunting for a typo that is not there.
+ */
+export class PassphraseError extends Error {
+  constructor(message = 'That passphrase is not correct.') {
+    super(message);
+    this.name = 'PassphraseError';
+  }
+}
 
 // The vault envelope, as stored: { kdf, iterations, salt, iv, ciphertext }.
 // It holds no plaintext, which is why persisting it is not a leak.
@@ -96,8 +111,9 @@ export async function openVault(vault, passphrase) {
   } catch {
     // OperationError from a failed tag check. Do not distinguish it from other
     // decrypt failures: telling a caller which one happened would leak information
-    // about the stored blob.
-    throw new Error('That passphrase is not correct.');
+    // about the stored blob. What survives is only "wrong passphrase", and that
+    // is all a caller needs.
+    throw new PassphraseError();
   }
 }
 
@@ -116,6 +132,31 @@ export function loadVault() {
 }
 
 /**
+ * Remember the address the vault holds.
+ *
+ * An address is public — it is published on the chain the moment the wallet is
+ * used — so caching it is not a disclosure. It is what lets the mining and wallet
+ * screens show a balance and an eligibility window without decrypting a recovery
+ * phrase first, and it is what lets an operation check the chain before it puts a
+ * phrase in memory.
+ */
+export function saveWalletAddress(address) {
+  try {
+    localStorage.setItem(ADDRESS_KEY, String(address));
+  } catch {
+    /* private mode can refuse storage; the address is re-derived on unlock */
+  }
+}
+
+export function loadWalletAddress() {
+  try {
+    return localStorage.getItem(ADDRESS_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Destroy the local copy.
  *
  * This does not and cannot destroy the wallet: the phrase still exists wherever the
@@ -123,7 +164,12 @@ export function loadVault() {
  * otherwise would be the most dangerous thing this function could imply.
  */
 export function destroyVault() {
-  localStorage.removeItem(STORAGE_KEY);
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ADDRESS_KEY);
+  } catch {
+    /* nothing left to remove */
+  }
 }
 
-export { PBKDF2_ITERATIONS, KDF };
+export { PBKDF2_ITERATIONS, KDF, STORAGE_KEY, ADDRESS_KEY };

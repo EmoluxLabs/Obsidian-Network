@@ -6,13 +6,13 @@
   "description": "The Obsidian mobile client as a web app. Uses the supplied HTML design verbatim and the Obsidian Web platform's own API as its single backend.",
   "scripts": {
     "start": "node server/main.mjs",
-    "test": "node --test tests/",
-    "build:web": "node scripts/build-web.mjs"
+    "build:web": "node scripts/build-web.mjs && node scripts/check-browser-safe.mjs",
+    "check:web": "node scripts/check-browser-safe.mjs",
+    "pretest": "node scripts/ensure-core.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:integration": "bash tests/integration.sh"
   },
   "engines": {
     "node": ">=20"
-  },
-  "dependencies": {
-    "@noble/curves": "1.6.0"
   }
 }

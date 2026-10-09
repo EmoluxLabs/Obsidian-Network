@@ -11,7 +11,7 @@
  * It does NOT prove the canonical derivation is itself correct. The vector below
  * was generated FROM that implementation, so it cannot detect an error that is
  * already in it. obsidian-core's own test suite is what covers that; this file
- * covers only the question "does this app agree with the node?"
+ * covers only the question "does this app agree with the node?".
  *
  * That distinction is the whole reason this test exists separately. The failure
  * mode it guards against is the one the platform's wallet.ts documents from its own
@@ -46,22 +46,32 @@ test('the standard BIP-39 phrase derives the pinned address', () => {
   assert.equal(addressFromPublicKey(wallet.publicKey), EXPECTED_ADDRESS);
 });
 
+test('the wallet object carries its own address, and it agrees', () => {
+  const wallet = deriveWallet(PHRASE, 0, 0);
+  assert.equal(wallet.address, EXPECTED_ADDRESS);
+  assert.equal(wallet.address, addressFromPublicKey(wallet.publicKey));
+});
+
 test('derivation is deterministic across calls', () => {
   const a = deriveWallet(PHRASE, 0, 0);
   const b = deriveWallet(PHRASE, 0, 0);
   assert.equal(a.publicKey, b.publicKey);
-  assert.equal(a.privateKeyHex, b.privateKeyHex);
+  // `privateKey`, not `privateKeyHex`. This line used to compare two undefined
+  // values, which passed no matter what the derivation did.
+  assert.equal(a.privateKey, b.privateKey);
+  assert.equal(typeof a.privateKey, 'string');
+  assert.equal(a.privateKey.length, 64, 'a secp256k1 private key is 32 bytes of hex');
 });
 
 test('different indices derive a different wallet', () => {
   const first = deriveWallet(PHRASE, 0, 0);
   const second = deriveWallet(PHRASE, 0, 1);
   assert.notEqual(first.publicKey, second.publicKey);
+  assert.notEqual(first.address, second.address);
 });
 
 test('an invalid phrase is refused before anything is derived', () => {
   assert.equal(isValidRecoveryPhrase('not a real recovery phrase at all'), false);
-  assert.throws(() => {
-    if (!isValidRecoveryPhrase('twelve words only here now')) throw new Error('invalid');
-  });
+  assert.equal(isValidRecoveryPhrase('twelve words only here now'), false);
+  assert.equal(isValidRecoveryPhrase(''), false);
 });
