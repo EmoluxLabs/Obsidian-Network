@@ -29,7 +29,7 @@
  * Nothing is estimated, extrapolated or defaulted into looking plausible.
  */
 
-import { sealsToObs, formatDuration, formatTerm, formatTime, normaliseName, MIN_PASSPHRASE_LENGTH } from './data.mjs';
+import { sealsToObs, formatDuration, formatTerm, formatTime, normaliseName, arg, MIN_PASSPHRASE_LENGTH } from './data.mjs';
 import { explorerScreen } from './explorer.mjs';
 
 // ── the design's own helpers ─────────────────────────────────────────────────
@@ -80,7 +80,7 @@ function designBack(to) {
   try {
     return back(to);
   } catch {
-    return `<div class="hd"><b onclick="ObsidianGo('${esc(to)}')" style="cursor:pointer;font-size:13px;letter-spacing:.1em">‹ BACK</b></div>`;
+    return `<div class="hd"><b onclick="ObsidianGo('${arg(to)}')" style="cursor:pointer;font-size:13px;letter-spacing:.1em">‹ BACK</b></div>`;
   }
 }
 
@@ -490,7 +490,7 @@ export const SCREENS = {
       `<div class="lb">TRY A READ</div>` +
       `<div style="display:flex;flex-wrap:wrap;gap:8px">${API_READS.map(
         ([route, label]) =>
-          `<button class="btn ${t?.route === route ? 'p' : ''}" style="width:auto;margin:0;height:38px;padding:0 12px;font-size:11px;letter-spacing:.06em" onclick="ObsidianApiTry('${esc(
+          `<button class="btn ${t?.route === route ? 'p' : ''}" style="width:auto;margin:0;height:38px;padding:0 12px;font-size:11px;letter-spacing:.06em" onclick="ObsidianApiTry('${arg(
             route,
           )}')">${esc(label)}</button>`,
       ).join('')}</div>` +
@@ -688,7 +688,7 @@ function receivePanel(s) {
         ? `<div class="mu" style="font-size:12.5px;margin-bottom:12px">The QR code could not be drawn on this device. The address below is still correct.</div>`
         : '') +
     `<div class="m" id="wallet-address" style="word-break:break-all;font-size:13px">${esc(s.walletAddress)}</div></div>` +
-    `<button class="btn p" onclick="ObsidianCopy('${esc(s.walletAddress)}')">COPY ADDRESS</button>` +
+    `<button class="btn p" onclick="ObsidianCopy('${arg(s.walletAddress)}')">COPY ADDRESS</button>` +
     `<p class="mu" style="font-size:12.5px;margin-top:12px">This code holds only your address, nothing else, and is safe to show. The address is derived from the recovery phrase sealed on this device. Anyone who holds that phrase holds the funds.</p>`
   );
 }
@@ -787,7 +787,7 @@ function nameResult(s) {
         )}</b></div>`) +
     (!r.registered && s.walletAddress && fee
       ? designField('pp', 'VAULT PASSPHRASE', 'password', 'To sign the registration') +
-        `<button class="btn p" onclick="ObsidianRegisterName('${esc(r.name)}')">${busy(
+        `<button class="btn p" onclick="ObsidianRegisterName('${arg(r.name)}')">${busy(
           `REGISTER ${r.name}`,
           s,
           'ons',
@@ -817,7 +817,7 @@ function activity(s, limit) {
     .map((t) => {
       const incoming = typeof t.kind === 'string' && /credit|reward|received/i.test(t.kind);
       const amount = t.amount ? `${incoming ? '+' : ''}${t.amount} OBS` : '—';
-      return `<div class="row" onclick="ObsidianExOpen('tx','${esc(t.txId)}')" style="cursor:pointer"><div><b>${
+      return `<div class="row" onclick="ObsidianExOpen('tx','${arg(t.txId)}')" style="cursor:pointer"><div><b>${
         t.kind ? esc(prettyKind(t.kind)) : 'Transaction'
       }</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(short(t.txId))} · ${esc(
         formatTime(t.timestamp),
@@ -888,4 +888,4 @@ function notifyLabel(permission) {
   return 'OFF';
 }
 
-export { esc, normaliseName };
+export { esc, arg, normaliseName };

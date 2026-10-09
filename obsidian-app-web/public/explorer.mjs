@@ -20,7 +20,7 @@
  * loading and handlers live in real.mjs.
  */
 
-import { formatTime } from './data.mjs';
+import { formatTime, arg } from './data.mjs';
 
 export const EXPLORER_TABS = [
   ['overview', 'OVERVIEW'],
@@ -74,7 +74,7 @@ function tabs(s, ex, ui) {
     `<div style="display:flex;gap:6px;margin:18px 0 4px">` +
     EXPLORER_TABS.map(
       ([key, label]) =>
-        `<button class="btn ${ex.tab === key ? 'p' : ''}" style="flex:1 1 0;min-width:0;width:auto;height:40px;margin:0;padding:0;font-size:9.5px;letter-spacing:.04em" onclick="ObsidianExTab('${esc(
+        `<button class="btn ${ex.tab === key ? 'p' : ''}" style="flex:1 1 0;min-width:0;width:auto;height:40px;margin:0;padding:0;font-size:9.5px;letter-spacing:.04em" onclick="ObsidianExTab('${arg(
           key,
         )}')">${esc(label)}</button>`,
     ).join('') +
@@ -188,7 +188,7 @@ function blocks(s, ex, ui) {
     `<div class="card">${list
       .map(
         (b) =>
-          `<div class="row" onclick="ObsidianExOpen('block','${esc(b.height)}')" style="cursor:pointer"><div><b class="m">#${Number(
+          `<div class="row" onclick="ObsidianExOpen('block','${arg(b.height)}')" style="cursor:pointer"><div><b class="m">#${Number(
             b.height,
           ).toLocaleString()}</b><div class="m mu" style="font-size:12px;margin-top:3px">${esc(
             `${String(b.hash).slice(0, 12)}…${String(b.hash).slice(-6)}`,
@@ -212,7 +212,7 @@ function claims(s, ex, ui) {
       ? `<div class="card">${d.claims
           .map(
             (c) =>
-              `<div class="row" onclick="ObsidianExOpen('tx','${esc(c.txId)}')" style="cursor:pointer"><div><b class="m">${esc(
+              `<div class="row" onclick="ObsidianExOpen('tx','${arg(c.txId)}')" style="cursor:pointer"><div><b class="m">${esc(
                 mask(c.miner),
               )}</b><div class="mu" style="font-size:12px;margin-top:3px">block ${esc(c.height)} · ${esc(
                 formatTime(c.timestamp),
@@ -237,7 +237,7 @@ function names(s, ex, ui) {
       ? `<div class="card">${d.names
           .map(
             (n) =>
-              `<div class="row" onclick="ObsidianExOpen('name','${esc(n.name)}')" style="cursor:pointer"><div><b class="m">${esc(
+              `<div class="row" onclick="ObsidianExOpen('name','${arg(n.name)}')" style="cursor:pointer"><div><b class="m">${esc(
                 n.name,
               )}</b><div class="m mu" style="font-size:12px;margin-top:3px">${esc(mask(n.owner))}</div></div><span class="pill">UNTIL ${esc(
                 isoDate(n.expiresAt),
@@ -362,16 +362,16 @@ function blockDetail(b, s, ui) {
       'PARENT',
       header.prevHash ?? summary.prevHash,
       ui,
-      Number.isFinite(height) && height > 0 ? `ObsidianExOpen('block','${esc(height - 1)}')` : '',
+      Number.isFinite(height) && height > 0 ? `ObsidianExOpen('block','${arg(height - 1)}')` : '',
     ) +
     longValue('TRANSACTION ROOT', header.txRoot, ui) +
     longValue('STATE ROOT', header.stateRoot, ui) +
     `</div>` +
     `<div style="display:flex;gap:12px">` +
-    `<button class="btn" ${Number.isFinite(height) && height > 0 ? '' : 'disabled'} onclick="ObsidianExOpen('block','${esc(
+    `<button class="btn" ${Number.isFinite(height) && height > 0 ? '' : 'disabled'} onclick="ObsidianExOpen('block','${arg(
       height - 1,
     )}')">‹ PREVIOUS</button>` +
-    `<button class="btn" ${Number.isFinite(height) && Number.isFinite(head) && height < head ? '' : 'disabled'} onclick="ObsidianExOpen('block','${esc(
+    `<button class="btn" ${Number.isFinite(height) && Number.isFinite(head) && height < head ? '' : 'disabled'} onclick="ObsidianExOpen('block','${arg(
       height + 1,
     )}')">NEXT ›</button></div>` +
     `<div class="lb">TRANSACTIONS IN THIS BLOCK</div>` +
@@ -379,7 +379,7 @@ function blockDetail(b, s, ui) {
       ? `<div class="card">${txs
           .map((t) => {
             const id = t.id ?? t.txId;
-            return `<div class="row" onclick="ObsidianExOpen('tx','${esc(id)}')" style="cursor:pointer"><div><b class="m" style="font-size:12px">${esc(
+            return `<div class="row" onclick="ObsidianExOpen('tx','${arg(id)}')" style="cursor:pointer"><div><b class="m" style="font-size:12px">${esc(
               `${String(id).slice(0, 12)}…${String(id).slice(-6)}`,
             )}</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(
               t.kind ?? t.typeName ?? `type ${t.type}`,
@@ -413,7 +413,7 @@ function txDetail(t, ui) {
     ) +
     `<div class="card" style="margin-top:10px">` +
     longValue('TRANSACTION ID', t.txId, ui) +
-    longValue('BLOCK ID', t.blockHash, ui, t.height !== undefined ? `ObsidianExOpen('block','${esc(t.height)}')` : '') +
+    longValue('BLOCK ID', t.blockHash, ui, t.height !== undefined ? `ObsidianExOpen('block','${arg(t.height)}')` : '') +
     (t.reference ? longValue('REFERENCE', t.reference, ui) : '') +
     `</div>` +
     (t.note ? `<p class="mu" style="font-size:12.5px">${esc(t.note)}</p>` : '') +

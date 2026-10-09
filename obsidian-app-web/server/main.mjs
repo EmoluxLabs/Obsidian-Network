@@ -27,6 +27,7 @@ import { stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { originAllowed as checkOrigin, parseAllowedOrigins } from './origin.mjs';
 import { NETWORK_NAMES, networkFor, publicConfig, verifyPlatform } from './networks.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,10 @@ const USAGE = `Obsidian app server
                         mainnet 8790, testnet 18790, staging 28790, devnet 38790)
   APP_HOST              address to bind              (default 0.0.0.0)
   APP_NETWORK_RECHECK_MS  how often the platform's network is re-verified (default 30000)
+  APP_TRUST_PROXY       true ONLY behind a reverse proxy you control that writes X-Forwarded-For: the visitor's
+                        address is then taken from it, so the platform rate-limits per visitor (default false)
+  APP_ALLOWED_ORIGINS   extra exact origins allowed to make state-changing API calls, comma separated
+                        (default none: only this app's own origin and browser extensions)
 
 Serves ./public and proxies /api/* to the platform. Holds no session state.
 Refuses to start in front of a platform that reports a different network.
@@ -96,7 +101,15 @@ const TYPES = {
  * crafted path cannot read outside it.
  */
 async function resolveStatic(pathname) {
-  const decoded = decodeURIComponent(pathname);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    // A lone `%` or a broken UTF-8 sequence. This used to throw out of an async handler, and an unhandled
+    // rejection ends the process: one unauthenticated request took the whole app down.
+    return null;
+  }
+  if (decoded.includes('\0')) return null;
   const rel = decoded === '/' ? '/index.html' : decoded;
   const target = resolve(PUBLIC_DIR, '.' + normalize(rel));
   if (target !== PUBLIC_DIR && !target.startsWith(PUBLIC_DIR + '/')) return null;
@@ -109,8 +122,56 @@ async function resolveStatic(pathname) {
   }
 }
 
+/**
+ * Sent on every response this server makes, including the proxied ones.
+ *
+ * The app holds a wallet and signs with it, so it must not be framed (a transparent frame over a real page turns a
+ * click into a signature), must not be sniffed into another type, and must only talk to itself. The platform sets
+ * the same family of headers on its own pages; this server is the front door for the app, so it sets them too.
+ * script-src keeps 'unsafe-inline' because the design's own markup uses inline handlers and one inline boot
+ * script; everything else is closed (no framing, no plugins, no <base>, no remote connections, no foreign forms).
+ */
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "media-src 'self' blob:",
+    "connect-src 'self'",
+    "worker-src 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+  ].join('; '),
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  // camera is the QR scanner, and only on this origin
+  'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), payment=()',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+};
+
+/**
+ * May this browser request use the API?
+ *
+ * The proxy drops `Origin` before forwarding (see forwardHeaders), which switches OFF the platform's own check of
+ * who is calling. So the check has to happen here, at the first hop that still sees the header. A request that
+ * changes anything must come from this app's own origin, or from a browser extension (the Obsidian extension
+ * calls this server from chrome-extension:// or moz-extension://), or from an origin the operator listed in
+ * APP_ALLOWED_ORIGINS. No Origin at all means not a browser form or fetch (curl, a server, a native app), and
+ * a cross-site browser request that hides its Origin is caught by Sec-Fetch-Site.
+ * The session cookie is SameSite=Lax, which already stops the common case; this is the second wall, and the one
+ * that holds against a sibling subdomain, where Lax does not.
+ */
+const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.APP_ALLOWED_ORIGINS);
+const TRUST_PROXY = process.env.APP_TRUST_PROXY === 'true';
+const IP_LIKE = /^[0-9a-fA-F:.]{3,45}$/;
+
 function send(res, status, body, headers = {}) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
+  res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8', ...headers });
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
 }
 
@@ -150,16 +211,27 @@ function forwardHeaders(req) {
   delete headers.origin;
   delete headers.referer;
 
-  const peer = req.socket.remoteAddress ?? '';
+  const peer = (req.socket.remoteAddress ?? '').replace(/^::ffff:/i, '');
   const prior = headers['x-forwarded-for'];
   const chain = typeof prior === 'string' ? prior.split(',').map((s) => s.trim()).filter(Boolean) : [];
   // Keep what the caller claimed, then append what this socket actually is: the
   // last entry is then always the address this server saw, never a claim.
-  headers['x-forwarded-for'] = [...chain, peer].join(', ');
+  //
+  // Behind the operator's own reverse proxy (nginx, Cloudflare) the socket is the PROXY, so appending it makes every
+  // visitor look like one client to the platform's rate limiter: a handful of requests would lock everyone out of
+  // sign-in. With APP_TRUST_PROXY=true the last entry the proxy wrote is the visitor, and it stays last.
+  const visitor = TRUST_PROXY ? chain.at(-1) : undefined;
+  headers['x-forwarded-for'] = visitor && IP_LIKE.test(visitor) ? chain.join(', ') : [...chain, peer].join(', ');
   return headers;
 }
 
+const MAX_BODY_BYTES = 1_000_000;
+
 async function proxy(req, res, url) {
+  const declared = Number(req.headers['content-length'] ?? 0);
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return send(res, 413, { error: 'request body too large', code: 'ERR_BODY_TOO_LARGE' });
+  }
   const target = PLATFORM_URL.replace(/\/$/, '') + url.pathname + url.search;
   const headers = forwardHeaders(req);
 
@@ -173,12 +245,13 @@ async function proxy(req, res, url) {
       duplex: 'half',
     });
 
-    const responseHeaders = {};
+    const responseHeaders = { ...SECURITY_HEADERS };
     for (const [key, value] of upstream.headers) {
       // Hop-by-hop and encoding headers must not be replayed: the body is
       // re-streamed here, so a content-length or content-encoding from upstream
       // would describe bytes this response is not sending.
       if (['content-length', 'content-encoding', 'transfer-encoding', 'connection'].includes(key.toLowerCase())) continue;
+      if (Object.keys(SECURITY_HEADERS).some((h) => h.toLowerCase() === key.toLowerCase())) continue;
       if (key.toLowerCase() === 'set-cookie') {
         const existing = responseHeaders[key];
         responseHeaders[key] = existing ? [].concat(existing, value) : value;
@@ -193,6 +266,9 @@ async function proxy(req, res, url) {
     }
     res.end();
   } catch (error) {
+    // Headers already sent: the status line is gone and cannot be changed, and writeHead would throw out of
+    // this handler. Cut the connection instead, so the browser sees a failed request and not a truncated "success".
+    if (res.headersSent) return void res.destroy();
     // A platform that cannot be reached is reported as such. It is never turned
     // into an empty 200, which the app would render as a chain with no data.
     send(res, 502, {
@@ -203,6 +279,20 @@ async function proxy(req, res, url) {
   }
 }
 
+/** A file that vanishes between stat and open emits 'error' on the stream; unhandled, that ends the process. */
+function pipeFile(res, file, type) {
+  const stream = createReadStream(file);
+  stream.once('open', () => {
+    res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': type });
+    stream.pipe(res);
+  });
+  stream.once('error', () => {
+    if (res.headersSent) res.destroy();
+    else send(res, 404, { error: 'not found', code: 'ERR_NOT_FOUND' });
+  });
+  res.once('close', () => stream.destroy());
+}
+
 async function serveStatic(req, res, url) {
   const file = await resolveStatic(url.pathname);
   if (!file) {
@@ -210,16 +300,19 @@ async function serveStatic(req, res, url) {
     // client-side routes survive a reload. Only non-API GETs reach here.
     const shell = await resolveStatic('/index.html');
     if (!shell) return send(res, 404, { error: 'not found', code: 'ERR_NOT_FOUND' });
-    res.writeHead(200, { 'Content-Type': TYPES['.html'] });
-    createReadStream(shell).pipe(res);
-    return;
+    return pipeFile(res, shell, TYPES['.html']);
   }
-  res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
-  createReadStream(file).pipe(res);
+  return pipeFile(res, file, TYPES[extname(file)] ?? 'application/octet-stream');
 }
 
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+async function handle(req, res) {
+  let url;
+  try {
+    // The Host header is attacker-controlled and `new URL` throws on a malformed one.
+    url = new URL(req.url ?? '/', 'http://localhost');
+  } catch {
+    return send(res, 400, { error: 'bad request', code: 'ERR_BAD_REQUEST' });
+  }
 
   if (url.pathname === '/healthz') {
     return send(res, verification.state === 'mismatch' ? 503 : 200, {
@@ -250,6 +343,9 @@ const server = createServer(async (req, res) => {
         code: 'ERR_PLATFORM_UNCONFIGURED',
       });
     }
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS' && !checkOrigin(req.headers, ALLOWED_ORIGINS)) {
+      return send(res, 403, { error: 'this request did not come from this app', code: 'ERR_ORIGIN_NOT_ALLOWED' });
+    }
     return proxy(req, res, url);
   }
 
@@ -258,6 +354,20 @@ const server = createServer(async (req, res) => {
   }
 
   return serveStatic(req, res, url);
+}
+
+// One handler failing must answer 500, never take the process down: an async handler that rejects is an
+// unhandled rejection, and Node ends the process for those.
+const server = createServer((req, res) => {
+  handle(req, res).catch((error) => {
+    process.stderr.write(`request failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    if (res.headersSent) res.destroy();
+    else send(res, 500, { error: 'internal error', code: 'ERR_INTERNAL' });
+  });
+});
+server.on('clientError', (_error, socket) => {
+  if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+  else socket.destroy();
 });
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {

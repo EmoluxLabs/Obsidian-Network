@@ -166,3 +166,58 @@ test('the audit answers are shown with their evidence, and a YES is shown as a w
   assert.match(html, /because/);
   assert.match(html, /background:#FDECEA[^"]*">YES/);
 });
+
+// ── hostile data in inline handlers ──────────────────────────────────────────────────────────
+//
+// The screens are HTML strings with inline handlers: onclick="ObsidianExOpen('tx','<id from the node>')". The browser
+// decodes entities in an attribute BEFORE it parses the handler as script, so escaping the id with an HTML escape
+// (quote -> &#39;) does not stop a quote from ending the JS string. This test does what the browser does: it decodes
+// each onclick attribute and RUNS it, and a handler that was hijacked sets a flag.
+
+const decodeEntities = (text) => text
+  .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+  .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+  .replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+function runHandlers(html) {
+  const calls = [];
+  const flag = { hijacked: false };
+  const handlers = [...html.matchAll(/onclick="([^"]*)"/g)].map((m) => decodeEntities(m[1]));
+  for (const code of handlers) {
+    const stub = (...args) => { calls.push(args); };
+    // Every Obsidian* handler is a stub; `pwn` stands for anything an attacker could want to run.
+    const names = [...new Set([...code.matchAll(/\b(Obsidian[A-Za-z]+)\(/g)].map((m) => m[1]))];
+    try { new Function(...names, 'pwn', code)(...names.map(() => stub), () => { flag.hijacked = true; }); } catch { /* a syntax error is also not an exploit */ }
+  }
+  return { calls, flag, handlers };
+}
+
+const HOSTILE = [
+  "x');pwn();//", "x'),pwn(),('", "\\');pwn();//", "x&#39;);pwn();//", "x\"onmouseover=\"pwn()", "x</script><script>pwn()</script>",
+  "x\u2028pwn()//", "x\n');pwn();//", "x');pwn();ObsidianExOpen('",
+];
+
+test('inline handler arguments built from node data cannot break out of their string', () => {
+  for (const evil of HOSTILE) {
+    const html =
+      render({ tab: 'blocks', data: { blocks: { blocks: [{ ...DATA.blocks.blocks[0], height: evil }] } } }) +
+      render({ tab: 'claims', data: { claims: { activeMiners: 1, claims: [{ ...DATA.claims.claims[0], txId: evil }] } } }) +
+      render({ tab: 'names', data: { names: { count: 1, names: [{ ...DATA.names.names[0], name: evil }] } } });
+    const { flag, handlers } = runHandlers(html);
+    assert.ok(handlers.length >= 3, 'the rows are clickable');
+    assert.equal(flag.hijacked, false, `a handler ran attacker code for ${JSON.stringify(evil)}`);
+    assert.doesNotMatch(html, /onclick="[^"]*\bpwn\b/, 'the payload is not even present as code');
+  }
+});
+
+test('the id a handler receives is exactly the id that was shown, for every legitimate shape', () => {
+  const ids = [TX, BLOCK, '82', 'e2e-test.obs', 'dobs13s4pgc4qczhgdjdmxhm8g9wf7e2ya66rrs0ff0'];
+  for (const id of ids) {
+    const { calls } = runHandlers(render({ tab: 'claims', data: { claims: { activeMiners: 1, claims: [{ ...DATA.claims.claims[0], txId: id }] } } }));
+    assert.ok(calls.some((args) => args.includes(id)), `the handler got ${id} unchanged`);
+  }
+  // text with spaces or quotes arrives intact too (escaped as \uXXXX inside the string), just never as code
+  const odd = "it's a name";
+  const { calls } = runHandlers(render({ tab: 'names', data: { names: { count: 1, names: [{ ...DATA.names.names[0], name: odd }] } } }));
+  assert.ok(calls.some((args) => args.includes(odd)));
+});

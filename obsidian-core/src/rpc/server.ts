@@ -1593,16 +1593,14 @@ export class RpcServer {
   }
 
   private async jsonRpc(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    let payload: { method?: string; params?: unknown; id?: number | string };
-    try {
-      payload = JSON.parse(await this.readBody(request)) as { method?: string; params?: unknown; id?: number | string };
-    } catch {
-      this.json(response, 400, { error: 'invalid JSON body', code: 'ERR_MALFORMED' });
-      return;
-    }
-    const method = payload.method ?? '';
-    const params = (payload.params ?? {}) as Record<string, unknown>;
-    const id = payload.id ?? null;
+    // The shared reader: an oversized body is 413, anything that is not a single JSON object (`null`, a number, an
+    // array) is 400. The inline JSON.parse this replaces turned `null` into a 500 and an oversized body into a 400.
+    const parsed = await this.jsonBody<Record<string, unknown>>(request, response);
+    if (parsed === undefined) return;
+    const payload = parsed as { method?: unknown; params?: unknown; id?: unknown };
+    const method = typeof payload.method === 'string' ? payload.method : '';
+    const params = (payload.params !== null && typeof payload.params === 'object' && !Array.isArray(payload.params) ? payload.params : {}) as Record<string, unknown>;
+    const id = typeof payload.id === 'number' || typeof payload.id === 'string' ? payload.id : null;
     try {
       const result = await this.invokeJsonRpc(method, params);
       this.json(response, 200, { jsonrpc: '2.0', id, result });
@@ -1625,7 +1623,8 @@ export class RpcServer {
       case 'getblock':
         return this.options.chain.getBlockByHeight(Number(params.height ?? 0))?.header ?? null;
       case 'getblocks':
-        return (this.options.chain.store.canonicalRange(Number(params.from ?? 0), Number(params.limit ?? 10)) ?? []).map(
+        // Bounded like the REST list: an unbounded `limit` is an unbounded response, on a public endpoint.
+        return (this.options.chain.store.canonicalRange(clampNumber(params.from, 0, 0, Number.MAX_SAFE_INTEGER), clampNumber(params.limit, 10, 1, 500)) ?? []).map(
           (entry) => entry.hash,
         );
       case 'gettransaction':
@@ -1666,6 +1665,12 @@ export class RpcServer {
         throw new Error(`unknown method ${method}`);
     }
   }
+}
+
+function clampNumber(raw: unknown, fallback: number, min: number, max: number): number {
+  const value = Math.trunc(Number(raw));
+  if (raw === undefined || raw === null || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
 }
 
 function clampInt(raw: string | null, fallback: number, min: number, max: number): number {

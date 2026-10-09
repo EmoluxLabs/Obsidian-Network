@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { serveExtension, launch, sleep, waitText, clickText } from './harness.mjs';
+import { serveExtension, launch, sleep, waitText, clickText, sendOrigin } from './harness.mjs';
 import { disposableWallet, totp, rpc } from './fund.mjs';
 import { evaluateClaim } from '../../src/claim-watch.mjs';
 
@@ -69,6 +69,7 @@ const browser = await launch();
 try {
   page = await browser.newPage();
   await page.evaluateOnNewDocument(fs.readFileSync(path.join(here, 'shim.js'), 'utf8'));
+  const control = await sendOrigin(page, ORIGIN);
   page.on('console', (m) => {
     if (m.type() === 'error') consoleErrors.push(m.text());
   });
@@ -77,7 +78,8 @@ try {
   // ── first run ──────────────────────────────────────────────────────────────────────────────
   await step('first run: connect screen, no demo data, nothing requested from any server', async () => {
     const requests = [];
-    page.on('request', (r) => { if (/^(https?|wss?):/.test(r.url()) && !r.url().startsWith(ORIGIN)) requests.push(r.url()); });
+    const watcher = (r) => { if (/^(https?|wss?):/.test(r.url()) && !r.url().startsWith(ORIGIN)) requests.push(r.url()); };
+    page.on('request', watcher);
     await popup();
     await waitText(page, 'This extension has no server yet');
     const t = await text();
@@ -87,7 +89,7 @@ try {
     assert.ok(!/BLOCK HEIGHT|SUPPLY|ACTIVE MINERS|\d{2,} OBS/i.test(t), 'no chain figure on the connect screen');
     await sleep(500);
     assert.deepEqual(requests, [], 'no network request before a server is configured');
-    page.removeAllListeners('request');
+    page.off('request', watcher);
     await shot('01-connect');
   });
 
@@ -214,17 +216,14 @@ try {
   });
 
   await step('NODE screen: when the node stops answering the figures turn STALE, they are not shown as current', async () => {
-    await page.setRequestInterception(true);
-    const block = (r) => (r.url().includes('/api/rpc') || r.url().includes('/api/nodes') ? r.abort('connectionrefused') : r.continue());
-    page.on('request', block);
+    control.block = (url) => url.includes('/api/rpc') || url.includes('/api/nodes');
     await clickText(page, 'button', 'REFRESH');
     await waitText(page, 'STALE');
     const t = await text();
     assert.ok(/these figures are from/i.test(t));
     assert.ok(/UNAVAILABLE|Unavailable/.test(t));
     await shot('04-stale');
-    page.off('request', block);
-    await page.setRequestInterception(false);
+    control.block = null;
     await clickText(page, 'button', 'REFRESH');
     await waitText(page, 'CONNECTED');
   });

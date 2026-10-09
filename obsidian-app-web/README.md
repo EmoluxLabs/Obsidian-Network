@@ -105,6 +105,8 @@ Running `node server/main.mjs` directly also works, with `OBSIDIAN_APP_NETWORK` 
 | `APP_PORT` | Port to listen on | the network's port, above |
 | `APP_HOST` | Address to bind | `0.0.0.0` |
 | `APP_NETWORK_RECHECK_MS` | How often the platform's network is re-verified | `30000` |
+| `APP_TRUST_PROXY` | `true` only behind a reverse proxy you control that writes `X-Forwarded-For` (nginx `proxy_set_header X-Forwarded-For $remote_addr;`, never `$proxy_add_x_forwarded_for`). The visitor's address is then the last entry the proxy wrote, and the platform rate-limits per visitor. **Also start the platform with `OBSIDIAN_INTERFACE_TRUST_PROXY=true`**: this server is its proxy. Without both, every visitor is one client to the platform's limiter and a few requests lock everyone out of sign-in | `false` |
+| `APP_ALLOWED_ORIGINS` | Extra exact origins (`https://wallet.example.org`, comma separated, no wildcards) allowed to make state-changing `/api` calls. Without it only this app's own origin and browser extensions (`chrome-extension://`, `moz-extension://`) may; a foreign `Origin`, `Origin: null` or a cross-site `Sec-Fetch-Site` gets `403 ERR_ORIGIN_NOT_ALLOWED` before anything reaches the platform | none |
 
 What makes the four deployments different, and impossible to cross:
 

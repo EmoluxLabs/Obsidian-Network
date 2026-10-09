@@ -1151,6 +1151,17 @@ P2P. For **RPC**, only if you deliberately publish read access.
 If a proxy terminates TLS in front of the interface, set
 `OBSIDIAN_INTERFACE_TRUST_PROXY=true`, and only then.
 
+**Web app in front of the platform.** `obsidian-app-web` is itself a proxy to the platform's
+`/api`. If you put an nginx/Cloudflare layer in front of the web app, start the web app with
+`APP_TRUST_PROXY=true` **and** the platform with `OBSIDIAN_INTERFACE_TRUST_PROXY=true`; then the
+platform rate-limits each visitor on their own address. Without both, every visitor reaches the
+platform from the web app's address and shares one sign-in limit, so a handful of failed attempts
+lock everyone out. Both settings are only safe when the platform's port is reachable from the web
+app alone (bind it to `127.0.0.1`) and your proxy overwrites `X-Forwarded-For` (use
+`$remote_addr`, never `$proxy_add_x_forwarded_for`). The web app refuses state-changing `/api`
+calls from a foreign `Origin`; list a separately hosted front end in `APP_ALLOWED_ORIGINS`.
+See [obsidian-app-web/README.md](../obsidian-app-web/README.md).
+
 ### D10. Persistent storage, backups, logs
 
 - **Data directory**: `/var/lib/obsidian/<network>/node` (the template unit's own; one per
@@ -1537,7 +1548,7 @@ The frontends themselves need no environment variables. The **interface** does:
 | `OBSIDIAN_INTERFACE_DATA_DIR` | Where the account list is stored |
 | `OBSIDIAN_GENESIS_INVITE_HASH` | Hash of the single-use Genesis Invitation |
 | `OBSIDIAN_INTERFACE_ALLOWED_ORIGINS` | Origins allowed to call the API with cookies (exact, or `https://*.example.org`); empty = same-origin only. Pages on `obsmainnet.us.ci` and its subdomains may always read chain data without cookies; see [trusted-domains.md](trusted-domains.md) |
-| `OBSIDIAN_INTERFACE_TRUST_PROXY` | `true` only behind a TLS proxy you control |
+| `OBSIDIAN_INTERFACE_TRUST_PROXY` | `true` only behind a TLS proxy you control (also required when `APP_TRUST_PROXY=true` is set on the web app in front of it) |
 | `OBSIDIAN_INTERFACE_MAX_INVITES` | Invites per account (protocol default 5) |
 
 ### F6. Test locally, deploy, update

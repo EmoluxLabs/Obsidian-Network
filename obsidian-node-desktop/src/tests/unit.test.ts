@@ -152,3 +152,17 @@ test('renderer: html templates escape everything interpolated', async () => {
   assert.equal(dom.html`${dom.html`<b>${'<i>'}</b>`}`.toString(), '<b>&#60;i&#62;</b>');
   assert.equal(dom.html`${[1, '<', null, false]}`.toString(), '1&#60;');
 });
+
+test('external links: only this organisation\u2019s GitHub repositories, never a dot segment or an encoded one', async () => {
+  const { isAllowedExternalLink } = await import('../core/handlers.js');
+  for (const ok of ['https://github.com/EmoluxLabs/Obsidian-Network', 'https://github.com/EmoluxLabs/Obsidian-Network/releases/tag/desktop-v1.0.0-rc.2', 'https://github.com/EmoluxLabs/Obsidian-Network/issues?q=open']) {
+    assert.equal(isAllowedExternalLink(ok), true, ok);
+  }
+  for (const bad of [
+    'http://github.com/EmoluxLabs/Obsidian-Network', 'https://github.com/Other/x', 'https://github.com.evil.test/EmoluxLabs/x', 'https://evil.test/https://github.com/EmoluxLabs/x',
+    'https://github.com/EmoluxLabs/x/../../someone/else', 'https://github.com/EmoluxLabs/..', 'https://github.com/EmoluxLabs/x/%2e%2e/%2e%2e/someone',
+    'https://github.com/EmoluxLabs/x%2f..%2f..%2fo', 'https://github.com/EmoluxLabs/x\\..\\o', 'file:///etc/passwd', 'javascript:alert(1)', 'https://user@github.com/EmoluxLabs/x', 'https://github.com/EmoluxLabs/x y',
+  ]) {
+    assert.equal(isAllowedExternalLink(bad), false, bad);
+  }
+});

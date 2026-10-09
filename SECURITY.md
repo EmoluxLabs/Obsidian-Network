@@ -78,5 +78,17 @@ stolen funds:
 * The node identity keystore signs metadata, heartbeats and attestations. It is
   not a wallet and should never hold funds.
 
+## Known design limit: the sign-up gate is the platform's, not the chain's
+
+Account sign-up, invitations, MFA and the "one wallet per account" rule are enforced by the
+Obsidian platform (`obsidian-interface`), and by the web app, extension and desktop app that talk
+to it. They are **not** consensus rules. The chain accepts a `MINING_CLAIM` from any key, so a
+person who submits a claim straight to a node's `/tx/submit` is not stopped by the account system
+(consensus still limits each key to one claim per window, and the platform refuses to link or
+claim with a wallet that is already tied to another account). Closing this would need a consensus
+change, which this project does not make outside a new-genesis release. Operators who want the
+account system to be the only door should not publish `/tx/submit` on a public node (see
+`rpcAllowSubmit` above) and should let only the platform reach it.
+
 See `docs/security-model.md` for the full trust boundaries and the limitations
 this project states openly rather than hides.

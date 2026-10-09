@@ -122,7 +122,14 @@ function lockDownSession(): void {
   });
   protocol.handle(SCHEME, (request) => {
     const url = new URL(request.url);
-    const relative = normalize(decodeURIComponent(url.pathname)).replace(/^[/\\]+/, '');
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(url.pathname);
+    } catch {
+      return new Response('Bad request', { status: 400 });
+    }
+    if (decoded.includes('\0')) return new Response('Bad request', { status: 400 });
+    const relative = normalize(decoded).replace(/^[/\\]+/, '');
     const target = resolve(WEB_ROOT, relative || 'index.html');
     if (target !== WEB_ROOT && !target.startsWith(WEB_ROOT + sep)) return new Response('Not found', { status: 404 });
     return net.fetch(pathToFileURL(target).href);

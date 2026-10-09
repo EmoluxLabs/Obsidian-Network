@@ -28,6 +28,15 @@ export type Handlers = { [K in ChannelName]: Handler<K> };
 
 const EXTERNAL_ALLOWLIST = [/^https:\/\/github\.com\/EmoluxLabs\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._\-/#?=&]*)?$/];
 
+/**
+ * May the app hand this URL to the operating system's browser? Only this organisation's repositories on GitHub.
+ * A dot segment is refused outright: `https://github.com/EmoluxLabs/x/../../someone-else/repo` matches the shape
+ * and is resolved by GitHub to another organisation's page.
+ */
+export function isAllowedExternalLink(url: string): boolean {
+  return !url.includes('..') && !/%2e|%2f|%5c|\\/i.test(url) && EXTERNAL_ALLOWLIST.some((re) => re.test(url));
+}
+
 function payloadObject(value: unknown): Record<string, unknown> {
   if (value === undefined) return {};
   if (!isRecord(value)) throw new AppError('BAD_REQUEST', 'The request was malformed.');
@@ -100,7 +109,7 @@ export function createHandlers(ctx: AppContext, platform: PlatformActions): Hand
 
     'app:open-external': async (raw) => {
       const url = reqString(payloadObject(raw).url, 'url', 300);
-      if (!EXTERNAL_ALLOWLIST.some((re) => re.test(url))) throw new AppError('LINK_NOT_ALLOWED', 'That link is not one the app opens.');
+      if (!isAllowedExternalLink(url)) throw new AppError('LINK_NOT_ALLOWED', 'That link is not one the app opens.');
       await platform.openExternal(url);
     },
 

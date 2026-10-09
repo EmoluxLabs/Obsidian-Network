@@ -414,3 +414,17 @@ export function formatTime(seconds) {
   if (!Number.isFinite(value) || value <= 0) return '—';
   return new Date(value * 1000).toLocaleString();
 }
+
+/**
+ * A value that goes INSIDE the quotes of an inline handler argument: onclick="ObsidianExOpen('tx','HERE')".
+ *
+ * esc() is the wrong tool there. It turns a quote into &#39;, and the browser decodes the attribute BEFORE it parses
+ * the handler, so the value arrives as a real quote and ends the string: a node (or anything else that can put text
+ * in a block, a name or a transaction id) could then run its own script in the page that holds the wallet.
+ * Here every character outside a small safe set becomes a \uXXXX escape: the handler still receives the exact text,
+ * and nothing in the attribute can be a quote, a backslash-escape of one, a tag or an entity. Real ids, heights,
+ * names and addresses use only the safe set and are unchanged.
+ */
+export function arg(value) {
+  return String(value ?? '').replace(/[^A-Za-z0-9._:@-]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}

@@ -53,3 +53,23 @@ export async function clickText(page, selector, text) {
   }, selector, text);
   if (!ok) throw new Error(`no enabled ${selector} containing "${text}"`);
 }
+
+// Chromium with --disable-web-security leaves the Origin header off cross-origin requests, which a real browser never does
+// (it always sends `Origin: chrome-extension://<id>` or `moz-extension://<id>`, and the app server's origin policy relies
+// on that). So the test adds it back, as the real browser would, to every non-GET request that leaves the page's own origin.
+export async function sendOrigin(page, origin) {
+  await page.setRequestInterception(true);
+  // `control.block` lets a test make some URLs unreachable (a server going down) through the one interceptor.
+  const control = { block: null };
+  page.on('request', (request) => {
+    const headers = request.headers();
+    if (control.block?.(request.url())) {
+      request.abort('connectionrefused');
+    } else if (!request.url().startsWith(origin) && request.method() !== 'GET' && request.method() !== 'HEAD' && !headers.origin && /^https?:/.test(request.url())) {
+      request.continue({ headers: { ...headers, origin } });
+    } else {
+      request.continue();
+    }
+  });
+  return control;
+}

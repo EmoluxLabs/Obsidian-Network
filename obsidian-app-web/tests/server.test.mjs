@@ -135,7 +135,7 @@ test('the browser’s Origin is not forwarded to the platform', async () => {
 
   await fetch(`${base}/api/auth/login`, {
     method: 'POST',
-    headers: { origin: 'https://evil.example', referer: 'https://evil.example/page' },
+    headers: { origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop', referer: 'https://evil.example/page' },
     body: '{}',
   });
   const body = await (await fetch(`${base}/api/auth/login`, { method: 'POST', body: '{}' })).json();
@@ -172,7 +172,7 @@ test('the caller cannot claim an Origin that reaches the platform', async () => 
 
   const response = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
-    headers: { origin: 'https://evil.example', referer: 'https://evil.example/page' },
+    headers: { origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop', referer: 'https://evil.example/page' },
     body: '{}',
   });
   const body = await response.json();

@@ -11,6 +11,33 @@ a node running it. For 1.6.1 that is `2dd76ca2b2305d725f3a975bfca04eb5`.
 
 ---
 
+## Unreleased — security audit of the app server, web app, extension, desktop app and node RPC
+
+No consensus change. The params hash, genesis id and protocol/core versions are unchanged.
+
+- **obsidian-app-web: unauthenticated remote crash fixed.** `GET /%E0%A4%A` threw inside the
+  request handler and stopped the process. Malformed URLs now answer 400 and the server survives.
+- **obsidian-app-web / extension: stored-XSS in inline handlers fixed.** Screens put chain-supplied
+  strings (block height, transaction id, name, claim ids) into `onclick="…('${esc(value)}')"`.
+  The browser decodes the attribute before parsing it as JavaScript, so `esc()`'s `&#39;` turned
+  back into a quote and let a hostile or compromised node break out of the string. Handler
+  arguments now go through `arg()`, which `\uXXXX`-escapes everything outside `[A-Za-z0-9._:@-]`.
+  Regression tests execute the decoded attributes.
+- **obsidian-app-web server:** same-origin policy for state-changing `/api` calls (foreign `Origin`,
+  `Origin: null` and cross-site `Sec-Fetch-Site` get 403; `APP_ALLOWED_ORIGINS` for a separate
+  front end), security headers and a CSP, a 1 MB body cap (413), and `APP_TRUST_PROXY` so the
+  platform rate-limits each visitor instead of treating the whole web app as one client.
+- **obsidian-core RPC:** `POST /rpc` with `null`, an array or a scalar answered 500 and an oversize
+  body answered 400; they are now 400 and 413. `getblocks` clamps its limit to 1..500.
+- **obsidian-node-desktop:** the external-link allowlist no longer accepts dot segments that
+  GitHub resolves to another repository, and the `app://` handler answers 400 on a malformed
+  percent sequence instead of throwing.
+- New tests: `tests/e2e-adversarial.mjs` (app-web), `tests/server-hardening.test.mjs`,
+  `rpc-hardening` additions, and the extension's `tests/ui/hostile.e2e.mjs`.
+- Documented the sign-up gate's design limit in `SECURITY.md`.
+
+---
+
 ## [1.6.1] — 2026-10-08
 
 **Consensus-breaking, new-genesis release for a pre-launch network.** Params hash

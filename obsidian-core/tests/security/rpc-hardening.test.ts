@@ -189,8 +189,8 @@ describe('RPC request limits', () => {
    * distinction cannot drift back.
    */
   it('answers 400, never 500, for an unparseable body on every POST route', async () => {
-    const routes = ['/tx/submit', '/tx/simulate', '/tx/encode', '/tx/gas', '/wallet/balance', '/wallet/quote'];
-    const bodies = ['', '{', 'not json at all', '[1,2,3', 'null', '"a string"'];
+    const routes = ['/tx/submit', '/tx/simulate', '/tx/encode', '/tx/gas', '/wallet/balance', '/wallet/quote', '/rpc'];
+    const bodies = ['', '{', 'not json at all', '[1,2,3', 'null', '"a string"', '123', '[]', '[{"jsonrpc":"2.0","method":"getstatus","id":1}]'];
     const offenders: string[] = [];
     for (const route of routes) {
       for (const body of bodies) {
@@ -362,6 +362,29 @@ describe('transaction submission guardrails', () => {
 
     const empty = await post('/tx/submit', {});
     expect(empty.status).toBe(400);
+  });
+
+  it('JSON-RPC: odd field types are an error object, never a crash, and a list is bounded', async () => {
+    for (const request of [
+      { jsonrpc: '2.0', id: { a: 1 }, method: { b: 1 }, params: 'x' },
+      { jsonrpc: '2.0', id: 1, method: 'getblocks', params: { from: -5, limit: 1e12 } },
+      { jsonrpc: '2.0', id: 1, method: 'getblocks', params: { from: 'x', limit: 'y' } },
+      { jsonrpc: '2.0', id: 1, method: 'getblocks', params: [1, 2] },
+      { jsonrpc: '2.0', id: 1, method: '__proto__', params: { __proto__: { polluted: true } } },
+      { jsonrpc: '2.0', id: 1, method: 'constructor' },
+    ]) {
+      const response = await post('/rpc', request);
+      expect(response.status, JSON.stringify(request)).toBe(200);
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    const list = await post('/rpc', { jsonrpc: '2.0', id: 1, method: 'getblocks', params: { from: 0, limit: 1e12 } });
+    expect(Array.isArray((list.body as { result: unknown[] }).result)).toBe(true);
+    expect(((list.body as { result: unknown[] }).result).length).toBeLessThanOrEqual(500);
+  });
+
+  it('an oversized JSON-RPC body is 413, like every other route', async () => {
+    const response = await post('/rpc', '{"jsonrpc":"2.0","method":"x","params":["' + 'a'.repeat(600 * 1024) + '"],"id":1}');
+    expect(response.status).toBe(413);
   });
 
   it('answers a JSON-RPC batch without leaking internal state', async () => {
