@@ -93,7 +93,9 @@ describe('a losing sibling must not poison the canonical state (C-6)', () => {
     // A sibling at height 4 carrying BOB's claim, tuned to lose the hash tie-break.
     const parent = forkParent(h, 3);
     let sibling: ReturnType<Harness['makeBlockOn']> | undefined;
-    for (let t = 1; t < 600 && !sibling; t += 1) {
+    // A sibling must hash HIGHER than the head so it stays a side chain. The head's hash varies from run to run, so
+    // a bound of 600 candidates failed about once in a few hundred runs when the head hash was unusually high.
+    for (let t = 1; t < 20_000 && !sibling; t += 1) {
       const timestamp = GENESIS_TS + 100 + t;
       const built = h.makeBlockOn(parent, [signedClaim(h, bob, timestamp)], { timestamp });
       if (blockHash(built.block.header) > head.hash) sibling = built;
@@ -229,10 +231,13 @@ describe('blocks that cannot matter are refused cheaply', () => {
     for (let i = 1; i <= 4; i += 1) h.produce([], { timestamp: GENESIS_TS + i });
     const head = h.chain.tip!;
     let sibling: Block | undefined;
-    for (let t = 1; t < 600 && !sibling; t += 1) {
+    // A sibling must hash HIGHER than the head so it stays a side chain. The head's hash varies from run to run, so
+    // a bound of 600 candidates failed about once in a few hundred runs when the head hash was unusually high.
+    for (let t = 1; t < 20_000 && !sibling; t += 1) {
       const built = h.makeBlockOn(forkParent(h, 3), [], { timestamp: GENESIS_TS + 100 + t });
       if (blockHash(built.block.header) > head.hash) sibling = built.block;
     }
+    expect(sibling, 'found a side-chain candidate that hashes above the head').toBeDefined();
     expect(h.chain.addBlock(sibling!).accepted).toBe(true);
     const again = h.chain.addBlock(sibling!);
     expect(again.accepted).toBe(false);
