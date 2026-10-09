@@ -93,7 +93,7 @@ async function get(path: string, headers: Record<string, string> = {}): Promise<
   return { status: response.status, body, raw, headers: response.headers };
 }
 
-async function post(path: string, payload: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any; raw: string }> {
+async function post(path: string, payload: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any; raw: string; headers: Headers }> {
   const response = await fetch(`${base}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
@@ -106,7 +106,7 @@ async function post(path: string, payload: unknown, headers: Record<string, stri
   } catch {
     /* non-JSON body */
   }
-  return { status: response.status, body, raw };
+  return { status: response.status, body, raw, headers: response.headers };
 }
 
 describe('RPC origin policy', () => {
@@ -150,6 +150,8 @@ describe('RPC request limits', () => {
     const response = await post('/tx/submit', { tx: huge });
     expect(response.status).toBe(413);
     expect(response.body).toMatchObject({ code: 'ERR_BODY_TOO_LARGE' });
+    // the unread remainder of the body means this connection must not be reused
+    expect(response.headers.get('connection')).toBe('close');
   });
 
   it('rate limits a flood once the limit is configured', async () => {

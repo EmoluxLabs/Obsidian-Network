@@ -148,6 +148,9 @@ export class RpcServer {
     } catch (error) {
       const message = (error as Error).message;
       if (message === 'request body too large') {
+        // The rest of the oversized body is never read, so this connection cannot carry another request: say so, or a
+        // keep-alive client reuses it and gets a reset on its next call.
+        if (!response.headersSent) response.setHeader('Connection', 'close');
         this.json(response, 413, { error: message, code: 'ERR_BODY_TOO_LARGE' });
         return;
       }

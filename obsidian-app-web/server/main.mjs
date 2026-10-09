@@ -230,7 +230,8 @@ const MAX_BODY_BYTES = 1_000_000;
 async function proxy(req, res, url) {
   const declared = Number(req.headers['content-length'] ?? 0);
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    return send(res, 413, { error: 'request body too large', code: 'ERR_BODY_TOO_LARGE' });
+    // The body is never read, so this connection must not be reused for another request.
+    return send(res, 413, { error: 'request body too large', code: 'ERR_BODY_TOO_LARGE' }, { Connection: 'close' });
   }
   const target = PLATFORM_URL.replace(/\/$/, '') + url.pathname + url.search;
   const headers = forwardHeaders(req);
