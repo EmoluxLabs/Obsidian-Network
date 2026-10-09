@@ -61,7 +61,15 @@ jobs:
         working-directory: obsidian-node-desktop
         run: |
           npm ci
-          npm run dist -- --publish never
+          # Keep the log and, on failure, surface its tail as an annotation (visible without downloading logs).
+          set +e
+          npm run dist -- --publish never 2>&1 | tee "${RUNNER_TEMP}/package.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            msg=$(tail -n 30 "${RUNNER_TEMP}/package.log" | sed -e 's/\x1b\[[0-9;]*m//g' -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | cut -c1-3500)
+            echo "::error title=electron-builder failed on ${{ matrix.os }}::${msg}"
+            exit "$rc"
+          fi
       - name: Check the packaged app contains what it needs and nothing it should not
         working-directory: obsidian-node-desktop
         run: node scripts/verify-package.mjs

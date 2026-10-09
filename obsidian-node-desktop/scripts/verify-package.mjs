@@ -40,8 +40,25 @@ function resourceDirs() {
 }
 
 const dirs = resourceDirs();
+function annotate(title, lines) {
+  // On GitHub Actions also write an annotation, readable without downloading the log.
+  if (process.env.GITHUB_ACTIONS) {
+    process.stdout.write(`::error title=${title}::${lines.join('%0A').slice(0, 3500)}\n`);
+  }
+}
+
 if (dirs.length === 0) {
-  process.stderr.write('verify-package: no unpacked app found under release/\n');
+  const seen = [];
+  const walk = (dir, depth) => {
+    if (!existsSync(dir) || depth > 2) return;
+    for (const name of readdirSync(dir)) {
+      seen.push(`${dir.replace(root, '.')}/${name}`);
+      if (statSync(join(dir, name)).isDirectory()) walk(join(dir, name), depth + 1);
+    }
+  };
+  walk(release, 0);
+  process.stderr.write(`verify-package: no unpacked app found under release/\n${seen.join('\n')}\n`);
+  annotate('verify-package: no unpacked app found', seen.slice(0, 40));
   process.exit(1);
 }
 
@@ -78,6 +95,8 @@ for (const resources of dirs) {
 }
 
 if (problems.length > 0) {
+  // On GitHub Actions also write the problems as an annotation, readable without downloading the log.
+  annotate('verify-package failed', problems.map((p) => `- ${p}`));
   process.stderr.write(`verify-package: FAILED\n${problems.map((p) => `  - ${p}`).join('\n')}\n`);
   process.exit(1);
 }
