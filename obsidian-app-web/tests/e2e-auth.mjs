@@ -10,7 +10,7 @@
  * `npm test`: it consumes the genesis invitation and creates an account.
  *
  * Covers register -> MFA setup/confirm -> sign out -> MFA-required sign-in -> wrong
- * password -> sign-in with a code -> invites -> link wallet -> bad recovery code.
+ * password -> sign-in with a code -> invites -> prove and link a wallet (once, for good) -> bad recovery code.
  */
 import { createHmac } from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -87,8 +87,25 @@ await d.login({ email, password, totp: totp(mfa.secret, Date.now() + 30000) });
 
 assert.equal((await d.invites()).limit, 5);
 assert.match((await d.issueInvite()).invite.code, /^[A-Z0-9]{4}(-[A-Z0-9]{4}){3}$/);
-assert.equal((await d.linkWallet(address)).linked, true);
+// Linking is a proof, not a claim: the wallet signs the platform's challenge with its own key.
+// The words are the standard test phrase; WALLET_ADDRESS must be its address on this network.
+const { walletFromPhrase, signLinkChallenge } = await import('../web/signing.mjs');
+const hrp = address.slice(0, address.indexOf('1'));
+const wallet = walletFromPhrase('abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about', hrp);
+const second = walletFromPhrase('legal winner thank year wave sausage worth useful legal winner thank yellow', hrp);
+assert.equal(wallet.address, address, 'WALLET_ADDRESS must be the standard phrase on this network');
+assert.equal((await d.me()).account.walletAddress, undefined, 'no wallet before the proof');
+await rejects(() => d.submitLinkProof({ address }), 'ERR_LINK_PROOF_REQUIRED');
+const bad = await d.requestLinkChallenge(address);
+const goodProof = signLinkChallenge({ wallet, message: bad.message });
+await rejects(() => d.submitLinkProof({ ...goodProof, signature: 'ab'.repeat(64) }), 'ERR_LINK_PROOF');
+await rejects(() => d.submitLinkProof(goodProof), 'ERR_LINK_CHALLENGE'); // the failed attempt spent the challenge
+const fresh = await d.requestLinkChallenge(address);
+assert.equal((await d.submitLinkProof(signLinkChallenge({ wallet, message: fresh.message }))).linked, true);
 assert.equal((await d.me()).account.walletAddress, address);
+assert.equal((await d.requestLinkChallenge(address)).alreadyLinked, true, 'linking the same wallet again is a no-op');
+await rejects(() => d.requestLinkChallenge(second.address), 'ERR_WALLET_LOCKED'); // one wallet per account, for good
+assert.equal((await d.me()).account.walletAddress, address, 'the account kept its wallet');
 await rejects(() => d.recover({ email, recoveryCode: 'XXXX-XXXX', newPassword: 'another long password 9' }), 'ERR_RECOVERY_INVALID');
 
 console.log('e2e-auth: all steps passed');

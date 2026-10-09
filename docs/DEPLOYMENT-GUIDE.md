@@ -1578,10 +1578,21 @@ master secret the signing key is derived from — see §G6 for the exact output.
 - Any passphrase protecting them
 
 Not in an API call, not in a log, not in analytics, not in browser storage you
-sync to a cloud. The account store on the server holds the wallet *address* only. It
-is what the platform checks a mining claim against: a claim is relayed only for a signed-in,
+sync to a cloud. The account store on the server holds the wallet *address* and *public key* only. They are
+what the platform checks a mining claim against: a claim is relayed only for a signed-in,
 MFA-confirmed account, and only when it is signed by the wallet linked to that account. The
 address grants no spending power.
+
+**One wallet per account, and one account per wallet.** The wallet is a key the user makes on
+their own device; it is never derived from the account (email, password or id). It is linked by
+signing a challenge issued by the platform, which proves the device holds the key, and the link is
+permanent: a second, different wallet is refused (`ERR_WALLET_LOCKED`) and so is a wallet already
+linked to another account (`ERR_WALLET_TAKEN`). Whether a claim is *due* is not the platform's
+decision: consensus decides it from the account's last claim, and the platform adds no cooldown.
+Operator notes: an unproven address left by an earlier version counts as unlinked until its owner
+signs; a wallet that claimed on chain before this rule, with no account, can be linked by the first
+account that proves its key; claims submitted straight to a node bypass the platform; and an
+account whose wallet is lost cannot mine again, so users must keep their 24 words.
 
 ### G4. Signing and submitting
 

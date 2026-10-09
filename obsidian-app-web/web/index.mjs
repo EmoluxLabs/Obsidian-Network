@@ -19,6 +19,8 @@ export {
   generatePhrase,
   retargetAddress,
   sign,
+  signLinkChallenge,
+  WALLET_LINK_DOMAIN,
   signingDigestFor,
   buildMiningBody,
   buildPaymentBody,
@@ -31,6 +33,7 @@ export {
 
 export {
   submitClaim,
+  linkWalletProven,
   submitPayment,
   submitNameRegistration,
   submitNameRenewal,

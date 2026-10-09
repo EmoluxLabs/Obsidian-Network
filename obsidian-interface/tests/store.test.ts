@@ -12,10 +12,15 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AccountStore } from '../server/store.js';
+import { AccountStore, provenWallet } from '../server/store.js';
 import { newInviteCode } from '../server/auth.js';
 
 let dir: string;
+
+const WALLET_A = 'dobs1examplewalletaddressaaaaaaaaaaaaaaa';
+const WALLET_B = 'dobs1examplewalletaddressbbbbbbbbbbbbbbb';
+const PUB_A = '02' + 'aa'.repeat(32);
+const PUB_B = '02' + 'bb'.repeat(32);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'obsidian-interface-store-'));
@@ -85,9 +90,10 @@ describe('AccountStore', () => {
   it('writes the store with owner-only permissions and survives a restart', () => {
     const store = new AccountStore({ dataDir: dir });
     const account = store.createAccount({ subject: 'sub-1', email: 'a@example.com' });
-    store.setWalletAddress(account.accountId, 'dobs1examplewalletaddress000000000000000');
+    store.linkWallet(account.accountId, WALLET_A, PUB_A);
     const reopened = new AccountStore({ dataDir: dir });
-    expect(reopened.getAccount(account.accountId)?.walletAddress).toBe('dobs1examplewalletaddress000000000000000');
+    expect(reopened.getAccount(account.accountId)?.walletAddress).toBe(WALLET_A);
+    expect(reopened.walletOwner(WALLET_A)).toBe(account.accountId);
     expect(JSON.parse(readFileSync(join(dir, 'interface-accounts.json'), 'utf8')).version).toBe(2);
   });
 
@@ -196,5 +202,78 @@ describe('sessions and durability', () => {
     store.deleteAccount(account.accountId);
     expect(store.findByCanonicalEmail('ab@gmail.com')).toBeUndefined();
     expect(new AccountStore({ dataDir: dir }).findByCanonicalEmail('ab@gmail.com')).toBeUndefined();
+  });
+});
+
+describe('wallet registry: one wallet per account, one account per wallet', () => {
+  const two = (store: AccountStore) => [
+    store.createAccount({ subject: 'sub-1', email: 'first@gmail.com', canonicalEmail: 'first@gmail.com' }),
+    store.createAccount({ subject: 'sub-2', email: 'second@gmail.com', canonicalEmail: 'second@gmail.com' }),
+  ] as const;
+
+  it('links once, is idempotent for the same address and refuses any other', () => {
+    const store = new AccountStore({ dataDir: dir });
+    const [first] = two(store);
+    const linked = store.linkWallet(first.accountId, WALLET_A, PUB_A);
+    expect(linked).toMatchObject({ ok: true, changed: true });
+    const at = store.getAccount(first.accountId)!.walletLinkedAt;
+    expect(at).toBeGreaterThan(0);
+    expect(store.linkWallet(first.accountId, WALLET_A, PUB_A)).toMatchObject({ ok: true, changed: false });
+    expect(store.getAccount(first.accountId)!.walletLinkedAt).toBe(at);
+    expect(store.linkWallet(first.accountId, WALLET_B, PUB_B)).toEqual({ ok: false, code: 'ERR_WALLET_LOCKED' });
+    expect(provenWallet(store.getAccount(first.accountId)!)).toBe(WALLET_A);
+    expect(store.walletOwner(WALLET_B)).toBeUndefined();
+  });
+
+  it('refuses an address that belongs to another account, and keeps that across a restart', () => {
+    const store = new AccountStore({ dataDir: dir });
+    const [first, second] = two(store);
+    store.linkWallet(first.accountId, WALLET_A, PUB_A);
+    expect(store.linkWallet(second.accountId, WALLET_A, PUB_A)).toEqual({ ok: false, code: 'ERR_WALLET_TAKEN' });
+    const reopened = new AccountStore({ dataDir: dir });
+    expect(reopened.walletOwner(WALLET_A)).toBe(first.accountId);
+    expect(reopened.linkWallet(second.accountId, WALLET_A, PUB_A)).toEqual({ ok: false, code: 'ERR_WALLET_TAKEN' });
+    expect(reopened.linkWallet(second.accountId, WALLET_B, PUB_B)).toMatchObject({ ok: true });
+  });
+
+  it('does not count a legacy bare address: it reserves nothing and can be replaced by a proven one', () => {
+    const store = new AccountStore({ dataDir: dir });
+    const [first, second] = two(store);
+    const legacy = store.getAccount(first.accountId)!;
+    legacy.walletAddress = WALLET_A; // what the old advisory link stored
+    store.saveAccount(legacy);
+    const reopened = new AccountStore({ dataDir: dir });
+    expect(provenWallet(reopened.getAccount(first.accountId)!)).toBeUndefined();
+    expect(reopened.walletOwner(WALLET_A)).toBeUndefined();
+    expect(reopened.linkWallet(second.accountId, WALLET_A, PUB_A)).toMatchObject({ ok: true });
+    expect(reopened.linkWallet(first.accountId, WALLET_B, PUB_B)).toMatchObject({ ok: true, changed: true });
+  });
+
+  it('withdraws the later of two proofs for one address if a file ever holds both', () => {
+    const store = new AccountStore({ dataDir: dir });
+    const [first, second] = two(store);
+    store.linkWallet(first.accountId, WALLET_A, PUB_A);
+    const raw = JSON.parse(readFileSync(join(dir, 'interface-accounts.json'), 'utf8'));
+    const forged = raw.accounts.find((a: { accountId: string }) => a.accountId === second.accountId);
+    forged.walletAddress = WALLET_A;
+    forged.walletPublicKey = PUB_A;
+    forged.walletLinkedAt = Date.now() + 1000;
+    writeFileSync(join(dir, 'interface-accounts.json'), JSON.stringify(raw));
+    const reopened = new AccountStore({ dataDir: dir });
+    expect(reopened.walletOwner(WALLET_A)).toBe(first.accountId);
+    expect(provenWallet(reopened.getAccount(second.accountId)!)).toBeUndefined();
+  });
+
+  it('keeps the registry honest when an account is deleted', () => {
+    const store = new AccountStore({ dataDir: dir });
+    const [first] = two(store);
+    store.linkWallet(first.accountId, WALLET_A, PUB_A);
+    store.deleteAccount(first.accountId);
+    expect(store.walletOwner(WALLET_A)).toBeUndefined();
+  });
+
+  it('refuses to link for an account that does not exist', () => {
+    const store = new AccountStore({ dataDir: dir });
+    expect(store.linkWallet('acc_missing', WALLET_A, PUB_A)).toEqual({ ok: false, code: 'ERR_UNKNOWN_ACCOUNT' });
   });
 });

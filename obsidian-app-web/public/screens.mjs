@@ -459,8 +459,11 @@ export const SCREENS = {
     (s.notify === 'granted'
       ? `<button class="btn" onclick="ObsidianNotifyDisable()">TURN OFF ALERTS</button>`
       : `<button class="btn" onclick="ObsidianNotifyEnable()">TURN ON ALERTS</button>`) +
-    (s.walletAddress && s.account?.walletAddress !== s.walletAddress
-      ? `<button class="btn" onclick="ObsidianLinkAddress()">LINK THIS ADDRESS TO MY ACCOUNT</button>`
+    (s.walletAddress && s.account && !s.account.walletAddress
+      ? `<div class="lb">LINK YOUR WALLET</div>` +
+        `<p class="mu" style="font-size:12.5px;line-height:1.5">One wallet per account, for good. You sign a short challenge on this device to prove the key is yours.</p>` +
+        designField('pp', 'VAULT PASSPHRASE', 'password', 'The passphrase you sealed this wallet with') +
+        `<button class="btn" onclick="ObsidianLinkAddress()">LINK THIS WALLET TO MY ACCOUNT</button>`
       : '') +
     `<button class="btn" style="color:var(--er);border-color:#E7C9C9;margin-top:24px" onclick="ObsidianSignOut()">SIGN OUT</button>` +
     designNav('menu'),
@@ -510,7 +513,8 @@ export const SCREENS = {
           ['GET  /api/auth/me', 'the signed-in account, or 401'],
           ['POST /api/auth/register', 'Gmail + password + invitation'],
           ['POST /api/auth/login', 'add totp once MFA is enabled'],
-          ['POST /api/wallet/link', 'attach an address to the account'],
+          ['POST /api/wallet/link/challenge', 'ask to link an address'],
+          ['POST /api/wallet/link', 'link it by signing the challenge — once, for good'],
         ].map(([a, b]) => [a, `<span class="m" style="font-size:12.5px">${esc(b)}</span>`]),
       ) +
       `<p class="mu" style="font-size:12.5px;margin-top:14px;line-height:1.5">Transaction submission is a signed POST to <span class="m">/api/rpc?path=%2Ftx%2Fsubmit</span> carrying <span class="m">{ "tx": "&lt;hex&gt;" }</span>. The bytes must come from the canonical encoder; nothing in this app invents them.</p>` +
@@ -571,15 +575,16 @@ function miningBlocker(s) {
   if (!account.walletAddress) {
     return card(
       'LINK YOUR WALLET TO MINE',
-      'Mining is open only to a wallet linked to your account. Linking publishes this address only — the key stays on this device.',
-      `<button class="btn p" style="margin-top:10px" onclick="ObsidianLinkAddress()">${busy('LINK THIS ADDRESS TO MY ACCOUNT', s, 'link')}</button>`,
+      'Mining is open only to the wallet linked to your account. One wallet per account, and the link cannot be changed. You prove the key is yours by signing a short challenge on this device with your passphrase; the key itself never leaves it, and the wallet is never made from your account details.',
+      designField('pp', 'VAULT PASSPHRASE', 'password', 'The passphrase you sealed this wallet with') +
+        `<button class="btn p" style="margin-top:10px" onclick="ObsidianLinkAddress()">${busy('LINK THIS WALLET TO MY ACCOUNT', s, 'link')}</button>`,
     );
   }
   if (account.walletAddress !== s.walletAddress) {
     return card(
       'THIS ISN’T YOUR LINKED WALLET',
-      `Your account mines with <span class="m" style="word-break:break-all">${esc(account.walletAddress)}</span> only. Restore that wallet on this device, or link this one instead.`,
-      `<button class="btn" style="margin-top:10px" onclick="ObsidianLinkAddress()">${busy('LINK THIS WALLET INSTEAD', s, 'link')}</button>`,
+      `Your account mines with <span class="m" style="word-break:break-all">${esc(account.walletAddress)}</span> only. An account keeps one wallet for good, so restore that wallet on this device from its recovery phrase to mine.`,
+      `<button class="btn" style="margin-top:10px" onclick="ObsidianGo('wallet')">OPEN WALLET</button>`,
     );
   }
   if (!account.miningEnabled) {

@@ -25,7 +25,11 @@ test('an account with no linked wallet is asked to link one, and offered no clai
   assert.match(html, /LINK YOUR WALLET TO MINE/);
   assert.match(html, /ObsidianLinkAddress\(\)/);
   assert.ok(!offersClaim(html));
-  assert.ok(!html.includes('id="pp"'), 'no passphrase field for a claim that would be refused');
+  assert.ok(!/ObsidianClaim\(\)/.test(html), 'no claim button for a claim that would be refused');
+  // The only passphrase asked for here is the one that signs the link proof.
+  assert.equal(html.split('id="pp"').length - 1, 1);
+  assert.match(html, /cannot be changed/);
+  assert.match(html, /never made from your account/);
 });
 
 test('a device wallet that is not the linked one is named as such, and offered no claim', () => {
@@ -33,6 +37,10 @@ test('a device wallet that is not the linked one is named as such, and offered n
   assert.match(html, /LINKED WALLET/);
   assert.ok(html.includes(OTHER));
   assert.ok(!offersClaim(html));
+  // One wallet per account, for good: no way to swap this device's wallet in.
+  assert.ok(!/ObsidianLinkAddress/.test(html), 'no link action once the account has its wallet');
+  assert.ok(!/instead/i.test(html));
+  assert.match(html, /recovery phrase/);
 });
 
 test('a linked account whose mining is closed is sent to confirm two-factor', () => {

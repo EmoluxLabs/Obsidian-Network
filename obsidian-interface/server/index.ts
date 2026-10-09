@@ -22,7 +22,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, statSync, createReadStream } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { extname, join, normalize, resolve, sep } from 'node:path';
-import { AccountStore, type Account } from './store.js';
+import { AccountStore, provenWallet, type Account } from './store.js';
 import { newInviteCode, newSecret } from './auth.js';
 import { NodePool } from './nodes.js';
 import { KeyedLimiter } from './rate-limit.js';
@@ -119,6 +119,8 @@ export interface TxCore {
   decodeSignedTxFromBytes(bytes: Uint8Array): { type: number; sender: string; chainId: number };
   miningClaimType: number;
   isValidAddress(address: string, hrp?: string): boolean;
+  addressFromPublicKey(publicKeyHex: string, hrp?: string): string;
+  verifyMessage(domain: string, message: Uint8Array, signatureHex: string, publicKeyHex: string): boolean;
 }
 
 async function loadTxCore(coreDir: string): Promise<TxCore> {
@@ -132,6 +134,8 @@ async function loadTxCore(coreDir: string): Promise<TxCore> {
     decodeSignedTxFromBytes: encode.decodeSignedTxFromBytes,
     miningClaimType: types.TxType.MINING_CLAIM,
     isValidAddress: keys.isValidAddress,
+    addressFromPublicKey: keys.addressFromPublicKey,
+    verifyMessage: keys.verifyMessage,
   };
 }
 
@@ -140,6 +144,14 @@ async function loadTxCore(coreDir: string): Promise<TxCore> {
  * a POST to any other route is refused here instead of being forwarded, so the
  * only write that crosses this server is a signed transaction.
  */
+/**
+ * Domain tag of the wallet-link proof. A signature made for this tag can never be a transaction
+ * signature (those use the core's own tags), so a link proof cannot be replayed as a transfer and
+ * a transaction cannot be replayed as a link. The same string is used by every client that signs one.
+ */
+export const WALLET_LINK_DOMAIN = 'OBSIDIAN:WALLET_LINK:v1';
+const WALLET_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+
 const PROXY_POST_ROUTES: ReadonlySet<string> = new Set(['/tx/submit', '/wallet/balance', '/wallet/quote']);
 
 export interface InterfaceDependencies {
@@ -687,25 +699,99 @@ export class InterfaceServer {
       return;
     }
 
-    if (path === '/api/wallet/link' && request.method === 'POST') {
+    // ── wallet link: one wallet per account, proven by its key, permanent ─────────────────────
+    //
+    // The wallet is a key pair the user made on their own device. The account never derives it, and
+    // the server never sees a private key: it issues a challenge, the device signs it, and the server
+    // checks the signature against the public key and the public key against the address.
+    if (path === '/api/wallet/link/challenge' && request.method === 'POST') {
       if (!this.throttle(request, response, this.authLimiter, 'auth')) return;
       const account = this.requireSession(request, response);
       if (!account) return;
       const body = await this.readJson<{ address?: unknown }>(request);
       const address = typeof body?.address === 'string' ? body.address.trim() : '';
       if (!(await this.isLinkableAddress(address))) {
-        const hrp = this.config.network ? interfaceNetwork(this.config.network).addressHrp : undefined;
+        this.badAddress(response);
+        return;
+      }
+      const refusal = this.linkRefusal(account, address);
+      if (refusal === 'same') {
+        this.json(response, 200, { alreadyLinked: true, address, account: publicAccount(account) });
+        return;
+      }
+      if (refusal) {
+        this.json(response, 409, refusal);
+        return;
+      }
+      const now = Date.now();
+      for (const [key, value] of this.walletChallenges) if (value.expiresAt <= now) this.walletChallenges.delete(key);
+      const nonce = newSecret(16);
+      const expiresAt = now + WALLET_CHALLENGE_TTL_MS;
+      const message = [
+        'OBSIDIAN WALLET LINK v1',
+        `network: ${this.config.network ?? address.slice(0, address.indexOf('1'))}`,
+        `account: ${account.accountId}`,
+        `address: ${address}`,
+        `nonce: ${nonce}`,
+        `expires: ${new Date(expiresAt).toISOString()}`,
+        'Signing proves this device holds the key for the address and links it to this account, permanently. It moves no funds.',
+      ].join('\n');
+      // One outstanding challenge per account: asking again replaces it.
+      this.walletChallenges.set(account.accountId, { address, message, expiresAt });
+      this.json(response, 200, { message, expiresAt, domain: WALLET_LINK_DOMAIN });
+      return;
+    }
+
+    if (path === '/api/wallet/link' && request.method === 'POST') {
+      if (!this.throttle(request, response, this.authLimiter, 'auth')) return;
+      const account = this.requireSession(request, response);
+      if (!account) return;
+      const body = await this.readJson<{ address?: unknown; publicKey?: unknown; signature?: unknown }>(request);
+      const address = typeof body?.address === 'string' ? body.address.trim() : '';
+      const publicKey = typeof body?.publicKey === 'string' ? body.publicKey.trim().toLowerCase() : '';
+      const signature = typeof body?.signature === 'string' ? body.signature.trim().toLowerCase() : '';
+      if (!(await this.isLinkableAddress(address))) {
+        this.badAddress(response);
+        return;
+      }
+      if (!publicKey || !signature) {
         this.json(response, 400, {
-          error: hrp
-            ? `a valid ${this.config.network} wallet address (${hrp}1…) is required`
-            : 'a valid wallet address is required',
-          code: 'ERR_BAD_ADDRESS',
+          error: 'linking needs proof that you hold the wallet key: sign the challenge on your device',
+          code: 'ERR_LINK_PROOF_REQUIRED',
         });
         return;
       }
-      this.dependencies.store.setWalletAddress(account.accountId, address);
-      const updated = this.dependencies.store.getAccount(account.accountId) ?? account;
-      this.json(response, 200, { linked: true, address, account: publicAccount(updated) });
+      // Single use: taken out before anything is checked, so a failed attempt needs a fresh challenge.
+      const challenge = this.walletChallenges.get(account.accountId);
+      this.walletChallenges.delete(account.accountId);
+      if (!challenge || challenge.expiresAt <= Date.now() || challenge.address !== address) {
+        this.json(response, 400, { error: 'the link challenge is missing, expired or for another address; request a new one', code: 'ERR_LINK_CHALLENGE' });
+        return;
+      }
+      let valid = false;
+      try {
+        const core = await this.core();
+        const hrp = address.slice(0, address.indexOf('1'));
+        valid =
+          /^[0-9a-f]{66}$/.test(publicKey) &&
+          /^[0-9a-f]{128}$/.test(signature) &&
+          core.addressFromPublicKey(publicKey, hrp) === address &&
+          core.verifyMessage(WALLET_LINK_DOMAIN, new TextEncoder().encode(challenge.message), signature, publicKey);
+      } catch (error) {
+        this.dependencies.log('error', 'wallet link proof could not be checked', { error: (error as Error).message });
+        this.json(response, 503, { error: 'this interface cannot check wallet proofs right now; nothing was linked', code: 'ERR_RELAY_UNAVAILABLE' });
+        return;
+      }
+      if (!valid) {
+        this.json(response, 400, { error: 'that signature does not prove control of this wallet', code: 'ERR_LINK_PROOF' });
+        return;
+      }
+      const linked = this.dependencies.store.linkWallet(account.accountId, address, publicKey);
+      if (!linked.ok) {
+        this.json(response, 409, this.linkRefusal(account, address) || { error: 'the wallet could not be linked', code: linked.code });
+        return;
+      }
+      this.json(response, 200, { linked: true, address, changed: linked.changed, account: publicAccount(linked.account) });
       return;
     }
 
@@ -1243,6 +1329,33 @@ export class InterfaceServer {
   }
 
   private txCore?: Promise<TxCore>;
+  /** The pending wallet-link challenge of each account: one at a time, five minutes, single use. */
+  private readonly walletChallenges = new Map<string, { address: string; message: string; expiresAt: number }>();
+
+  private badAddress(response: ServerResponse): void {
+    const hrp = this.config.network ? interfaceNetwork(this.config.network).addressHrp : undefined;
+    this.json(response, 400, {
+      error: hrp ? `a valid ${this.config.network} wallet address (${hrp}1…) is required` : 'a valid wallet address is required',
+      code: 'ERR_BAD_ADDRESS',
+    });
+  }
+
+  /**
+   * Why this account may not link this address, or undefined if it may, or 'same' if it already has
+   * exactly this wallet. The rules live in the store; this only words them for the caller.
+   */
+  private linkRefusal(account: Account, address: string): { error: string; code: string } | 'same' | undefined {
+    const mine = provenWallet(account);
+    if (mine === address) return 'same';
+    const owner = this.dependencies.store.walletOwner(address);
+    if (owner && owner !== account.accountId) {
+      return { error: 'this wallet is already linked to another mining account and cannot be linked to a second one', code: 'ERR_WALLET_TAKEN' };
+    }
+    if (mine) {
+      return { error: 'this account already has its wallet. One wallet per account, and it cannot be changed', code: 'ERR_WALLET_LOCKED' };
+    }
+    return undefined;
+  }
 
   private core(): Promise<TxCore> {
     if (!this.txCore) {
@@ -1312,9 +1425,10 @@ export class InterfaceServer {
 
     const account = this.requireSession(request, response);
     if (!account) return false;
-    if (!account.walletAddress) {
+    const wallet = provenWallet(account);
+    if (!wallet) {
       this.json(response, 403, {
-        error: 'link a wallet to your account before mining: open the account page and publish your wallet address',
+        error: 'link a wallet to your account before mining: open the account page and prove your wallet with a signature',
         code: 'ERR_WALLET_NOT_LINKED',
       });
       return false;
@@ -1326,13 +1440,18 @@ export class InterfaceServer {
       });
       return false;
     }
-    if (tx.sender !== account.walletAddress) {
+    // The claim must come from THE wallet of this account, and that wallet must belong to no other
+    // account (the second check cannot fail while the store's rules hold; it is the belt to the braces).
+    if (tx.sender !== wallet || this.dependencies.store.walletOwner(tx.sender) !== account.accountId) {
       this.json(response, 403, {
-        error: 'this claim is signed by a different wallet than the one linked to your account',
+        error: 'this claim is not signed by the wallet linked to your account',
         code: 'ERR_WALLET_MISMATCH',
       });
       return false;
     }
+    // Nothing here decides whether the claim is DUE. Eligibility — the interval since the account's
+    // last claim, the claim sequence, the cycle — belongs to consensus alone: the node accepts or
+    // refuses the claim from chain state, and this server relays its answer unchanged.
     return true;
   }
 
@@ -1421,11 +1540,13 @@ function publicAccount(account: NonNullable<ReturnType<AccountStore['getAccount'
     displayName: account.displayName,
     createdAt: account.createdAt,
     invitesIssued: account.invitesIssued,
-    walletAddress: account.walletAddress,
+    // Only a PROVEN wallet is shown as the account's wallet; it is permanent once there.
+    walletAddress: provenWallet(account),
+    walletLocked: provenWallet(account) !== undefined,
     mfaEnabled: account.mfaEnabled === true,
     miningEnabled: account.miningEnabled === true,
     // What the server enforces on a claim: a linked wallet AND confirmed MFA.
-    miningReady: Boolean(account.walletAddress) && account.miningEnabled === true,
+    miningReady: provenWallet(account) !== undefined && account.miningEnabled === true,
     recoveryCodesRemaining: account.recoveryCodesRemaining ?? 0,
     // Never leaked: passwordHash, totpSecret, recoveryCodeHashes,
     // canonicalEmail (the uniqueness key is a server concern).

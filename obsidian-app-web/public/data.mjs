@@ -132,9 +132,15 @@ export const invites = () => call('/api/auth/invites');
 
 export const issueInvite = () => call('/api/auth/invites', { method: 'POST' });
 
-/** Links the wallet address to the account. Only an address is sent — never a key. */
-export const linkWallet = (address) =>
-  call('/api/wallet/link', { method: 'POST', body: { address } });
+/**
+ * Linking a wallet is two calls: the platform issues a challenge for an address, then takes the
+ * signature of it. The address is never accepted on its word alone, and no key is ever sent.
+ */
+export const requestLinkChallenge = (address) =>
+  call('/api/wallet/link/challenge', { method: 'POST', body: { address } });
+
+export const submitLinkProof = ({ address, publicKey, signature }) =>
+  call('/api/wallet/link', { method: 'POST', body: { address, publicKey, signature } });
 
 // ── chain data, through the platform's one read-through gateway ───────────────
 

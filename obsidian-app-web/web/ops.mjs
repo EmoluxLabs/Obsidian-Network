@@ -32,6 +32,7 @@
 import {
   walletFromPhrase,
   sign,
+  signLinkChallenge,
   buildMiningBody,
   buildPaymentBody,
   buildOnsBody,
@@ -144,6 +145,56 @@ async function runOperation(deps, spec) {
 
 function refusal(reason, message, extra = {}) {
   return { ok: false, reason, message, ...extra };
+}
+
+// ── linking the wallet to the account ────────────────────────────────────────
+
+/**
+ * Link this device's wallet to the signed-in account, once and for good.
+ *
+ * One wallet per account and one account per wallet, enforced by the platform; this is the
+ * client's half: it proves the key is on this device. The platform issues a challenge, the
+ * wallet signs it, and only the address, public key and signature go back. Nothing is derived
+ * from the account, and the phrase is decrypted, used and dropped like any other signature.
+ *
+ * The platform is asked first, with the cached address, so a refusal (the wallet belongs to
+ * another account, or this account already has its own) arrives before any passphrase is typed.
+ */
+export async function linkWalletProven(deps) {
+  const vault = deps.loadVault?.();
+  if (!vault) return refusal('NO_VAULT', 'No wallet is set up on this device yet.');
+  const cached = deps.loadAddress?.() ?? null;
+  if (!cached) return refusal('NO_WALLET', 'This device has no wallet address to link.');
+
+  let challenge;
+  try {
+    challenge = await deps.linkChallenge(cached);
+  } catch (error) {
+    return refusal(error?.code || 'LINK_REFUSED', error?.message || String(error));
+  }
+  if (challenge?.alreadyLinked) return { ok: true, address: cached, already: true, account: challenge.account ?? null };
+  if (typeof challenge?.message !== 'string') return refusal('LINK_REFUSED', 'the platform sent no link challenge');
+
+  const passphrase = await deps.requestPassphrase();
+  if (!passphrase) return refusal('CANCELLED', 'Cancelled.');
+
+  let phrase = null;
+  try {
+    const { addressHrp } = await deps.getContext();
+    phrase = await openVault(vault, passphrase);
+    const wallet = walletFromPhrase(phrase, addressHrp);
+    if (wallet.address !== cached) {
+      return refusal('WRONG_WALLET', 'The wallet in this vault does not match the address on this device; nothing was linked.');
+    }
+    const proof = signLinkChallenge({ wallet, message: challenge.message });
+    const result = await deps.linkSubmit(proof);
+    return { ok: true, address: wallet.address, already: false, account: result?.account ?? null };
+  } catch (error) {
+    if (error instanceof PassphraseError) return refusal('BAD_PASSPHRASE', error.message);
+    return refusal(error?.code || 'LINK_FAILED', error?.message || String(error));
+  } finally {
+    phrase = null;
+  }
 }
 
 // ── mining ───────────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ Obsidian Web platform's own API as its single backend. Keys never leave the brow
 | Explorer | Overview, blocks, claims, names, the reward pool, audit, search | the node, read-only, addresses masked, no balances, no address search |
 | ONS | Search, register and list `.obs` names | the node and a signed ONS transaction |
 | API | Run any public read the gateway allows and see the node's own answer | `/api/rpc?path=…` |
-| Menu | MFA enrolment, invitations, link an address, claim alerts, sign out | platform `/api/auth/*`, `/api/wallet/link` |
+| Menu | MFA enrolment, invitations, link your wallet (once, by signing a challenge), claim alerts, sign out | platform `/api/auth/*`, `/api/wallet/link` |
 
 Every figure comes from the platform or the node. A value not yet answered renders as
 `—`; nothing is defaulted, estimated or invented. The design's own demo behaviours
@@ -215,11 +215,15 @@ with `npm run start:testnet` and walked in the browser.
   refusals are covered by tests, but no mainnet node was run.
 - The browser vault is per origin; sharing one vault with the platform needs both served
   from one origin (a reverse proxy), which this repository does not configure.
-- Mining is now gated on the platform, and this app follows it: the platform relays a claim only
+- Mining is gated on the platform, and this app follows it: the platform relays a claim only
   for a signed-in account that has a wallet linked and MFA confirmed, signed by that linked
-  wallet. The Mine screen says which step is missing and offers the link from there. One thing
-  is deliberately left open: an account may change its linked wallet (a lost device must not
-  lock an account out), and linking proves nothing about key ownership, so one account can
-  rotate through wallets. Closing that needs a policy (one wallet per account, or a signed
-  challenge plus a cooldown) and is a decision for the platform's owner.
+  wallet. **One wallet per account, for good:** the link is made by signing a challenge from the
+  platform with the wallet's own key (the vault passphrase unlocks it on this device), it can
+  never be changed, and a wallet linked to one account can never be linked to, or claim for,
+  another. The wallet stays an independent key made on the device; nothing about it is derived
+  from the account. Eligibility is not decided by the platform or by the address but by
+  consensus, from the account's last claim, and this app only reads the node's `/mining/status`.
+  Consequence worth knowing: a lost wallet cannot be replaced, so the 24 words are the only
+  way to keep mining on that account. Direct submissions to a node bypass the platform, so
+  on-chain uniqueness is outside what this app or the platform can enforce.
 - No service worker; claim alerts work only while the page is open.

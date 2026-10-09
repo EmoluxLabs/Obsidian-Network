@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { InterfaceServer, type InterfaceConfig } from '../server/index.js';
+import { InterfaceServer, WALLET_LINK_DOMAIN, type InterfaceConfig } from '../server/index.js';
 import { loadInterfaceConfig } from '../server/config.js';
 import { AccountStore } from '../server/store.js';
 import { newGenesisInvitation } from '../server/genesis-invite.js';
@@ -29,7 +29,7 @@ import { newGenesisInvitation } from '../server/genesis-invite.js';
 // @ts-expect-error — plain JS module without a declaration file in the test tree
 import { signTransaction, encodeSignedTx } from '../web/core/transactions/encode.js';
 // @ts-expect-error — plain JS module
-import { keyPairFromPrivateKey } from '../web/core/crypto/keys.js';
+import { keyPairFromPrivateKey, signMessage } from '../web/core/crypto/keys.js';
 // @ts-expect-error — plain JS module
 import { TxType } from '../web/core/protocol/types.js';
 
@@ -79,6 +79,38 @@ const KEYS = {
   other: keyPairFromPrivateKey('22'.repeat(32), 'dobs') as { address: string; publicKey: string; privateKey: string },
 };
 
+type Keys = { address: string; publicKey: string; privateKey: string };
+const jsonHeaders = (cookie?: string) => ({ 'content-type': 'application/json', ...(cookie ? { cookie } : {}) });
+
+/** Ask for a link challenge the way the wallet does. */
+async function challengeFor(h: { origin: string }, cookie: string, address: string) {
+  const response = await fetch(`${h.origin}/api/wallet/link/challenge`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({ address }) });
+  return { response, body: (await response.json()) as { message?: string; expiresAt?: number; domain?: string; alreadyLinked?: boolean; code?: string } };
+}
+
+/** Link `keys` to the account behind `cookie`, with a real signature over the server's challenge. */
+async function proveLink(h: { origin: string }, cookie: string, keys: Keys, tamper: { signWith?: Keys; publicKey?: string; signature?: string } = {}): Promise<Response> {
+  const { response, body } = await challengeFor(h, cookie, keys.address);
+  // Nothing to sign (refused, or already linked): hand back what the server said.
+  if (response.status !== 200 || !body.message) return new Response(JSON.stringify(body), { status: response.status });
+  const signer = tamper.signWith ?? keys;
+  const signature = tamper.signature ?? signMessage(WALLET_LINK_DOMAIN, new TextEncoder().encode(body.message), signer.privateKey);
+  return fetch(`${h.origin}/api/wallet/link`, {
+    method: 'POST',
+    headers: jsonHeaders(cookie),
+    body: JSON.stringify({ address: keys.address, publicKey: tamper.publicKey ?? signer.publicKey, signature }),
+  });
+}
+
+/** Register a second account through an invite from `inviterCookie`; returns its cookie. */
+async function secondAccount(h: Harness, inviterCookie: string, name = 'guest'): Promise<string> {
+  const created = await fetch(`${h.origin}/api/auth/invites`, { method: 'POST', headers: { cookie: inviterCookie } });
+  const invite = ((await created.json()) as { invite: { code: string } }).invite.code;
+  const guest = await h.signIn(name, { inviteCode: invite });
+  expect(guest.status).toBe(200);
+  return (guest.headers.get('set-cookie') ?? '').split(';')[0]!;
+}
+
 /** A genuinely signed transaction, as hex, the way a wallet would send it. */
 function signedTxHex(type: number, signer: { address: string; publicKey: string; privateKey: string }, nonce = 0): string {
   const tx = signTransaction({
@@ -119,7 +151,7 @@ function totpNow(secret: string, offsetSteps = 0): string {
   return String(truncated % 1_000_000).padStart(6, '0');
 }
 
-async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[] } = {}): Promise<Harness> {
+async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[]; dataDir?: string } = {}): Promise<Harness> {
   // Every harness gets its own Genesis Invitation: the first account on a
   // deployment must present one, so the tests need the plaintext.
   const genesis = newGenesisInvitation();
@@ -215,7 +247,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
     siteRoot,
     publicDir,
     coreDir,
-    dataDir: scratch(),
+    dataDir: options.dataDir ?? scratch(),
     nodeUrls: options.nodeUrls ?? [nodeUrl],
     googleClientId: 'test-client-id',
     allowedOrigins: [],
@@ -713,22 +745,20 @@ describe('sessions', () => {
     expect(after.status).toBe(401);
   });
 
-  it('links a wallet address but never stores key material', async () => {
+  it('links a proven wallet address but never stores key material', async () => {
     const h = await harness();
     const signedIn = await h.signIn('founder', { inviteCode: h.genesisCode });
     const cookie = (signedIn.headers.get('set-cookie') ?? '').split(';')[0]!;
 
-    const linked = await fetch(`${h.origin}/api/wallet/link`, {
-      method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ address: KEYS.mine.address }),
-    });
+    const linked = await proveLink(h, cookie, KEYS.mine);
     expect(linked.status).toBe(200);
-    expect(await linked.json()).toMatchObject({ linked: true, address: KEYS.mine.address, account: { walletAddress: KEYS.mine.address } });
+    expect(await linked.json()).toMatchObject({ linked: true, address: KEYS.mine.address, account: { walletAddress: KEYS.mine.address, walletLocked: true } });
 
     const storeFile = join(h.config.dataDir, 'interface-accounts.json');
     const raw = (await import('node:fs')).readFileSync(storeFile, 'utf8');
     expect(raw).toContain(KEYS.mine.address);
+    expect(raw).toContain(KEYS.mine.publicKey);
+    expect(raw).not.toContain(KEYS.mine.privateKey);
     expect(raw).not.toContain('privateKey');
   });
 });
@@ -967,7 +997,8 @@ describe('the mining gate', () => {
     const cookie = (created.headers.get('set-cookie') ?? '').split(';')[0]!;
     const json = { cookie, 'content-type': 'application/json' };
     if (steps.link) {
-      const linked = await fetch(`${h.origin}/api/wallet/link`, { method: 'POST', headers: json, body: JSON.stringify({ address: steps.link }) });
+      const keys = Object.values(KEYS).find((candidate) => candidate.address === steps.link)!;
+      const linked = await proveLink(h, cookie, keys);
       expect(linked.status).toBe(200);
     }
     if (steps.mfa) {
@@ -1131,8 +1162,171 @@ describe('linking a wallet', () => {
     const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
     const me = async () => ((await (await fetch(`${h.origin}/api/auth/me`, { headers: { cookie } })).json()) as { account: { miningReady: boolean } }).account;
     expect((await me()).miningReady).toBe(false);
-    await link(h, cookie, KEYS.mine.address);
+    expect((await proveLink(h, cookie, KEYS.mine)).status).toBe(200);
     expect((await me()).miningReady).toBe(false); // linked, but MFA is not confirmed
+  });
+
+  const raw = (h: Harness) => readFileSync(join(h.config.dataDir, 'interface-accounts.json'), 'utf8');
+
+  it('refuses an unsigned link: an address alone proves nothing', async () => {
+    const h = await harness();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    const response = await link(h, cookie, KEYS.mine.address);
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_LINK_PROOF_REQUIRED');
+    const me = (await (await fetch(`${h.origin}/api/auth/me`, { headers: { cookie } })).json()) as { account: { walletAddress?: string } };
+    expect(me.account.walletAddress).toBeUndefined();
+  });
+
+  it('issues a challenge that names the network, the account and the address', async () => {
+    const h = await harness();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    const { response, body } = await challengeFor(h, cookie, KEYS.mine.address);
+    expect(response.status).toBe(200);
+    expect(body.domain).toBe(WALLET_LINK_DOMAIN);
+    expect(body.message).toMatch(/network: (devnet|dobs)/);
+    expect(body.message).toContain(`address: ${KEYS.mine.address}`);
+    expect(body.expiresAt).toBeGreaterThan(Date.now());
+    expect((await fetch(`${h.origin}/api/wallet/link/challenge`, { method: 'POST', headers: jsonHeaders(), body: JSON.stringify({ address: KEYS.mine.address }) })).status).toBe(401);
+  });
+
+  it('refuses a signature made by a key that does not own the address (nobody can squat a stranger\'s wallet)', async () => {
+    const h = await harness();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    // Signed by the attacker's key, claiming the victim's address, with the victim's public key or their own.
+    for (const tamper of [{ signWith: KEYS.other }, { signWith: KEYS.other, publicKey: KEYS.other.publicKey }, { signature: 'ab'.repeat(64) }, { signature: 'zz' }]) {
+      const response = await proveLink(h, cookie, KEYS.mine, tamper);
+      expect(response.status, JSON.stringify(tamper)).toBe(400);
+      expect(['ERR_LINK_PROOF'].includes(((await response.json()) as { code: string }).code)).toBe(true);
+    }
+    expect(raw(h)).not.toContain(KEYS.mine.address);
+    // The wallet is still free for its real owner.
+    expect((await proveLink(h, cookie, KEYS.mine)).status).toBe(200);
+  });
+
+  it('spends a challenge on the first attempt, good or bad, and never accepts an old or foreign one', async () => {
+    const h = await harness();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    const { body } = await challengeFor(h, cookie, KEYS.mine.address);
+    const signature = signMessage(WALLET_LINK_DOMAIN, new TextEncoder().encode(body.message!), KEYS.mine.privateKey);
+    const post = (address: string, sig: string) =>
+      fetch(`${h.origin}/api/wallet/link`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({ address, publicKey: KEYS.mine.publicKey, signature: sig }) });
+    // A failed attempt consumes it...
+    expect(((await (await post(KEYS.mine.address, 'ab'.repeat(64))).json()) as { code: string }).code).toBe('ERR_LINK_PROOF');
+    // ...so the correct signature can no longer be used with it.
+    const replay = await post(KEYS.mine.address, signature);
+    expect(replay.status).toBe(400);
+    expect(((await replay.json()) as { code: string }).code).toBe('ERR_LINK_CHALLENGE');
+    // A challenge for one address does not authorise another.
+    const second = await challengeFor(h, cookie, KEYS.mine.address);
+    const wrong = await post(KEYS.other.address, signMessage(WALLET_LINK_DOMAIN, new TextEncoder().encode(second.body.message!), KEYS.other.privateKey));
+    expect(((await wrong.json()) as { code: string }).code).toBe('ERR_LINK_CHALLENGE');
+    // The same signature under another domain is not a link proof.
+    const third = await challengeFor(h, cookie, KEYS.mine.address);
+    const otherDomain = signMessage('OBSIDIAN:SOMETHING_ELSE:v1', new TextEncoder().encode(third.body.message!), KEYS.mine.privateKey);
+    expect(((await (await post(KEYS.mine.address, otherDomain)).json()) as { code: string }).code).toBe('ERR_LINK_PROOF');
+  });
+
+  it('expires a challenge', async () => {
+    const h = await harness();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    const { body } = await challengeFor(h, cookie, KEYS.mine.address);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 6 * 60 * 1000;
+    try {
+      const response = await fetch(`${h.origin}/api/wallet/link`, {
+        method: 'POST',
+        headers: jsonHeaders(cookie),
+        body: JSON.stringify({ address: KEYS.mine.address, publicKey: KEYS.mine.publicKey, signature: signMessage(WALLET_LINK_DOMAIN, new TextEncoder().encode(body.message!), KEYS.mine.privateKey) }),
+      });
+      expect(((await response.json()) as { code: string }).code).toBe('ERR_LINK_CHALLENGE');
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it('makes the link permanent: a second, different wallet is refused, the same one is idempotent', async () => {
+    const h = await harness();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    expect((await proveLink(h, cookie, KEYS.mine)).status).toBe(200);
+
+    const change = await proveLink(h, cookie, KEYS.other);
+    expect(change.status).toBe(409);
+    expect(((await change.json()) as { code: string }).code).toBe('ERR_WALLET_LOCKED');
+
+    // Even with a valid challenge in hand, a direct post for a different wallet cannot rebind.
+    const again = await proveLink(h, cookie, KEYS.mine);
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({ alreadyLinked: true, address: KEYS.mine.address });
+
+    const me = (await (await fetch(`${h.origin}/api/auth/me`, { headers: { cookie } })).json()) as { account: { walletAddress: string } };
+    expect(me.account.walletAddress).toBe(KEYS.mine.address);
+    expect(raw(h)).not.toContain(KEYS.other.address);
+  });
+
+  it('refuses a wallet already linked to another account, for linking and for claiming', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const owner = await (async () => {
+      const created = await h.signIn('founder', { inviteCode: h.genesisCode });
+      return (created.headers.get('set-cookie') ?? '').split(';')[0]!;
+    })();
+    expect((await proveLink(h, owner, KEYS.mine)).status).toBe(200);
+
+    const rival = await secondAccount(h, owner);
+    const taken = await proveLink(h, rival, KEYS.mine);
+    expect(taken.status).toBe(409);
+    expect(((await taken.json()) as { code: string }).code).toBe('ERR_WALLET_TAKEN');
+    const me = (await (await fetch(`${h.origin}/api/auth/me`, { headers: { cookie: rival } })).json()) as { account: { walletAddress?: string } };
+    expect(me.account.walletAddress).toBeUndefined();
+
+    // The rival can still link a wallet of its own, and only that one.
+    expect((await proveLink(h, rival, KEYS.other)).status).toBe(200);
+    const before = h.requests.filter((r) => r === 'POST /tx/submit').length;
+    const setup = (await (await fetch(`${h.origin}/api/auth/mfa/setup`, { method: 'POST', headers: jsonHeaders(rival), body: '{}' })).json()) as { secret: string };
+    await fetch(`${h.origin}/api/auth/mfa/confirm`, { method: 'POST', headers: jsonHeaders(rival), body: JSON.stringify({ totp: totpNow(setup.secret) }) });
+    const stolen = await fetch(`${h.origin}/api/rpc?path=/tx/submit`, { method: 'POST', headers: jsonHeaders(rival), body: JSON.stringify({ tx: signedTxHex(TxType.MINING_CLAIM, KEYS.mine) }) });
+    expect(stolen.status).toBe(403);
+    expect(((await stolen.json()) as { code: string }).code).toBe('ERR_WALLET_MISMATCH');
+    expect(h.requests.filter((r) => r === 'POST /tx/submit').length).toBe(before);
+  });
+
+  it('lets only one of two racing accounts take a wallet', async () => {
+    const h = await harness();
+    const first = (await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie')!.split(';')[0]!;
+    const second = await secondAccount(h, first);
+    // Both fetch their challenge, then both submit at the same moment.
+    const challenges = await Promise.all([challengeFor(h, first, KEYS.mine.address), challengeFor(h, second, KEYS.mine.address)]);
+    const submit = (cookie: string, message: string) =>
+      fetch(`${h.origin}/api/wallet/link`, {
+        method: 'POST',
+        headers: jsonHeaders(cookie),
+        body: JSON.stringify({ address: KEYS.mine.address, publicKey: KEYS.mine.publicKey, signature: signMessage(WALLET_LINK_DOMAIN, new TextEncoder().encode(message), KEYS.mine.privateKey) }),
+      });
+    const results = await Promise.all([submit(first, challenges[0]!.body.message!), submit(second, challenges[1]!.body.message!)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+  });
+
+  it('ignores a legacy bare address: not shown, not enough to mine, and replaceable by a proven link', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const cookie = ((await h.signIn('founder', { inviteCode: h.genesisCode })).headers.get('set-cookie') ?? '').split(';')[0]!;
+    const file = join(h.config.dataDir, 'interface-accounts.json');
+    await h.close();
+    const stored = JSON.parse(readFileSync(file, 'utf8')) as { accounts: Array<Record<string, unknown>> };
+    stored.accounts[0]!.walletAddress = KEYS.other.address; // what the old advisory link wrote
+    writeFileSync(file, JSON.stringify(stored));
+    const reopened = await startHarness({ dataDir: h.config.dataDir });
+    running.push(reopened);
+    await reopened.poolCheck();
+    const me = (await (await fetch(`${reopened.origin}/api/auth/me`, { headers: { cookie } })).json()) as { account: { walletAddress?: string; miningReady: boolean } };
+    expect(me.account.walletAddress).toBeUndefined();
+    expect(me.account.miningReady).toBe(false);
+    // The legacy address reserved nothing: another account may prove it first...
+    const guest = await secondAccount(reopened, cookie);
+    expect((await proveLink(reopened, guest, KEYS.other)).status).toBe(200);
+    // ...and the legacy account can link a different, proven wallet.
+    expect((await proveLink(reopened, cookie, KEYS.mine)).status).toBe(200);
   });
 });
 

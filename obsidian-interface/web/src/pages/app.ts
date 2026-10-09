@@ -16,6 +16,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { session, type AccountView, type AuthConfig } from '../lib/session.js';
+import { linkStoredWallet } from '../lib/link-wallet.js';
 import { el, spinner, toast, kv, badge, table, short, when, copyButton } from '../lib/ui.js';
 
 const client = new ObsidianClient();
@@ -351,24 +352,32 @@ async function drawInvites(account: AccountView): Promise<void> {
 
 function drawWalletLink(account: AccountView): void {
   const address = Wallet.storedAddress();
+  const linked = account.walletAddress;
   walletPanel.replaceChildren(
     el('h2', {}, 'Linked wallet'),
-    el('p', {}, 'Mining needs a linked wallet: this interface accepts a claim only from the wallet linked to your account. Linking publishes the address only; it grants no spending power, because the server never holds a key.'),
-    address
-      ? el('div', { class: 'row' },
-          el('span', { class: 'mono' }, address),
-          linkButton(address))
-      : el('p', { class: 'muted' }, 'No wallet in this browser. Create one to link it.'),
-    ...(account.walletAddress ? [el('p', { class: 'fineprint' }, `Currently linked: ${account.walletAddress}`)] : []),
+    el('p', {}, 'Mining needs a wallet: this interface accepts a claim only from the wallet linked to your account. One wallet per account, and the link is permanent. A wallet linked to one account can never serve another. The wallet is a key made on your device, never derived from your account, and the server never holds it.'),
+    ...(linked
+      ? [
+          kv([['Your wallet (permanent)', el('span', { class: 'mono' }, linked)]]),
+          ...(address && address !== linked
+            ? [el('p', { class: 'fineprint' }, 'This browser holds a different wallet. To claim from this browser, restore the linked wallet with its recovery phrase on the wallet page.')]
+            : []),
+        ]
+      : address
+        ? [
+            el('div', { class: 'row' }, el('span', { class: 'mono' }, address), linkButton(address)),
+            el('p', { class: 'fineprint' }, 'You will sign a challenge with your wallet passphrase to prove the key is yours. This cannot be undone.'),
+          ]
+        : [el('p', { class: 'muted' }, 'No wallet in this browser. Create one to link it.')]),
   );
 }
 
 function linkButton(address: string): HTMLElement {
-  const button = el('button', { class: 'primary', type: 'button' }, 'Publish this address to my account');
+  const button = el('button', { class: 'primary', type: 'button', id: 'link-wallet' }, 'Link this wallet to my account for good');
   button.addEventListener('click', async () => {
     try {
-      await session.linkWallet(address);
-      toast('Wallet address linked to your account.', 'success');
+      await linkStoredWallet(address);
+      toast('Wallet linked to your account for good.', 'success');
       await drawAuth();
     } catch (error) {
       toast((error as Error).message, 'error');

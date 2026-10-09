@@ -21,6 +21,7 @@ import { ObsidianClient, type MiningStatus } from '../lib/client.js';
 import { Wallet, hrpOfAddress } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
 import { session, type AccountView } from '../lib/session.js';
+import { linkStoredWallet } from '../lib/link-wallet.js';
 import { el, obs, duration, spinner, toast, kv, badge, table, short, when, rewardLine, rewardPerClaim } from '../lib/ui.js';
 
 const client = new ObsidianClient();
@@ -73,7 +74,7 @@ function drawWalletPanel(): void {
   const wrongNetwork = address !== undefined && networkHrp !== undefined && hrpOfAddress(address) !== networkHrp;
   walletPanel.replaceChildren(
     el('h2', {}, 'Signing wallet'),
-    ...(account?.walletAddress ? [el('p', { class: 'fineprint' }, 'Linked to your account — claims from any other wallet are refused.')] : []),
+    ...(account?.walletAddress ? [el('p', { class: 'fineprint' }, 'This is your account\'s wallet, linked for good. Claims from any other wallet are refused, and this wallet can serve no other account.')] : []),
     ...(wrongNetwork
       ? [
           el(
@@ -141,8 +142,8 @@ function linkButton(address: string, label: string): HTMLElement {
   button.addEventListener('click', async () => {
     button.disabled = true;
     try {
-      await session.linkWallet(address);
-      toast('Wallet linked to your account.', 'success');
+      await linkStoredWallet(address);
+      toast('Wallet linked to your account for good.', 'success');
     } catch (error) {
       toast((error as Error).message, 'error');
     } finally {
@@ -181,7 +182,7 @@ async function refresh(): Promise<void> {
         ? [
             kv([['Wallet in this browser', el('span', { class: 'mono' }, address)]]),
             linkButton(address, 'Link this wallet to my account'),
-            el('p', { class: 'fineprint' }, 'Linking publishes only the address. The key stays encrypted in this browser and is never sent anywhere.'),
+            el('p', { class: 'fineprint' }, 'One wallet per account, and the link cannot be changed. You sign a short challenge with your passphrase to prove the key is yours; only the address, public key and signature are sent. The wallet is its own key, never made from your account details.'),
           ]
         : address
           ? [
@@ -218,13 +219,10 @@ async function refresh(): Promise<void> {
         'p',
         {},
         address
-          ? 'This browser holds a different wallet. Restore the linked wallet here with its recovery phrase, or move this account to this browser\'s wallet.'
+          ? 'This browser holds a different wallet. An account keeps one wallet for good, so restore the linked wallet here with its recovery phrase to claim.'
           : 'The linked wallet is not in this browser. Restore it here with its recovery phrase to claim.',
       ),
       asLink('/wallet/', 'Restore the linked wallet'),
-      ...(address && (networkHrp === undefined || hrpOfAddress(address) === networkHrp)
-        ? [linkButton(address, 'Link this browser\'s wallet instead')]
-        : []),
     );
     return;
   }

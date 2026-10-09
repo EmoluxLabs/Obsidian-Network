@@ -117,6 +117,7 @@ const data = await import('../public/data.mjs');
 const appWallet = await import('../public/wallet.mjs');
 const signing = await import('../web/signing.mjs');
 const ops = await import('../web/ops.mjs');
+const { signMessage } = await import('../../obsidian-interface/web/core/crypto/keys.js');
 
 // ── the platform's own code ──────────────────────────────────────────────────
 
@@ -263,9 +264,39 @@ if (!minerCookie) {
 }
 jars[APP].cookies = minerCookie;
 jars[PLATFORM].cookies = minerCookie;
+/** Link a wallet the way both products do: the wallet signs the platform's challenge with its own key. */
 const linkFor = async (w) => {
-  const linked = await data.linkWallet(w.address);
+  const challenge = await data.requestLinkChallenge(w.address);
+  const proof = signing.signLinkChallenge({ wallet: signing.walletFromPhrase(w.phrase, HRP), message: challenge.message });
+  const linked = await data.submitLinkProof(proof);
   assert.equal(linked.account?.walletAddress, w.address, 'the platform linked the wallet to the account');
+};
+
+// One wallet per account, so every wallet that mines gets an account of its own: invited by the
+// miner account, MFA confirmed, signed in on both doors, its wallet linked for good.
+const runStamp = Date.now().toString(36);
+const accountCookies = new Map();
+const accountWallets = new Map();
+async function accountFor(w, label) {
+  jars[APP].cookies = minerCookie;
+  jars[PLATFORM].cookies = minerCookie;
+  const inviteCode = (await data.issueInvite()).invite.code;
+  jars[PLATFORM].cookies = '';
+  const email = `xp.${label}.${runStamp}@gmail.com`;
+  const created = await api(PLATFORM, 'POST', '/api/auth/register', { email, password: 'correct horse battery 7 staple', inviteCode });
+  assert.equal(created.status, 200, `register ${label}: ${JSON.stringify(created.data)}`);
+  const setup = await api(PLATFORM, 'POST', '/api/auth/mfa/setup', {});
+  const confirmed = await api(PLATFORM, 'POST', '/api/auth/mfa/confirm', { totp: totp(setup.data.secret) });
+  assert.equal(confirmed.status, 200, `mfa ${label}: ${JSON.stringify(confirmed.data)}`);
+  jars[APP].cookies = jars[PLATFORM].cookies;
+  await linkFor(w);
+  accountCookies.set(w.address, jars[PLATFORM].cookies);
+  accountWallets.set(label, w);
+}
+/** Act as the account that owns `w` (on both doors). */
+const actAs = (w) => {
+  jars[APP].cookies = accountCookies.get(w.address);
+  jars[PLATFORM].cookies = accountCookies.get(w.address);
 };
 
 // A signed-out caller cannot claim, whatever it holds: refused by the platform, and nothing on the ledger.
@@ -327,8 +358,8 @@ async function forgeClaim(w, label) {
 // ── a claim through the PLATFORM first, then the app ─────────────────────────
 {
   const w = await freshWallet();
-  await linkFor(w);
-  say(`wallet W1 ${w.address.slice(0, 14)}… (fresh, usable from both products)`);
+  await accountFor(w, 'w1');
+  say(`wallet W1 ${w.address.slice(0, 14)}… (fresh, usable from both products, linked to its own account)`);
 
   const first = await claimViaPlatform(w);
   assert.ok(first.txId, 'the platform’s claim was submitted');
@@ -354,7 +385,7 @@ async function forgeClaim(w, label) {
 // ── a claim through the APP first, then the platform ─────────────────────────
 {
   const w = await freshWallet();
-  await linkFor(w);
+  await accountFor(w, 'w2');
   say(`wallet W2 ${w.address.slice(0, 14)}… (fresh)`);
 
   const first = await claimViaApp();
@@ -383,7 +414,7 @@ async function forgeClaim(w, label) {
 // ── both products at once ────────────────────────────────────────────────────
 {
   const w = await freshWallet();
-  await linkFor(w);
+  await accountFor(w, 'w3');
   say(`wallet W3 ${w.address.slice(0, 14)}… (fresh) — both products claim at the same instant`);
   const [a, b] = await Promise.allSettled([claimViaApp(), claimViaPlatform(w)]);
   const accepted = [a, b].filter((r) => r.status === 'fulfilled' && (r.value.ok ?? true) && r.value.txId);
@@ -396,6 +427,42 @@ async function forgeClaim(w, label) {
   await untilClaims(w.address, 1, 'W3 race');
   assert.equal(await ledgerCount(w.address), 1, 'a simultaneous claim from both products is still exactly one claim');
   say('ledger:   W3 has exactly one claim');
+}
+
+// ── one wallet per account, one account per wallet ───────────────────────────
+{
+  const [w1, w2, w3] = ['w1', 'w2', 'w3'].map((label) => accountWallets.get(label));
+  const spare = await freshWallet(); // a wallet nobody has linked
+  const before = await ledgerCount(w1.address);
+
+  // an account keeps its wallet for good: W1's account cannot take a second one
+  actAs(w1);
+  await assert.rejects(data.requestLinkChallenge(spare.address), { code: 'ERR_WALLET_LOCKED' });
+  say('wallets:  W1\'s account is refused a second wallet (ERR_WALLET_LOCKED); linking W1 again is a no-op');
+  assert.equal((await data.requestLinkChallenge(w1.address)).alreadyLinked, true);
+
+  // a wallet that belongs to one account cannot be linked to another, or used through it
+  actAs(w2);
+  await assert.rejects(data.requestLinkChallenge(w1.address), { code: 'ERR_WALLET_TAKEN' });
+  const borrowed = await forgeClaim(w1, 'W1 key through W2 account');
+  assert.equal(borrowed.accepted, false, 'W1\'s key through W2\'s account must be refused');
+  assert.equal(borrowed.reason, 'ERR_WALLET_MISMATCH');
+  say('wallets:  W2\'s account cannot link W1\'s wallet (ERR_WALLET_TAKEN) or claim with it (ERR_WALLET_MISMATCH)');
+
+  // nobody can claim a stranger's address without its key: a signature from the wrong key proves nothing
+  jars[APP].cookies = minerCookie;
+  jars[PLATFORM].cookies = minerCookie;
+  const challenge = await data.requestLinkChallenge(spare.address);
+  const thief = signing.walletFromPhrase(w3.phrase, HRP);
+  const forged = {
+    address: spare.address,
+    publicKey: thief.publicKey,
+    signature: signMessage('OBSIDIAN:WALLET_LINK:v1', new TextEncoder().encode(challenge.message), thief.privateKeyHex),
+  };
+  await assert.rejects(data.submitLinkProof(forged), { code: 'ERR_LINK_PROOF' });
+  say('wallets:  a signature from the wrong key cannot link an address (ERR_LINK_PROOF): no one can squat a wallet they do not hold');
+
+  assert.equal(await ledgerCount(w1.address), before, 'none of that touched the ledger');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

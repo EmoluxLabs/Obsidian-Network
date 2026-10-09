@@ -11,7 +11,9 @@ export interface AccountView {
   email: string;
   displayName?: string;
   invitesIssued: number;
+  /** The account's proven wallet. Permanent once set: one wallet per account. */
   walletAddress?: string;
+  walletLocked?: boolean;
   mfaEnabled: boolean;
   /** Mining opens only once password, recovery codes and MFA are all done. */
   miningEnabled: boolean;
@@ -113,7 +115,22 @@ export const session = {
   createInvite(): Promise<{ invite: { code: string }; issued: number; limit: number }> {
     return api('/api/auth/invites', { method: 'POST', body: '{}' });
   },
-  linkWallet(address: string): Promise<{ linked: boolean; address: string; account?: AccountView }> {
-    return api('/api/wallet/link', { method: 'POST', body: JSON.stringify({ address }) });
+  /**
+   * Link `address` to the account — once, for good. The server issues a challenge; `sign` signs it
+   * on this device (the key never leaves); the server checks the signature and links. Linking the
+   * wallet the account already has is a no-op that succeeds.
+   */
+  async linkWallet(
+    address: string,
+    sign: (message: string) => { publicKey: string; signature: string },
+  ): Promise<{ linked: boolean; address: string; account?: AccountView }> {
+    const challenge = await api<{ alreadyLinked?: boolean; message?: string; account?: AccountView }>(
+      '/api/wallet/link/challenge',
+      { method: 'POST', body: JSON.stringify({ address }) },
+    );
+    if (challenge.alreadyLinked) return { linked: true, address, account: challenge.account };
+    if (!challenge.message) throw new Error('the interface sent no link challenge');
+    const proof = sign(challenge.message);
+    return api('/api/wallet/link', { method: 'POST', body: JSON.stringify({ address, ...proof }) });
   },
 };

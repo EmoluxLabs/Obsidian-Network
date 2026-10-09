@@ -49,7 +49,6 @@ import {
   recover,
   invites,
   issueInvite,
-  linkWallet,
   getAppConfig,
   MIN_PASSPHRASE_LENGTH,
   getStatus,
@@ -90,6 +89,7 @@ import {
   removeWallet,
   revealPhrase,
   claim,
+  linkProven,
   send,
   registerName,
 } from './wallet.mjs';
@@ -656,13 +656,20 @@ function install() {
       setNotice('Invitation issued.');
     });
 
+  /**
+   * Link this device's wallet to the account — once, for good. The wallet signs a challenge from
+   * the platform with its own key (the passphrase unlocks it here), so only a proven address is
+   * ever bound, and nothing about the account is used to make a wallet.
+   */
   g.ObsidianLinkAddress = () => {
-    const address = state.walletAddress;
+    const passphrase = field('pp');
     return withBusy('link', async () => {
-      if (!address) return setError('Set up a wallet on this device first.');
-      const result = await linkWallet(address);
-      state.account = result?.account ?? state.account;
-      setNotice('Address linked to your account.');
+      if (!state.walletAddress) return setError('Set up a wallet on this device first.');
+      if (!passphrase) return setError('Enter your vault passphrase to sign the link.');
+      const result = await linkProven(() => passphrase);
+      if (!result.ok) return setError(result.message);
+      await refreshAccount();
+      setNotice('Wallet linked to your account for good.');
     });
   };
 

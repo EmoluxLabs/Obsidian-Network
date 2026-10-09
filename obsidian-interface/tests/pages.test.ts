@@ -15,6 +15,10 @@
  */
 
 import { webcrypto } from 'node:crypto';
+import { Wallet } from '../web/src/lib/wallet.js';
+import { verifyMessage, addressFromPublicKey } from '../web/core/crypto/keys.js';
+import { WALLET_LINK_DOMAIN } from '../web/src/lib/link-wallet.js';
+import { WALLET_LINK_DOMAIN as SERVER_DOMAIN } from '../server/index.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** Everything the pages fetch, answered from fixtures — and every call recorded. */
@@ -401,16 +405,80 @@ describe('mining is gated on the account, not on the browser', () => {
 
     expect(document.querySelector('#claim-button')).toBeNull();
     expect(panelText()).toContain('Connect a wallet');
+    expect(panelText()).toContain('cannot be changed');
     const link = document.querySelector<HTMLButtonElement>('#link-wallet');
     expect(link?.textContent).toContain('Link this wallet');
     expect(asked('/mining/status')).toHaveLength(0);
+  });
 
-    // Clicking publishes exactly that address — the server decides whether it is acceptable.
-    link!.click();
+  it('links by signing a server challenge with the vault key: the passphrase unlocks it, only a proof is sent', async () => {
+    const PASSPHRASE = 'a passphrase long enough for the vault';
+    const real = await Wallet.create('dobs', PASSPHRASE);
+    const address = Wallet.storedAddress()!;
+    const MESSAGE = `OBSIDIAN WALLET LINK v1\nnetwork: devnet\naccount: acc-1\naddress: ${address}\nnonce: abc`;
+    const view = accountView({ walletAddress: undefined });
+    respond = (url) => {
+      if (url.includes('/api/auth/me')) return { status: 200, body: { account: view } };
+      if (url.includes('/api/wallet/link/challenge')) return { status: 200, body: { message: MESSAGE, domain: 'OBSIDIAN:EVIL:v1', expiresAt: Date.now() + 1000 } };
+      if (url.includes('/api/wallet/link')) return { status: 200, body: { linked: true, address, account: { ...view, walletAddress: address } } };
+      return url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} };
+    };
+    const prompt = vi.fn(() => PASSPHRASE);
+    vi.stubGlobal('prompt', prompt);
+    window.prompt = prompt as unknown as typeof window.prompt;
+    await import('../web/src/pages/mine.js');
     await settle();
-    const post = calls.find((call) => call.url.includes('/api/wallet/link'));
+
+    document.querySelector<HTMLButtonElement>('#link-wallet')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500)); // PBKDF2 at 600,000 rounds, for real
+    expect(prompt).toHaveBeenCalledTimes(1);
+
+    const challenge = calls.find((call) => call.url.includes('/api/wallet/link/challenge'));
+    expect(JSON.parse(String(challenge?.init?.body))).toEqual({ address });
+    const post = calls.find((call) => call.url.endsWith('/api/wallet/link'));
     expect(post?.init?.method).toBe('POST');
-    expect(JSON.parse(String(post?.init?.body))).toEqual({ address: MINER });
+    const sent = JSON.parse(String(post?.init?.body)) as { address: string; publicKey: string; signature: string };
+    expect(Object.keys(sent).sort()).toEqual(['address', 'publicKey', 'signature']);
+    expect(sent.address).toBe(address);
+    // The signature is a real one, over exactly the server's message, under the link domain.
+    expect(verifyMessage(WALLET_LINK_DOMAIN, new TextEncoder().encode(MESSAGE), sent.signature, sent.publicKey)).toBe(true);
+    expect(addressFromPublicKey(sent.publicKey, 'dobs')).toBe(address);
+    expect(JSON.stringify(calls.map((call) => call.init?.body))).not.toContain(PASSPHRASE);
+    void real;
+    expect(WALLET_LINK_DOMAIN).toBe(SERVER_DOMAIN);
+  });
+
+  it('signs nothing when the server\'s challenge is for some other address', async () => {
+    const PASSPHRASE = 'a passphrase long enough for the vault';
+    await Wallet.create('dobs', PASSPHRASE);
+    const view = accountView({ walletAddress: undefined });
+    respond = (url) => {
+      if (url.includes('/api/auth/me')) return { status: 200, body: { account: view } };
+      if (url.includes('/api/wallet/link/challenge')) return { status: 200, body: { message: `OBSIDIAN WALLET LINK v1\naddress: ${OTHER}\nnonce: x` } };
+      return url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} };
+    };
+    window.prompt = (() => PASSPHRASE) as unknown as typeof window.prompt;
+    await import('../web/src/pages/mine.js');
+    await settle();
+    document.querySelector<HTMLButtonElement>('#link-wallet')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(calls.some((call) => call.url.endsWith('/api/wallet/link'))).toBe(false);
+  });
+
+  it('sends nothing to the server when the passphrase is wrong or the prompt is dismissed', async () => {
+    await Wallet.create('dobs', 'a passphrase long enough for the vault');
+    const address = Wallet.storedAddress()!;
+    const view = accountView({ walletAddress: undefined });
+    serve(view);
+    await import('../web/src/pages/mine.js');
+    await settle();
+    for (const answer of [null, 'not the passphrase at all']) {
+      window.prompt = (() => answer) as unknown as typeof window.prompt;
+      document.querySelector<HTMLButtonElement>('#link-wallet')!.click();
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    expect(calls.filter((call) => call.url.includes('/api/wallet/link'))).toHaveLength(0);
+    expect(address).toMatch(/^dobs1/);
   });
 
   it('sends a signed-in account with no wallet anywhere to create one', async () => {
@@ -441,6 +509,9 @@ describe('mining is gated on the account, not on the browser', () => {
     expect(document.querySelector('#claim-button')).toBeNull();
     expect(panelText()).toContain('linked wallet only');
     expect(panelText()).toContain(MINER);
+    // An account keeps its wallet for good: there is no way to swap in this browser's wallet.
+    expect(document.querySelector('#link-wallet')).toBeNull();
+    expect(panelText()).not.toMatch(/instead|move this account/i);
     expect(asked('/mining/status')).toHaveLength(0);
   });
 

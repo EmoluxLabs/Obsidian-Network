@@ -20,7 +20,7 @@
 
 import { encodeSignedTx, signTransaction, type UnsignedTx } from '../../core/transactions/encode.js';
 import { deriveWallet, generateRecoveryPhrase, isValidRecoveryPhrase } from '../../core/crypto/mnemonic.js';
-import { addressFromPublicKey } from '../../core/crypto/keys.js';
+import { addressFromPublicKey, signMessage } from '../../core/crypto/keys.js';
 import { TxType } from '../../core/protocol/types.js';
 
 export interface WalletAccount {
@@ -358,6 +358,21 @@ export class Wallet {
       publicKeyHex: derived.publicKey,
     });
     return encodeSignedTx(signed);
+  }
+
+  /**
+   * Sign a text message with the key behind `address`, under a domain tag. Used for the one-time
+   * proof that links this wallet to an account; the private key is derived here, used, and dropped,
+   * and only the public key and the signature leave this function.
+   */
+  signMessageFor(address: string, domain: string, message: string): { publicKey: string; signature: string } {
+    const entry = this.payload.accounts.find((candidate) => candidate.address === address);
+    if (!entry) throw new Error('that address is not in this wallet');
+    const derived = deriveWallet(this.payload.phrase, entry.account, entry.index);
+    return {
+      publicKey: derived.publicKey,
+      signature: signMessage(domain, new TextEncoder().encode(message), derived.privateKey),
+    };
   }
 
   /** Derive an additional address from the same phrase (same wallet, new index). */

@@ -23,7 +23,7 @@ import {
   generateRecoveryPhrase,
   isValidRecoveryPhrase,
 } from '../../obsidian-interface/web/core/crypto/mnemonic.js';
-import { addressFromPublicKey } from '../../obsidian-interface/web/core/crypto/keys.js';
+import { addressFromPublicKey, signMessage } from '../../obsidian-interface/web/core/crypto/keys.js';
 import { encodePayload, decodePayload } from '../../obsidian-interface/web/core/crypto/bech32.js';
 import {
   signTransaction,
@@ -150,6 +150,37 @@ export function sign({ wallet, chainId, protocolVersion, nonce, type, gas, body,
     // how a UI ends up showing a transaction id for a transaction it never named.
     txId: txIdOf(envelope),
     hex: toHex(bytes),
+  };
+}
+
+/**
+ * The domain tag of the wallet-link proof. It is fixed HERE, in the client, and the server's
+ * copy is only ever compared against it: a server must not be able to choose the domain a user
+ * signs under, so a link proof can never be passed off as a transaction signature.
+ */
+export const WALLET_LINK_DOMAIN = 'OBSIDIAN:WALLET_LINK:v1';
+
+/**
+ * Sign the platform's wallet-link challenge with the wallet's own key.
+ *
+ * This proves the device holds the key for the address, which is what lets the platform bind
+ * the address to the account for good without ever holding a key or deriving one from the
+ * account. The message must be a link challenge for exactly this wallet's address; anything
+ * else is refused before a key touches it.
+ */
+export function signLinkChallenge({ wallet, message }) {
+  if (!wallet?.address || !wallet?.privateKeyHex || !wallet?.publicKey) {
+    throw new Error('a wallet with an address, a public key and a private key is required');
+  }
+  const text = String(message ?? '');
+  const lines = text.split('\n');
+  if (lines[0] !== 'OBSIDIAN WALLET LINK v1' || !lines.includes(`address: ${wallet.address}`)) {
+    throw new Error('that is not a link challenge for this wallet, so it was not signed');
+  }
+  return {
+    address: wallet.address,
+    publicKey: wallet.publicKey,
+    signature: signMessage(WALLET_LINK_DOMAIN, new TextEncoder().encode(text), wallet.privateKeyHex),
   };
 }
 

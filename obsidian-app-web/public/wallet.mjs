@@ -21,6 +21,8 @@ import {
   getAppConfig,
   MIN_PASSPHRASE_LENGTH,
   submitTransaction,
+  requestLinkChallenge,
+  submitLinkProof,
 } from './data.mjs';
 
 const BUNDLE_URL = '/js/obsidian.js';
@@ -205,6 +207,8 @@ async function run(name, requestPassphrase, args) {
     getBalance,
     getName,
     submit: (hex) => submitTransaction(hex),
+    linkChallenge: requestLinkChallenge,
+    linkSubmit: submitLinkProof,
   };
   return bundle[name](deps, args);
 }
@@ -283,6 +287,7 @@ export async function getNonce(address) {
 
 // ── operations ───────────────────────────────────────────────────────────────
 
+export const linkProven = (requestPassphrase) => run('linkWalletProven', requestPassphrase);
 export const claim = (requestPassphrase) => run('submitClaim', requestPassphrase);
 export const send = (input, requestPassphrase) => run('submitPayment', requestPassphrase, input);
 export const registerName = (input, requestPassphrase) => run('submitNameRegistration', requestPassphrase, input);

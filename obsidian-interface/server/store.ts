@@ -26,8 +26,19 @@ export interface Account {
   createdAt: number;
   lastSeenAt: number;
   invitesIssued: number;
-  /** Wallet address the account says it owns. Advisory only; never trusted. */
+  /**
+   * The wallet this account mines with. It is a PUBLIC address the user generated on their own
+   * device; nothing about it is derived from the account (email, password, id), and the server
+   * never holds a key. It counts only when `walletLinkedAt` is set, i.e. when the owner proved
+   * control of the key by signing a server challenge. A bare address with no `walletLinkedAt`
+   * is a legacy, unproven entry: it is ignored everywhere and replaced by the first proven link.
+   * Once linked it is permanent: one wallet per account, and one account per wallet.
+   */
   walletAddress?: string;
+  /** Public key that signed the link proof (the address is derived from it). */
+  walletPublicKey?: string;
+  /** When the link was proven. Set exactly once, never changed. */
+  walletLinkedAt?: number;
   suspended?: boolean;
 
   /** scrypt hash of the password. The password itself is never stored. */
@@ -50,6 +61,11 @@ export interface Account {
   miningEnabled?: boolean;
   failedLogins?: number;
   lockedUntil?: number;
+}
+
+/** The account's PROVEN wallet address, or undefined. A legacy bare address does not count. */
+export function provenWallet(account: Pick<Account, 'walletAddress' | 'walletLinkedAt'>): string | undefined {
+  return account.walletAddress && account.walletLinkedAt ? account.walletAddress : undefined;
 }
 
 export interface Invite {
@@ -129,6 +145,8 @@ export class AccountStore {
   private accounts = new Map<string, Account>();
   /** canonical Gmail -> accountId: the single place one-account-per-human is decided. */
   private byCanonicalEmail = new Map<string, string>();
+  /** address → accountId for every PROVEN link. An address appears here at most once, forever. */
+  private byWallet = new Map<string, string>();
   private invites = new Map<string, Invite>();
   /** Keyed by the token's SHA-256, never the token. */
   private sessions = new Map<string, Session>();
@@ -151,6 +169,25 @@ export class AccountStore {
         this.accounts.set(account.accountId, account);
         if (account.canonicalEmail) this.byCanonicalEmail.set(account.canonicalEmail, account.accountId);
       }
+      // Rebuild the wallet registry from the proven links. If a file ever holds two accounts proven
+      // to the same address (it cannot be produced by this code), the earlier proof keeps it and
+      // the later link is withdrawn: one wallet belongs to one account.
+      const proven = [...this.accounts.values()]
+        .filter((account) => account.walletAddress && account.walletLinkedAt)
+        .sort((a, b) => (a.walletLinkedAt ?? 0) - (b.walletLinkedAt ?? 0));
+      let withdrawn = false;
+      for (const account of proven) {
+        const address = account.walletAddress!;
+        if (this.byWallet.has(address)) {
+          account.walletAddress = undefined;
+          account.walletPublicKey = undefined;
+          account.walletLinkedAt = undefined;
+          withdrawn = true;
+        } else {
+          this.byWallet.set(address, account.accountId);
+        }
+      }
+      if (withdrawn) this.persist();
       for (const invite of parsed.invites ?? []) this.invites.set(normalise(invite.code), invite);
       for (const stored of parsed.sessions ?? []) {
         // A version-1 file kept the raw token; it is hashed here and the file is
@@ -350,6 +387,7 @@ export class AccountStore {
     if (!account) return;
     this.accounts.delete(accountId);
     if (this.byCanonicalEmail.get(account.canonicalEmail) === accountId) this.byCanonicalEmail.delete(account.canonicalEmail);
+    if (account.walletAddress && this.byWallet.get(account.walletAddress) === accountId) this.byWallet.delete(account.walletAddress);
     for (const [key, session] of this.sessions) {
       if (session.accountId === accountId) this.sessions.delete(key);
     }
@@ -363,12 +401,41 @@ export class AccountStore {
     this.persistSoon();
   }
 
-  setWalletAddress(accountId: string, walletAddress: string): void {
+  /** The account a wallet address is linked to, if any. */
+  walletOwner(address: string): string | undefined {
+    return this.byWallet.get(address);
+  }
+
+  /**
+   * Link a wallet to an account, once.
+   *
+   * The caller has ALREADY checked the proof of key ownership; this is the rule about what may be
+   * linked, and it is synchronous so the check and the write cannot be split by another request:
+   *   - an address linked to another account can never be linked to this one (ERR_WALLET_TAKEN);
+   *   - an account that already has a proven wallet keeps it for good (ERR_WALLET_LOCKED);
+   *   - linking the same address again changes nothing and succeeds.
+   * Because mining claims are accepted only from the linked wallet, a wallet that has claimed under
+   * one account is by construction linked to that account, and no other account can take it.
+   */
+  linkWallet(
+    accountId: string,
+    address: string,
+    publicKey: string,
+  ): { ok: true; account: Account; changed: boolean } | { ok: false; code: 'ERR_WALLET_TAKEN' | 'ERR_WALLET_LOCKED' | 'ERR_UNKNOWN_ACCOUNT' } {
     const account = this.accounts.get(accountId);
-    if (!account) return;
-    account.walletAddress = walletAddress;
-    // Rare and visible to the user ("linked: true"): written before we answer.
+    if (!account) return { ok: false, code: 'ERR_UNKNOWN_ACCOUNT' };
+    const owner = this.byWallet.get(address);
+    if (owner && owner !== accountId) return { ok: false, code: 'ERR_WALLET_TAKEN' };
+    if (account.walletLinkedAt && account.walletAddress) {
+      return account.walletAddress === address ? { ok: true, account, changed: false } : { ok: false, code: 'ERR_WALLET_LOCKED' };
+    }
+    account.walletAddress = address;
+    account.walletPublicKey = publicKey;
+    account.walletLinkedAt = Date.now();
+    this.byWallet.set(address, accountId);
+    // Permanent and visible to the user: written before we answer.
     this.persist();
+    return { ok: true, account, changed: true };
   }
 
   setSuspended(accountId: string, suspended: boolean): void {
