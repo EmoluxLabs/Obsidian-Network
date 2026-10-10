@@ -1,0 +1,21 @@
+{
+  "name": "@obsidian/wallet-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Obsidian Wallet: a non-custodial browser wallet for the Obsidian Network. A client of the network's own node and wallet code; it has no chain, node, RPC or key format of its own.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/start.mjs",
+    "start:mainnet": "node scripts/start.mjs mainnet",
+    "start:testnet": "node scripts/start.mjs testnet",
+    "start:staging": "node scripts/start.mjs staging",
+    "start:devnet": "node scripts/start.mjs devnet",
+    "lint": "node scripts/lint.mjs",
+    "test": "node scripts/build.mjs --if-missing && node --test tests/*.test.mjs",
+    "test:e2e": "node tests/e2e/wallet.e2e.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

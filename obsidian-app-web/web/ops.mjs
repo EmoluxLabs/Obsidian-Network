@@ -120,7 +120,25 @@ async function runOperation(deps, spec) {
       validUntil: ctx.validUntil,
     });
 
-    const result = await deps.submit(signed.hex, signed.txId);
+    let result;
+    try {
+      result = await deps.submit(signed.hex, signed.txId);
+    } catch (error) {
+      // The transaction IS signed. Whether the node has it is unknown when the request itself failed (a timeout or a
+      // dropped connection can happen after the node accepted it), so the caller is handed the signed bytes: it can
+      // send the SAME transaction again (same id, same nonce: the chain cannot apply it twice) instead of signing a
+      // second one that could spend the money twice. A 4xx answer is a refusal by the node: nothing was accepted.
+      const status = Number(error?.status);
+      return refusal('SUBMIT_FAILED', error?.message || String(error), {
+        txId: signed.txId,
+        signedHex: signed.hex,
+        validUntil: ctx.validUntil,
+        nonce,
+        address,
+        code: error?.code ?? null,
+        refusedByNode: Number.isInteger(status) && status >= 400 && status < 500,
+      });
+    }
     return {
       ok: true,
       txId: signed.txId,
@@ -130,6 +148,7 @@ async function runOperation(deps, spec) {
       bytes: signed.bytes.length,
       address,
       nonce,
+      validUntil: ctx.validUntil,
       result,
     };
   } catch (error) {

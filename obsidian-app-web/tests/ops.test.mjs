@@ -267,6 +267,57 @@ test('an amount the protocol cannot represent is refused, not rounded', async ()
   assert.equal(node.sent.length, 0);
 });
 
+test('a submit that fails after signing hands back the SAME signed transaction, so it is never signed twice', async () => {
+  const node = fakeNode({
+    submit: async () => {
+      throw Object.assign(new Error('fetch failed'), { status: undefined });
+    },
+  });
+  const result = await submitPayment(node, { to: ADDRESS, amountObs: '2' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'SUBMIT_FAILED', 'not SIGNING_FAILED: signing worked');
+  assert.equal(result.refusedByNode, false, 'a dropped connection is not a refusal');
+  assert.match(result.txId, /^[0-9a-f]{64}$/);
+  assert.equal(result.validUntil, 1_700_000_000 + 600);
+  assert.equal(result.nonce, 7);
+  // the bytes are exactly the transaction that has that id: re-sending them cannot spend twice
+  const tx = decodeSent(result.signedHex);
+  assert.equal(tx.nonce, 7);
+  assert.equal(decodePaymentBody(tx.body).to, ADDRESS);
+});
+
+test('a node that answers with a 4xx has refused the transaction, and says so', async () => {
+  const node = fakeNode({
+    submit: async () => {
+      throw Object.assign(new Error('BAD_NONCE'), { status: 400, code: 'ERR_BAD_NONCE' });
+    },
+  });
+  const result = await submitPayment(node, { to: ADDRESS, amountObs: '2' });
+  assert.equal(result.reason, 'SUBMIT_FAILED');
+  assert.equal(result.refusedByNode, true);
+  assert.equal(result.code, 'ERR_BAD_NONCE');
+  assert.match(result.message, /BAD_NONCE/);
+});
+
+test('a real signing failure is still reported as one, with nothing to resend', async () => {
+  const node = fakeNode({
+    getNonce: async () => {
+      throw new Error('the node did not report a nonce');
+    },
+  });
+  const result = await submitPayment(node, { to: ADDRESS, amountObs: '2' });
+  assert.equal(result.reason, 'SIGNING_FAILED');
+  assert.equal(result.signedHex, undefined);
+  assert.equal(node.sent.length, 0);
+});
+
+test('a successful payment reports until when the transaction is valid', async () => {
+  const node = fakeNode();
+  const result = await submitPayment(node, { to: ADDRESS, amountObs: '2' });
+  assert.equal(result.ok, true);
+  assert.equal(result.validUntil, 1_700_000_000 + 600);
+});
+
 // ── ONS ──────────────────────────────────────────────────────────────────────
 
 test('registering a name offers the consensus fee and gas on that fee', async () => {

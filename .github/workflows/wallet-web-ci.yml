@@ -1,0 +1,82 @@
+name: Wallet web CI
+
+# Obsidian Wallet (obsidian-wallet-web/): the browser wallet. It reuses obsidian-app-web's signing bundle and modules
+# (built from obsidian-core), so a change to any of those is checked here against the wallet as well.
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'obsidian-wallet-web/**'
+      - 'obsidian-app-web/**'
+      - 'obsidian-core/**'
+      - '.github/workflows/wallet-web-ci.yml'
+  pull_request:
+    paths:
+      - 'obsidian-wallet-web/**'
+      - 'obsidian-app-web/**'
+      - 'obsidian-core/**'
+      - '.github/workflows/wallet-web-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: wallet-web-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  wallet:
+    name: Wallet (app-web tests, build, lint, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Build the core
+        working-directory: obsidian-core
+        run: npm ci && npm run build
+      - name: Install the platform (the web app's tests use its generated browser core)
+        working-directory: obsidian-interface
+        run: npm ci
+      - name: Web app tests (the wallet reuses these modules and this server)
+        working-directory: obsidian-app-web
+        run: npm ci && npm test
+      - name: Build the wallet
+        working-directory: obsidian-wallet-web
+        run: npm run build
+      - name: Lint
+        working-directory: obsidian-wallet-web
+        run: npm run lint
+      - name: Wallet tests (design kept, no placeholders, logic, screens, served policy)
+        working-directory: obsidian-wallet-web
+        run: npm test
+
+  e2e:
+    name: Wallet in a real browser against a real devnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Build the core
+        working-directory: obsidian-core
+        run: npm ci && npm run build
+      - name: Build the platform server (the launcher starts it)
+        working-directory: obsidian-interface
+        run: npm ci && npx tsc -p tsconfig.json
+      - name: Build the web app bundle
+        working-directory: obsidian-app-web
+        run: npm ci && npm run build:web
+      - name: Build the wallet
+        working-directory: obsidian-wallet-web
+        run: npm run build
+      - name: Browser (test-only; not a dependency of the wallet)
+        run: mkdir -p /tmp/uitest && cd /tmp/uitest && npm init -y >/dev/null && npm i puppeteer-core @sparticuz/chromium
+      - name: End-to-end
+        working-directory: obsidian-wallet-web
+        run: npm run test:e2e

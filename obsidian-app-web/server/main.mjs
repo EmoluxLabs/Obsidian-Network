@@ -31,7 +31,37 @@ import { originAllowed as checkOrigin, parseAllowedOrigins } from './origin.mjs'
 import { NETWORK_NAMES, networkFor, publicConfig, verifyPlatform } from './networks.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = resolve(here, '..', 'public');
+/**
+ * The directory served. Defaults to this app's own `public/`; another product that reuses this hardened server (the
+ * standalone OBS wallet) points it at its own build with APP_PUBLIC_DIR. Resolved to an absolute path once: every
+ * request is checked against it.
+ */
+const PUBLIC_DIR = process.env.APP_PUBLIC_DIR ? resolve(process.env.APP_PUBLIC_DIR) : resolve(here, '..', 'public');
+
+/**
+ * Which `/api/` routes this deployment forwards, as comma separated exact paths or `prefix/*`. Unset = all of them,
+ * which is what the full app needs (sign-in, mining, wallet link). A product that needs only chain reads and
+ * transaction relay (the wallet) lists just those, so its origin cannot be used as a door to the account API.
+ */
+const API_ALLOW = (process.env.APP_API_ALLOW ?? '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+for (const entry of API_ALLOW) {
+  if (!/^\/api\/[A-Za-z0-9/_-]*\*?$/.test(entry)) {
+    process.stderr.write(`APP_API_ALLOW entry "${entry}" is not a path like /api/rpc or /api/nodes/*\n`);
+    process.exit(2);
+  }
+}
+const apiAllowed = (pathname) =>
+  API_ALLOW.length === 0 ||
+  API_ALLOW.some((entry) => (entry.endsWith('*') ? pathname.startsWith(entry.slice(0, -1)) : pathname === entry));
+
+/**
+ * APP_STRICT_SCRIPTS=true removes 'unsafe-inline' from script-src: no inline script and no inline event handler can
+ * run at all. The full app keeps inline handlers (the supplied design uses them); the wallet has none.
+ */
+const STRICT_SCRIPTS = process.env.APP_STRICT_SCRIPTS === 'true';
 
 /**
  * Which network this deployment is. Required, never defaulted: there is deliberately
@@ -74,6 +104,9 @@ const USAGE = `Obsidian app server
   APP_NETWORK_RECHECK_MS  how often the platform's network is re-verified (default 30000)
   APP_TRUST_PROXY       true ONLY behind a reverse proxy you control that writes X-Forwarded-For: the visitor's
                         address is then taken from it, so the platform rate-limits per visitor (default false)
+  APP_PUBLIC_DIR        serve this directory instead of ./public (the wallet product uses it)
+  APP_API_ALLOW         comma separated /api routes to forward (exact, or prefix/*); unset forwards all
+  APP_STRICT_SCRIPTS    true removes 'unsafe-inline' from script-src (no inline script or handler runs)
   APP_ALLOWED_ORIGINS   extra exact origins allowed to make state-changing API calls, comma separated
                         (default none: only this app's own origin and browser extensions)
 
@@ -130,11 +163,12 @@ async function resolveStatic(pathname) {
  * the same family of headers on its own pages; this server is the front door for the app, so it sets them too.
  * script-src keeps 'unsafe-inline' because the design's own markup uses inline handlers and one inline boot
  * script; everything else is closed (no framing, no plugins, no <base>, no remote connections, no foreign forms).
+ * A product with no inline script at all (the standalone wallet) sets APP_STRICT_SCRIPTS=true and loses 'unsafe-inline'.
  */
 const SECURITY_HEADERS = {
   'Content-Security-Policy': [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    STRICT_SCRIPTS ? "script-src 'self'" : "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
@@ -343,6 +377,9 @@ async function handle(req, res) {
         error: `this app is the ${NETWORK.name} app, but its platform is not on ${NETWORK.name}: ${verification.detail}`,
         code: 'ERR_NETWORK_MISMATCH',
       });
+    }
+    if (!apiAllowed(url.pathname)) {
+      return send(res, 404, { error: 'this app does not expose that API route', code: 'ERR_NOT_EXPOSED' });
     }
     if (!PLATFORM_URL) {
       return send(res, 503, {

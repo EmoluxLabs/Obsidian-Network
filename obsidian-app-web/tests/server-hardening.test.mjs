@@ -184,3 +184,39 @@ test('X-Forwarded-For: by default the socket is the client; behind a trusted pro
   await fetch(`${behind.base}/api/echo`);
   assert.match(seen.at(-1), /^(127\.0\.0\.1|::1)$/, 'no header at all: the socket');
 });
+
+test('the web app keeps its policy and its whole API; a product that sets APP_API_ALLOW / APP_STRICT_SCRIPTS gets less', async () => {
+  const seen = [];
+  const handler = (req, res) => { seen.push(req.url); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); };
+
+  // defaults: unchanged. The design's inline handlers need 'unsafe-inline', and every /api route is forwarded.
+  const full = await stack({}, handler);
+  const shell = await fetch(`${full.base}/`);
+  assert.match(shell.headers.get('content-security-policy'), /script-src 'self' 'unsafe-inline'/);
+  assert.equal((await fetch(`${full.base}/api/auth/config`)).status, 200);
+
+  // restricted: only the listed routes, and no inline script allowed
+  const wallet = await stack({ APP_API_ALLOW: '/api/rpc,/api/nodes/*', APP_STRICT_SCRIPTS: 'true' }, handler);
+  seen.length = 0; // the server's own start-up check of the platform's network is not a request from a browser
+  const csp = (await fetch(`${wallet.base}/`)).headers.get('content-security-policy');
+  assert.match(csp, /script-src 'self';/);
+  assert.doesNotMatch(csp, /unsafe-inline'[^;]*;[^;]*connect/, 'only style-src keeps unsafe-inline');
+  assert.equal((await fetch(`${wallet.base}/api/rpc?path=%2Fstatus`)).status, 200);
+  assert.equal((await fetch(`${wallet.base}/api/nodes/registry`)).status, 200);
+  const refused = await fetch(`${wallet.base}/api/auth/login`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } });
+  assert.equal(refused.status, 404);
+  assert.equal((await refused.json()).code, 'ERR_NOT_EXPOSED');
+  assert.equal((await fetch(`${wallet.base}/api/rpcx`)).status, 404, 'an exact entry is exact, not a prefix');
+  assert.deepEqual(seen, ['/api/rpc?path=%2Fstatus', '/api/nodes/registry']);
+
+  // a malformed entry stops the server rather than silently allowing everything
+  const bad = spawn(process.execPath, [resolve(appWeb, 'server/main.mjs')], {
+    cwd: appWeb,
+    env: { ...process.env, OBSIDIAN_APP_NETWORK: 'devnet', OBSIDIAN_PLATFORM_URL: 'http://127.0.0.1:9', APP_API_ALLOW: '*' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let err = '';
+  bad.stderr.on('data', (d) => (err += d));
+  assert.equal(await new Promise((r) => bad.on('exit', r)), 2);
+  assert.match(err, /APP_API_ALLOW/);
+});
