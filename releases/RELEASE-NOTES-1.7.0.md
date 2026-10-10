@@ -1,6 +1,6 @@
 # Obsidian Network 1.7.0
 
-Built from commit `3a91e2b9c6efd4d83ff8a3ee99e5f41345332ef4` at 2026-10-09T22:38:36Z.
+Built from commit `eba716707a25e72aed0e5edb26e90a566f71c68f` at 2026-10-10T05:22:52Z.
 
 ## Verify before you run
 
@@ -48,7 +48,7 @@ public release.
   block hash, so equal-height ties resolve identically on every node
 * protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data; it does not
   include a live-chain migration
-* 927 automated tests, all of them run immediately before packaging: core (508), interface (306), edge worker (17), release verification and signing behaviour (6), soak verdict rules (5), the genesis invitation generator (3), repository consistency (29), the three-node cluster end-to-end suite (15) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (38)
+* 930 automated tests, all of them run immediately before packaging: core (508), interface (306), edge worker (17), release verification and signing behaviour (9), soak verdict rules (5), the genesis invitation generator (3), repository consistency (29), the three-node cluster end-to-end suite (15) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (38)
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%
   node runners / 10% treasury, and the validator bond is exactly 20,000 OBS
