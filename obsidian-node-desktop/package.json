@@ -30,5 +30,12 @@
     "electron": "44.7.0",
     "electron-builder": "26.15.3",
     "typescript": "5.6.3"
+  },
+  "overrides": {
+    "app-builder-lib@26.15.3": {
+      "@electron/get": {
+        "global-agent": "4.1.3"
+      }
+    }
   }
 }
