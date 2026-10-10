@@ -299,7 +299,7 @@ async function until(what: string, condition: () => boolean, timeoutMs = 20_000)
 }
 
 describe('landing page', () => {
-  it('renders the product story with three product doors and the app download', async () => {
+  it('renders the product story with three product doors and no download button', async () => {
     respond = (url) => (url.includes('/api/rpc') ? chainFixture(url) : { status: 404, body: {} });
     await import('../web/src/pages/landing.js');
     await settle();
@@ -310,10 +310,13 @@ describe('landing page', () => {
 
     // The scope rule the product owner set: a description page, not a button hub.
     const ctas = [...document.querySelectorAll('a.cta')].map((node) => node.textContent?.trim());
-    // Three product doors, then the Android download on its own line below them.
-    expect(ctas).toEqual(['Start Mining', 'Create Wallet', 'Explorer', 'Download Obsidian App']);
-    expect(document.querySelectorAll('.cta-row:not(.cta-row-app) a')).toHaveLength(3);
-    expect(document.querySelectorAll('.cta-row-app a')).toHaveLength(1);
+    // Exactly the three product doors, and no download button of any kind.
+    expect(ctas).toEqual(['Start Mining', 'Create Wallet', 'Explorer']);
+    expect(document.querySelectorAll('.cta-row a')).toHaveLength(3);
+    expect(document.querySelector('a[download]')).toBeNull();
+    const hrefs = [...document.querySelectorAll('a')].map((node) => node.getAttribute('href') ?? '');
+    expect(hrefs.filter((href) => /releases|\.apk|\/download/i.test(href))).toEqual([]);
+    expect(text).not.toMatch(/download/i);
   });
 
   it('reads the chain and shows live numbers instead of placeholders', async () => {
@@ -345,7 +348,7 @@ describe('landing page', () => {
     const stats = document.querySelector('#stats')?.textContent ?? '';
     expect(stats.toLowerCase()).toContain('could not read the chain');
     // The page still renders: an outage of a reader is not an outage of the project.
-    expect(document.querySelectorAll('a.cta')).toHaveLength(4);
+    expect(document.querySelectorAll('a.cta')).toHaveLength(3);
   });
 });
 
