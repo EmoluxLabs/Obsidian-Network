@@ -59,6 +59,22 @@ so anyone could post a `MINING_CLAIM` straight to a node's `/tx/submit`. That do
 (1–500, default 200), `offset` and `prefix`; the REST reply adds `matched`, `offset`, `limit` and `hasMore` and keeps
 `count` as the registry size.
 
+### Block sync no longer stalls when a peer serves fewer blocks than the requester's overlap
+A node that connected to an established peer could stop part-way (a fresh testnet node stopped at height 8, with no
+peers, "peer address refused for a while", reason "claimed a better chain but did not deliver it"). The sync loop asked
+for blocks starting 16 below its own head on every round and ignored the reply's `more` flag. When the peer served
+a batch no larger than that overlap, the next request fell below the head, returned only blocks the node already had,
+was counted as "no progress", and the honest peer was penalised until it was refused. The loop now pages with a cursor
+(`from + returned` while `more`), uses the overlap only to find the common ancestor, counts duplicates as range already
+covered, and penalises a peer only when a whole attempt delivered nothing new. Each request carries an optional `id`
+that the reply echoes, so a late or repeated answer is dropped rather than punished as "unsolicited" (an unrequested one
+still is); a link that closes mid-request ends the sync at once and is not blamed on the peer; a peer's score recovers
+one point per accepted block (never above zero). `getblocks` rejects a non-integer `limit`. Sync now logs the remote and
+local height and head, the requested range, how many blocks came back, whether more follow, the first and last
+height and hash, the accepted/duplicate/stale/orphan counts and the first rejection code and message. Consensus
+validation is unchanged and so is the params hash. `P2PServiceOptions.syncBatch` and `syncTimeoutMs` exist for tests;
+the defaults (128 blocks, 15 s) are unchanged. Regression tests: `obsidian-core/tests/integration/p2p-sync.test.ts`.
+
 ### Other changes in this release
 
 - `obsidian-node-desktop`: the supervisor passes `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` (public configuration, and only

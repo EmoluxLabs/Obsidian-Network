@@ -178,10 +178,20 @@ mistyped into a devnet transaction and silently work.
 * **Staying level.** `ping`/`pong`/`status` carry the sender's chain tip (height,
   PoT weight, head hash). A node that sees a better tip — better under the fork
   choice rule, which ranks **weight** before height — or an announced block whose
-  parent it lacks, syncs from that peer: `getblocks {from,limit}` with an overlap
-  behind its own head that doubles until it reaches the common ancestor or the
-  `maxReorgDepth` limit, so a node that spent minutes on its own fork rejoins.
-  A peer that claims a better chain and cannot deliver it stops being believed.
+  parent it lacks, syncs from that peer: `getblocks {from,limit,id}`. The first
+  request starts a little behind the node's own head, and that overlap doubles
+  until it reaches the common ancestor or the `maxReorgDepth` limit, so a node
+  that spent minutes on its own fork rejoins. After that a cursor pages through
+  the peer's chain: while the reply says `more`, the next request starts at
+  `from + returned`, whatever the peer's batch size and wherever the node's own
+  head is. `id` is optional, chosen by the requester and echoed in the `blocks`
+  reply (an old peer that does not echo it is still understood); a reply that
+  matches no request in flight is dropped without penalty if it answers a
+  request that already ended, and penalised if nobody asked. `from` is a block
+  height (genesis is 0, the first batch starts at 1), `limit` is an integer
+  clamped to 1..128, and `more` means the chain continues past the last block
+  sent. A peer that claims a better chain and delivers nothing new in a whole
+  sync attempt stops being believed.
 * Health, latency, height and genesis id are tracked per peer. A peer that is
   behind, unresponsive repeatedly, or on a different genesis is demoted and
   eventually pruned; its entry is dropped from `<data-dir>/peers.json`. Peer

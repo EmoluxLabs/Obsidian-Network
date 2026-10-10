@@ -129,7 +129,8 @@ const WIRE_VERSION = 1;
 const MAX_PAYLOAD_BYTES = 8 * 1024 * 1024;
 const HANDSHAKE_TIMEOUT_MS = 12_000;
 const PING_INTERVAL_MS = 20_000;
-const SYNC_BATCH = 128;
+/** Most blocks one `blocks` message may carry (the wire's own bound: 128 blocks stay far under MAX_PAYLOAD_BYTES). */
+const MAX_SYNC_BATCH = 128;
 /** A node that keeps dialling a peer of another network is told once per this long, not on every retry. */
 const IDENTITY_REPORT_WINDOW_MS = 10 * 60_000;
 
@@ -141,6 +142,56 @@ const MAX_INBOUND_PER_IP = 8;
 const IP_BAN_MS = 10 * 60 * 1000;
 /** Minimum gap between two sync attempts against one peer that produced nothing. */
 const SYNC_RETRY_GAP_MS = 3_000;
+/** The per-batch fields of a sync log line. */
+function batchFields(outcome: BatchOutcome): Record<string, unknown> {
+  return {
+    requestedFrom: outcome.from,
+    limit: outcome.limit,
+    returned: outcome.returned,
+    more: outcome.more,
+    firstHeight: outcome.firstHeight,
+    firstHash: outcome.firstHash,
+    lastHeight: outcome.lastHeight,
+    lastHash: outcome.lastHash,
+    accepted: outcome.accepted,
+    duplicates: outcome.duplicates,
+    stale: outcome.stale,
+    orphans: outcome.orphans,
+    rejectedCode: outcome.rejected?.code ?? null,
+    rejectedMessage: outcome.rejected?.message ?? null,
+    malformed: outcome.malformed,
+    timedOut: outcome.timedOut,
+    disconnected: outcome.disconnected,
+  };
+}
+
+/** How long a `getblocks` waits for its answer. */
+const DEFAULT_SYNC_TIMEOUT_MS = 15_000;
+/** How long the id of an answered or abandoned request is remembered, so a late repeat is recognised. */
+const SETTLED_BATCH_TTL_MS = 120_000;
+const MAX_SETTLED_BATCHES = 32;
+
+function emptyOutcome(request: { id: string; from: number; limit: number }): BatchOutcome {
+  return {
+    id: request.id,
+    from: request.from,
+    limit: request.limit,
+    returned: 0,
+    more: false,
+    firstHeight: null,
+    firstHash: null,
+    lastHeight: null,
+    lastHash: null,
+    accepted: 0,
+    duplicates: 0,
+    stale: 0,
+    orphans: 0,
+    rejected: null,
+    malformed: null,
+    timedOut: false,
+    disconnected: false,
+  };
+}
 
 export interface P2PMessage {
   v: number;
@@ -169,11 +220,47 @@ interface PeerLink {
   challenge: string;
   /** Nonce WE put in our hello on an outbound link; the acceptor's answer must sign it. */
   sentNonce: string;
-  /** True only between sending `getblocks` and receiving its answer. */
-  awaitingBlocks: boolean;
+  /** The one `getblocks` request in flight on this link, or null. Registered BEFORE the request is sent. */
+  pending: PendingBatch | null;
+  /** Ids of requests already answered or given up on, so a late or repeated answer is dropped, not punished. */
+  settledBatches: Map<string, number>;
+  /** An uncorrelated (old-peer) `blocks` message is ignored without penalty until this time. */
+  lateBatchUntil: number;
   /** When the last unproductive sync attempt against this peer happened. */
   lastSyncMiss: number;
   budgets: LinkBudgets;
+}
+
+/** What one `getblocks` round trip came to. Everything here is local fact, nothing is taken from the peer unverified. */
+export interface BatchOutcome {
+  id: string;
+  from: number;
+  limit: number;
+  /** Blocks the peer sent. */
+  returned: number;
+  /** The peer's own `more` flag. */
+  more: boolean;
+  firstHeight: number | null;
+  firstHash: string | null;
+  lastHeight: number | null;
+  lastHash: string | null;
+  accepted: number;
+  duplicates: number;
+  stale: number;
+  orphans: number;
+  /** The first block that failed validation, if any. The peer was already penalised for it. */
+  rejected: { code: string; message: string; height: number; hash: string } | null;
+  /** Why the whole reply was unusable (undecodable, oversized), if it was. The peer was already penalised. */
+  malformed: string | null;
+  timedOut: boolean;
+  disconnected: boolean;
+}
+
+interface PendingBatch {
+  id: string;
+  from: number;
+  limit: number;
+  settle: (outcome: BatchOutcome) => void;
 }
 
 export interface HelloPayload {
@@ -251,6 +338,13 @@ export interface P2PServiceOptions {
   /** Called when a peer sends a transaction we accept into the mempool. */
   onTransaction?: (tx: TxEnvelope) => void;
   now?: () => number;
+  /**
+   * Blocks asked for, and served, per `getblocks` (1..128, default 128). A smaller value is for tests and for
+   * constrained nodes: the sync loop is correct for ANY value on either side, which the tests prove with 8.
+   */
+  syncBatch?: number;
+  /** How long to wait for the answer to one `getblocks` (default 15 s, minimum 50 ms). */
+  syncTimeoutMs?: number;
 }
 
 export interface PeerView {
@@ -275,6 +369,8 @@ export class P2PService extends EventEmitter {
   private readonly nodeId: string;
   private readonly nodeName: string;
   private readonly now: () => number;
+  private readonly syncBatch: number;
+  private readonly syncTimeoutMs: number;
   private readonly sink: (level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Record<string, unknown>) => void;
   private host = '0.0.0.0';
   private port = 0;
@@ -303,6 +399,8 @@ export class P2PService extends EventEmitter {
     this.peers = options.peers;
     this.onTransaction = options.onTransaction;
     this.now = options.now ?? (() => Date.now());
+    this.syncBatch = Number.isInteger(options.syncBatch) ? Math.min(MAX_SYNC_BATCH, Math.max(1, options.syncBatch as number)) : MAX_SYNC_BATCH;
+    this.syncTimeoutMs = Number.isFinite(options.syncTimeoutMs) ? Math.max(50, options.syncTimeoutMs as number) : DEFAULT_SYNC_TIMEOUT_MS;
     const address = options.identity.address ?? addressFromPublicKey(options.identity.publicKey, options.net.addressHrp);
     this.identity = { address, publicKey: options.identity.publicKey, privateKey: options.identity.privateKey };
     this.nodeId = options.identity.nodeId || nodeIdFor(address, options.chain.genesisId);
@@ -701,7 +799,9 @@ export class P2PService extends EventEmitter {
       syncing: false,
       challenge: randomBytes(16).toString('hex'),
       sentNonce: '',
-      awaitingBlocks: false,
+      pending: null,
+      settledBatches: new Map(),
+      lateBatchUntil: 0,
       lastSyncMiss: 0,
       budgets: newLinkBudgets(this.now),
     };
@@ -739,6 +839,12 @@ export class P2PService extends EventEmitter {
   private dropLink(key: string, link: PeerLink): void {
     if (link.handshakeTimer) clearTimeout(link.handshakeTimer);
     this.links.delete(key);
+    if (link.pending) {
+      const pending = link.pending;
+      link.pending = null;
+      this.rememberBatch(link, pending.id);
+      pending.settle({ ...emptyOutcome(pending), disconnected: true });
+    }
     if (link.hello) {
       this.log.debug('peer disconnected', { address: link.address, nodeId: link.nodeId });
     }
@@ -1158,13 +1264,24 @@ export class P2PService extends EventEmitter {
   /**
    * Pull blocks from `link` until we are level with it.
    *
-   * Each request asks for a little overlap behind our head so a short competing
-   * branch is resolved by ordinary fork choice. When a batch arrives but none of
-   * it connects (every block was an orphan: the peer is on a branch we do not
-   * share) the overlap doubles and we ask again, until the batches reach back
-   * to the common ancestor or past the protocol's reorg limit, beyond which no
-   * reorganisation is accepted anyway. A fixed 16-block overlap used to strand
-   * any node that had been on its own fork for more than 80 seconds.
+   * Two separate questions are answered by two separate mechanisms:
+   *
+   *  - WHERE does the peer's chain meet ours? The first request starts a little behind our head (`back`, 16
+   *    blocks). When a reply arrives and none of it connects (every block an orphan: the peer is on a branch we
+   *    do not share) `back` doubles and we ask again, until the replies reach the common ancestor or the
+   *    protocol's reorg limit, beyond which no reorganisation is accepted anyway.
+   *
+   *  - HOW MUCH is there still to fetch? A cursor. While the peer says `more`, the next request starts right
+   *    after the last block it sent (`from + returned`), whatever the peer's batch size and wherever our own
+   *    head is. The cursor never depends on our head, so a batch that lies below our head (the overlap, or a
+   *    peer that serves fewer blocks than our overlap is wide) still moves the sync forward.
+   *
+   * The loop used to re-derive `from` from our head on every round (`height - back`). With a peer serving
+   * N <= back blocks per reply, the round after reaching height N asked for blocks 1..N again, got nothing but
+   * duplicates, counted that as "no progress" and left the peer to be punished for "claiming a better chain but
+   * not delivering it". The peer's `more` flag was never read.
+   *
+   * A peer is only punished when its WHOLE attempt delivered nothing we did not already have.
    */
   private async syncFrom(link: PeerLink, forceCertificateFetch = false): Promise<void> {
     if (link.syncing || this.stopping) return;
@@ -1173,42 +1290,93 @@ export class P2PService extends EventEmitter {
     link.syncing = true;
     this.chain.setSyncing(true);
     let progressed = false;
+    let failure: string | null = null;
+    /** True when the failure already cost the peer a penalty (a bad block, a malformed reply) or the link is gone. */
+    let alreadyHandled = false;
+    const startHeight = this.chain.height;
+    let requests = 0;
+    let acceptedTotal = 0;
     try {
-      const maxBack = CONSENSUS_PARAMS.consensus.maxReorgDepth + SYNC_BATCH;
+      const maxBack = CONSENSUS_PARAMS.consensus.maxReorgDepth + this.syncBatch;
+      const maxRequests = 64 + 2 * Math.ceil((Math.max(link.height, this.chain.height) + maxBack) / this.syncBatch);
       let back = 16;
-      let guard = 0;
-      let mustFetchCertificateTarget=forceCertificateFetch;
-      while (!this.stopping && (mustFetchCertificateTarget||this.peerIsBetter(link)) && guard < 64) {
-        mustFetchCertificateTarget=false;
-        guard += 1;
-        const from = Math.max(1, this.chain.height - back);
-        link.awaitingBlocks = true;
-        this.send(link, { v: WIRE_VERSION, t: 'getblocks', from, limit: SYNC_BATCH });
-        const outcome = await this.waitForBatch(link);
-        link.awaitingBlocks = false;
-        if (outcome.accepted > 0) {
-          progressed = true;
-          back = 16;
-          continue;
+      let cursor = Math.max(1, this.chain.height - back);
+      let mustFetchCertificateTarget = forceCertificateFetch;
+      this.log.debug('sync started', this.syncView(link, { from: cursor, limit: this.syncBatch }));
+      while (!this.stopping && (mustFetchCertificateTarget || this.peerIsBetter(link))) {
+        mustFetchCertificateTarget = false;
+        if (requests >= maxRequests) {
+          failure = 'request budget exhausted';
+          break;
         }
-        if (outcome.orphans > 0 && back < maxBack && from > 1) {
+        requests += 1;
+        const outcome = await this.requestBatch(link, cursor);
+        this.log.debug('sync batch', this.syncView(link, batchFields(outcome)));
+        acceptedTotal += outcome.accepted;
+        if (outcome.accepted > 0) progressed = true;
+        if (outcome.disconnected) {
+          failure = 'disconnected';
+          alreadyHandled = true;
+          break;
+        }
+        if (outcome.timedOut) {
+          failure = 'timeout';
+          break;
+        }
+        if (outcome.malformed || outcome.rejected) {
+          failure = outcome.malformed ?? `rejected ${outcome.rejected!.code}: ${outcome.rejected!.message}`;
+          alreadyHandled = true;
+          break;
+        }
+        if (outcome.returned === 0) {
+          failure = 'empty reply';
+          break;
+        }
+        if (outcome.accepted === 0 && outcome.duplicates === 0 && outcome.stale === 0 && outcome.orphans > 0) {
+          // Nothing connected: the peer's branch parted from ours further back. Reach back further.
+          if (cursor <= 1 || back >= maxBack) {
+            failure = 'no common ancestor within the reorg limit';
+            break;
+          }
           back = Math.min(back * 2, maxBack);
+          cursor = Math.max(1, this.chain.height - back);
           continue;
         }
-        break;
+        if (!outcome.more) {
+          // The peer has sent everything it has from `cursor` on. If that brought something new, one more look from
+          // just behind our new head catches anything it mined meanwhile; otherwise we are as level as it can make us.
+          if (outcome.accepted === 0) {
+            failure = failure ?? 'peer has nothing further to send';
+            break;
+          }
+          back = 16;
+          cursor = Math.max(1, this.chain.height - back);
+          continue;
+        }
+        const next = outcome.from + outcome.returned;
+        if (next <= cursor) {
+          failure = 'cursor did not advance';
+          break;
+        }
+        cursor = next;
+        back = 16;
       }
     } finally {
-      link.awaitingBlocks = false;
+      link.pending = null;
       link.syncing = false;
-      if (!progressed) {
+      this.log.debug('sync finished', this.syncView(link, { startHeight, requests, accepted: acceptedTotal, progressed, failure }));
+      if (!progressed && !alreadyHandled) {
         link.lastSyncMiss = this.now();
         if (this.peerIsBetter(link)) {
           // It claimed a better chain and could not deliver it. Believe the
           // claim no longer, or one liar keeps this node "syncing" for ever.
           const tip = this.chain.tip;
+          this.log.warn('peer claimed a better chain but delivered nothing', this.syncView(link, { reason: failure ?? 'no new blocks', requests }));
           this.noteTip(link, this.chain.height, BigInt(tip?.cumulativePotWeight ?? '0'), tip?.hash ?? '');
-          this.penalise(link, 'minor', 'claimed a better chain but did not deliver it');
+          this.penalise(link, 'minor', `claimed a better chain but did not deliver it (${failure ?? 'no new blocks'})`);
         }
+      } else if (!progressed) {
+        link.lastSyncMiss = this.now();
       }
       this.chain.setSyncing(false);
       this.castFinalityVote();
@@ -1216,32 +1384,83 @@ export class P2PService extends EventEmitter {
     }
   }
 
-  private waitForBatch(link: PeerLink): Promise<{ accepted: number; orphans: number }> {
+  /** The fields every sync log line carries: what we know of the peer, and of ourselves. No secrets, no keys. */
+  private syncView(link: PeerLink, extra: Record<string, unknown>): Record<string, unknown> {
+    return {
+      address: link.address,
+      remoteHeight: link.height,
+      remoteHead: link.headHash,
+      localHeight: this.chain.height,
+      localHead: this.chain.tip?.hash ?? '',
+      ...extra,
+    };
+  }
+
+  private rememberBatch(link: PeerLink, id: string): void {
+    const now = this.now();
+    for (const [known, until] of link.settledBatches) if (until <= now) link.settledBatches.delete(known);
+    while (link.settledBatches.size >= MAX_SETTLED_BATCHES) {
+      const oldest = link.settledBatches.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      link.settledBatches.delete(oldest);
+    }
+    link.settledBatches.set(id, now + SETTLED_BATCH_TTL_MS);
+    // An old peer's answers carry no id. For a while after a request ends, an uncorrelated one is a late answer.
+    link.lateBatchUntil = now + this.syncTimeoutMs * 2;
+  }
+
+  /**
+   * Ask `link` for blocks from height `from` and wait for the answer.
+   *
+   * The request is registered on the link BEFORE it is sent, so an answer that arrives in the very next event
+   * cannot find nothing waiting for it. Each request carries an id that the reply echoes, which is what lets a
+   * late or repeated answer be told from a fresh one.
+   */
+  private requestBatch(link: PeerLink, from: number): Promise<BatchOutcome> {
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        this.removeListener(`blocks:${link.nodeId}`, onBlocks);
-        resolve({ accepted: 0, orphans: 0 });
-      }, 15_000);
-      const onBlocks = (outcome: { accepted: number; orphans: number }) => {
-        clearTimeout(timeout);
-        this.removeListener(`blocks:${link.nodeId}`, onBlocks);
-        resolve(outcome);
+      const id = randomBytes(8).toString('hex');
+      const request = { id, from, limit: this.syncBatch };
+      if (link.socket.readyState !== WebSocket.OPEN) {
+        resolve({ ...emptyOutcome(request), disconnected: true });
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (link.pending !== pending) return;
+        link.pending = null;
+        this.rememberBatch(link, id);
+        resolve({ ...emptyOutcome(request), timedOut: true });
+      }, this.syncTimeoutMs);
+      const pending: PendingBatch = {
+        ...request,
+        settle: (outcome) => {
+          clearTimeout(timer);
+          resolve(outcome);
+        },
       };
-      this.once(`blocks:${link.nodeId}`, onBlocks);
+      link.pending = pending;
+      this.send(link, { v: WIRE_VERSION, t: 'getblocks', from, limit: request.limit, id });
     });
   }
 
   private handleGetBlocks(link: PeerLink, message: P2PMessage): void {
     const from = Number(message.from ?? 0);
-    const limit = Math.min(SYNC_BATCH, Math.max(1, Number(message.limit ?? SYNC_BATCH)));
+    const asked = message.limit === undefined ? this.syncBatch : Number(message.limit);
     if (!Number.isInteger(from) || from < 0) {
       this.penalise(link, 'malformed', 'invalid getblocks range');
       return;
     }
+    if (!Number.isInteger(asked)) {
+      this.penalise(link, 'malformed', 'invalid getblocks limit');
+      return;
+    }
+    const limit = Math.min(this.syncBatch, Math.max(1, asked));
+    const id = typeof message.id === 'string' && /^[0-9a-f]{1,32}$/.test(message.id) ? message.id : undefined;
     const result = this.chain.blocksForSync(from, limit);
+    this.log.debug('serving blocks', { address: link.address, from, limit, returned: result.blocks.length, more: result.more, localHeight: this.chain.height });
     this.send(link, {
       v: WIRE_VERSION,
       t: 'blocks',
+      ...(id === undefined ? {} : { id }),
       blocks: result.blocks.map((bytes) => Buffer.from(bytes).toString('hex')),
       more: result.more,
     });
@@ -1250,43 +1469,74 @@ export class P2PService extends EventEmitter {
   private handleBlocks(link: PeerLink, message: P2PMessage): void {
     // A batch is up to 128 block validations in one message. It is only
     // accepted as the answer to a request this node made.
-    if (!link.awaitingBlocks) {
+    const id = typeof message.id === 'string' ? message.id : null;
+    const pending = link.pending;
+    if (!pending || (id !== null && id !== pending.id)) {
+      const late = id !== null ? link.settledBatches.has(id) : this.now() < link.lateBatchUntil;
+      if (late) {
+        // The answer to a request that already timed out, or a repeat of one already handled. Nothing is
+        // wrong with the peer; the blocks are simply not what this node is waiting for now.
+        this.log.debug('late or repeated block batch ignored', { address: link.address, id });
+        return;
+      }
       this.penalise(link, 'malformed', 'unsolicited block batch');
       return;
     }
-    link.awaitingBlocks = false;
+    link.pending = null;
+    this.rememberBatch(link, pending.id);
+    const outcome = emptyOutcome(pending);
+    const finish = (): void => {
+      if (outcome.accepted > 0) link.score = Math.min(0, link.score + outcome.accepted);
+      pending.settle(outcome);
+    };
     const raw = Array.isArray(message.blocks) ? (message.blocks as string[]) : [];
-    if (raw.length > SYNC_BATCH) {
-      this.penalise(link, 'malformed', 'batch larger than requested');
-      this.emit(`blocks:${link.nodeId}`, { accepted: 0, orphans: 0 });
+    outcome.returned = raw.length;
+    outcome.more = message.more === true;
+    if (raw.length > pending.limit) {
+      outcome.malformed = 'batch larger than requested';
+      this.penalise(link, 'malformed', outcome.malformed);
+      finish();
       return;
     }
-    let accepted = 0;
-    let orphans = 0;
     for (const hex of raw) {
       let block: Block;
       try {
         block = decodeBlock(fromHex(hex));
       } catch (error) {
-        this.penalise(link, 'malformed', `undecodable block: ${(error as Error).message}`);
+        outcome.malformed = `undecodable block: ${(error as Error).message}`;
+        this.penalise(link, 'malformed', outcome.malformed);
         break;
       }
       const hash = blockHash(block.header);
-      if (this.chain.getBlockByHash(hash)) continue; // already have it
+      if (outcome.firstHeight === null) {
+        outcome.firstHeight = block.header.height;
+        outcome.firstHash = hash;
+      }
+      outcome.lastHeight = block.header.height;
+      outcome.lastHash = hash;
+      if (this.chain.getBlockByHash(hash)) {
+        outcome.duplicates += 1; // already have it
+        continue;
+      }
       const result = this.chain.addBlock(block);
       if (result.accepted) {
-        accepted += 1;
+        outcome.accepted += 1;
         this.retryPendingCertificate(hash);
         this.peers.recordValidBlock(link.address);
         this.emit('block', block);
       } else if (result.code === ErrCode.ORPHAN_BLOCK) {
-        orphans += 1;
-      } else if (result.code !== ErrCode.DUPLICATE_BLOCK && result.code !== ErrCode.STALE_BLOCK) {
+        outcome.orphans += 1;
+      } else if (result.code === ErrCode.DUPLICATE_BLOCK) {
+        outcome.duplicates += 1;
+      } else if (result.code === ErrCode.STALE_BLOCK) {
+        outcome.stale += 1;
+      } else {
+        outcome.rejected = { code: result.code, message: result.message, height: block.header.height, hash };
         this.penalise(link, result.code === ErrCode.BAD_TIMESTAMP ? 'minor' : 'invalid-block', `${result.code}: ${result.message}`);
         break;
       }
     }
-    this.emit(`blocks:${link.nodeId}`, { accepted, orphans });
+    finish();
   }
 
   private handleNewBlock(link: PeerLink, message: P2PMessage): void {
