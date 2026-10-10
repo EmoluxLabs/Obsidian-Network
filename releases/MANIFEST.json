@@ -1,8 +1,8 @@
 {
   "product": "Obsidian Network",
   "version": "1.7.0",
-  "commit": "eba716707a25e72aed0e5edb26e90a566f71c68f",
-  "builtAt": "2026-10-10T05:22:52Z",
+  "commit": "5e16ac7eb839b05ad81cc35fb0143ade7ace060c",
+  "builtAt": "2026-10-10T05:43:01Z",
   "protocolVersion": "1.7.0",
   "paramsHash": "bffeacb35532ba3df70cda8c27ed6c96",
   "forkChoice": "FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH",
@@ -60,7 +60,7 @@
   "assets": [
     {
       "name": "obsidian-cloudflare-1.7.0.tar.gz",
-      "bytes": 177277
+      "bytes": 177278
     },
     {
       "name": "obsidian-cloudflare-1.7.0.zip",
@@ -68,7 +68,7 @@
     },
     {
       "name": "obsidian-core-1.7.0.tar.gz",
-      "bytes": 766764
+      "bytes": 766738
     },
     {
       "name": "obsidian-core-1.7.0.zip",
@@ -76,27 +76,27 @@
     },
     {
       "name": "obsidian-interface-1.7.0.tar.gz",
-      "bytes": 1620323
+      "bytes": 1615068
     },
     {
       "name": "obsidian-interface-1.7.0.zip",
-      "bytes": 1803268
+      "bytes": 1802057
     },
     {
       "name": "obsidian-interface-selfhost-1.7.0.tar.gz",
-      "bytes": 1442389
+      "bytes": 1436808
     },
     {
       "name": "obsidian-interface-selfhost-1.7.0.zip",
-      "bytes": 1586788
+      "bytes": 1585953
     },
     {
       "name": "obsidian-network-source-1.7.0.tar.gz",
-      "bytes": 4212752
+      "bytes": 4212424
     },
     {
       "name": "obsidian-node-operator-1.7.0.tar.gz",
-      "bytes": 587890
+      "bytes": 587878
     },
     {
       "name": "obsidian-node-operator-1.7.0.zip",
