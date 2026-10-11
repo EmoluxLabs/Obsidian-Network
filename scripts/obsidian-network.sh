@@ -11,6 +11,7 @@
 #             status    what is running, on which ports, at what height
 #             logs      follow the logs  (logs [node|interface])
 #             wallet    create a wallet for THIS network (printed once, stored nowhere)
+#             gate-key  print this network's mining gate public key (every node of the network must be given it)
 #             invite    mint a Genesis Invitation for this network's interface
 #             reset     delete THIS network's chain and accounts (never mainnet)
 #             doctor    check this machine and this network, and say what to fix
@@ -140,6 +141,12 @@ need_core() {
 need_interface() {
   [ -n "$INTERFACE_DIR" ] && [ -f "$INTERFACE_DIR/dist/server/main.js" ] ||
     die "cannot find a built obsidian-interface (dist/server/main.js). Set OBSIDIAN_INTERFACE_DIR, or build it: npm --prefix obsidian-interface ci && npm --prefix obsidian-interface run build"
+  # The interface loads the synced core (web/core) for certificate signing and transaction
+  # decoding, and that code imports its packages by name, so they must be installed in the
+  # interface too — a node-only install fails later with "Cannot find package '@noble/curves'"
+  # exactly when a gate key is configured. Fail here, with the command that fixes it.
+  [ -d "$INTERFACE_DIR/node_modules/@noble/curves" ] && [ -d "$INTERFACE_DIR/node_modules/@scure/bip39" ] ||
+    die "obsidian-interface has no dependencies installed. Run:  cd \"$INTERFACE_DIR\" && npm ci --omit=dev"
 }
 
 # ── small helpers ────────────────────────────────────────────────────────────
@@ -457,6 +464,29 @@ cmd_reset() {
   say "$NETWORK has been reset (its passphrase file and invitation hash were kept)"
 }
 
+# Print this network's mining gate ISSUER PUBLIC key. It is public by design (committed in genesis), and it is the
+# one value every node of the network must share: protocol 1.7.0 hashes the list into the genesis id, so a node
+# started without it builds a different chain and the other nodes refuse it as "another network".
+# The observed value goes to stdout and nothing else, so it can be used as  K="$(... gate-key)"  in a command.
+cmd_gate_key() {
+  local key=""
+  if [ -f "$GATE_KEYSTORE_FILE" ]; then
+    key="$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf8')).publicKey||'')" "$GATE_KEYSTORE_FILE")"
+    [ -n "$key" ] || die "the mining gate keystore $GATE_KEYSTORE_FILE has no public key; move it aside and start again"
+    if [ -n "${OBSIDIAN_MINING_GATE_PUBLIC_KEYS:-}" ] && [ "$OBSIDIAN_MINING_GATE_PUBLIC_KEYS" != "$key" ]; then
+      say "ignoring OBSIDIAN_MINING_GATE_PUBLIC_KEYS from your shell: this $NETWORK uses the gate key made for it ($GATE_KEYSTORE_FILE)" >&2
+    fi
+  elif [ -n "${OBSIDIAN_MINING_GATE_PUBLIC_KEYS:-}" ]; then
+    key="$OBSIDIAN_MINING_GATE_PUBLIC_KEYS"
+  fi
+  if [ -z "$key" ]; then
+    die "this machine holds no mining gate key for $NETWORK. If the network was made here, start it once and one is made ($0 $NETWORK start). If it was made on another machine, give THIS command the list that machine's node uses:  OBSIDIAN_MINING_GATE_PUBLIC_KEYS='<that list>' bash $0 $NETWORK gate-key"
+  fi
+  printf '%s\n' "$key"
+  say "every node of $NETWORK must be started with:  OBSIDIAN_MINING_GATE_PUBLIC_KEYS=$key" >&2
+  say "(the list is part of the genesis id: a node without it is a different chain and is refused as 'another network')" >&2
+}
+
 # Answers "why is it not working?" in one command, from facts rather than guesses. Uses only Node, df, grep,
 # tail and the shell, so it runs on a phone with nothing installed beyond the guide's packages.
 port_free() {  # port_free <host> <port>
@@ -551,6 +581,21 @@ cmd_doctor() {
     ok "passphrase: none yet; one will be generated on the first start (a test network does not need one you chose)"
     [ -z "$given" ] || info "the passphrase in your shell is ignored: a new $NETWORK key gets its own"
   fi
+  if [ -f "$GATE_KEYSTORE_FILE" ]; then
+    local gate_key; gate_key="$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf8')).publicKey||'')" "$GATE_KEYSTORE_FILE" 2>/dev/null)"
+    ok "mining gate: this network's issuer key is here, and every node must be given its public key"
+    [ -z "$gate_key" ] || info "give this to every node:  OBSIDIAN_MINING_GATE_PUBLIC_KEYS=$gate_key   ($0 $NETWORK gate-key)"
+  elif [ -n "${OBSIDIAN_MINING_GATE_PUBLIC_KEYS:-}" ]; then
+    ok "mining gate: the list in your shell is used (OBSIDIAN_MINING_GATE_PUBLIC_KEYS=$OBSIDIAN_MINING_GATE_PUBLIC_KEYS)"
+    info "every node of $NETWORK must be given the SAME list: the list is part of the genesis id, and a different one is a different chain"
+  else
+    info "mining gate: no issuer key here, so NO mining claim can be accepted (the node still runs and verifies blocks)"
+    if [ "$NETWORK" = "mainnet" ]; then
+      fix "make one on a machine you trust: node scripts/generate-mining-gate-key.mjs; give the public key to every node (OBSIDIAN_MINING_GATE_PUBLIC_KEYS) and the encrypted keystore to the interface"
+    else
+      fix "start once to make one here ($0 $NETWORK start), or give this machine the list every node of $NETWORK uses (OBSIDIAN_MINING_GATE_PUBLIC_KEYS)"
+    fi
+  fi
   if [ -f "$INVITE_FILE" ]; then
     ok "invitation: this network's own ($INVITE_FILE)"
   elif [ "$NETWORK" = "devnet" ]; then
@@ -601,8 +646,9 @@ case "$COMMAND" in
   status) cmd_status ;;
   logs) cmd_logs "$@" ;;
   wallet) cmd_wallet ;;
+  gate-key) cmd_gate_key ;;
   invite) cmd_invite ;;
   reset) cmd_reset "$@" ;;
   doctor) cmd_doctor ;;
-  *) die "unknown command \"$COMMAND\" — start, stop, restart, status, logs, wallet, invite, reset or doctor" ;;
+  *) die "unknown command \"$COMMAND\" — start, stop, restart, status, logs, wallet, gate-key, invite, reset or doctor" ;;
 esac

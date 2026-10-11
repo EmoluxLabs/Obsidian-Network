@@ -48,7 +48,7 @@ and tries each file up to eight times. Paste these five lines together:
 ```bash
 rm -rf ~/obsidian/src; mkdir -p ~/obsidian; cd ~/obsidian
 G="git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60"
-for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
+for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
 cd src && for f in SHA256SUMS obsidian-node-operator-1.7.0.tar.gz obsidian-interface-selfhost-1.7.0.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
 ls -l releases
 ```
@@ -74,11 +74,13 @@ tar xzf obsidian-interface-selfhost-1.7.0.tar.gz -C ~/obsidian/run
 ls ~/obsidian/run        # obsidian-core  obsidian-interface  obsidian-network.sh  landing  mine ...
 ```
 
-Install the node's libraries (about 4 MB; if it stops, run the same line again, because npm keeps what it has
-already downloaded):
+Install the runtime libraries — for the node **and** the interface (about 4 MB in all; if it stops, run the
+same lines again, because npm keeps what it has already downloaded):
 
 ```bash
 cd ~/obsidian/run/obsidian-core
+npm ci --omit=dev --fetch-retries=10
+cd ~/obsidian/run/obsidian-interface
 npm ci --omit=dev --fetch-retries=10
 ```
 
@@ -295,6 +297,7 @@ its whole output.
 | --- | --- | --- |
 | `cd: …/obsidian/run: No such file or directory` | the archives were never unpacked there | do section 2 again, from the download |
 | `obsidian-core has no dependencies installed` | the libraries step was skipped or stopped | `cd ~/obsidian/run/obsidian-core && npm ci --omit=dev --fetch-retries=10` |
+| `obsidian-interface has no dependencies installed` (or `Cannot find package '@noble/curves'`) | the libraries step was skipped or stopped for the interface | `cd ~/obsidian/run/obsidian-interface && npm ci --omit=dev --fetch-retries=10` |
 | `cannot find a built obsidian-core` | the two archives are not in the same directory, or you are not in `~/obsidian/run` | `cd ~/obsidian/run`, and unpack both archives there (section 2) |
 | `Node.js 20.10 or newer is required` | Node is too old | `pkg upgrade -y` |
 | `node did not answer within 180s, but it is still running` | a slow phone, not a failure | wait a minute, then run `status` |

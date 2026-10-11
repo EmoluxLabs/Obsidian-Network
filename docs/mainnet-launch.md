@@ -267,6 +267,7 @@ Expect `totalSupplyObs: "0.000000000000000000"`, `invariantOk: true`,
 ### 2.2 Start nodes 2 and 3, pointed at node 1
 
 ```bash
+export OBSIDIAN_MINING_GATE_PUBLIC_KEYS='<the same public key node 1 uses>'   # part of the genesis id: it must match on every node
 node dist/index.js start --config config/mainnet.json --seeds node1.example.org:8631
 ```
 

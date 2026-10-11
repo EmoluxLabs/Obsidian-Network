@@ -136,7 +136,7 @@ curl -s http://127.0.0.1:38630/audit/compliance | jq -c 'to_entries[] | {(.key):
 
 ```bash
 cd /tmp/obsidian-verify && tar -xzf /path/to/obsidian-interface-selfhost-1.7.0.tar.gz
-cd obsidian-interface
+cd obsidian-interface && npm ci --omit=dev     # the four crypto packages it loads from web/core
 node dist/server/main.js --network devnet --nodes http://127.0.0.1:38630 &       # devnet's interface port is 38788
 curl -s http://127.0.0.1:38788/api/health | jq        # {"status":"ok","healthyNodes":1,...}
 curl -s http://127.0.0.1:38788/mine/ | head -5        # the mine page, served from the package

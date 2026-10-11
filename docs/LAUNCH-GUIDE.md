@@ -107,7 +107,7 @@ on a phone.
 ```bash
 rm -rf ~/obsidian/src; mkdir -p ~/obsidian; cd ~/obsidian
 G="git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60"
-for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
+for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
 cd src && for f in SHA256SUMS obsidian-node-operator-1.7.0.tar.gz obsidian-interface-selfhost-1.7.0.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
 ls -l releases
 ```
@@ -118,14 +118,14 @@ about three): keep Termux open and the screen on while it runs. If it does not l
 first line of the error and find it in the troubleshooting table at the end of this guide (§8), or use the
 browser route below. The first command removes any half-finished earlier attempt, so running this step
 again is always safe. `--branch` names the branch you are installing from; this release was delivered on
-`arena/414b663a-obsidian-network`.
+`arena/7c29c899-obsidian-network`.
 
 **If your connection keeps dropping** (the sign is `Connection reset by peer` or `early EOF`, again and
 again), download the two archives with your phone's browser instead. A browser resumes an interrupted
 download; `git` and `curl` in Termux cannot. Open both links and let them finish (they land in Downloads):
 
-* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-node-operator-1.7.0.tar.gz>
-* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-interface-selfhost-1.7.0.tar.gz>
+* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/7c29c899-obsidian-network/releases/obsidian-node-operator-1.7.0.tar.gz>
+* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/7c29c899-obsidian-network/releases/obsidian-interface-selfhost-1.7.0.tar.gz>
 
 Then copy them where Step 5 expects them. `termux-setup-storage` asks for permission once; tap Allow. The
 last command fetches the checksum file (1 KB), in case the commands above did not get that far:
@@ -134,7 +134,7 @@ last command fetches the checksum file (1 KB), in case the commands above did no
 termux-setup-storage
 mkdir -p ~/obsidian/src/releases
 cp ~/storage/downloads/obsidian-node-operator-1.7.0.tar.gz ~/storage/downloads/obsidian-interface-selfhost-1.7.0.tar.gz ~/obsidian/src/releases/
-cd ~/obsidian/src/releases && curl -fL --retry 8 -o SHA256SUMS https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/SHA256SUMS
+cd ~/obsidian/src/releases && curl -fL --retry 8 -o SHA256SUMS https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/7c29c899-obsidian-network/releases/SHA256SUMS
 ls -l
 ```
 
@@ -147,7 +147,7 @@ where the built archives are. If you also want the whole project (source, script
 11 MB), clone it into a separate folder. Nothing in the install needs it:
 
 ```bash
-git clone --depth 1 --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
+git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
 ```
 
 **Step 5 — verify the archives.** Do not skip this: an archive you have not checked is a
@@ -176,21 +176,33 @@ tar xzf obsidian-interface-selfhost-1.7.0.tar.gz -C ~/obsidian/run
 ls ~/obsidian/run        # obsidian-core  obsidian-interface  obsidian-network.sh  landing  mine ...
 ```
 
-**Step 7 — install the node's runtime packages (six small packages, about 4 MB, no native code).**
+**Step 7 — install the runtime packages (about 4 MB in all, no native code).**
 
 ```bash
 cd ~/obsidian/run/obsidian-core
 npm ci --omit=dev --fetch-retries=10
+cd ~/obsidian/run/obsidian-interface
+npm ci --omit=dev --fetch-retries=10
 ```
 
-`--omit=dev` is what keeps this light and compiler-free: the build tools (`esbuild`,
-TypeScript, the test runner) are not needed to *run* a node. The interface has no runtime
-packages at all. `--fetch-retries=10` makes npm try each download up to ten times, which a slow or
-unstable connection needs. If it still stops, run the same command again: npm keeps every package it has
-already downloaded. If `npm ci` fails on your mirror, install the five it needs by name (npm adds the one they share):
+Both are needed. The node's install is the six small packages (`@noble/curves`, `@noble/hashes`,
+`@scure/base`, `@scure/bip32`, `@scure/bip39`, `ws`). The interface loads the synced core for
+certificate signing and transaction decoding, and that code imports the four crypto packages by
+name, so the interface needs them too — they are the ones the first command already downloaded, so
+the second one installs from npm's cache and fetches nothing new. `--omit=dev` is what keeps this
+light and compiler-free: the build tools (`esbuild`, TypeScript, the test runner) are not needed to
+*run* anything. `--fetch-retries=10` makes npm try each download up to ten times, which a slow or
+unstable connection needs. If it still stops, run the same commands again: npm keeps every package it has
+already downloaded. If `npm ci` fails on your mirror, install the five the node needs by name (npm adds the one they share):
 
 ```bash
-npm install --omit=dev --no-audit --no-fund --fetch-retries=10 @noble/curves@1.6.1 @noble/hashes@1.5.0 @scure/bip32@1.5.0 @scure/bip39@1.4.0 ws@8.22.0
+npm install --omit=dev --no-audit --no-fund --fetch-retries=10 @noble/curves@1.6.0 @noble/hashes@1.5.0 @scure/bip32@1.5.0 @scure/bip39@1.4.0 ws@8.22.0
+```
+
+…and, in `obsidian-interface`, the four it needs:
+
+```bash
+npm install --omit=dev --no-audit --no-fund --fetch-retries=10 @noble/curves@1.6.0 @noble/hashes@1.5.0 @scure/bip32@1.5.0 @scure/bip39@1.4.0
 ```
 
 **Step 8 — smoke test.**
@@ -295,13 +307,26 @@ curl -s localhost:38788/api/auth/config    # genesisInvite: configured true, red
 Every node needs its own data directory. `--seeds` takes the **P2P** port of a node that is
 already running, never an RPC port.
 
+Every node must also be given the network's mining gate issuer key (protocol 1.7.0). That key
+is hashed into the genesis id, so a node started **without** it builds a different chain: the
+first node refuses it as `another network` (peers stay at 0), and with no issuer committed it
+could never accept a mining claim either. This device made a key for devnet; print it:
+
 ```bash
-cd ~/obsidian/run/obsidian-core
-OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network devnet --data-dir ~/obsidian-data/devnet/node2 --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631
+cd ~/obsidian/run && bash obsidian-network.sh devnet gate-key
+```
+
+On another machine, copy that exact value from the first node's device into the command below.
+On the same device, the command reads it back itself:
+
+```bash
+cd ~/obsidian/run && GATE_KEY="$(bash obsidian-network.sh devnet gate-key)" && cd obsidian-core && OBSIDIAN_MINING_GATE_PUBLIC_KEYS="$GATE_KEY" OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network devnet --data-dir ~/obsidian-data/devnet/node2 --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631
 ```
 
 On another machine, replace `127.0.0.1` with the first node's address and open TCP **38631**
-there. Both nodes should report the same `headHash` once they have synced.
+there. Both nodes should report the same `headHash` once they have synced. If peers stay at 0,
+compare the two genesis ids in the logs: a different `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` is a
+different chain, and the warning names it (`is on another network or version than this one`).
 
 ### Reset devnet (start again from height 0)
 
@@ -367,11 +392,19 @@ curl -s localhost:18788/api/auth/config    # genesisInvite: configured true, red
 
 ### Add another testnet node
 
-The first testnet node is the seed. Give other operators its public address and the P2P port; they point `--seeds` at it. Every node needs its own data directory.
+The first testnet node is the seed. Give other operators its public address, the P2P port, and
+the network's mining gate issuer key — the key is hashed into the genesis id (protocol 1.7.0),
+so every node must be started with the same one or it is a different chain and will not peer.
+On the first node's device:
 
 ```bash
-cd ~/obsidian/run/obsidian-core
-OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network testnet --data-dir ~/obsidian-data/testnet/node2 --seeds FIRST_NODE_ADDRESS:18631
+cd ~/obsidian/run && bash obsidian-network.sh testnet gate-key
+```
+
+They point `--seeds` at the first node and pass that key. Every node needs its own data directory:
+
+```bash
+cd ~/obsidian/run/obsidian-core && OBSIDIAN_MINING_GATE_PUBLIC_KEYS='<the key printed by the first node: bash obsidian-network.sh testnet gate-key>' OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network testnet --data-dir ~/obsidian-data/testnet/node2 --seeds FIRST_NODE_ADDRESS:18631
 ```
 
 Open TCP **18631** on the first node's firewall (the P2P port only — never the RPC port).
@@ -437,11 +470,13 @@ curl -s localhost:28788/api/auth/config    # genesisInvite: configured true, red
 
 ### Add another staging node
 
-The first staging node is the seed; other staging nodes point `--seeds` at it. Every node needs its own data directory.
+The first staging node is the seed; other staging nodes point `--seeds` at it and are started
+with the same mining gate issuer key (`bash obsidian-network.sh staging gate-key` on the first
+node's device prints it — it is part of the genesis id, so a node without it is a different
+chain). Every node needs its own data directory:
 
 ```bash
-cd ~/obsidian/run/obsidian-core
-OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network staging --data-dir ~/obsidian-data/staging/node2 --seeds FIRST_NODE_ADDRESS:28631
+cd ~/obsidian/run/obsidian-core && OBSIDIAN_MINING_GATE_PUBLIC_KEYS='<the key printed by the first node: bash obsidian-network.sh staging gate-key>' OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network staging --data-dir ~/obsidian-data/staging/node2 --seeds FIRST_NODE_ADDRESS:28631
 ```
 
 Open TCP **28631** on the first node's firewall (the P2P port only — never the RPC port).
@@ -515,14 +550,21 @@ bash obsidian-network.sh mainnet stop        # stops THIS network's node and int
 ```bash
 # terminal 1 — the node (type the passphrase first, as in step 1 above; MP is set in this terminal)
 cd ~/obsidian/run/obsidian-core
+export OBSIDIAN_MINING_GATE_PUBLIC_KEYS='<the issuer key list EVERY mainnet node commits — the same list on all of them>'
 OBSIDIAN_KEYSTORE_PASSPHRASE="$MP" node dist/index.js start --network mainnet --data-dir ~/obsidian-data/mainnet/node --rpc-port 8630 --p2p-port 8631 --seeds 203.0.113.10:8631      # example address: use the real operators'
 ```
 
+The gate list is part of the genesis id (protocol 1.7.0): a node started without it — or with a
+different list — is a different chain and the others refuse it. It is the public half of the
+issuer key the operators made with `scripts/generate-mining-gate-key.mjs`.
+
 ```bash
-# terminal 2 — the interface
-cd ~/obsidian/run/obsidian-interface
-OBSIDIAN_GENESIS_INVITE_HASH='<the hash printed by the invite command, in single quotes>' node dist/server/main.js --network mainnet --port 8788 --nodes http://127.0.0.1:8630 --data-dir ~/obsidian-data/mainnet/interface
+# terminal 2 — the interface (it holds the issuer key's encrypted private half, and signs certificates with it)
+cd ~/obsidian/run/obsidian-interface && OBSIDIAN_GATE_KEYSTORE=/etc/obsidian/mainnet/gate.keystore.json OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE=/etc/obsidian/mainnet/gate.pass OBSIDIAN_GENESIS_INVITE_HASH='<the hash printed by the invite command, in single quotes>' node dist/server/main.js --network mainnet --port 8788 --nodes http://127.0.0.1:8630 --data-dir ~/obsidian-data/mainnet/interface
 ```
+
+Without the keystore the interface still answers, but it cannot sign mining-gate certificates,
+so no claim can be accepted.
 
 Open **http://127.0.0.1:8788**. The interface port for mainnet is **8788**.
 
@@ -547,6 +589,7 @@ their own key and data directory, and points `--seeds` at the others:
 
 ```bash
 cd ~/obsidian/run/obsidian-core
+export OBSIDIAN_MINING_GATE_PUBLIC_KEYS='<the same issuer key list the other operators committed>'
 OBSIDIAN_KEYSTORE_PASSPHRASE="$MP" node dist/index.js start --network mainnet --data-dir ~/obsidian-data/mainnet/node --seeds FIRST_NODE_ADDRESS:8631
 ```
 
@@ -645,7 +688,7 @@ and everything stops cleanly. It needs `git`, `curl`, `sha256sum`, `tar` and `se
 `pkg install util-linux`), the default ports free, and about four minutes. It lives in the whole project, which Step 4 did not download, so the first line fetches that (about 11 MB):
 
 ```bash
-rm -rf ~/obsidian/full; git clone --depth 1 --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
+rm -rf ~/obsidian/full; git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
 cd ~/obsidian/full && bash scripts/fresh-machine-test.sh
 ```
 
@@ -710,6 +753,6 @@ cannot be regenerated. On mainnet, also back up the interface's data directory (
 | Wallet page: "cannot use the browser's cryptography" | the page is plain HTTP at a non-localhost address | open `http://127.0.0.1:<port>` on the device, or use HTTPS |
 | `[Process completed (signal 9)]` in Termux | Android killed the process | Step 3 of section 1A |
 | `npm ci` fails on a phone | a mirror problem | use the five-package `npm install` in Step 7 |
-| Peers stay at 0 | the seed is unreachable, its P2P port is closed, or it follows another network | check `--seeds` is the **P2P** port of a node on **this** network; open it in the firewall; look in the log for `is on another network or version than this one` |
+| Peers stay at 0 | the seed is unreachable, its P2P port is closed, it follows another network, or it was started without the network's mining gate issuer key (a different genesis id) | check `--seeds` is the **P2P** port of a node on **this** network; open it in the firewall; give every node the same `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` (`bash obsidian-network.sh <network> gate-key` prints it); look in the log for `is on another network or version than this one` |
 
 More detail: [node-operator.md](node-operator.md) §9.

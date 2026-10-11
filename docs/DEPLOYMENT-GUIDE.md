@@ -49,7 +49,7 @@ Each term is explained the first time it matters. Skim this, then come back.
 | **Repository (repo)** | The folder containing all the project's code and its history. |
 | **Git** | The program that tracks every change to the repo. |
 | **Clone** | Download a copy of the repo to your device. |
-| **Branch** | A named line of development. Yours is `arena/414b663a-obsidian-network`. |
+| **Branch** | A named line of development. Yours is `arena/7c29c899-obsidian-network`. |
 | **Commit** | One saved change, with a message and a unique id like `b34e581`. |
 | **Push / pull** | Send your commits to GitHub / fetch GitHub's commits to you. |
 | **Node.js** | The program that runs this project's JavaScript. Version 20.10+ required. |
@@ -78,7 +78,7 @@ wrong one is how people ship old code.
 
 | Thing | What it is | When you deploy from it |
 |---|---|---|
-| **The delivery branch** (`arena/414b663a-obsidian-network`) | The branch this release was delivered on: the full source tree, the built release archives in `releases/`, and these docs. Clone from it to install (the launch guide's commands do) and start new work from it. | Local devnet, private testnet and rehearsals; **mainnet from the archives**. |
+| **The delivery branch** (`arena/7c29c899-obsidian-network`) | The branch this release was delivered on: the full source tree, the built release archives in `releases/`, and these docs. Clone from it to install (the launch guide's commands do) and start new work from it. | Local devnet, private testnet and rehearsals; **mainnet from the archives**. |
 | **Default branch** | Whichever branch GitHub shows first (Settings → Branches); it is what a plain `git clone` checks out. GitHub refuses to delete the default branch, so if you want only the delivery branch to remain, **make it the default first**, then delete the others. | — |
 | **Release branch** | A branch frozen for a release, e.g. `release/1.7.0`, that only receives fixes. Optional: this repository does not use one. | Optional; see §B. |
 | **Git tag** | A permanent, immovable label on one exact commit, e.g. `v1.7.0`. Unlike a branch it never moves. The release tag for this version is created by the operator from the commit the shipped archives were built from (§B6); until you create `v1.7.0` the remote does not carry it. | Tag first, then build the archive from the tag. |
@@ -185,15 +185,15 @@ Bash on Windows — not PowerShell, the loop is Bash syntax):
 
 ```bash
 cd ~/Obsidian-Network
-git checkout arena/414b663a-obsidian-network
-git pull origin arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
+git pull origin arena/7c29c899-obsidian-network
 
 for b in main develop staging testnet devnet release/1.7.0; do
-  git branch -f "$b" arena/414b663a-obsidian-network
+  git branch -f "$b" arena/7c29c899-obsidian-network
   git push -u origin "$b"
 done
 
-git checkout arena/414b663a-obsidian-network   # back to the work branch
+git checkout arena/7c29c899-obsidian-network   # back to the work branch
 git branch -a
 ```
 
@@ -240,19 +240,19 @@ git branch --show-current
 Expect exactly:
 
 ```
-arena/414b663a-obsidian-network
+arena/7c29c899-obsidian-network
 ```
 
 If it says anything else, switch:
 
 ```bash
-git checkout arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
 ```
 
 ### A4. Pull the latest code
 
 ```bash
-git pull origin arena/414b663a-obsidian-network
+git pull origin arena/7c29c899-obsidian-network
 ```
 
 `pull` downloads commits from GitHub (`origin`) and applies them to your copy.
@@ -426,7 +426,7 @@ treated as unsigned. See `docs/release-verification.md` §1b.
 
 ### B0. Should you?
 
-This release was delivered on `arena/414b663a-obsidian-network`, and that branch is complete on its own: you
+This release was delivered on `arena/7c29c899-obsidian-network`, and that branch is complete on its own: you
 can keep it as your main line (make it the default branch in GitHub → Settings → Branches) and
 skip this section. Merging into `main` is for people who keep `main` as their "accepted state"
 branch.
@@ -447,13 +447,13 @@ A backup branch is a second name pointing at the same commit, so you can always
 come back.
 
 ```bash
-git checkout arena/414b663a-obsidian-network
-git pull origin arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
+git pull origin arena/7c29c899-obsidian-network
 git branch backup/pre-main-$(date +%Y%m%d)
 git push origin backup/pre-main-$(date +%Y%m%d)
 ```
 
-> Your working session is tied to `arena/414b663a-obsidian-network`. Creating a
+> Your working session is tied to `arena/7c29c899-obsidian-network`. Creating a
 > backup branch is a safety net; keep doing your actual work on the session
 > branch.
 
@@ -474,7 +474,7 @@ message.
 ```bash
 git checkout main
 git pull origin main
-git merge arena/414b663a-obsidian-network
+git merge arena/7c29c899-obsidian-network
 ```
 
 **Expect no conflicts today.** `main` already contains the full tree (PR #1
@@ -501,7 +501,7 @@ with your branch's tree:
 
 ```bash
 git checkout main
-git reset --hard arena/414b663a-obsidian-network
+git reset --hard arena/7c29c899-obsidian-network
 git push --force-with-lease origin main
 ```
 
@@ -515,13 +515,13 @@ Compare the file trees. If the two hashes match, the contents are byte-identical
 
 ```bash
 git rev-parse main^{tree}
-git rev-parse arena/414b663a-obsidian-network^{tree}
+git rev-parse arena/7c29c899-obsidian-network^{tree}
 ```
 
 And confirm nothing differs:
 
 ```bash
-git diff main arena/414b663a-obsidian-network --stat
+git diff main arena/7c29c899-obsidian-network --stat
 ```
 
 Empty output = identical.
@@ -540,8 +540,8 @@ release's tag. Create `v1.7.0` yourself on the commit the shipped archives were 
 
 ```bash
 cd ~/Obsidian-Network
-git checkout arena/414b663a-obsidian-network
-git pull origin arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
+git pull origin arena/7c29c899-obsidian-network
 git status              # must print: nothing to commit, working tree clean
 ```
 
@@ -569,7 +569,7 @@ landed on the commit you meant:
 ```bash
 git show --stat v1.7.0 | head -5
 git rev-parse v1.7.0^{commit}
-git rev-parse arena/414b663a-obsidian-network
+git rev-parse arena/7c29c899-obsidian-network
 ```
 
 The last two commands must print the **same** commit id.
@@ -654,7 +654,7 @@ cd ~/Obsidian-Network
 git status
 git add releases
 git commit -m "Rebuild 1.7.0 release archives from tag v1.7.0"
-git push origin arena/414b663a-obsidian-network
+git push origin arena/7c29c899-obsidian-network
 ```
 
 > Note the ordering quirk: the tag labels the commit *before* the rebuilt
@@ -712,7 +712,7 @@ Android: see [§M](#m-android-guide). Windows: see [§N](#n-windows-guide).
 ```bash
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
-git checkout arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
 npm --prefix obsidian-core ci
 npm --prefix obsidian-core run build
 ```
@@ -741,6 +741,15 @@ with their timestamps removed):
 {"level":"info","message":"obsidian core ready","network":"devnet","rpc":"http://127.0.0.1:38630","mining":true}
 {"level":"info","message":"produced block","height":1,"transactions":0}
 ```
+
+Started this way the chain commits **no** mining gate issuer key (the `genesisId` above is that chain's).
+The node runs and produces blocks, but no mining claim can be accepted, so no OBS is ever minted. A 1.7.0
+network that can mine needs an issuer key whose public half every node is given as
+`OBSIDIAN_MINING_GATE_PUBLIC_KEYS` (the release's helper prints it: `bash obsidian-network.sh devnet
+gate-key`; the release's own devnet is started with `bash obsidian-network.sh devnet start`, which makes
+one). The list is part of the genesis id, so a node started with a different one — or none — is a
+different chain, and the nodes refuse each other (`is on another network or version than this one`). The
+encrypted private half goes to the interface (`OBSIDIAN_GATE_KEYSTORE`, `OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE`).
 
 Note the two addresses: **P2P listens on every interface** (peers must reach it) and **RPC listens on
 127.0.0.1 only**, which is deliberate: the RPC is an operator control surface and is never exposed unless
@@ -1023,7 +1032,7 @@ node --version      # must be >= 20.10
 
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
-git checkout arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
 npm --prefix obsidian-core ci
 npm --prefix obsidian-core run build
 ```
@@ -1656,7 +1665,7 @@ node --version        # must be v20.10.0 or higher
 cd ~
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
-git checkout arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
 ```
 
 **3. Build the core** (a few minutes on a phone):
@@ -2327,7 +2336,7 @@ settings → Personal access tokens).
 ### M4. Switch to the branch
 
 ```bash
-git checkout arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
 git branch --show-current
 ```
 
@@ -2477,7 +2486,7 @@ ssh user@server 'curl -s localhost:8630/status'
 
 Codespaces gives you a real Linux machine in a browser tab, free for a monthly
 quota. On github.com, open the repository → **Code** → **Codespaces** → create
-one on branch `arena/414b663a-obsidian-network`. Every command in this guide
+one on branch `arena/7c29c899-obsidian-network`. Every command in this guide
 works there, and it will not be killed by Android.
 
 ---
@@ -2522,7 +2531,7 @@ run `gh auth login`.
 cd ~
 git clone https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network
-git checkout arena/414b663a-obsidian-network
+git checkout arena/7c29c899-obsidian-network
 
 npm --prefix obsidian-core ci
 npm --prefix obsidian-core run build
@@ -2610,7 +2619,7 @@ curl -s https://rpc1.example.org/status
 
 **Repository**
 - [ ] `git status` clean
-- [ ] On branch `arena/414b663a-obsidian-network`
+- [ ] On branch `arena/7c29c899-obsidian-network`
 - [ ] `git pull` done; commit id recorded: ________
 - [ ] Dependencies installed with `npm ci`
 
