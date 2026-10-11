@@ -982,6 +982,28 @@ test('the helper, the packaging gate and CI all run this test', () => {
   assert.match(read('.github/workflows/ci.yml'), /check-nginx-conf\.py/, 'CI must check the nginx files');
 });
 
+test('every file outside obsidian-core that a shipped core test reads is staged into the core archive', () => {
+  // obsidian-core-<version>.tar.gz ships its own suite and verify-release.sh runs it in the extracted
+  // archive ("only the node package ships a suite that is self-contained"). A test that reads a
+  // repository file the packaging script does not stage then fails there — on a correct archive, after
+  // a reader followed the release notes. The relative path inside the archive is the same one, so the
+  // fix is always to stage the file.
+  const pack = read('scripts/package-releases.sh');
+  // a real staging line (cp/stage), not a comment that merely names the path
+  const staged = (target) => pack.split('\n').some((line) => /^\s*(?:cp|stage)\b/.test(line) && line.includes(target));
+  const missing = [];
+  for (const file of walk(join(CORE, 'tests'), (p) => p.endsWith('.ts'))) {
+    const text = readFileSync(file, 'utf8');
+    for (const m of text.matchAll(/new URL\('((?:\.\.\/)+)([^']+)',\s*import\.meta\.url\)/g)) {
+      const up = m[1].match(/\.\.\//g).length;
+      const depth = relative(ROOT, file).split('/').length - 1; // directory levels below the repository root
+      if (up < depth) continue; // still inside obsidian-core/, which the archive stages whole
+      if (!staged(m[2])) missing.push(`${relative(ROOT, file)} reads ${m[2]}, which the core archive does not stage`);
+    }
+  }
+  assert.deepEqual(missing, []);
+});
+
 // ── the mining gate key is part of the genesis id ───────────────────────────
 // Protocol 1.7.0 hashes the committed mining-gate issuer key list into the genesis id, so a node started
 // without the network's list builds a different chain: the other nodes refuse it ("is on another network or

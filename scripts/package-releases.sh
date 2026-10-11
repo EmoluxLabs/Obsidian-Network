@@ -225,6 +225,16 @@ stage "$STAGING/obsidian-core" \
   obsidian-core/src obsidian-core/tests obsidian-core/dist obsidian-core/config \
   obsidian-core/deployment obsidian-core/README.md .env.example 2>/dev/null || true
 cp LICENSE "$STAGING/obsidian-core/" 2>/dev/null || true
+# One shipped test compares the node's compliance audit with the removed-feature list CI carries
+# (tests/security/rpc-hardening.test.ts reads ../../../.github/workflows/ci.yml — the same
+# repository-relative path inside this archive). Without the file,
+# `verify-release.sh obsidian-core-<version>.tar.gz --with-tests` — the command the generated
+# release notes tell a reader to run — fails on a correct archive, so the suite's one repo-level
+# input ships with it.
+if [ -f .github/workflows/ci.yml ]; then
+  mkdir -p "$STAGING/obsidian-core/.github/workflows"
+  cp .github/workflows/ci.yml "$STAGING/obsidian-core/.github/workflows/ci.yml"
+fi
 
 # ── 2. obsidian-interface: server, built bundles and the site shells ─────────
 stage "$STAGING/obsidian-interface" \
