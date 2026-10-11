@@ -89,6 +89,16 @@ const POST_ONLY_PATHS: ReadonlySet<string> = new Set([
  */
 const SLASH_LIST_LIMIT = 64;
 
+/**
+ * The most client addresses the rate limiter will remember at once.
+ *
+ * The map is keyed by client address, which is data an attacker supplies, so it
+ * needs a ceiling: past it, entries are shed oldest-first (see `boundBuckets`).
+ */
+const MAX_RATE_LIMIT_KEYS = 10_000;
+/** How long an untouched bucket is kept before the sweep offers to forget it. */
+const IDLE_BUCKET_TTL_MS = 10 * 60_000;
+
 export class RpcServer {
   private server?: Server;
   private readonly buckets = new Map<string, RateBucket>();
@@ -230,17 +240,40 @@ export class RpcServer {
     bucket.updatedAt = now;
     if (bucket.tokens < 1) {
       this.buckets.set(ip, bucket);
+      this.boundBuckets(now);
       return false;
     }
     bucket.tokens -= 1;
     this.buckets.set(ip, bucket);
-    if (this.buckets.size > 10_000) {
-      // Opportunistic cleanup so a scan cannot grow this map without bound.
-      for (const [key, value] of this.buckets) {
-        if (now - value.updatedAt > 10 * 60_000) this.buckets.delete(key);
-      }
-    }
+    this.boundBuckets(now);
     return true;
+  }
+
+  /**
+   * Keep the rate-limit map to `MAX_RATE_LIMIT_KEYS` entries, whatever the
+   * traffic looks like.
+   *
+   * Forgetting only the buckets that have been idle for ten minutes is not a
+   * bound: under a flood of fresh addresses none of them are ten minutes old,
+   * so the map grew with every address an attacker could present, and every
+   * further request past the threshold scanned the whole of it. Sweep the idle
+   * ones first (that is the cheap case, and it never touches a live client),
+   * then shed the least-recently-inserted entries until the ceiling holds.
+   * Losing an old budget means one address is throttled a little early; running
+   * out of memory would take the node down for everybody.
+   */
+  private boundBuckets(now: number): void {
+    if (this.buckets.size <= MAX_RATE_LIMIT_KEYS) return;
+    for (const [key, value] of this.buckets) {
+      if (now - value.updatedAt > IDLE_BUCKET_TTL_MS) this.buckets.delete(key);
+    }
+    let excess = this.buckets.size - MAX_RATE_LIMIT_KEYS;
+    if (excess <= 0) return;
+    for (const key of this.buckets.keys()) {
+      this.buckets.delete(key);
+      excess -= 1;
+      if (excess <= 0) return;
+    }
   }
 
   /**

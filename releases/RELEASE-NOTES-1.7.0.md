@@ -46,8 +46,9 @@ public release.
   proposer/vote equivocation evidence
 * fork choice is finalized anchor → fixed PoT weight → height → the lowest
   block hash, so equal-height ties resolve identically on every node
-* protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data; it does not
-  include a live-chain migration
+* protocol 1.7.0 is genesis-bound and rejects anything below 1.7.0 (peers at
+  the handshake, data directories at startup); it does not include a live-chain
+  migration
 * 951 automated tests, all of them run immediately before packaging: core (529), interface (306), edge worker (17), release verification and signing behaviour (9), soak verdict rules (5), the genesis invitation generator (3), repository consistency (29), the three-node cluster end-to-end suite (15) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (38)
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%

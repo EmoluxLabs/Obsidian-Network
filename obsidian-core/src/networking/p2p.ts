@@ -133,6 +133,13 @@ const PING_INTERVAL_MS = 20_000;
 const MAX_SYNC_BATCH = 128;
 /** A node that keeps dialling a peer of another network is told once per this long, not on every retry. */
 const IDENTITY_REPORT_WINDOW_MS = 10 * 60_000;
+/**
+ * Ceilings on the two maps keyed by a peer address this node did not choose.
+ * Both are throttles over data a stranger controls, so both need a size the
+ * stranger cannot grow: see `banIp` and `reportIdentityMismatch`.
+ */
+const MAX_BANNED_IPS = 2_000;
+const MAX_IDENTITY_REPORTS = 2_000;
 
 /** Before the handshake completes a peer may only send a hello: nothing needs more than this. */
 const MAX_PRE_HANDSHAKE_BYTES = 64 * 1024;
@@ -829,9 +836,19 @@ export class P2PService extends EventEmitter {
 
   private banIp(ip: string, reason: string): void {
     if (!ip || isLoopback(ip)) return;
-    this.bannedIps.set(ip, this.now() + IP_BAN_MS);
-    if (this.bannedIps.size > 2_000) {
-      for (const [address, until] of this.bannedIps) if (until <= this.now()) this.bannedIps.delete(address);
+    const now = this.now();
+    this.bannedIps.set(ip, now + IP_BAN_MS);
+    if (this.bannedIps.size > MAX_BANNED_IPS) {
+      // Forgetting only the bans that have EXPIRED is not a ceiling: a host
+      // that can present many addresses (IPv6 makes that cheap) fills the map
+      // with bans that are all still live, so nothing is ever forgotten, the
+      // map grows with the flood, and every further ban scans the whole of it.
+      // Sweep the expired ones first, then shed the oldest until it holds.
+      for (const [address, until] of this.bannedIps) if (until <= now) this.bannedIps.delete(address);
+      for (const address of this.bannedIps.keys()) {
+        if (this.bannedIps.size <= MAX_BANNED_IPS) break;
+        this.bannedIps.delete(address);
+      }
     }
     this.log.info('peer address refused for a while', { ip, reason, minutes: IP_BAN_MS / 60_000 });
   }
@@ -911,6 +928,17 @@ export class P2PService extends EventEmitter {
     if (link.inbound) return;
     const key = `${link.address}|${code}`;
     const now = this.now();
+    // An entry older than the window can never suppress a report again, so it
+    // is dead weight: this node only dials out to addresses it was given, and
+    // a peer that hands it thousands of them would otherwise pile up an entry
+    // for each. Forget the stale ones, then shed the oldest if it is still full.
+    if (this.identityReported.size >= MAX_IDENTITY_REPORTS) {
+      for (const [known, at] of this.identityReported) if (now - at >= IDENTITY_REPORT_WINDOW_MS) this.identityReported.delete(known);
+      for (const known of this.identityReported.keys()) {
+        if (this.identityReported.size < MAX_IDENTITY_REPORTS) break;
+        this.identityReported.delete(known);
+      }
+    }
     const last = this.identityReported.get(key);
     if (last !== undefined && now - last < IDENTITY_REPORT_WINDOW_MS) return;
     this.identityReported.set(key, now);

@@ -145,7 +145,13 @@ test('the tree carries nothing older than the release it ships', () => {
   // removed on purpose, so a reader cannot mistake an old artefact for this
   // release — and this test is what keeps one from being copied back in.
   const version = json('obsidian-core/package.json').version;
-  for (const gone of ['docs/IMPLEMENTATION-REPORT.md', 'docs/MAINNET-SECURITY-AUDIT.md']) {
+  // `SECURITY-AUDIT-1.6.0-slashing.md` is the same kind of artefact as the two
+  // below — a dated report of a release this repository no longer ships — and
+  // survived only because it sat at the repository root rather than in `docs/`.
+  // Nothing referenced it: not the document index, not the changelog, not a
+  // test. It was shipped inside the source archive, where a reader would take it
+  // for a report on the release they had just downloaded.
+  for (const gone of ['docs/IMPLEMENTATION-REPORT.md', 'docs/MAINNET-SECURITY-AUDIT.md', 'SECURITY-AUDIT-1.6.0-slashing.md']) {
     assert.ok(!exists(gone), `${gone} records an older release and must stay deleted`);
   }
   const stale = [];
@@ -891,6 +897,26 @@ test('every RPC route the node serves is in the API reference', () => {
   };
   const missing = [...routes].filter((route) => route !== '/' && !pattern(route).test(api)).sort();
   assert.deepEqual(missing, [], `routes the node serves and docs/api.md never names:\n${missing.join('\n')}`);
+});
+
+test('the release notes state the protocol version they were generated for', () => {
+  // The release notes are generated for one release, so the protocol identity
+  // they state has to come from that build. It was a literal once, and a
+  // literal is exactly what goes stale: the 1.7.0 notes told the reader that
+  // "protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data" while the
+  // archives shipped 1.7.0, which rejects 1.6.x. A reader checks that sentence
+  // against the node they just started, so it has to be true of that node.
+  const version = json('obsidian-core/package.json').version;
+  const files = ['scripts/package-releases.sh', `releases/RELEASE-NOTES-${version}.md`].filter(exists);
+  const stale = [];
+  for (const file of files) {
+    lines(read(file)).forEach((line, index) => {
+      for (const match of line.matchAll(/\bprotocol(?: version)?\s+(\d+\.\d+\.\d+)\b/g)) {
+        if (match[1] !== version) stale.push(`${file}:${index + 1}: ${match[0]} (packaging ${version})`);
+      }
+    });
+  }
+  assert.deepEqual(stale, [], `a release note names another protocol version:\n${stale.join('\n')}`);
 });
 
 test('the helper, the packaging gate and CI all run this test', () => {

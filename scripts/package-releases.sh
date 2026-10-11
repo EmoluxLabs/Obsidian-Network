@@ -343,6 +343,16 @@ else
   TEST_SUMMARY="* No tests were run for this packaging pass (--skip-build). Treat these archives as source-only until you run the suites yourself."
 fi
 
+# The protocol identity the notes state is read from the build being packaged,
+# never typed in. It was typed in once, and a literal is exactly what goes
+# stale: the 1.7.0 notes stated the 1.6.0 identity — a release this one refuses
+# to peer with — while the archives they described were shipping 1.7.0. A reader
+# checks that sentence against the node they just started.
+PROTOCOL_IDENTITY="$(node --input-type=module -e "
+import { PROTOCOL_VERSION, MIN_CORE_VERSION } from './obsidian-core/dist/version.js';
+process.stdout.write('protocol ' + PROTOCOL_VERSION + ' is genesis-bound and rejects anything below ' + MIN_CORE_VERSION + ' (peers at the handshake, data directories at startup); it does not include a live-chain migration');
+" 2>/dev/null || printf 'protocol %s is genesis-bound and rejects older peers and data directories; it does not include a live-chain migration' "$VERSION")"
+
 cat > "$RELEASES/RELEASE-NOTES-$VERSION.md" <<NOTES
 # Obsidian Network $VERSION
 
@@ -382,8 +392,7 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   proposer/vote equivocation evidence
 * fork choice is finalized anchor → fixed PoT weight → height → the lowest
   block hash, so equal-height ties resolve identically on every node
-* protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data; it does not
-  include a live-chain migration
+* ${PROTOCOL_IDENTITY}
 ${TEST_SUMMARY}
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%

@@ -75,10 +75,44 @@ height and hash, the accepted/duplicate/stale/orphan counts and the first reject
 validation is unchanged and so is the params hash. `P2PServiceOptions.syncBatch` and `syncTimeoutMs` exist for tests;
 the defaults (128 blocks, 15 s) are unchanged. Regression tests: `obsidian-core/tests/integration/p2p-sync.test.ts`.
 
+### Throttles keyed by an address a stranger supplies now have a ceiling that holds
+
+Four maps in the node and the interface are keyed by something the caller chooses — the client address a request
+or a connection arrives from, or the address a peer handed us to dial. All four were size-limited the same way:
+"when it gets big, forget the entries that have gone quiet". None of them was a bound. Under a flood of fresh
+addresses no entry is ever old enough to forget, so each map grew with the flood, and every insert past the
+threshold then walked the whole of it — memory that grew without limit and a scan paid on every request, from
+data the attacker chose. Each one now forgets the stale entries first and then sheds the oldest until the
+ceiling holds, so the cost of a flood is a few early refusals instead of the process:
+
+- `obsidian-core` RPC rate limiter (`MAX_RATE_LIMIT_KEYS`, 10,000 addresses).
+- `obsidian-core` peer ban list (`MAX_BANNED_IPS`, 2,000 addresses) — IPv6 makes presenting many addresses cheap.
+- `obsidian-core` identity-mismatch report throttle (`MAX_IDENTITY_REPORTS`, 2,000 entries), which until now was
+  never pruned at all.
+- `obsidian-interface` `KeyedLimiter` (`maxKeys`, 20,000 clients), on the sign-in, node-proxy and refresh budgets.
+
+Consensus validation, the params hash and every default budget are unchanged. Regression tests:
+`obsidian-core/tests/security/rpc-hardening.test.ts`, `obsidian-core/tests/integration/p2p-sync.test.ts`,
+`obsidian-interface/tests/interface-hardening.test.ts`.
+
+### The release notes no longer state the protocol identity of a release this one refuses to peer with
+
+`scripts/package-releases.sh` wrote the release notes from a literal: the 1.7.0 notes told the reader that
+"protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data" while the archives they shipped carried 1.7.0,
+which rejects 1.6.x. A reader checks that sentence against the node they have just started, so it has to be true
+of that node. It is now read from the build being packaged (`PROTOCOL_VERSION` and `MIN_CORE_VERSION`), with the
+package version as a fallback when there is no build. `tests/scripts/repo-consistency.test.mjs` fails any release
+note, template or shipped, that names another protocol version than the one being packaged.
+
 ### Other changes in this release
 
 - `obsidian-node-desktop`: the supervisor passes `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` (public configuration, and only
   from the app's own environment) to the node it supervises.
+- `SECURITY-AUDIT-1.6.0-slashing.md` is deleted. It was a dated report of the 1.6.0 release that survived the
+  fresh start only because it sat at the repository root rather than in `docs/`: nothing referenced it (not the
+  document index, not the changelog, not a test) and it was shipped inside the source archive, where a reader
+  would take it for a report on the release they had just downloaded. The 1.6.1 record the changelog points at
+  (`docs/remediation-1.6.1.md`) is indexed and linked and stays.
 - New tests: `rpc-hardening` and `mining-gate` (core), gate issuance in `obsidian-interface`, and gated flows in
   `tests/e2e`, `tests/scripts`, the app-web, desktop and extension end-to-end suites.
 
