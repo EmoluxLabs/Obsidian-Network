@@ -23,6 +23,7 @@ import { genesisId as computeGenesisId } from '../../src/genesis/initialize.js';
 import { parseObs } from '../../src/protocol/amount.js';
 import { TxType } from '../../src/protocol/types.js';
 import { encodePaymentBody } from '../../src/transactions/executors/payment.js';
+import { encodeMiningBody } from '../../src/transactions/executors/mining.js';
 import { encodeSignedTx, signTransaction } from '../../src/transactions/encode.js';
 import { expectedGas } from '../../src/transactions/helpers.js';
 import { addressFromPublicKey, generateKeyPair } from '../../src/crypto/keys.js';
@@ -355,6 +356,42 @@ describe('transaction submission guardrails', () => {
     const response = await post('/tx/submit', { tx: Buffer.from(encodeSignedTx(tx)).toString('hex') });
     expect(response.status).toBe(400);
     expect(response.body.code).toBe('ERR_WRONG_CHAIN_ID');
+  });
+
+  it("a malformed mining-claim body is answered as bad encoding, not as a node fault", async () => {
+    // A guard, and a regression test for the diagnosis. The status was already 400, because
+    // simulateTransactions catches anything at all and records it as a rejection — so this
+    // was never a 500. What decodeMiningBody got wrong is the SHAPE of the failure: its
+    // reader bounds check is a plain Error and DataView's short-read is a RangeError, so the
+    // caller's bad bytes came back as "Invalid DataView length 4", which reads like a bug in
+    // the node and leaks an internal detail. decodeSlashBody has always converted exactly
+    // these into MALFORMED; the mining decoder now does too.
+    const pair = generateKeyPair();
+    const address = addressFromPublicKey(pair.publicKey, NET.addressHrp);
+    const whole = encodeMiningBody({ claimId: 'aa'.repeat(32), claimSequence: 1 });
+    const bodies: Array<[string, Uint8Array]> = [
+      ['empty', new Uint8Array(0)],
+      ['truncated', whole.subarray(0, whole.length - 1)],
+    ];
+    for (const [label, body] of bodies) {
+      const tx = signTransaction({
+        sender: address,
+        privateKeyHex: pair.privateKey,
+        publicKeyHex: pair.publicKey,
+        chainId: NET.chainId,
+        protocolVersion: PROTOCOL_VERSION,
+        nonce: 0,
+        type: TxType.MINING_CLAIM,
+        gas: 0n,
+        body,
+        validUntil: chain.protocolTime + 600,
+      });
+      const response = await post('/tx/submit', { tx: Buffer.from(encodeSignedTx(tx)).toString('hex') });
+      expect(response.status, `${label} is the caller's mistake, so it is a 4xx`).toBe(400);
+      expect(response.body.code, label).not.toBe('ERR_INTERNAL');
+      expect(response.body.error, `${label} must be diagnosed as an encoding failure`).toMatch(/canonically encoded/);
+      expect(response.body.error, `${label} must not leak a DataView fault`).not.toMatch(/DataView/);
+    }
   });
 
   it('rejects garbage hex and a missing body', async () => {

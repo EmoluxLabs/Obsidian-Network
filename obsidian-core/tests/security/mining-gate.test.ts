@@ -2,8 +2,15 @@
  * Security suite: the mining gate (consensus rule, protocol 1.7.0).
  *
  * The account system (sign-in, second factor, one wallet per account) used to be enforced only by the platform, so a
- * person could skip it by posting a claim straight to a node. These tests prove the CHAIN now refuses that, through
- * every door a claim can arrive by: a block, the mempool, and the node's own HTTP endpoint.
+ * person could skip it by posting a claim straight to a node. These tests prove the CHAIN now refuses that, at block
+ * production, validation and sync replay — the one place the rule can actually be enforced, because a certificate's
+ * validity is a function of the including block's protocol time.
+ *
+ * The other doors are covered where they belong, and the split is deliberate:
+ *   - the node's HTTP endpoint: rpc-hardening.test.ts (a bad claim is the caller's 4xx, never a node fault);
+ *   - gossip: the last describe here. A body that cannot DECODE is refused before a pool, because it can never apply
+ *     to any state. A body that decodes but carries no certificate, or an expired one, is still relayed: only a
+ *     producer knows the protocol time, so judging it at gossip would penalise an honest relayer.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -259,5 +266,60 @@ describe('the certificate primitive', () => {
     const rogue = generateKeyPair();
     const cert = issueMiningGateCertificate(rogue.privateKey, rogue.publicKey, subject, 1_000_000);
     expect(() => assertMiningGate([GATE_ISSUER.publicKey], cert, subject, 1_000_000)).toThrow(/not issued by a key this chain committed/);
+  });
+});
+
+describe('the gossip door: a claim body that cannot decode is refused before a pool', () => {
+  // A SLASH body is decoded at gossip for exactly this reason (see slashing.test.ts): an
+  // undecodable body can never apply to any state, on any node, at any height, so relaying it
+  // is free work for the receiver and the peer that forwarded it is answerable. A MINING_CLAIM
+  // body has the same property, and since 1.7.0 it carries a certificate whose half-present
+  // form decodeMiningBody already calls MALFORMED — but nothing decoded it before the pool, so
+  // every node pooled and re-broadcast a claim no producer could ever execute.
+  //
+  // Only the SHAPE is judged here. Whether the certificate is valid is deliberately NOT decided
+  // at gossip: that is a function of the including block's protocol time, so a relayer whose
+  // clock differs would penalise an honest peer for a claim that is perfectly minable.
+  it('refuses an undecodable or half-certified claim body at gossip, and pools a well-formed one', async () => {
+    const h = await harness();
+    const bob = makeWallet();
+    advance(h, 1);
+
+    const good = signedClaim(h, bob);
+    expect(h.chain.checkGossipedTransaction(good).ok, 'a well-formed claim must still be relayed').toBe(true);
+    expect(h.chain.mempool.add(good).accepted).toBe(true);
+
+    const full = miningBody(h, bob);
+    const claimId = decodeMiningBody(full).claimId;
+    const halfCert = encodeMiningBody({
+      claimId,
+      claimSequence: 1,
+      gate: { issuer: GATE_ISSUER.publicKey, issuedAt: h.chain.protocolTime, signature: '' },
+    });
+    const garbage: Array<[string, Uint8Array]> = [
+      ['empty-body', new Uint8Array(0)],
+      ['truncated', full.slice(0, full.length - 1)],
+      ['half-present-certificate', halfCert],
+    ];
+    for (const [label, raw] of garbage) {
+      const verdict = h.chain.checkGossipedTransaction(h.sign(bob, TxType.MINING_CLAIM, raw, { gas: 0n }));
+      expect(verdict.ok, `${label} must be refused at gossip`).toBe(false);
+      if (!verdict.ok) expect(verdict.code, label).toBe(ErrCode.MALFORMED);
+    }
+  });
+
+  it('does not judge the certificate at gossip: an ungated or stale claim is still relayed for a producer to refuse', async () => {
+    const h = await harness();
+    const bob = makeWallet();
+    advance(h, 1);
+    // No certificate at all. The chain refuses it (proven above), but a relayer cannot know
+    // that without reading state and clocks, so gossip passes it and the producer refuses it.
+    const ungated = h.sign(bob, TxType.MINING_CLAIM, miningBody(h, bob, { gate: 'none' }), { gas: 0n });
+    expect(h.chain.checkGossipedTransaction(ungated).ok).toBe(true);
+    // An expired certificate is the same case: it is well-formed, so gossip relays it.
+    const stale = h.sign(bob, TxType.MINING_CLAIM, miningBody(h, bob, { gate: { issuedAt: 1 } }), { gas: 0n });
+    expect(h.chain.checkGossipedTransaction(stale).ok).toBe(true);
+    // And the producer is the one that refuses both.
+    expect(h.tryBlock([ungated], { simulate: false }).code).toBe(ErrCode.MINING_GATE_REQUIRED);
   });
 });

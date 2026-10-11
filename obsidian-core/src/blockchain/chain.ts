@@ -70,6 +70,7 @@ import {
 } from '../consensus/proposer.js';
 import { encodeSignedTx, validateTxStructure } from '../transactions/encode.js';
 import { decodeSlashBody } from '../transactions/executors/slash.js';
+import { decodeMiningBody } from '../transactions/executors/mining.js';
 import {
   buildGenesisBlock,
   createGenesisState,
@@ -1589,6 +1590,14 @@ export class ChainManager extends EventEmitter {
       // is read and no verdict about the offence is formed here, because that
       // stays a consensus decision.
       if (tx.type === TxType.SLASH) decodeSlashBody(tx.body);
+      // A MINING_CLAIM body is the same case. An undecodable one — or one whose gate
+      // certificate is half-present, which decodeMiningBody already calls MALFORMED — can
+      // never apply to any state, on any node, at any height, so no producer would ever
+      // execute it: pooling and relaying it is free work for every receiver. Only the SHAPE
+      // is judged here. Whether the certificate is *valid* is a function of the including
+      // block's protocol time, and deciding that at gossip would penalise an honest relayer
+      // whose clock differs from the producer's, so that stays a consensus decision.
+      if (tx.type === TxType.MINING_CLAIM) decodeMiningBody(tx.body);
       // Gas is the mempool's eviction priority. Refuse a peer's priority claim
       // unless the current state proves the sender can fund at least that much;
       // full type-specific validity is still decided at block execution.

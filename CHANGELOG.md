@@ -75,6 +75,30 @@ height and hash, the accepted/duplicate/stale/orphan counts and the first reject
 validation is unchanged and so is the params hash. `P2PServiceOptions.syncBatch` and `syncTimeoutMs` exist for tests;
 the defaults (128 blocks, 15 s) are unchanged. Regression tests: `obsidian-core/tests/integration/p2p-sync.test.ts`.
 
+### A gossiped mining claim is now checked the way a gossiped slash report already was
+
+A peer's `SLASH` transaction has its body decoded before it is pooled, on the stated grounds that an undecodable body
+can never apply to any state, on any node, at any height, so relaying it is free work for the receiver. `MINING_CLAIM`
+had no such check, so a claim whose body did not decode — or whose gate certificate was half-present, a shape
+`decodeMiningBody` already calls `MALFORMED` — was pooled and re-broadcast by every node for no producer ever to
+execute. It is decoded at gossip now, under the same rule and for the same reason.
+
+Adding that check exposed a second defect underneath it. `decodeMiningBody` let the reader's own bounds failures
+escape: its length check is a plain `Error` and `DataView`'s short read is a `RangeError`, and neither is a
+`ProtocolError`. So `checkGossipedTransaction` rethrew them as a node fault instead of returning a verdict the
+relaying peer is answerable for, and `/tx/submit` answered a caller's malformed bytes with `Invalid DataView
+length 4` — the wording of an internal fault, for the caller's own input. `decodeSlashBody` has always converted
+exactly these into `MALFORMED`; the mining decoder now keeps the same contract. The HTTP status was already 400,
+because `simulateTransactions` catches anything at all and records it as a rejection; what changes is the diagnosis,
+not the outcome.
+
+Whether a certificate is *valid* is deliberately still not decided at gossip. Validity is a function of the including
+block's protocol time, so a relayer whose clock differs from the producer's would penalise an honest peer for a claim
+that is perfectly minable. A claim that decodes but carries no certificate, or an expired one, is still relayed, and
+the producer is the one that refuses it. Consensus validation is unchanged and so is the params hash, so this is not
+a fork: nodes on either side of it agree on the chain and differ only in what they pool. Regression tests:
+`obsidian-core/tests/security/mining-gate.test.ts` and `obsidian-core/tests/security/rpc-hardening.test.ts`.
+
 ### Other changes in this release
 
 - `obsidian-node-desktop`: the supervisor passes `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` (public configuration, and only

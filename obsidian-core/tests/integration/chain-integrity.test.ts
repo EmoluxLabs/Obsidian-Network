@@ -17,6 +17,7 @@ import { ChainManager } from '../../src/blockchain/chain.js';
 import { blockHash } from '../../src/blockchain/block.js';
 import { ErrCode } from '../../src/protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
+import { encodeMiningBody } from '../../src/transactions/executors/mining.js';
 import { TxType, ValidatorOp } from '../../src/protocol/types.js';
 import { WorldState } from '../../src/blockchain/state.js';
 import { missedProposersFor, proposerRound, scheduledProposer } from '../../src/consensus/proposer.js';
@@ -428,8 +429,10 @@ describe('transactions a peer gossips are checked before they are pooled', () =>
     const alice = makeWallet();
     const now = h.chain.protocolTime;
 
-    const good = h.sign(alice, TxType.MINING_CLAIM, new Uint8Array(), { gas: 0n });
-    // Only the structural checks run here, so any well-formed body will do.
+    const good = h.sign(alice, TxType.MINING_CLAIM, encodeMiningBody({ claimId: 'aa'.repeat(32), claimSequence: 1 }), { gas: 0n });
+    // The body has to decode: gossip refuses a claim whose body is not canonically
+    // encoded, because such a claim can never apply to any state. Whether its gate
+    // certificate is valid is the producer's business, not gossip's.
     expect(h.chain.checkGossipedTransaction(good)).toEqual({ ok: true });
 
     const forged = { ...good, signature: { ...good.signature, signature: '00'.repeat(64) } };
@@ -437,12 +440,12 @@ describe('transactions a peer gossips are checked before they are pooled', () =>
     expect(forgedVerdict.ok).toBe(false);
     if (!forgedVerdict.ok) expect(forgedVerdict.code).toBe(ErrCode.BAD_SIGNATURE);
 
-    const stale = h.sign(alice, TxType.MINING_CLAIM, new Uint8Array(), { gas: 0n, nonce: 7 });
+    const stale = h.sign(alice, TxType.MINING_CLAIM, encodeMiningBody({ claimId: 'aa'.repeat(32), claimSequence: 1 }), { gas: 0n, nonce: 7 });
     const staleVerdict = h.chain.checkGossipedTransaction(stale);
     expect(staleVerdict.ok).toBe(false);
     if (!staleVerdict.ok) expect(staleVerdict.code).toBe(ErrCode.BAD_NONCE);
 
-    const expired = h.sign(alice, TxType.MINING_CLAIM, new Uint8Array(), { gas: 0n, validUntil: now - 10 });
+    const expired = h.sign(alice, TxType.MINING_CLAIM, encodeMiningBody({ claimId: 'aa'.repeat(32), claimSequence: 1 }), { gas: 0n, validUntil: now - 10 });
     const expiredVerdict = h.chain.checkGossipedTransaction(expired);
     expect(expiredVerdict.ok).toBe(false);
     if (!expiredVerdict.ok) expect(expiredVerdict.code).toBe(ErrCode.EXPIRED);

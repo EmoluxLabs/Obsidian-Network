@@ -19,7 +19,7 @@ import { Reader, Writer } from '../../protocol/encoding.js';
 import { DOMAIN } from '../../protocol/domains.js';
 import { domainHash, fromHex, toHex } from '../../crypto/hash.js';
 import { CONSENSUS_PARAMS } from '../../protocol/params.js';
-import { ErrCode, reject } from '../../protocol/errors.js';
+import { ErrCode, ProtocolError, reject } from '../../protocol/errors.js';
 import type { MiningClaimBody, TxEnvelope } from '../../protocol/types.js';
 import { assertMiningEligibility, alignedCycleStart } from '../../mining/rules.js';
 import { claimRewardForActiveMiners } from '../../mining/schedule.js';
@@ -32,14 +32,34 @@ import { minBig } from '../../protocol/amount.js';
 export const POOL_DISTRIBUTION_HISTORY = 256;
 
 export function decodeMiningBody(body: Uint8Array): MiningClaimBody {
-  const r = new Reader(body);
-  const claimId = r.string();
-  const claimSequence = r.u32();
-  const viaNodeId = r.string();
-  const gateIssuer = r.string();
-  const gateIssuedAt = r.u64();
-  const gateSignature = r.string();
-  r.ensureConsumed();
+  let claimId: string;
+  let claimSequence: number;
+  let viaNodeId: string;
+  let gateIssuer: string;
+  let gateIssuedAt: bigint;
+  let gateSignature: string;
+  try {
+    const r = new Reader(body);
+    claimId = r.string();
+    claimSequence = r.u32();
+    viaNodeId = r.string();
+    gateIssuer = r.string();
+    gateIssuedAt = r.u64();
+    gateSignature = r.string();
+    r.ensureConsumed();
+  } catch (error) {
+    // The same contract decodeSlashBody has always kept. A truncated or overrun body is
+    // the SENDER's mistake, and the reader reports it in two ways that are not protocol
+    // errors: its own bounds check is a plain Error, and DataView's is a RangeError.
+    // Left as they are, they escape checkGossipedTransaction as a node fault instead of a
+    // verdict the relaying peer is answerable for, and /tx/submit answers the caller with
+    // "Invalid DataView length 4" — the wording of an internal fault, for their own bytes.
+    // (The status was already 400: simulateTransactions catches anything and records it as
+    // a rejection. What changes is the diagnosis, not the outcome.) Every encoding failure
+    // is MALFORMED; the claim is refused either way.
+    if (error instanceof ProtocolError) throw error;
+    reject(ErrCode.MALFORMED, `mining claim body is not canonically encoded: ${(error as Error).message}`);
+  }
   // Absent means all three are empty. A half-present certificate is a malformed body, not a missing one.
   const absent = gateIssuer.length === 0 && gateSignature.length === 0 && gateIssuedAt === 0n;
   if (!absent && (gateIssuer.length === 0 || gateSignature.length === 0 || gateIssuedAt === 0n || gateIssuedAt > BigInt(Number.MAX_SAFE_INTEGER))) {

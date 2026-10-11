@@ -26,6 +26,7 @@ import { genesisDocumentFor } from '../../src/genesis/initialize.js';
 import { P2PService, helloDigest, type HelloPayload } from '../../src/networking/p2p.js';
 import { PeerStore } from '../../src/networking/peer-store.js';
 import { getNetwork } from '../../src/protocol/networks.js';
+import { encodeMiningBody } from '../../src/transactions/executors/mining.js';
 import { TxType } from '../../src/protocol/types.js';
 import { signTransaction } from '../../src/transactions/encode.js';
 import { CORE_VERSION, PROTOCOL_VERSION } from '../../src/version.js';
@@ -253,7 +254,7 @@ describe('connecting and following', () => {
       nonce: 0,
       type: TxType.MINING_CLAIM,
       gas: 0n,
-      body: new Uint8Array(),
+      body: encodeMiningBody({ claimId: 'aa'.repeat(32), claimSequence: 1 }),
       validUntil: Math.floor(Date.now() / 1000) + 600,
     });
     expect(heavyTx.id).toHaveLength(64);
@@ -410,7 +411,7 @@ describe('after the handshake', () => {
         nonce: 0,
         type: TxType.MINING_CLAIM,
         gas: 0n,
-        body: new Uint8Array(),
+        body: encodeMiningBody({ claimId: 'aa'.repeat(32), claimSequence: 1 }),
         validUntil: Math.floor(Date.now() / 1000) + 600,
       });
     // Two different senders, so the sender-side relay de-duplication cannot hide either message.
