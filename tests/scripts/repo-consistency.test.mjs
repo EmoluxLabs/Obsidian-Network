@@ -1004,6 +1004,36 @@ test('every file outside obsidian-core that a shipped core test reads is staged 
   assert.deepEqual(missing, []);
 });
 
+// ── the applications travel with the release ────────────────────────────────
+// The four applications this network ships (the web app, Obsidian Wallet, the browser extension and
+// the desktop node) are directories in this repository, not separate repositories: they were added
+// inside the 1.7.0 line and the release archives carry them. A product that is in the tree but in no
+// README is one a reader cannot find; one with no test script or no workflow is one that can rot
+// unnoticed. Both are checked here, discovered from the filesystem so a new application is covered
+// without editing this test.
+
+test('every application directory is named in the README, has a suite, and is run by a workflow', () => {
+  const apps = readdirSync(ROOT)
+    .filter((name) => name.startsWith('obsidian-') && statSync(join(ROOT, name)).isDirectory())
+    .filter((name) => existsSync(join(ROOT, name, 'package.json')))
+    .sort();
+  assert.ok(apps.length >= 6, `expected the node, the reader and the applications, found ${apps.join(', ')}`);
+
+  const readme = read('README.md');
+  const workflows = readdirSync(join(ROOT, '.github', 'workflows'))
+    .map((name) => readFileSync(join(ROOT, '.github', 'workflows', name), 'utf8'))
+    .join('\n');
+
+  const problems = [];
+  for (const app of apps) {
+    if (!readme.includes(`${app}/`)) problems.push(`${app} is not named in README.md`);
+    const scripts = json(`${app}/package.json`).scripts ?? {};
+    if (!scripts.test) problems.push(`${app} has no test script`);
+    if (!workflows.includes(app)) problems.push(`${app} is referenced by no workflow in .github/workflows`);
+  }
+  assert.deepEqual(problems, []);
+});
+
 // ── the mining gate key is part of the genesis id ───────────────────────────
 // Protocol 1.7.0 hashes the committed mining-gate issuer key list into the genesis id, so a node started
 // without the network's list builds a different chain: the other nodes refuse it ("is on another network or

@@ -22,6 +22,28 @@ The mainnet genesis of a document that commits **no** gate keys has id `2dc198e4
 and block hash `8ffcf7c18a5ba07b6a67fee4a373a62c62e9da612e7b66dcd9437597695b0475`. **A real network commits its
 issuer keys in genesis, so its id is different from these**; read the id from `GET /health` on your own node.
 
+### Four applications ship in this release
+
+`obsidian-app-web/`, `obsidian-wallet-web/`, `obsidian-extension/` and `obsidian-node-desktop/` are new in
+1.7.0 — none of them existed at 1.6.0. Each talks to the same protocol and keeps no chain state of its own:
+
+* **`obsidian-app-web/` — the web app** (`@obsidian/app-web` 0.1.0). The browser client: shared account and
+  claim state with the interface, a browser wallet and the explorer, behind its own proxy server.
+* **`obsidian-wallet-web/` — Obsidian Wallet** (`@obsidian/wallet-web` 1.0.0). A non-custodial browser
+  wallet on the real protocol: the keys stay in the browser, the signed transaction goes to a node. Also
+  shipped as a single file, `obsidian-wallet-web/template/obsidian-wallet.html` with its `TEMPLATE.sha256`.
+* **`obsidian-extension/` — Obsidian Node Extension** (`@obsidian/extension` 1.0.0). An MV3 extension for
+  Chrome, Edge and Firefox that asks the platform at `obsidian-extension@obsmainnet.us.ci` for the
+  mining-gate certificate. The built package is committed as `obsidian-extension/template/obsidian-extension.zip`
+  beside its `.sha256`.
+* **`obsidian-node-desktop/` — Obsidian Node** (`obsidian-node` 1.0.0). The Electron desktop app that runs the
+  real core with a template UI. Windows, macOS and Linux installers are built by
+  `.github/workflows/desktop-release.yml` when a `desktop-v<version>` tag is pushed and appear on the Releases
+  page; `obsidian-node-desktop/DOWNLOAD.md` says where they are and how to check one.
+
+Every application has its own suite, plus lint or typecheck where it applies, and a workflow that runs them
+(`extension-ci.yml` and `wallet-web-ci.yml` also run the web app's suite, because both reuse its modules).
+
 ### The sign-up gate is now a consensus rule
 
 Before, the account system (sign-up, invitation, MFA, one wallet per account) was enforced only by the platform,
