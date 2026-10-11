@@ -16,7 +16,7 @@
     "test": "vitest run --passWithNoTests",
     "check:browser-safe": "node scripts/check-browser-safe.mjs",
     "build:sites": "node scripts/build-sites.mjs",
-    "verify": "npm run typecheck && npm run build && npm run test"
+    "verify": "npm run build && npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@types/node": "22.18.13",

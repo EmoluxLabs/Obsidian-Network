@@ -12,7 +12,7 @@ cd Obsidian-Network/obsidian-interface
 npm ci
 npm run build      # builds core → copies browser-safe modules → bundles 9 sites → typecheck
 npm test           # store, node pool, real HTTP server, config discovery, hardening, wallet vault, browser pages, live node
-npm run verify     # typecheck + build + test in one shot
+npm run verify     # build + typecheck + test in one shot
 ```
 
 `npm run build` does four things worth knowing about:

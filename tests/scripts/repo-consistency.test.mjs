@@ -898,3 +898,29 @@ test('the helper, the packaging gate and CI all run this test', () => {
   assert.match(read('.github/workflows/ci.yml'), /repo-consistency\.test\.mjs/, 'CI must run the consistency test');
   assert.match(read('.github/workflows/ci.yml'), /check-nginx-conf\.py/, 'CI must check the nginx files');
 });
+
+test('the interface one-shot verify builds before it typechecks', () => {
+  // `typecheck` compiles web/src, which imports '../../core/…'. That directory is
+  // generated: build:core runs scripts/sync-core.mjs to copy the browser-safe
+  // subset of obsidian-core/dist into obsidian-interface/web/core, and it is
+  // .gitignored, so a clean checkout does not have it. Ordering typecheck first
+  // made the documented one-shot entry point fail on a fresh clone with TS2307
+  // for every one of those imports — the build had to be run by hand first,
+  // which is the opposite of what "in one shot" means.
+  assert.match(read('.gitignore'), /^obsidian-interface\/web\/core\/$/m,
+    'web/core must stay generated, which is why the order below matters');
+
+  const verify = json('obsidian-interface/package.json').scripts.verify;
+  const build = verify.indexOf('build');
+  const typecheck = verify.indexOf('typecheck');
+  const runTests = verify.indexOf('test');
+  assert.ok(build !== -1 && typecheck !== -1 && runTests !== -1,
+    `verify must run build, typecheck and test, found: ${verify}`);
+  assert.ok(build < typecheck,
+    `verify typechecks before the build generates web/core: ${verify}`);
+  assert.ok(typecheck < runTests, `verify must typecheck before it runs the tests: ${verify}`);
+
+  // The guide promises the same order the script performs.
+  assert.match(read('docs/self-hosting.md'), /npm run verify\s+# build \+ typecheck \+ test in one shot/,
+    'docs/self-hosting.md must describe verify in the order it runs');
+});
