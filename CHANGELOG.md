@@ -119,8 +119,29 @@ note, template or shipped, that names another protocol version than the one bein
   contain it, so the run failed with `ENOENT`. It was also being dropped from the `.zip` after being staged: the
   exclude pattern `*.git*` is not "the git directory" — zip's `*` crosses `/`, so it matched `.github/…` too. The
   pattern is now `.git/*`.
+- `scripts/fresh-machine-test.sh` now installs the runtime packages of **both** archives it starts. It installed
+  `obsidian-core`'s six and stopped there, but the self-host archive ships the built node and the built interface
+  without their `node_modules`, so every interface died at startup on
+  `Cannot find package '@noble/curves' imported from obsidian-interface/web/core/crypto/keys.js` and 33 of the 96
+  checks failed on a machine whose archives were correct — the harness was crying wolf, which is worse than no
+  harness, and it contradicted `docs/LAUNCH-GUIDE.md`, `docs/DEPLOYMENT-GUIDE.md` and `docs/self-hosting.md`, all of
+  which tell the operator to install the interface's packages too.
+- The same script no longer hardcodes the network identities. Its table of four genesis ids and its single params
+  hash were all from the release before 1.7.0 (`1f2fba9a…` instead of `bffeacb3…`), so eight checks reported a
+  healthy machine as broken. They are derived from the build now, per network, from the mining gate keys that
+  network is actually running — which they have to be, because those keys are part of the genesis document, so a
+  devnet started by the helper has a different genesis id from one started without a key.
+- Its second-node check passes `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` to the new node. It started node 1 with the
+  helper (which mints a gate key for the network) and node 2 with the bare command from the launch guide (which
+  commits no key), so the two nodes were on genuinely different chains and correctly refused each other with
+  `genesis id mismatch` — the script was mixing two setups and then reporting the refusal as a failure. The nodes
+  now converge on the same head. The launch guide itself is not affected: its own flow runs every node without a
+  gate key, which is why the genesis id it publishes is the gate-key-free one.
 - New tests: `rpc-hardening` and `mining-gate` (core), gate issuance in `obsidian-interface`, and gated flows in
-  `tests/e2e`, `tests/scripts`, the app-web, desktop and extension end-to-end suites.
+  `tests/e2e`, `tests/scripts`, the app-web, desktop and extension end-to-end suites. The repository-consistency
+  test that already rejected stale identity values in the docs, `.env.example` and both `deployment/` trees now
+  covers `scripts/` too, so the constants above cannot be typed in again; and it asserts the fresh-machine harness
+  installs the packages of every archive it starts.
 
 ### Security audit of the app server, web app, extension, desktop app and node RPC
 

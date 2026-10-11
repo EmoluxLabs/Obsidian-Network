@@ -504,7 +504,7 @@ test('the port, chain id and prefix tables in the guides are the ones the code d
   }
 });
 
-test('the identity values in the docs are the ones `genesis init` prints', { skip: skipUnbuilt }, () => {
+test('the identity values in the docs and the scripts are the ones `genesis init` prints', { skip: skipUnbuilt }, () => {
   const good = new Map();
   for (const name of NETWORKS) {
     const out = spawnSync(process.execPath, [join(CORE, 'dist', 'index.js'), 'genesis', 'init', '--network', name], { encoding: 'utf8' });
@@ -519,6 +519,11 @@ test('the identity values in the docs are the ones `genesis init` prints', { ski
     // Operator documentation may contain only live network identities.
     ...currentDocs(),
     '.env.example',
+    // and so may the operator-facing scripts. The fresh-machine harness used to carry a
+    // hand-typed table of the four genesis ids plus a params hash; all five were from a
+    // release before 1.7.0, so it reported a healthy machine as broken 8 checks in a row.
+    // Identity values are derived from the build now, and this is what keeps them that way.
+    ...walk(join(ROOT, 'scripts'), () => true).map((p) => relative(ROOT, p)),
     ...walk(join(ROOT, 'obsidian-core', 'deployment'), () => true).map((p) => relative(ROOT, p)),
     ...walk(join(ROOT, 'obsidian-interface', 'deployment'), () => true).map((p) => relative(ROOT, p)),
   ];
@@ -541,6 +546,21 @@ test('the identity values in the docs are the ones `genesis init` prints', { ski
   for (const [value, label] of good) {
     if (label.startsWith('mainnet') && /genesisId|genesisHash/.test(label)) assert.ok(mainnetLaunch.includes(value), `mainnet-launch.md does not state the ${label}`);
   }
+});
+
+test('the fresh-machine harness installs the runtime packages of every archive it then starts', () => {
+  // The archives ship the built node and the built interface but not their node_modules, and the
+  // harness starts both. It used to install only the node's six packages, so the interface died at
+  // startup on "Cannot find package '@noble/curves'" and 33 checks failed on a machine whose
+  // archives were fine — a harness that cries wolf is worse than none, because nobody trusts it.
+  const sh = read('scripts/fresh-machine-test.sh');
+  for (const pkg of ['obsidian-core', 'obsidian-interface']) {
+    assert.ok(
+      new RegExp(`cd ${pkg} && npm ci --omit=dev`).test(sh),
+      `the fresh-machine harness never runs "npm ci --omit=dev" in ${pkg}, so the ${pkg} it starts cannot run`,
+    );
+  }
+  assert.ok(/obsidian-interface\/node_modules/.test(sh), 'nothing checks what the interface install brought in');
 });
 
 // ── the four networks never mixed ───────────────────────────────────────────

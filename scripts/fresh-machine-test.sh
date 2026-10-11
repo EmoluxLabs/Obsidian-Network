@@ -90,6 +90,19 @@ echo "   installed packages: $REAL"
 [ "$REAL" = "@noble/curves @noble/hashes @scure/base @scure/bip32 @scure/bip39 ws " ] && ok "exactly the six runtime packages, nothing else" || bad "unexpected packages installed"
 check "no native binaries and no build tools (esbuild, rollup, vitest, typescript)" bash -c 'test "$(find obsidian-core/node_modules \( -name "*.node" -o -name esbuild -o -name rollup -o -name vitest -o -name tsc \) | wc -l)" = 0'
 echo "   node_modules size: $(du -sh obsidian-core/node_modules | cut -f1)"
+
+# The interface's OWN runtime packages, the same way and for the same reason.
+# The self-host archive ships the built server and the browser modules but not
+# node_modules, and docs/DEPLOYMENT-GUIDE.md (§C14) and docs/self-hosting.md both
+# tell the operator to install them after unpacking. This script installs the
+# node's six and used to stop there, so the interface died at startup with
+# "Cannot find package '@noble/curves'" and every check that needed it reported a
+# false failure — 33 of them, on a machine whose archives were perfectly fine.
+( cd obsidian-interface && npm ci --omit=dev --no-audit --no-fund >"$FM/npm-interface.log" 2>&1 ) && ok "interface npm ci --omit=dev" || { bad "interface npm ci --omit=dev"; tail -5 "$FM/npm-interface.log"; }
+IFACE=$(cd obsidian-interface && find node_modules -name package.json -not -path "*/node_modules/*/node_modules/*" -not -path "*/esm/*" -not -path "*/lib/*" -not -path "*/src/*" | sed 's#node_modules/##; s#/package.json##' | sort | tr '\n' ' ')
+echo "   interface packages: $IFACE"
+[ "$IFACE" = "@noble/curves @noble/hashes @scure/base @scure/bip32 @scure/bip39 " ] && ok "exactly the five interface runtime packages, nothing else" || bad "unexpected interface packages installed"
+check "the interface brings no native binaries and no build tools" bash -c 'test "$(find obsidian-interface/node_modules \( -name "*.node" -o -name esbuild -o -name rollup -o -name vitest -o -name tsc \) | wc -l)" = 0'
 node obsidian-core/dist/index.js version | tee "$FM/version.json" | head -12 | sed 's/^/   /'
 [ "$(jget core < "$FM/version.json")" = "$VERSION" ] && ok "node reports core $VERSION" || bad "core version"
 bash obsidian-network.sh help | head -3 | sed 's/^/   /'
@@ -124,13 +137,34 @@ log "6. each network is itself, and nothing else"
 declare -A CHAIN=( [mainnet]=7777 [testnet]=7778 [staging]=7779 [devnet]=7780 )
 declare -A RPC=( [mainnet]=8630 [testnet]=18630 [staging]=28630 [devnet]=38630 )
 declare -A UI=( [mainnet]=8788 [testnet]=18788 [staging]=28788 [devnet]=38788 )
-declare -A GID=( [mainnet]=681d443596d5c58221c59b2add83882848abe470 [testnet]=31d49f2338b0e4fdc874a53770ea45d49d7b767e [staging]=e0173182e8e82fe08e683467d2e6d4c969de3d00 [devnet]=2b4c905feeb565c2c41f2eaabca248c8281aa845 )
+# The genesis id is not a constant anyone can type out once: the mining gate issuer public keys are part of the
+# genesis document, so each of the three test networks is running a key this script's own helper minted for it and
+# has an id of its own. A table of literals here went stale once already — these four were the pre-1.7.0 ids, and
+# the params hash two lines down was 1f2fba9a… while 1.7.0 ships bffeacb3… — and a stale constant is worse than no
+# check at all, because it reports a healthy machine as broken. So ask this build, for the keys each network runs.
+PARAMS_EXPECT=$(node -e "process.stdout.write(require('$FM/src/releases/MANIFEST.json').paramsHash)")
+declare -A GID=()
+for n in mainnet testnet staging devnet; do
+  GID[$n]=$(node --input-type=module -e "
+    import { getNetwork } from './obsidian-core/dist/protocol/networks.js';
+    import { genesisDocumentFor, genesisId } from './obsidian-core/dist/genesis/initialize.js';
+    import { existsSync, readFileSync } from 'node:fs';
+    const net = getNetwork(process.argv[1]);
+    const f = process.argv[2];
+    const keys = existsSync(f) ? [JSON.parse(readFileSync(f, 'utf8')).publicKey] : [];
+    process.stdout.write(genesisId(genesisDocumentFor(net, [], keys), net));
+  " "$n" "$FM/data/$n/gate/mining-gate.keystore.json")
+done
+echo "   expected: paramsHash $PARAMS_EXPECT, mainnet genesis ${GID[mainnet]}, devnet genesis ${GID[devnet]}"
+[ -n "$PARAMS_EXPECT" ] && [ "${#GID[mainnet]}" = 40 ] && [ "${#GID[devnet]}" = 40 ] \
+  && ok "identity constants come from this build, not from a table typed by hand" \
+  || bad "could not compute the identity constants"
 for n in mainnet testnet staging devnet; do
   S=$(get "http://127.0.0.1:${RPC[$n]}/status")
   [ "$(echo "$S" | jget networkId)" = "obsidian-$n-1" ] && ok "$n: networkId obsidian-$n-1" || bad "$n: networkId ($(echo "$S" | jget networkId))"
   [ "$(echo "$S" | jget chainId)" = "${CHAIN[$n]}" ] && ok "$n: chainId ${CHAIN[$n]}" || bad "$n: chainId"
-  [ "$(echo "$S" | jget genesisId)" = "${GID[$n]}" ] && ok "$n: genesisId matches the guide" || bad "$n: genesisId"
-  [ "$(echo "$S" | jget paramsHash)" = "1f2fba9a918147b084e67bf6e0c76d89" ] && ok "$n: paramsHash 1f2fba9a…" || bad "$n: paramsHash"
+  [ "$(echo "$S" | jget genesisId)" = "${GID[$n]}" ] && ok "$n: genesisId ${GID[$n]}" || bad "$n: genesisId (node says $(echo "$S" | jget genesisId), want ${GID[$n]})"
+  [ "$(echo "$S" | jget paramsHash)" = "$PARAMS_EXPECT" ] && ok "$n: paramsHash $PARAMS_EXPECT" || bad "$n: paramsHash (node says $(echo "$S" | jget paramsHash))"
   H=$(echo "$S" | jget height); [ "${H:-0}" -ge 1 ] 2>/dev/null && ok "$n: producing blocks (height $H)" || bad "$n: height ${H:-?}"
   D=$(get "http://127.0.0.1:${RPC[$n]}/network" | jget domains)
   if [ "$n" = mainnet ]; then
@@ -180,11 +214,21 @@ done
 [ "$(get http://127.0.0.1:28788/api/auth/config | jget genesisInvite.configured)" = "false" ] && ok "staging: none configured, so nobody can register" || bad "staging invitation"
 
 log "8. a second devnet node, from the guide's own command"
+# Node 1 was started by the helper, which mints a mining gate key for the network, and that key is part of the
+# genesis document — so node 1's chain is NOT the chain the guide's bare command produces. The guide's own flow
+# runs every node without a gate key, which is why the genesis id it publishes is the gate-key-free one. A node 2
+# started with no key was therefore a different chain, and the two correctly refused each other with
+# "genesis id mismatch" — the script was mixing two setups and then reporting the refusal as a failure.
+# Joining node 1 means being given the key node 1's chain was made with, exactly as the helper says when it makes one.
+GATE_PUB=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync(process.argv[1],'utf8')).publicKey||'')" "$FM/data/devnet/gate/mining-gate.keystore.json")
+[ -n "$GATE_PUB" ] && ok "read node 1's mining gate public key from the keystore" || bad "no gate key: node 2 cannot join node 1's chain"
+export OBSIDIAN_MINING_GATE_PUBLIC_KEYS="$GATE_PUB"
 export OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters'
 ( cd obsidian-core && exec setsid nohup node dist/index.js start --network devnet --data-dir "$FM/data/devnet/node2" --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631 </dev/null >"$FM/node2.log" 2>&1 ) &
 echo $! > "$FM/node2.pid"
-unset OBSIDIAN_KEYSTORE_PASSPHRASE
+unset OBSIDIAN_KEYSTORE_PASSPHRASE OBSIDIAN_MINING_GATE_PUBLIC_KEYS
 sleep 24
+grep -q "genesis id mismatch" "$FM/node2.log" && bad "node 2 refused node 1 for a genesis mismatch" || ok "node 2 accepted node 1's chain"
 S1=$(get http://127.0.0.1:38630/status); S2=$(get http://127.0.0.1:38640/status)
 echo "   node 1: height $(echo "$S1" | jget height) peers $(echo "$S1" | jget peers) head $(echo "$S1" | jget headHash | cut -c1-12)"
 echo "   node 2: height $(echo "$S2" | jget height) peers $(echo "$S2" | jget peers) head $(echo "$S2" | jget headHash | cut -c1-12)"
