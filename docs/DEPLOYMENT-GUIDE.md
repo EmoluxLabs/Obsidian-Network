@@ -887,6 +887,12 @@ Rules enforced by consensus: one claim per 4 hours, at most 6 per 24 hours,
 minute** — block timestamps are protocol time and cannot be fast-forwarded.
 What you can verify is that a second claim inside 4 hours is *rejected*.
 
+Note the gate first: this by-hand chain (§C) commits no issuer key, so any claim
+is refused with `ERR_MINING_GATE_REQUIRED` before timing is even considered — see
+[mining.md](mining.md) and the note in §C3. The release's own devnet
+(`bash obsidian-network.sh devnet start`) makes a gate key for you, so the
+timing rules above can actually be seen there, through the interface.
+
 ### C12. Test the Genesis Invitation and its one-time rule
 
 This is interface-level, so start the interface (§C14) first, then:
@@ -2145,7 +2151,13 @@ nonce and resubmit.
 ### Mining claim rejected
 
 **Cause:** inside the 4-hour interval, already 6 claims in 24 hours, a replayed
-claim id, or a second claim for the same wallet in one block.
+claim id, or a second claim for the same wallet in one block. Protocol 1.7.0 adds
+the gate: `ERR_MINING_GATE_REQUIRED` means the claim carried no certificate — or
+the chain commits no issuer key, which is the case for a by-hand devnet (§C, where
+mining is closed by design) — and `ERR_MINING_GATE_INVALID` means the certificate
+is expired, was signed by a key this chain did not commit, or names another wallet,
+claim id or network. `GET /mining/status` reports the gate (`open`, issuer keys,
+window); `bash obsidian-network.sh <network> gate-key` prints this machine's key.
 ```bash
 curl -s "localhost:8630/mining/status?address=<addr>"
 ```
@@ -2656,6 +2668,7 @@ curl -s https://rpc1.example.org/status
 - [ ] Member invites work and cap at 5
 
 **Mining**
+- [ ] Gate key made by the operators; every node given the same `OBSIDIAN_MINING_GATE_PUBLIC_KEYS`; `/mining/status` reports `gate.open` true
 - [ ] `/mining/schedule` correct
 - [ ] Claim inside 4 hours is rejected
 - [ ] Registration credits 0 OBS
