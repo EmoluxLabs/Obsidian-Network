@@ -113,6 +113,12 @@ note, template or shipped, that names another protocol version than the one bein
   document index, not the changelog, not a test) and it was shipped inside the source archive, where a reader
   would take it for a report on the release they had just downloaded. The 1.6.1 record the changelog points at
   (`docs/remediation-1.6.1.md`) is indexed and linked and stays.
+- The `obsidian-core` archive now ships `.github/workflows/ci.yml`, so the command the release notes print for every
+  operator — `bash ../scripts/verify-release.sh obsidian-core-1.7.0.tar.gz --with-tests` — can actually run the suite
+  it extracts. The compliance test reads CI's removed-feature list out of that workflow, and the archive did not
+  contain it, so the run failed with `ENOENT`. It was also being dropped from the `.zip` after being staged: the
+  exclude pattern `*.git*` is not "the git directory" — zip's `*` crosses `/`, so it matched `.github/…` too. The
+  pattern is now `.git/*`.
 - New tests: `rpc-hardening` and `mining-gate` (core), gate issuance in `obsidian-interface`, and gated flows in
   `tests/e2e`, `tests/scripts`, the app-web, desktop and extension end-to-end suites.
 

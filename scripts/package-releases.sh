@@ -197,7 +197,11 @@ mkdir -p "$STAGING"
 # ── helpers ──────────────────────────────────────────────────────────────────
 archive() {
   local name="$1" dir="$2"
-  ( cd "$dir" && zip -qr "$RELEASES/${name}.zip" . -x '*.git*' )
+  # `*.git*` looked like "the git directory" and is not: zip's `*` crosses `/`,
+  # so it also matched every `.github/…` path. A staged `.github` was therefore
+  # written into the tarball and silently dropped from the zip. `.git/*` is what
+  # was meant, and it leaves `.github` alone.
+  ( cd "$dir" && zip -qr "$RELEASES/${name}.zip" . -x '.git/*' -x '.git' )
   ( cd "$dir" && tar --exclude='.git' -czf "$RELEASES/${name}.tar.gz" . )
   echo "  ${name}.zip / ${name}.tar.gz"
 }
@@ -219,11 +223,18 @@ stage() {
 echo "→ staging archives under $STAGING"
 
 # ── 1. obsidian-core: the node, with its built dist ──────────────────────────
+# `.github/workflows/ci.yml` is staged because one shipped test reads it: the
+# compliance test takes CI's removed-feature list from the workflow and asks the
+# running node to report every one of those names absent, so the two can never
+# drift apart. The archive is verified on its own — `verify-release.sh
+# --with-tests` extracts it and runs the suite there — and without this file that
+# command, which the release notes print for every operator, failed with ENOENT.
 stage "$STAGING/obsidian-core" \
   obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/tsconfig.json obsidian-core/tsconfig.test.json obsidian-core/vitest.config.ts \
   obsidian-core/src obsidian-core/tests obsidian-core/dist obsidian-core/config \
-  obsidian-core/deployment obsidian-core/README.md .env.example 2>/dev/null || true
+  obsidian-core/deployment obsidian-core/README.md .env.example \
+  .github/workflows/ci.yml 2>/dev/null || true
 cp LICENSE "$STAGING/obsidian-core/" 2>/dev/null || true
 
 # ── 2. obsidian-interface: server, built bundles and the site shells ─────────

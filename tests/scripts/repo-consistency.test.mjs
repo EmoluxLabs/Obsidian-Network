@@ -919,6 +919,23 @@ test('the release notes state the protocol version they were generated for', () 
   assert.deepEqual(stale, [], `a release note names another protocol version:\n${stale.join('\n')}`);
 });
 
+test('the core archive carries what its own tests read from outside the package', () => {
+  // `verify-release.sh --with-tests` — the command the release notes print for
+  // every operator — extracts obsidian-core-<version>.tar.gz on its own and runs
+  // the shipped suite there. One of those tests reads the removed-feature list
+  // out of `.github/workflows/ci.yml` and asks the running node to report every
+  // one of those names absent, so CI and the node's compliance audit can never
+  // drift apart. The archive did not contain that file, so the suite failed with
+  // ENOENT the moment an operator ran the documented command.
+  const script = read('scripts/package-releases.sh');
+  const stage = script.slice(script.indexOf('stage "$STAGING/obsidian-core"'), script.indexOf('# ── 2.'));
+  assert.ok(stage.length > 100, 'the core staging list must be found in scripts/package-releases.sh');
+  assert.match(stage, /\.github\/workflows\/ci\.yml/, 'the core archive must ship the workflow its test suite reads');
+  // ...and the zip must not silently drop it again: `*.git*` is not "the git
+  // directory" — zip's `*` crosses `/`, so it matched `.github/…` too.
+  assert.doesNotMatch(script, /zip [^\n]*-x\s+'\*\.git\*'/, "the zip exclude pattern '*.git*' excludes .github/ as well as .git/");
+});
+
 test('the helper, the packaging gate and CI all run this test', () => {
   assert.match(read('scripts/package-releases.sh'), /repo-consistency\.test\.mjs/, 'package-releases.sh must run the consistency test before it builds anything');
   assert.match(read('.github/workflows/ci.yml'), /repo-consistency\.test\.mjs/, 'CI must run the consistency test');
