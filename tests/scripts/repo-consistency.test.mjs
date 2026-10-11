@@ -1034,6 +1034,32 @@ test('every application directory is named in the README, has a suite, and is ru
   assert.deepEqual(problems, []);
 });
 
+test('the generated release notes describe this release, not the one before it', () => {
+  // The notes come from a heredoc in the packaging script. That heredoc shipped
+  // "protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data" inside the
+  // 1.7.0 candidate, and said nothing about the mining gate or the applications:
+  // text carried over from a previous release is exactly what a reader cannot
+  // tell from a claim about this one.
+  const script = read('scripts/package-releases.sh');
+  const start = script.indexOf('<<NOTES');
+  const end = script.indexOf('\nNOTES\n', start);
+  assert.ok(start > 0 && end > start, 'the release notes must be generated from a NOTES heredoc');
+  const template = script.slice(start + '<<NOTES'.length, end);
+  assert.ok(!/\bprotocol 1\.\d/.test(template),
+    'the notes template hard-codes a protocol version; generate it from $VERSION or drop the version');
+  const apps = readdirSync(ROOT)
+    .filter((name) => name.startsWith('obsidian-') && existsSync(join(ROOT, name, 'package.json')));
+  for (const app of apps) assert.ok(template.includes(app), `the release notes must name the application ${app}`);
+
+  // And the notes committed for the version this tree ships must agree with it.
+  const version = json('obsidian-core/package.json').version;
+  const notes = `releases/RELEASE-NOTES-${version}.md`;
+  if (!exists(notes)) return; // not packaged yet in this tree (the gate regenerates it)
+  for (const m of read(notes).matchAll(/\bprotocol (\d+\.\d+\.\d+)\b/g)) {
+    assert.equal(m[1], version, `${notes} speaks of protocol ${m[1]} while the tree ships ${version}`);
+  }
+});
+
 // ── the mining gate key is part of the genesis id ───────────────────────────
 // Protocol 1.7.0 hashes the committed mining-gate issuer key list into the genesis id, so a node started
 // without the network's list builds a different chain: the other nodes refuse it ("is on another network or

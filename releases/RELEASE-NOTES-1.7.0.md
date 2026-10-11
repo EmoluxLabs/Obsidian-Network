@@ -46,8 +46,21 @@ public release.
   proposer/vote equivocation evidence
 * fork choice is finalized anchor → fixed PoT weight → height → the lowest
   block hash, so equal-height ties resolve identically on every node
-* protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data; it does not
-  include a live-chain migration
+* a mining claim is valid only with a certificate from the mining gate: the
+  issuer public keys are committed in genesis and hashed into the genesis id, so
+  every node of a network must be given the same list, and a chain that commits
+  none accepts no claim (it fails closed)
+* protocol 1.7.0 is genesis-bound and rejects peers and data directories of
+  earlier protocol versions at the handshake; it does not include a live-chain
+  migration
+* name registry reads are bounded (`limit`/`offset`/`prefix` on `GET /names`,
+  `getnames` over JSON-RPC), and block sync no longer stalls when a peer serves
+  fewer blocks than the requested overlap
+* four applications ship in this release: `obsidian-app-web/` (the web app),
+  `obsidian-wallet-web/` (Obsidian Wallet, the non-custodial browser wallet),
+  `obsidian-extension/` (Obsidian Node Extension, MV3) and
+  `obsidian-node-desktop/` (Obsidian Node, the Electron app whose installers
+  are built by `.github/workflows/desktop-release.yml`)
 * 957 automated tests, all of them run immediately before packaging: core (529), interface (306), edge worker (17), release verification and signing behaviour (9), soak verdict rules (5), the genesis invitation generator (3), repository consistency (35), the three-node cluster end-to-end suite (15) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (38)
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%
