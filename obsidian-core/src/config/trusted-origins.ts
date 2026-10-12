@@ -17,6 +17,14 @@
  *   OBSIDIAN_RPC_TRUST_OFFICIAL_DOMAINS=false (node) or
  *   OBSIDIAN_INTERFACE_TRUST_OFFICIAL_DOMAINS=false (interface).
  *
+ * The second first-party domain: mineobs.network
+ *   Trusted by EXACT hostname, with NO wildcard: the root, www., app., wallet., api., node. and status., and
+ *   testnet., staging. and devnet. for the practice networks. A wildcard would also trust every name anyone ever
+ *   points under the domain (a forgotten CNAME to a deleted service is an open door), and none of those names
+ *   is needed: a new first-party host is one line in MINEOBS_HOSTS below, reviewed like any other change.
+ *   Everything said above about what "trusted" means holds here too: a trusted origin may read and relay, and
+ *   nothing else. It is not authentication.
+ *
  * Adding more
  *   The operator's own list (OBSIDIAN_RPC_CORS_ORIGINS, OBSIDIAN_INTERFACE_ALLOWED_ORIGINS) takes
  *   exact origins (`https://wallet.example.org`) and whole-subdomain patterns
@@ -39,19 +47,37 @@ export const OFFICIAL_DOMAIN = 'obsmainnet.us.ci';
 
 const MAINNET_SITES = ['mine', 'wallet', 'explorer', 'ons', 'node', 'developer', 'interface'] as const;
 
+/** The second registered domain. Trusted host by host (see the header): never as a wildcard. */
+export const MINEOBS_DOMAIN = 'mineobs.network';
+const MINEOBS_SITES = ['www', 'app', 'wallet', 'api', 'node', 'status'] as const;
+/** Every mineobs.network hostname this software trusts, by network. */
+export const MINEOBS_HOSTS: Readonly<Record<NetworkKey, readonly string[]>> = {
+  mainnet: [MINEOBS_DOMAIN, ...MINEOBS_SITES.map((site) => `${site}.${MINEOBS_DOMAIN}`)],
+  testnet: [`testnet.${MINEOBS_DOMAIN}`],
+  staging: [`staging.${MINEOBS_DOMAIN}`],
+  devnet: [`devnet.${MINEOBS_DOMAIN}`],
+};
+
 /**
  * The hostnames each network is served from. A network lists only its own: a devnet node never vouches
  * for mainnet's names, because those names are what people check a wallet address against.
  */
 export const OFFICIAL_HOSTS: Readonly<Record<NetworkKey, readonly string[]>> = {
-  mainnet: [OFFICIAL_DOMAIN, `api.${OFFICIAL_DOMAIN}`, ...MAINNET_SITES.map((site) => `${site}.${OFFICIAL_DOMAIN}`)],
-  testnet: [`testnet.${OFFICIAL_DOMAIN}`],
-  staging: [`staging.${OFFICIAL_DOMAIN}`],
-  devnet: [`devnet.${OFFICIAL_DOMAIN}`],
+  mainnet: [OFFICIAL_DOMAIN, `api.${OFFICIAL_DOMAIN}`, ...MAINNET_SITES.map((site) => `${site}.${OFFICIAL_DOMAIN}`), ...MINEOBS_HOSTS.mainnet],
+  testnet: [`testnet.${OFFICIAL_DOMAIN}`, ...MINEOBS_HOSTS.testnet],
+  staging: [`staging.${OFFICIAL_DOMAIN}`, ...MINEOBS_HOSTS.staging],
+  devnet: [`devnet.${OFFICIAL_DOMAIN}`, ...MINEOBS_HOSTS.devnet],
 };
 
-/** Origins trusted by default: the official domain, and everything beneath it. */
-export const OFFICIAL_ORIGIN_PATTERNS: readonly string[] = [`https://${OFFICIAL_DOMAIN}`, `https://*.${OFFICIAL_DOMAIN}`];
+/**
+ * Origins trusted by default: the official domain and everything beneath it, plus the mineobs.network hostnames
+ * listed above, exactly and over https.
+ */
+export const OFFICIAL_ORIGIN_PATTERNS: readonly string[] = [
+  `https://${OFFICIAL_DOMAIN}`,
+  `https://*.${OFFICIAL_DOMAIN}`,
+  ...Object.values(MINEOBS_HOSTS).flat().map((host) => `https://${host}`),
+];
 
 export interface OriginPattern {
   scheme: 'http' | 'https';

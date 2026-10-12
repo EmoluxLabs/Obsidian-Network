@@ -227,8 +227,13 @@ describe('a node says only what is true of the network it follows', () => {
     const result = await call('/network');
     expect(result.status).toBe(200);
     expect(result.body.network.name).toBe('devnet');
-    expect(result.body.domains).toEqual(['devnet.obsmainnet.us.ci']);
-    for (const mainnetHost of ['obsmainnet.us.ci', 'api.obsmainnet.us.ci', 'wallet.obsmainnet.us.ci']) {
+    // Its own hostname under each trusted domain (obsmainnet.us.ci and mineobs.network), and nothing else.
+    expect(result.body.domains).toEqual(['devnet.obsmainnet.us.ci', 'devnet.mineobs.network']);
+    for (const mainnetHost of [
+      'obsmainnet.us.ci', 'api.obsmainnet.us.ci', 'wallet.obsmainnet.us.ci',
+      'mineobs.network', 'www.mineobs.network', 'app.mineobs.network', 'wallet.mineobs.network', 'api.mineobs.network',
+      'node.mineobs.network', 'status.mineobs.network',
+    ]) {
       expect(result.body.domains).not.toContain(mainnetHost);
     }
   });

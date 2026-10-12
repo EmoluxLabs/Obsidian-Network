@@ -22,6 +22,18 @@ import {
 } from '../../src/config/trusted-origins.js';
 import { createHarness, type Harness } from '../helpers/harness.js';
 
+const MINEOBS_ORIGINS = [
+  'https://mineobs.network',
+  'https://www.mineobs.network',
+  'https://app.mineobs.network',
+  'https://wallet.mineobs.network',
+  'https://api.mineobs.network',
+  'https://node.mineobs.network',
+  'https://status.mineobs.network',
+  'https://testnet.mineobs.network',
+  'https://staging.mineobs.network',
+  'https://devnet.mineobs.network',
+];
 const official = (origin: string | undefined) => originMatches(origin, OFFICIAL_PATTERNS);
 const listed = (entries: string[], origin: string | undefined) => originMatches(origin, compileOrigins(entries));
 
@@ -77,9 +89,9 @@ describe('the official domain', () => {
   it('lists the five names the project hosts, among the hostnames mainnet advertises', () => {
     expect(OFFICIAL_DOMAIN).toBe('obsmainnet.us.ci');
     expect(OFFICIAL_HOSTS.mainnet).toEqual(expect.arrayContaining(['obsmainnet.us.ci', 'api.obsmainnet.us.ci']));
-    expect(OFFICIAL_HOSTS.devnet).toEqual(['devnet.obsmainnet.us.ci']);
-    expect(OFFICIAL_HOSTS.testnet).toEqual(['testnet.obsmainnet.us.ci']);
-    expect(OFFICIAL_HOSTS.staging).toEqual(['staging.obsmainnet.us.ci']);
+    expect(OFFICIAL_HOSTS.devnet).toEqual(['devnet.obsmainnet.us.ci', 'devnet.mineobs.network']);
+    expect(OFFICIAL_HOSTS.testnet).toEqual(['testnet.obsmainnet.us.ci', 'testnet.mineobs.network']);
+    expect(OFFICIAL_HOSTS.staging).toEqual(['staging.obsmainnet.us.ci', 'staging.mineobs.network']);
     // Every advertised name is one the node trusts, and a network lists none of another's.
     const all = new Set(Object.values(OFFICIAL_HOSTS).flat());
     for (const host of all) expect(official(`https://${host}`), host).toBe(true);
@@ -88,6 +100,73 @@ describe('the official domain', () => {
         if (network !== other) expect(hosts.filter((host) => otherHosts.includes(host)), `${network} vs ${other}`).toEqual([]);
       }
     }
+  });
+});
+
+describe('mineobs.network (exact hostnames, no wildcard)', () => {
+  it('trusts the root and each intended first-party host over https', () => {
+    for (const origin of MINEOBS_ORIGINS) expect(official(origin), origin).toBe(true);
+    expect(official('HTTPS://APP.MineObs.Network')).toBe(true); // case does not matter
+    expect(official('https://wallet.mineobs.network:443')).toBe(true); // the default port, written out
+  });
+
+  it('trusts no other name under the domain: there is no wildcard to take over', () => {
+    for (const origin of [
+      'https://forgotten.mineobs.network', // a name nobody listed (the dangling-record takeover case)
+      'https://ftp.mineobs.network',
+      'https://a.app.mineobs.network', // deeper than a listed name
+      'https://explorer.mineobs.network', // exists on the other domain, not listed here
+      'https://x.mineobs.network',
+    ]) {
+      expect(official(origin), origin).toBe(false);
+    }
+  });
+
+  it('rejects every lookalike, malformed host and wrong scheme or port', () => {
+    for (const origin of [
+      'https://mineobs.network.attacker.example', // the domain as a prefix
+      'https://app.mineobs.network.attacker.example',
+      'https://evilmineobs.network', // glued on, no dot
+      'https://mineobs.network.evil.test',
+      'https://mineobs.network@evil.test', // a user name, not a host
+      'https://evil.test@mineobs.network',
+      'https://evil.test/mineobs.network', // a path
+      'https://mineobs.network/',
+      'https://mineobs.network?x=1',
+      'https://mineobs.network#x',
+      'https://mineobs.network.', // trailing dot: a different string to every browser's Origin
+      'https://.mineobs.network',
+      'https://app..mineobs.network',
+      'http://mineobs.network', // not https
+      'http://app.mineobs.network',
+      'https://mineobs.network:8443', // another port is another origin
+      'https://app.mineobs.network:80',
+      'https://m\u0456neobs.network', // Cyrillic і: an IDN homograph
+      'https://xn--mneobs-network-9ze.example',
+      'https://%6dineobs.network', // percent-encoded host
+      'https://mineobs.network%2eevil.test',
+      'https://mineobs.network\u3002evil.test', // ideographic full stop
+      'https://mineobs.network\n.evil.test',
+      'https://mineobs.network .evil.test',
+      'https://mineobs.networks',
+      'https://mineobs.net',
+      'https://network',
+      'null',
+      'ftp://mineobs.network',
+    ]) {
+      expect(official(origin), origin).toBe(false);
+    }
+  });
+
+  it('names its testnet, staging and devnet host on that network only, and trusts them', () => {
+    expect(OFFICIAL_HOSTS.mainnet).toEqual(expect.arrayContaining(MINEOBS_ORIGINS.slice(0, 7).map((o) => o.replace('https://', ''))));
+    expect(OFFICIAL_HOSTS.mainnet).not.toContain('testnet.mineobs.network');
+    expect(OFFICIAL_HOSTS.testnet).toContain('testnet.mineobs.network');
+  });
+
+  it('is switched off with the rest of the official list, leaving only the operator\'s own entries', () => {
+    expect(originMatches('https://app.mineobs.network', compileOrigins([]))).toBe(false);
+    expect(originMatches('https://app.mineobs.network', compileOrigins(['https://app.mineobs.network']))).toBe(true);
   });
 });
 
@@ -256,7 +335,11 @@ describe('a node over real HTTP', () => {
         for (const host of OFFICIAL_HOSTS[other as keyof typeof OFFICIAL_HOSTS]) expect(body.domains, `${network} must not advertise ${host}`).not.toContain(host);
       }
       expect(body.trust.officialDomains).toBe(true);
-      expect(body.trust.patterns).toEqual(['https://obsmainnet.us.ci', 'https://*.obsmainnet.us.ci']);
+      expect(body.trust.patterns).toEqual([
+        'https://obsmainnet.us.ci',
+        'https://*.obsmainnet.us.ci',
+        ...MINEOBS_ORIGINS,
+      ]);
     }
     expect(getNetwork('mainnet').name).toBe('mainnet');
   });

@@ -359,6 +359,13 @@ test('pages on the official domain can read this node and this interface, and no
   assert.equal(node.status, 200);
   assert.equal(node.headers.get('access-control-allow-origin'), official);
   assert.equal(node.headers.get('access-control-allow-credentials'), null);
+  // The second trusted domain, by exact host: its named hosts read, lookalikes and unnamed hosts do not.
+  const mineobs = await get(`${NODE_URL}/status`, { headers: { origin: 'https://wallet.mineobs.network' } });
+  assert.equal(mineobs.status, 200);
+  assert.equal(mineobs.headers.get('access-control-allow-origin'), 'https://wallet.mineobs.network');
+  for (const origin of ['https://mineobs.network.attacker.example', 'https://evilmineobs.network', 'https://admin.mineobs.network', 'http://wallet.mineobs.network']) {
+    assert.equal((await get(`${NODE_URL}/status`, { headers: { origin } })).status, 403, origin);
+  }
   for (const origin of ['https://evil.test', 'https://obsmainnet.us.ci.evil.test', 'http://wallet.obsmainnet.us.ci']) {
     assert.equal((await get(`${NODE_URL}/status`, { headers: { origin } })).status, 403, origin);
   }
@@ -370,6 +377,6 @@ test('pages on the official domain can read this node and this interface, and no
   assert.equal((await get(`${UI_URL}/api/auth/me`, { headers: { origin: official } })).status, 403);
   // Each network names only its own hostnames.
   const network = (await get(`${NODE_URL}/network`)).body;
-  assert.deepEqual(network.domains, ['devnet.obsmainnet.us.ci']);
+  assert.deepEqual(network.domains, ['devnet.obsmainnet.us.ci', 'devnet.mineobs.network']);
   assert.equal(network.trust.officialDomains, true);
 });

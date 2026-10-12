@@ -815,8 +815,13 @@ test('trusted origins: one matcher in two packages, and the docs name the hostna
     const read_by = [read('obsidian-core/src/config/config.ts'), read('obsidian-interface/server/config.ts')].some((source) => source.includes(variable));
     assert.ok(read_by, `${variable} is documented but nothing reads it`);
   }
-  // The only wildcard the code trusts by default is the official domain, over https.
-  assert.match(core, /OFFICIAL_ORIGIN_PATTERNS[^=]*= \[`https:\/\/\$\{OFFICIAL_DOMAIN\}`, `https:\/\/\*\.\$\{OFFICIAL_DOMAIN\}`\]/);
+  // The only wildcard the code trusts by default is the official domain, over https. mineobs.network is
+  // trusted host by host: no pattern in the default list may carry a wildcard for it.
+  assert.match(core, /OFFICIAL_ORIGIN_PATTERNS[^=]*= \[\s*`https:\/\/\$\{OFFICIAL_DOMAIN\}`,\s*`https:\/\/\*\.\$\{OFFICIAL_DOMAIN\}`,\s*\.\.\.Object\.values\(MINEOBS_HOSTS\)\.flat\(\)\.map\(\(host\) => `https:\/\/\$\{host\}`\),\s*\]/);
+  assert.ok(!/\*\.\$\{MINEOBS_DOMAIN\}|\*\.mineobs/.test(core.replace(/\/\*[\s\S]*?\*\//g, '')), 'mineobs.network must not be trusted as a wildcard');
+  for (const host of ['mineobs.network', 'www.mineobs.network', 'app.mineobs.network', 'wallet.mineobs.network', 'api.mineobs.network', 'node.mineobs.network', 'status.mineobs.network']) {
+    assert.ok(doc.includes(`\`${host}\``), `docs/trusted-domains.md must name ${host}`);
+  }
 });
 
 test('the current docs describe only products that still exist', () => {

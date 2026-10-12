@@ -94,7 +94,7 @@ Options:
   --core-dir <dir>            compiled browser-safe core modules
   --allow-origin <origin>     extra origin allowed to call the API with cookies (repeatable): an exact
                               origin, or a whole-subdomain pattern like https://*.example.org
-  --no-trust-official-domains do not let pages on obsmainnet.us.ci read this interface
+  --no-trust-official-domains do not let pages on the official domains (obsmainnet.us.ci, mineobs.network) read this interface
   --max-invites <n>           invites per account (protocol default 5)
   --genesis-invite-hash <h>   scrypt hash of the single Genesis Invitation that
                               bootstraps the first account. Never the plaintext

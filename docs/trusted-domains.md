@@ -13,7 +13,7 @@ A page served from a trusted origin may call a node or an interface from a brows
 * Without it a browser refuses the call, and the node answers `403 origin not allowed`. That is what
   stops an unknown website from reading a node on a visitor's behalf.
 
-## The project's own domain, trusted by default
+## The project's own domain `obsmainnet.us.ci`, trusted by default
 
 `obsmainnet.us.ci` and **every subdomain beneath it** are trusted by default, over HTTPS only. These
 are the names the project uses:
@@ -34,6 +34,46 @@ A node reports what it knows about itself on `GET /network`: `domains` is the li
 own network** (a devnet node names `devnet.obsmainnet.us.ci` and none of mainnet's, because those names
 are what people check a wallet address against), and `trust` says whether the official domain is trusted
 and by which patterns.
+
+## The second first-party domain: `mineobs.network`
+
+`mineobs.network` is trusted **host by host, with no wildcard**. These exact origins are trusted by default, over
+HTTPS only, on the default port:
+
+| Hostname | Used for |
+| --- | --- |
+| `mineobs.network` | the root |
+| `www.mineobs.network` | the root's `www` alias |
+| `app.mineobs.network` | the web app |
+| `wallet.mineobs.network` | the wallet web app |
+| `api.mineobs.network` | a node's public API |
+| `node.mineobs.network` | the node page |
+| `status.mineobs.network` | the status page |
+| `testnet.mineobs.network`, `staging.mineobs.network`, `devnet.mineobs.network` | the practice networks (each is advertised only by its own network) |
+
+Why no wildcard: `https://*.mineobs.network` would also trust every name anyone ever points under the domain, and a
+forgotten DNS record that still points at a deleted cloud service is exactly how such a name gets taken over. Nothing
+needs it, because a new first-party host is one line in `MINEOBS_HOSTS` (`obsidian-core/src/config/trusted-origins.ts`,
+copied to `obsidian-interface/server/trusted-origins.ts`), reviewed like any other change. An operator who *wants* the
+wildcard can still write `https://*.mineobs.network` in their own list.
+
+What is rejected, and covered by tests (`obsidian-core/tests/security/trusted-origins.test.ts`): any name not listed
+above (`forgotten.mineobs.network`, `a.app.mineobs.network`), the domain as a prefix
+(`mineobs.network.attacker.example`), glued names (`evilmineobs.network`), user-name tricks
+(`mineobs.network@evil.test`), paths, queries, trailing dots, `http://`, any other port, an IDN homograph
+(Cyrillic `і`), percent-encoded hosts and control characters.
+
+**This is a list of who may *read* and *relay*, not a login.** Being on it never replaces sign-in, MFA, CSRF
+protection, rate limits or signature checks. Where it applies today: a node's RPC CORS answer, and the interface's
+cross-origin answer for its public read-only API paths. It is **not** used for cookies (host-only, never shared
+across hostnames), CSP (`connect-src 'self'`) or redirects; nothing in this repository takes a third-party callback
+or WebSocket.
+
+**Operator duty:** trusting a name means trusting whoever controls its DNS. Keep the registration renewed, enable
+registrar lock, and delete a record the day you stop using the name. If `mineobs.network` is not yours (or lapses),
+switch the default off with `OBSIDIAN_RPC_TRUST_OFFICIAL_DOMAINS=false` /
+`OBSIDIAN_INTERFACE_TRUST_OFFICIAL_DOMAINS=false` and list only your own origins. That switch turns off the
+`obsmainnet.us.ci` entries too.
 
 ## What a trusted page can reach
 

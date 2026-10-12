@@ -990,6 +990,18 @@ describe('node proxy', () => {
     expect(health).toMatchObject({ status: 'ok', healthyNodes: 1 });
   });
 
+  it('/api/ready is 503 until a node of its own network is healthy, then 200; /api/health stays up throughout', async () => {
+    const h = await harness();
+    const before = await fetch(`${h.origin}/api/ready`);
+    expect(before.status).toBe(503);
+    expect(await before.json()).toMatchObject({ status: 'not-ready', healthyNodes: 0 });
+    expect((await fetch(`${h.origin}/api/health`)).status).toBe(200);
+    await h.poolCheck();
+    const after = await fetch(`${h.origin}/api/ready`);
+    expect(after.status).toBe(200);
+    expect(await after.json()).toMatchObject({ status: 'ready', healthyNodes: 1, genesisMismatch: false });
+  });
+
   it('rejects an oversized body instead of buffering it', async () => {
     const h = await harness();
     const response = await fetch(`${h.origin}/api/rpc?path=/tx/submit`, {
@@ -1558,6 +1570,41 @@ describe('trusted origins', () => {
       'https://api.obsmainnet.us.ci:8443',
       'https://obsmainnet.us.ci@evil.test',
       'null',
+    ]) {
+      const response = await call(h, '/api/health', origin);
+      expect(response.status, origin).toBe(403);
+      expect(response.headers.get('access-control-allow-origin'), origin).toBeNull();
+    }
+  });
+
+  it('trusts the exact mineobs.network hosts for the public read routes — and never with cookies or accounts', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    for (const origin of ['https://mineobs.network', 'https://www.mineobs.network', 'https://app.mineobs.network', 'https://wallet.mineobs.network', 'https://api.mineobs.network', 'https://node.mineobs.network', 'https://status.mineobs.network']) {
+      const read = await call(h, '/api/health', origin);
+      expect(read.status, origin).toBe(200);
+      expect(read.headers.get('access-control-allow-origin'), origin).toBe(origin);
+      expect(read.headers.get('access-control-allow-credentials'), `${origin} must not allow cookies`).toBeNull();
+      // CORS is not authentication: an account route stays same-origin for every one of them.
+      const account = await call(h, '/api/auth/login', origin, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      expect(account.status, `${origin} login`).toBe(403);
+      expect(account.headers.get('access-control-allow-origin'), origin).toBeNull();
+    }
+  });
+
+  it('is not fooled by a lookalike of mineobs.network, nor by a subdomain it never named', async () => {
+    const h = await harness();
+    for (const origin of [
+      'https://mineobs.network.attacker.example',
+      'https://evilmineobs.network',
+      'https://mineobs.network.evil.test',
+      'https://xn--mineobs-3fa.network',
+      'https://mineobs.network@evil.test',
+      'http://app.mineobs.network',
+      'https://app.mineobs.network:8443',
+      'https://admin.mineobs.network',
+      'https://a.app.mineobs.network',
+      'https://mineobs.networkx',
     ]) {
       const response = await call(h, '/api/health', origin);
       expect(response.status, origin).toBe(403);
