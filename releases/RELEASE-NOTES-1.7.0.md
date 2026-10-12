@@ -1,6 +1,6 @@
 # Obsidian Network 1.7.0
 
-Built from commit `084f0cd0213fb0137f42fff763b9970e2691999d` at 2026-10-12T07:49:36Z.
+Built from commit `bee96c15f701a610c0bdda3ea961138c8243ef2d` at 2026-10-12T08:26:19Z.
 
 ## Verify before you run
 
@@ -59,7 +59,7 @@ public release.
   `obsidian-extension/` (Obsidian Node Extension, MV3) and
   `obsidian-node-desktop/` (Obsidian Node, the Electron app whose installers
   are built by `.github/workflows/desktop-release.yml`)
-* 970 automated tests, all of them run immediately before packaging: core (534), interface (308), edge worker (17), release verification and signing behaviour (9), soak verdict rules (5), the genesis invitation generator (3), repository consistency (41), the three-node cluster end-to-end suite (15) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (38)
+* 971 automated tests, all of them run immediately before packaging: core (535), interface (308), edge worker (17), release verification and signing behaviour (9), soak verdict rules (5), the genesis invitation generator (3), repository consistency (41), the three-node cluster end-to-end suite (15) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (38)
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%
   node runners / 10% treasury, and the validator bond is exactly 20,000 OBS
