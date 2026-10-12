@@ -149,7 +149,7 @@ operation, not a scored rating.
   `obsidian-app-web/web/vault.mjs`) validate the format string, the iteration range
   (100 000 – 10 000 000; new vaults use 600 000), salt, iv and ciphertext sizes
   before any key derivation, and the cipher is AES-GCM with a 12-byte iv.
-- **Tests.** `tests/wallet-vault.test.ts`, `obsidian-app-web/tests/vault-interop.test.mjs`
+- **Tests.** `obsidian-interface/tests/wallet-vault.test.ts`, `obsidian-app-web/tests/vault-interop.test.mjs`
   (wrong password, corrupt file, unsupported version, hostile KDF cost, the two
   implementations interoperate). Custody model: [wallet-custody.md](wallet-custody.md).
 - **Residual.** The vault **header** is not authenticated data, so a locked page can

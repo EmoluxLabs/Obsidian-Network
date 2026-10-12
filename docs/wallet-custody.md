@@ -16,7 +16,7 @@ account, permanently. Eligibility to claim is decided by consensus, not by the p
 | Product | Where the vault lives | Format |
 | --- | --- | --- |
 | Web platform wallet (`obsidian-interface/web/src/lib/wallet.ts`) | browser `localStorage`, key `obsidian.vault.v1` | the vault below |
-| Web app wallet (`obsidian-app-web/web/vault.mjs`) | same key, byte-compatible (`tests/vault-interop.test.mjs` opens each with the other's real code) | the vault below |
+| Web app wallet (`obsidian-app-web/web/vault.mjs`) | same key, byte-compatible (`obsidian-app-web/tests/vault-interop.test.mjs` opens each with the other's real code) | the vault below |
 | Desktop node (`obsidian-node-desktop/src/core/vault.ts`) | a file on the user's disk | the vault below |
 | Wallet web app (`obsidian-wallet-web`) | encrypted backup files the user downloads and re-imports | PBKDF2/AES-GCM backup with bounded parameters |
 
