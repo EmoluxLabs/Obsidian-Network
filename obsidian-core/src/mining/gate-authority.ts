@@ -66,6 +66,22 @@ export function gateQuorum(n: number): number {
   return n <= 0 ? Number.POSITIVE_INFINITY : Math.floor(n / 2) + 1;
 }
 
+/**
+ * Fewest gate keys a MAINNET may be created with. Operational policy, not a consensus rule (the chain accepts 1..8):
+ * with one key, that key alone can replace the whole set and nothing protects it; with two, the quorum is 2 of 2, so
+ * losing either key freezes all further rotation. Three is the smallest set where one key can be lost or compromised
+ * and the other two can still revoke it (quorum 2 of 3).
+ */
+export const MIN_GATE_KEYS_MAINNET = 3;
+
+/** Operator-facing warning codes for a given active key count. Pure; shared by the CLI, /gate and /readyz. */
+export function gateWarnings(activeKeys: number): string[] {
+  if (activeKeys <= 0) return ['gate-closed'];
+  if (activeKeys === 1) return ['gate-single-key'];
+  if (activeKeys < MIN_GATE_KEYS_MAINNET) return ['gate-below-three-keys'];
+  return [];
+}
+
 const KEY_PATTERN = /^0[23][0-9a-f]{64}$/;
 
 /** A lowercase compressed secp256k1 public key that is a real curve point, or a protocol rejection. */

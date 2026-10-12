@@ -109,7 +109,8 @@ function usage(): void {
       '  --require-init      `start` refuses to create a NEW network here (or set OBSIDIAN_REQUIRE_INIT=1)',
       '  --generate-gate-key `init`: create the mining gate authority key (passphrase: OBSIDIAN_GATE_KEYSTORE_PASSPHRASE[_FILE])',
       '  --gate-dir <path>   `init`: where the encrypted gate key is written (default: <data-dir>/../gate-authority)',
-      '  --gate-key-count <n> `init --generate-gate-key`: create n gate keys (1-8, default 1; use 3+ so a stolen key can be revoked)',
+      '  --gate-key-count <n> `init --generate-gate-key`: create n gate keys (1-8, default 1; mainnet requires 3+ so a stolen key can be revoked)',
+      '  --allow-single-gate-key  `init` on mainnet: accept fewer than 3 gate keys (a deliberate, unrecoverable-without-new-genesis choice)',
       '  --add/--remove <k,k> `gate propose`: compressed public keys to add or to revoke',
       '  --proposal <file>   `gate sign|submit`: the proposal file (`--out <file>` on propose/sign; `--dry-run` on submit checks only)',
       '  --peer <url>        `join`: the peer\'s RPC base URL, e.g. http://203.0.113.5:8630',
@@ -153,6 +154,7 @@ interface CliOptions {
   proposal?: string;
   out?: string;
   gateKeyCount?: number;
+  allowSingleGateKey?: boolean;
   dryRun: boolean;
   noInterface: boolean;
 }
@@ -246,6 +248,9 @@ function parseArgs(argv: string[]): CliOptions {
         break;
       case '--out':
         options.out = value();
+        break;
+      case '--allow-single-gate-key':
+        options.allowSingleGateKey = true;
         break;
       case '--gate-key-count':
         options.gateKeyCount = whole();
@@ -401,6 +406,7 @@ async function main(): Promise<void> {
           gateDir: options.gateDir,
           gatePassphrase: options.generateGateKey ? gatePassphraseFromEnv() : undefined,
           gateKeyCount: options.gateKeyCount,
+          allowSingleGateKey: options.allowSingleGateKey,
         });
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       } catch (error) {

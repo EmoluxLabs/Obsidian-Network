@@ -94,3 +94,14 @@ describe('gate proposal files', () => {
     expect(() => readProposal(join(dir, 'missing.json'))).toThrow(/not found/);
   });
 });
+
+describe('gate key-count policy', () => {
+  it('warns for 0, 1 and 2 keys and for nothing from 3 up', async () => {
+    const { gateWarnings, MIN_GATE_KEYS_MAINNET } = await import('../../src/mining/gate-authority.js');
+    expect(MIN_GATE_KEYS_MAINNET).toBe(3);
+    expect(gateWarnings(0)).toEqual(['gate-closed']);
+    expect(gateWarnings(1)).toEqual(['gate-single-key']);
+    expect(gateWarnings(2)).toEqual(['gate-below-three-keys']);
+    for (const n of [3, 4, 8]) expect(gateWarnings(n)).toEqual([]);
+  });
+});

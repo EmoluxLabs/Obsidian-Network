@@ -25,7 +25,7 @@ import { slashAmountFor } from '../consensus/slash-evidence.js';
 import { evaluateMining } from '../mining/rules.js';
 import { scheduleView, dailyRewardForActiveMiners, claimRewardForActiveMiners } from '../mining/schedule.js';
 import { decodeSignedTxFromBytes, encodeSignedTx } from '../transactions/encode.js';
-import { decodeGateAuthorityBody, encodeGateAuthorityBody, gateQuorum } from '../mining/gate-authority.js';
+import { decodeGateAuthorityBody, encodeGateAuthorityBody, gateQuorum, gateWarnings } from '../mining/gate-authority.js';
 import { simulateTransactions } from '../blockchain/state-machine.js';
 import { blockHash, summarizeBlock } from '../blockchain/block.js';
 import { paramsHashUtf8, PARAMS_HASH } from '../blockchain/state-root.js';
@@ -89,6 +89,9 @@ const POST_ONLY_PATHS: ReadonlySet<string> = new Set([
  * returns the most recent page and reports the exact total separately.
  */
 const SLASH_LIST_LIMIT = 64;
+
+/** Finality lag (blocks) beyond which /readyz lists `finality-lagging`. Informational: it never makes a node unready. */
+const READY_MAX_FINALITY_LAG = 64;
 
 export class RpcServer {
   private server?: Server;
@@ -470,6 +473,18 @@ export class RpcServer {
     const degraded: string[] = [];
     if (p2pExpected && connected === 0) degraded.push('no-peers');
     const ready = chainOk && !syncing && p2pOk;
+    // Dimensions an operator or a load balancer can tell apart. Only chain/sync/p2p decide `ready`; the rest are
+    // reported (and listed under `degraded`) because a node that verifies blocks is useful even while the gate is closed
+    // or finality is slow, and hiding that behind one boolean is how outages go unnoticed.
+    const info = chain.status({ peers: connected });
+    const identityOk = Boolean(this.options.genesisId) && info.genesisId === this.options.genesisId;
+    const gate = this.gateSummary();
+    const gateIssues = gateWarnings(gate.issuerKeys.length);
+    const finalityLag = info.finalityLag;
+    const finalityOk = finalityLag <= READY_MAX_FINALITY_LAG;
+    if (!identityOk) degraded.push('identity-mismatch');
+    // Advisories do not change `status` (a closed gate or slow finality is something to fix, not a reason to drain a node).
+    const advisories = [...(finalityOk ? [] : ['finality-lagging']), ...gateIssues];
     this.json(response, ready ? 200 : 503, {
       status: ready ? (degraded.length > 0 ? 'ready-degraded' : 'ready') : 'not-ready',
       checks: {
@@ -477,8 +492,13 @@ export class RpcServer {
         sync: { ok: !syncing, syncing, behindBy },
         p2p: { ok: p2pOk, enabled: p2pExpected, listening: p2pStatus.listening === true, connectedPeers: connected },
         rpc: { ok: true },
+        identity: { ok: identityOk, genesisId: this.options.genesisId, networkId: this.options.net.networkId },
+        finality: { ok: finalityOk, finalizedHeight: info.finalizedHeight, lag: finalityLag, maxLag: READY_MAX_FINALITY_LAG },
+        gateAuthority: { ok: gate.open && gateIssues.length === 0, open: gate.open, activeKeys: gate.issuerKeys.length, quorum: gate.quorum, epoch: gate.epoch, warnings: gateIssues },
+        lastBlockAgeSeconds: tip ? Math.max(0, Math.floor(Date.now() / 1000) - tip.timestamp) : null,
       },
       degraded,
+      advisories,
       network: this.options.net.name,
       genesisId: this.options.genesisId,
       timestamp: Math.floor(Date.now() / 1000),
@@ -1322,6 +1342,7 @@ export class RpcServer {
     quorum: number | null;
     revokedKeys: string[];
     genesisKeys: string[];
+    warnings: string[];
     certificateTtlSeconds: number;
     clockSkewSeconds: number;
   } {
@@ -1337,6 +1358,7 @@ export class RpcServer {
       quorum: issuerKeys.length > 0 ? gateQuorum(issuerKeys.length) : null,
       revokedKeys: [...g.gateKeysRevoked],
       genesisKeys: [...g.miningGateKeys],
+      warnings: gateWarnings(issuerKeys.length),
       certificateTtlSeconds: CONSENSUS_PARAMS.miningGate.certificateTtlSeconds,
       clockSkewSeconds: CONSENSUS_PARAMS.miningGate.clockSkewSeconds,
     };

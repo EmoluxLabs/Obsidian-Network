@@ -183,6 +183,30 @@ describe('the gate authority key', () => {
     expect(readManifest(loaded.config.dataDir)!.miningGatePublicKeys).toEqual([result.gateAuthority!.publicKey]);
   });
 
+  it('mainnet refuses fewer than 3 gate keys unless the override is named; other networks are unaffected', () => {
+    const MAIN = getNetwork('mainnet');
+    const mainLoaded = (root: string): LoadedConfig => {
+      const dataDir = join(root, 'data', 'mainnet');
+      return { config: { ...DEFAULT_CONFIG, network: 'mainnet', dataDir, keystorePath: join(dataDir, 'node-key.json'), miningGatePublicKeys: [] }, net: MAIN, source: 'test', warnings: [] };
+    };
+    for (const count of [1, 2]) {
+      const root = scratch();
+      const loaded = mainLoaded(root);
+      expect(() => initNetwork(loaded, { generateGateKey: true, gatePassphrase: PASS, gateKeyCount: count })).toThrow(/mainnet needs at least 3 gate keys/);
+      // The refusal happens before anything is written: no keystore, no manifest.
+      expect(existsSync(manifestPath(loaded.config.dataDir))).toBe(false);
+      expect(existsSync(join(root, 'data', 'gate-authority'))).toBe(false);
+    }
+    const ok = scratch();
+    const three = initNetwork(mainLoaded(ok), { generateGateKey: true, gatePassphrase: PASS, gateKeyCount: 3 });
+    expect(three.gateAuthority?.keys).toHaveLength(3);
+    const override = scratch();
+    const one = initNetwork(mainLoaded(override), { generateGateKey: true, gatePassphrase: PASS, gateKeyCount: 1, allowSingleGateKey: true });
+    expect(one.notes.join(' ')).toMatch(/WARNING: 1 gate key/);
+    // devnet still allows one key (that is how the tests and local development run).
+    expect(initNetwork(loadedFor(scratch()), { generateGateKey: true, gatePassphrase: PASS, gateKeyCount: 1 }).gateAuthority?.keys).toHaveLength(1);
+  });
+
   it('is never regenerated: re-running the same command changes nothing and keeps the same key', () => {
     const root = scratch();
     const loaded = loadedFor(root);

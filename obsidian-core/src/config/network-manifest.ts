@@ -34,7 +34,7 @@ import { join } from 'node:path';
 import { atomicWriteFile } from '../storage/atomic.js';
 import { Keystore } from '../crypto/keystore.js';
 import { generateKeyPair } from '../crypto/keys.js';
-import { gateQuorum } from '../mining/gate-authority.js';
+import { MIN_GATE_KEYS_MAINNET, gateQuorum } from '../mining/gate-authority.js';
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import { blockHash } from '../blockchain/block.js';
 import {
@@ -252,6 +252,11 @@ export interface InitOptions {
    * more, held by different people or machines, for any network that matters.
    */
   gateKeyCount?: number;
+  /**
+   * Mainnet refuses fewer than 3 gate keys (docs/gate-authority.md). This is the explicit, named override for a
+   * deliberate single-operator launch; it does not exist for any other reason and is recorded in the init notes.
+   */
+  allowSingleGateKey?: boolean;
 }
 
 export interface InitResult {
@@ -329,6 +334,13 @@ export function initNetwork(loaded: LoadedConfig, options: InitOptions = {}): In
     const count = options.gateKeyCount ?? 1;
     if (!Number.isSafeInteger(count) || count < 1 || count > CONSENSUS_PARAMS.miningGate.maxIssuers) {
       throw new NetworkIdentityError(`--gate-key-count must be a whole number from 1 to ${CONSENSUS_PARAMS.miningGate.maxIssuers}`);
+    }
+    if (net.name === 'mainnet' && count < MIN_GATE_KEYS_MAINNET && !options.allowSingleGateKey) {
+      throw new NetworkIdentityError(
+        `mainnet needs at least ${MIN_GATE_KEYS_MAINNET} gate keys (--gate-key-count ${MIN_GATE_KEYS_MAINNET}), held by different people or machines: ` +
+          `with ${count}, ${count === 1 ? 'one holder can replace the whole authority and nothing protects the key' : 'losing either key freezes all further rotation'}. ` +
+          'Pass --allow-single-gate-key only for a deliberate launch you accept cannot be recovered without a new genesis.',
+      );
     }
     const targets = Array.from({ length: count }, (_, i) =>
       join(gateDir, count === 1 ? `${net.name}-mining-gate.keystore.json` : `${net.name}-mining-gate-${i + 1}.keystore.json`),

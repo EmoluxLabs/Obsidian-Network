@@ -97,6 +97,24 @@ describe('/readyz', () => {
     }
   });
 
+  it('reports every dimension separately: identity, finality, and the gate authority (warnings for a thin key set)', async () => {
+    const s = await serve({ listening: true, connected: 2, behindBy: 0 });
+    try {
+      const { status, body } = await get(s.base, '/readyz');
+      expect(status).toBe(200);
+      expect(body.checks.identity).toMatchObject({ ok: true, networkId: NET.networkId });
+      expect(body.checks.finality).toMatchObject({ ok: true });
+      expect(typeof body.checks.finality.lag).toBe('number');
+      // This test chain has no gate key: the closed gate is reported, never hidden behind a green light.
+      expect(body.checks.gateAuthority).toMatchObject({ open: false, activeKeys: 0, quorum: null, warnings: ['gate-closed'] });
+      expect(body.advisories).toContain('gate-closed');
+      expect(body.status).toBe('ready'); // an advisory is not a reason to drain a node
+      expect(body.checks.lastBlockAgeSeconds === null || body.checks.lastBlockAgeSeconds >= 0).toBe(true);
+    } finally {
+      await s.close();
+    }
+  });
+
   it('is ready but DEGRADED with zero peers: the first node of a network starts there', async () => {
     const s = await serve({ listening: true, connected: 0, behindBy: 0 });
     try {

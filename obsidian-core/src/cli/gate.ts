@@ -99,6 +99,7 @@ export function renderGate(info: GateInfo): string {
   const removedFromGenesis = info.genesisKeys.filter((key) => !info.issuerKeys.includes(key));
   if (removedFromGenesis.length > 0) lines.push(`  note: ${removedFromGenesis.length} genesis key(s) are no longer active.`);
   if (info.issuerKeys.length === 1) lines.push('  warning: a single issuer key can replace itself and nothing else protects it; add keys (see docs/gate-authority.md).');
+  else if (info.issuerKeys.length === 2) lines.push('  warning: with 2 keys an update needs both; losing either one freezes all further rotation (see docs/gate-authority.md).');
   return `${lines.join('\n')}\n`;
 }
 
