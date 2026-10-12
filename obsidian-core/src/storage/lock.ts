@@ -14,7 +14,7 @@
  * taken over, so a node never needs manual cleanup to restart.
  */
 
-import { closeSync, openSync, readFileSync, unlinkSync, writeSync, mkdirSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export interface DataDirLock {
@@ -33,10 +33,65 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+/** Block this thread for `ms` milliseconds without spinning (the lock is taken once, at startup). */
+function pause(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function readOwner(path: string): number {
+  try {
+    return Number.parseInt(readFileSync(path, 'utf8'), 10);
+  } catch {
+    return Number.NaN; // released between our two calls
+  }
+}
+
+/**
+ * Taking over a lock whose owner is gone has to be serialised. Without that, two processes that both read the
+ * same stale pid each delete "the stale lock" and each create their own: the second one deletes the first
+ * one's brand-new lock, and both then run on one chain directory (reproduced: 10 of 10 trials with 12
+ * simultaneous starters produced two holders). So the takeover itself is guarded by a second exclusive file,
+ * and the owner is read AGAIN once the guard is held: a lock that was replaced meanwhile is live, not stale.
+ */
+function takeOverStaleLock(path: string, seenOwner: number): boolean {
+  const guard = `${path}.takeover`;
+  let fd: number;
+  try {
+    fd = openSync(guard, 'wx', 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    try {
+      // A guard left behind by a process that died mid-takeover must not wedge every later start.
+      if (Date.now() - statSync(guard).mtimeMs > 10_000) unlinkSync(guard);
+    } catch {
+      /* it went away: fine */
+    }
+    return false; // somebody else is taking over; the caller looks again
+  }
+  try {
+    const owner = readOwner(path);
+    if (Number.isFinite(owner) && owner !== seenOwner && processIsAlive(owner)) return false; // replaced by a live owner
+    if (Number.isFinite(owner) && processIsAlive(owner) && owner !== process.pid) return false;
+    try {
+      unlinkSync(path);
+    } catch {
+      /* already gone */
+    }
+    return true;
+  } finally {
+    closeSync(fd);
+    try {
+      unlinkSync(guard);
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
 export function acquireDataDirLock(dataDir: string): DataDirLock {
   const path = join(dataDir, 'LOCK');
   mkdirSync(dirname(path), { recursive: true });
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
     try {
       const fd = openSync(path, 'wx', 0o600);
       try {
@@ -58,12 +113,7 @@ export function acquireDataDirLock(dataDir: string): DataDirLock {
       return { path, release };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      let owner = Number.NaN;
-      try {
-        owner = Number.parseInt(readFileSync(path, 'utf8'), 10);
-      } catch {
-        /* the owner released it between our two calls: try again */
-      }
+      const owner = readOwner(path);
       if (owner === process.pid) {
         // This process already holds it (a second ChainManager in one process,
         // as the test suite does). Not a conflict.
@@ -76,11 +126,22 @@ export function acquireDataDirLock(dataDir: string): DataDirLock {
             `If you are certain no node is running, delete ${path}.`,
         );
       }
-      try {
-        unlinkSync(path); // stale: the owner is gone
-      } catch {
-        /* someone else removed it first */
+      // An unreadable pid is usually a lock its owner has created but not yet written to: give it a moment
+      // rather than taking over a live process's lock. Only an old, still-unreadable file is garbage.
+      if (!Number.isFinite(owner)) {
+        let ageMs = Number.POSITIVE_INFINITY;
+        try {
+          ageMs = Date.now() - statSync(path).mtimeMs;
+        } catch {
+          /* gone: loop again */
+        }
+        if (ageMs < 2_000) {
+          pause(10);
+          continue;
+        }
       }
+      // Stale (owner gone) or garbage: take it over, one process at a time.
+      if (!takeOverStaleLock(path, owner)) pause(5 + (attempt % 7) * 3);
     }
   }
   throw new Error(`could not acquire the data directory lock at ${path}`);

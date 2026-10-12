@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   utimesSync,
   writeFileSync,
@@ -257,4 +258,64 @@ describe('data directory lock', () => {
     expect(readFileSync(lock.path, 'utf8').trim()).toBe(String(process.pid));
     lock.release();
   });
+});
+
+describe('data directory lock under contention (separate processes)', () => {
+  // Regression: a stale lock used to be deleted by every starter that had read it, so each then created its own
+  // and two processes ran on one chain directory (reproduced 10/10 trials with 12 simultaneous starters).
+  it('lets exactly one of many simultaneous starters take over a stale lock', async () => {
+    const { spawn } = await import('node:child_process');
+    const ts = await import('typescript');
+    const work = mkdtempSync(join(tmpdir(), 'obs-lock-race-'));
+    try {
+      // Compile the real lock module, unchanged, so the children run the code under test and need no build step.
+      const source = readFileSync(new URL('../../src/storage/lock.ts', import.meta.url), 'utf8');
+      const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+      writeFileSync(join(work, 'lock.mjs'), js);
+      writeFileSync(
+        join(work, 'child.mjs'),
+        `import { acquireDataDirLock } from './lock.mjs';
+const [dir, startAt] = [process.argv[2], Number(process.argv[3])];
+while (Date.now() < startAt) {}
+try { const l = acquireDataDirLock(dir); process.stdout.write('OK\\n'); await new Promise((r) => setTimeout(r, 900)); l.release(); }
+catch { process.stdout.write('REFUSED\\n'); }
+`,
+      );
+      for (let trial = 0; trial < 3; trial += 1) {
+        const dir = join(work, `data${trial}`);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, 'LOCK'), '999999\n'); // a pid nobody owns
+        const startAt = Date.now() + 800;
+        const outcomes = await Promise.all(
+          Array.from({ length: 8 }, () =>
+            new Promise<string>((resolve) => {
+              const child = spawn(process.execPath, [join(work, 'child.mjs'), dir, String(startAt)]);
+              let out = '';
+              child.stdout.on('data', (d) => (out += d));
+              child.on('close', () => resolve(out.trim()));
+            }),
+          ),
+        );
+        expect(outcomes.filter((o) => o === 'OK')).toHaveLength(1);
+        expect(outcomes.filter((o) => o === 'REFUSED')).toHaveLength(7);
+      }
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('does not take over a lock whose owner has created the file but not yet written its pid', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-lock-new-'));
+    try {
+      writeFileSync(join(dir, 'LOCK'), ''); // brand new and empty: its owner is mid-creation
+      const started = Date.now();
+      // Nobody ever fills it in, so after the grace period it is garbage and is taken over, but not before.
+      const lock = acquireDataDirLock(dir);
+      expect(Date.now() - started).toBeGreaterThanOrEqual(1_500);
+      expect(readFileSync(lock.path, 'utf8').trim()).toBe(String(process.pid));
+      lock.release();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
