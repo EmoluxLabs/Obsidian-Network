@@ -1,0 +1,196 @@
+# Operating an Obsidian node: bootstrap, join, diagnostics
+
+Every command on this page exists in the built CLI (`obsidian-core/dist/index.js`). The package installs it under two
+names, `obsidian` and `obsidian-core`; they are the same program. From a checkout, `node obsidian-core/dist/index.js`
+is the same thing again, and the examples below write it as `obsidian`.
+
+```
+obsidian <network> <command> [options]      network = mainnet | testnet | staging | devnet
+obsidian <command> --network <name> [options]
+obsidian node <command> [options]           `node` before init|start|status|peers|sync|doctor is accepted;
+                                            a bare `obsidian node` is still `start`
+```
+
+`mainnet init` is `init --network mainnet`. It is spelling, not a second implementation. Giving both a network word
+and a different `--network` is a usage error.
+
+| Command | What it does |
+|---|---|
+| `init` | Creates (or confirms) the network identity in the data directory. Idempotent. Never starts a node, never touches chain data. |
+| `join --peer <http url> --genesis-id <40 hex>` | Adopts a network from a peer, verified against the genesis id **you** pinned. |
+| `start` | Runs the node. |
+| `status` | What a running node reports: alive, ready, height, finality, P2P listener, **live** peers. |
+| `peers` | The peers connected right now (handshake verified), and how many are only remembered. |
+| `sync [status]` | Local height against connected peers. |
+| `doctor` | Checks configuration, ports, keys, manifest, a running node and the interface; says what to fix. |
+| `validate` | Replays and verifies a data directory (existing command). |
+
+Options added for these commands: `--require-init`, `--generate-gate-key`, `--gate-dir <path>`, `--peer <url>`,
+`--genesis-id <hex>`, `--url <http url>` (ask this node instead of the local one), `--json`.
+
+**Exit codes.** `0` success. `1` failure (a refused operation, an unreachable or not-ready node, a failed check).
+`2` usage error. `3` it works but something needs attention (a degraded node, a doctor warning). Scripts can tell
+"broken" from "degraded".
+
+## 1. Bootstrap a fresh network on one authorised node
+
+Do this once, on the machine that will be the first node of the network.
+
+```bash
+export OBSIDIAN_KEYSTORE_PASSPHRASE='...at least 12 characters...'      # the node's own identity key
+export OBSIDIAN_GATE_KEYSTORE_PASSPHRASE='...another 12+ characters...' # the mining gate authority key
+obsidian mainnet init --data-dir ~/obsidian-data/mainnet --generate-gate-key
+obsidian mainnet start --require-init --data-dir ~/obsidian-data/mainnet
+```
+
+`init` prints the **genesis id**, the genesis hash, the public gate key(s), and where the encrypted gate keystore was
+written (`<data-dir>/../gate-authority/<network>-mining-gate.keystore.json`, mode 0600, outside the node's data
+directory). Give the genesis id to everyone who will join, **through a channel other than the first node** (a
+published announcement, a signed release note). That id is the root of trust (section 2).
+
+What `init` guarantees, and what is tested (`tests/unit/network-manifest.test.ts`, `tests/e2e/operations.test.mjs`):
+
+* **Deterministic.** The genesis id is derived from the network definition, the bootstrap validator keys and the gate
+  keys. The same inputs give the same id on any machine.
+* **Idempotent.** Run it again: it reports `existing`, writes nothing, does not regenerate the gate key, and exits 0.
+* **No replacement.** A different gate key list, a different network, or a directory with an unreadable manifest is
+  refused by name, and nothing is changed. An existing gate keystore file is never overwritten.
+* **Gate keys cannot be added later.** They are part of the genesis id. A directory created without one stays without
+  one; the fix is a new network (a new data directory), not an edit.
+* **Passphrases** come from the environment or `OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE`, never from an argument
+  (arguments are visible in `ps`). They are not printed or written anywhere.
+
+The identity is recorded in `<data-dir>/network.json` (public values only). From then on, `start` resumes **that**
+network: a missing key list is filled in from the manifest, a conflicting one is refused with both sides named.
+`start` without `init` still creates a new network in an empty directory, as before, so existing launchers keep
+working. `--require-init` (or `OBSIDIAN_REQUIRE_INIT=1`) turns that off: use it in production services so a wrong or
+empty data directory is an error and not a new chain.
+
+Mainnet and Testnet never mix: a manifest records its network, chain id and genesis id, and a process started for
+another network on the same directory is refused. The networks also have separate address prefixes, chain ids,
+genesis ids and default ports (section 5), and nodes of different networks are refused at the handshake.
+
+## 2. Join an existing network from another machine
+
+```bash
+obsidian mainnet join --data-dir ~/obsidian-data/mainnet \
+    --peer http://203.0.113.5:8630 --genesis-id <40-hex id printed by init>
+obsidian mainnet start --require-init --data-dir ~/obsidian-data/mainnet --seeds 203.0.113.5:8631
+```
+
+(Use the id the first node's `init` printed. It is deliberately not written here: any id in a document is one more thing to trust.)
+
+`join` fetches `/genesis` from the peer, **recomputes** the genesis id from the document the peer sent, and writes the
+manifest only if it equals the id you pinned. Consequences, all covered by tests:
+
+* A peer that serves a different gate key (or committee, chain id, network id, protocol version, an extra key, a
+  tampered list, malformed keys) is refused, and nothing is written.
+* The pin is mandatory and must be 40 lowercase hex characters. There is no trust-on-first-use mode.
+* Only **public** keys are ever learned. No private key is requested, sent or accepted.
+* The request is bounded: 8 s timeout, 256 KiB maximum, redirects refused.
+* An unreachable peer is an error, not a hang; the directory stays joinable.
+
+This is verifiable transitive trust: the gate keys a node learns from any peer are accepted only because they hash to
+an id obtained out of band. A peer cannot choose the keys.
+
+The peer connection itself is separate and also authenticated (section 4).
+
+## 3. Diagnostics
+
+```bash
+obsidian status --network mainnet                 # exit 0 ready, 3 degraded, 1 not ready/unreachable
+obsidian node peers --network mainnet
+obsidian node sync status --network mainnet
+obsidian mainnet doctor --data-dir ~/obsidian-data/mainnet
+obsidian status --network mainnet --url http://203.0.113.5:8630 --json   # ask a remote node's public routes
+```
+
+Rules the output follows:
+
+* **Connected means connected.** `peers` and the `connected` count come from the node's live, handshake-verified links.
+  The saved peer book is reported on its own line ("known") and never added to the count. A socket that has connected
+  but not finished the handshake is counted as `pendingHandshakes`, not as a peer (it used to inflate `peers`; see
+  `docs/security-audit-master.md`, finding 2).
+* **Unreachable is not zero.** If nothing answers, `status` says `UNREACHABLE` and exits 1.
+* After a peer dies, its count drops to 0 within seconds while the saved book keeps it
+  (`tests/e2e/operations.test.mjs`, "when A dies...").
+
+`doctor` runs these checks and prints a fix for each failure: data directory writable; lock holder; manifest versus
+configuration (a conflict is a FAIL naming both sides); node key opens with the configured passphrase (it never prints
+the passphrase and never creates a key); gate key present in the genesis and whether this host is configured as an
+issuer; a running node (readiness, P2P listener, peers, last peer problem); RPC and P2P port availability (only when no
+node answers there, so it never reports a port "in use" about itself); RPC bound to loopback; the interface's
+`/api/ready`.
+
+### Health endpoints
+
+| Endpoint | Where | Meaning |
+|---|---|---|
+| `GET /livez` | node RPC | The process answers. Always 200. No chain, peer or database dependency. |
+| `GET /readyz` | node RPC | 200 `ready` / `ready-degraded`, or 503 `not-ready`. Not ready when there is no chain tip, the node is syncing (or behind a peer by more than one block) or the P2P listener failed. Zero peers is `ready-degraded` (`degraded: ["no-peers"]`) because the first node of a network has none. |
+| `GET /health` | node RPC | Version, network, genesis id, height, peers, supply invariant. 500 if the supply invariant fails. |
+| `GET /peers` | node RPC | Connected peers, saved peers, P2P status, last peer problem. |
+| `GET /api/health` | interface | The interface process is up, how many nodes it sees. |
+| `GET /api/ready` | interface | 200 only when it reaches at least one healthy node of its own network, with no genesis mismatch. |
+
+`/readyz` returns no address, key or peer list. `/peers` does list peer addresses and is public on a node that exposes
+its RPC; see the audit's low-severity note.
+
+## 4. Peer discovery and the handshake
+
+Discovery is layered: configured seeds (`--seeds`, `OBSIDIAN_SEED_NODES`), the saved peer book, and peer exchange
+(gossiped addresses are only hints and are dialled and verified like any other). Every connection must complete a
+challenge–response handshake before any other message is processed. The acceptor checks, in this order of cost:
+timestamp within ±300 s; finality checkpoint well-formed; **genesis id**; **chain id and network id**; **consensus
+parameter hash**; **protocol version** (exact match) and minimum core version; not itself; the **public key derives the
+claimed identity address and signs the whole hello**; the signature covers **this connection's challenge** (a recorded
+hello replayed on another connection is refused); the peer's finalized checkpoint does not conflict with local history;
+one live connection per node id. Frames are size-limited before parsing (a peer that has not said hello cannot make the
+node parse a megabyte), messages are rate-budgeted per link, inbound connections are limited per IP, and handshakes time
+out. These are covered by `tests/integration/p2p.test.ts` and `tests/security/protocol-security.test.ts`.
+
+Capabilities are advertised for information (`capabilities` in the hello); the node does not gate behaviour on them.
+
+## 5. Ports
+
+| Network | Chain id | Prefix | Node RPC (loopback) | Node P2P (public) | Interface | Data |
+|---|---|---|---|---|---|---|
+| mainnet | 7777 | `obs1` | 8630 | 8631 | 8788 | `…/mainnet/` |
+| testnet | 7778 | `tobs1` | 18630 | 18631 | 18788 | `…/testnet/` |
+| staging | 7779 | `sobs1` | 28630 | 28631 | 28788 | `…/staging/` |
+| devnet | 7780 | `dobs1` | 38630 | 38631 | 38788 | `…/devnet/` |
+
+`--port-offset N` adds N to every port of a node (check the result does not land on another node's port: offset 1 on
+mainnet moves RPC to 8631, which is mainnet's P2P port). Only P2P and the interface are meant to be reachable from
+outside. The node RPC stays on `127.0.0.1`: it carries the transaction relay and operator routes, and `doctor` warns when
+it is bound elsewhere. Public traffic reaches chain data through the interface (`/api/rpc`, `/api/nodes`) or a reverse
+proxy that exposes only the read routes. Do not publish the RPC port directly.
+
+Interface per node: `scripts/obsidian-network.sh <network> start` starts the node and the interface together by default;
+`OBSIDIAN_NODE_ONLY=1` is the explicit opt-out. The interface is a separate process that talks to the node over its
+loopback RPC; it is not linked into the node process.
+
+## 6. Gate authority: provisioning, rotation, revocation, recovery
+
+* **Provisioning.** `init --generate-gate-key` on the first node. The private key is encrypted, mode 0600, written
+  outside the data directory, never put in the manifest, never sent to a peer. The public key goes into the genesis.
+* **Which host holds it.** The machine that runs the account platform (`OBSIDIAN_GATE_KEYSTORE` with
+  `OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE`). Nodes only verify; they hold the public key.
+* **Rotation and revocation: bounded by consensus.** The gate key set (up to 8 keys) is committed in the genesis id.
+  Within one genesis you can issue from any key of that set, so a set created with a spare key lets you stop using a
+  compromised one operationally (stop issuing with it), **but a compromised key stays valid for consensus** because
+  validity is "issuer is in the genesis set and the certificate is fresh". Removing a key, or adding one, changes the
+  genesis id, which is a different network. That is a consensus change and is not something a CLI flag can do safely;
+  it is not implemented here. Certificates are short-lived (valid from 60 s before to 900 s after issue), which limits
+  what a leaked certificate can do, not what a leaked key can do.
+* **Recovery.** Back up the encrypted keystore and its passphrase separately and offline. Without the key nobody can
+  issue certificates and no claim can be accepted; a node cannot recreate it. If it is lost or compromised the recovery
+  is a new network with a new genesis (documented as such, not hidden).
+
+## 7. Disposable validation
+
+To try all of this without touching a real directory, use a temp directory and shifted ports, as the test does:
+
+```bash
+node --test tests/e2e/operations.test.mjs        # needs: npm --prefix obsidian-core run build
+```

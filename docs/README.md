@@ -38,6 +38,10 @@ less than you might hope, which are called out explicitly rather than buried.
 | [node-runner-rewards.md](node-runner-rewards.md) | The 90/10 ONS revenue split, registering a reward wallet, how uptime and participation are measured without self-reporting, and how payouts are settled |
 | [self-hosting.md](self-hosting.md) | Anyone running the interface: systemd, Docker, nginx, Cloudflare |
 | [trusted-domains.md](trusted-domains.md) | Which browser origins a node or interface answers: the project's own domain by default, how to add yours (exact origins and wildcards), what is refused |
+| [operations.md](operations.md) | Bootstrap a network (`init`), join one (`join`), `status` / `peers` / `sync` / `doctor`, health endpoints, ports, the gate authority and its limits |
+| [failover-and-gateways.md](failover-and-gateways.md) | Running several interface hosts: what can fail over, nginx upstreams, the DNS/TLS work that is outside the repository (untested) |
+| [threat-model.md](threat-model.md) | Threats, controls and the tests that pin them, and the risks that remain |
+| [security-audit-master.md](security-audit-master.md) | Findings of the master audit pass: severity, location, status, regression test |
 | [obsidian-mobile-blueprint.md](obsidian-mobile-blueprint.md) | Developers of the app interfaces: what the mobile design blueprint defines, and the five placeholder behaviours in it that must never be ported as blockchain facts |
 | [api.md](api.md) | Every RPC route, with the fields it returns |
 | [transaction-format.md](transaction-format.md) | Canonical encoding, signing, gas, and how to submit without the interface |

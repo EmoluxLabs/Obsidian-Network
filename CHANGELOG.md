@@ -11,6 +11,34 @@ a node running it. For 1.7.0 that is `bffeacb35532ba3df70cda8c27ed6c96` (see the
 
 ---
 
+## [Unreleased]
+
+**Not consensus-breaking.** The params hash, the genesis documents and the genesis ids are unchanged (the 1.7.0
+ids in this file still apply) and the handshake is untouched. Nothing here changes a block, a transaction or a
+rule.
+
+### Operations
+- `init`, `join`, `status`, `peers`, `sync [status]`, `doctor`, the `<network> <command>` and `node <command>` forms,
+  `--require-init`, and an `obsidian` binary name next to `obsidian-core`. `init` records the network identity in
+  `<data-dir>/network.json` and is idempotent; `join` adopts a network from a peer only if its keys reproduce a genesis
+  id the operator pinned. See `docs/operations.md`.
+- Node `GET /livez` and `GET /readyz`; interface `GET /api/ready`.
+- `start` resumes the network a directory was created as, and refuses a conflicting key list or network by name.
+
+### Security
+- **High:** the data-directory lock's stale-takeover was racy and could leave two processes holding it. Fixed and
+  tested (`docs/security-audit-master.md`, finding 1).
+- **Medium:** `peers` counted sockets that had not finished the handshake. Only verified links are peers now; the rest
+  are reported as `pendingHandshakes`.
+- `mineobs.network` (exact hosts: root, `www`, `app`, `wallet`, `api`, `node`, `status`; plus `testnet.`, `staging.`,
+  `devnet.`) is a trusted origin for public reads, HTTPS only, no wildcard. See `docs/trusted-domains.md`. The
+  `/network` `domains` list now includes these hosts.
+
+### Documentation
+- `docs/operations.md`, `docs/failover-and-gateways.md`, `docs/threat-model.md`, `docs/security-audit-master.md`.
+
+---
+
 ## [1.7.0] — 2026-10-09
 
 **Consensus-breaking, new-genesis release for a pre-launch network.** Protocol and core version are `1.7.0`,

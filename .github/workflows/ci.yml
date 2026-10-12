@@ -170,6 +170,9 @@ jobs:
       # Binds ports 9130-9131, 19130-19131, 29130-29131, 39130-39131, 39150-39161
       # and 9288/19288/29288/39288/39289.
       - run: node --test tests/e2e/networks.test.mjs
+      # Live-process operations: init/join, status/peers/doctor, a wrong-genesis peer, a held data directory
+      # and a stranger on the port, all against disposable mainnet directories. Ports 49230-49251.
+      - run: node --test tests/e2e/operations.test.mjs
       # The interface's own browser code (operations, client, wallet), bundled and run against a real
       # node behind a real interface: ONS registration and renewal, the 90/10 revenue split, the
       # 20,000 OBS validator bond and trusted origins, checked on the chain afterwards. Binds ports

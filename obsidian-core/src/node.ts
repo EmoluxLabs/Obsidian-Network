@@ -25,6 +25,7 @@ import { genesisDocumentFor, genesisId as computeGenesisId } from './genesis/ini
 import { Logger } from './security/logger.js';
 import { acquireDataDirLock, type DataDirLock } from './storage/lock.js';
 import { describeConfig, type LoadedConfig } from './config/config.js';
+import { NetworkIdentityError, buildManifest, resolveIdentity, writeManifest } from './config/network-manifest.js';
 import { CONSENSUS_PARAMS } from './protocol/params.js';
 import { maxBig } from './protocol/amount.js';
 import type { Block, ProtocolEvent } from './protocol/types.js';
@@ -43,6 +44,11 @@ export interface NodeRuntimeInfo {
 export interface StartOptions extends LoadedConfig {
   /** Skip connecting to seed nodes (used by tests and isolated nodes). */
   offline?: boolean;
+  /**
+   * Refuse to create a NEW network in this directory: only continue one that `init` (or an earlier start) recorded.
+   * For production services, where a missing or wrong data directory must be an error and not a fresh chain.
+   */
+  requireInit?: boolean;
 }
 
 export async function startNode(options: StartOptions): Promise<NodeRuntimeInfo> {
@@ -52,14 +58,23 @@ export async function startNode(options: StartOptions): Promise<NodeRuntimeInfo>
   // that happens. A stale lock from a crash is taken over automatically.
   const lock = acquireDataDirLock(options.config.dataDir);
   try {
-    return await bootNode(options, lock);
+    // The identity of this directory is decided under the lock, before anything is opened: what it was created as
+    // (the manifest) wins over a missing setting and refuses a conflicting one.
+    const identity = resolveIdentity(options);
+    if (identity.state === 'new' && options.requireInit) {
+      throw new NetworkIdentityError(
+        `${options.config.dataDir} holds no network yet and --require-init is set, so a new chain will not be created here. ` +
+          'Run `init` first (it prints the genesis id to check), or point --data-dir at the right directory.',
+      );
+    }
+    return await bootNode({ ...options, ...identity.loaded }, lock, identity);
   } catch (error) {
     lock.release();
     throw error;
   }
 }
 
-async function bootNode(options: StartOptions, lock: DataDirLock): Promise<NodeRuntimeInfo> {
+async function bootNode(options: StartOptions, lock: DataDirLock, identity0: ReturnType<typeof resolveIdentity>): Promise<NodeRuntimeInfo> {
   const { config, net } = options;
   const logger = new Logger({ level: config.logLevel, json: config.logJson, component: 'node' });
   logger.info('starting obsidian core', describeConfig(config));
@@ -91,6 +106,14 @@ async function bootNode(options: StartOptions, lock: DataDirLock): Promise<NodeR
   });
   await chain.init();
   const genesisIdentifier = computeGenesisId(genesisDocument, net);
+  if (identity0.state !== 'existing') {
+    writeManifest(config.dataDir, buildManifest(net, identity0.derived, identity0.state === 'new' ? { kind: 'start' } : { kind: 'adopted' }));
+  }
+  logger.info(identity0.state === 'new' ? 'NEW network created in this data directory' : 'existing network resumed', {
+    state: identity0.state,
+    genesisId: genesisIdentifier,
+    adoptedFromManifest: identity0.adopted,
+  });
   logger.info('chain ready', {
     network: net.name,
     chainId: net.chainId,
@@ -372,10 +395,11 @@ export async function validateDataDir(loaded: LoadedConfig): Promise<{ ok: boole
   // meaningless, and opening it can interfere with the live node.
   const lock = acquireDataDirLock(config.dataDir);
   try {
+    const effective = resolveIdentity(loaded).loaded.config;
     const chain = new ChainManager({
       dataDir: config.dataDir,
       net,
-      genesisDocument: genesisDocumentFor(net, config.bootstrapValidatorPublicKeys, config.miningGatePublicKeys),
+      genesisDocument: genesisDocumentFor(net, effective.bootstrapValidatorPublicKeys, effective.miningGatePublicKeys),
     });
     await chain.init();
     return chain.verifyIntegrity();

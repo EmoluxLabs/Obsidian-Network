@@ -3,7 +3,14 @@
  * obsidian-core CLI.
  *
  * Commands
+ *   init                    create (or confirm) this network's identity in the data dir; idempotent
+ *   join                    adopt a network from a peer, verified against a genesis id you pin
  *   start | node            run a full node (chain + p2p + rpc + optional miner)
+ *   status | peers          what a RUNNING node reports (live connections, never the saved book)
+ *   sync [status]           local height against connected peers
+ *   doctor                  diagnose configuration, ports, keys and a running node
+ *   <network> <command>     e.g. `mainnet init`, `mainnet start` (same as --network mainnet)
+ *   node <command>          e.g. `node status`, `node peers`, `node sync status`, `node doctor`
  *   keygen                  create or show this node's identity key
  *   health                  query a local node's health endpoint
  *   finality                query the local node's verified finality state
@@ -37,6 +44,21 @@ import { CORE_VERSION, PROTOCOL_VERSION, versionInfo, BUILD_ID } from './version
 import { PARAMS_HASH } from './blockchain/state-root.js';
 import { formatObs, MAX_SUPPLY_SEALS } from './protocol/amount.js';
 import { Logger } from './security/logger.js';
+import { NetworkIdentityError, initNetwork, joinNetwork, readManifest, type PeerGenesisReply } from './config/network-manifest.js';
+import { acquireDataDirLock, type DataDirLock } from './storage/lock.js';
+import {
+  collectSnapshot,
+  doctorExitCode,
+  httpGetJson,
+  localBaseUrl,
+  renderDoctor,
+  renderPeers,
+  renderStatus,
+  renderSync,
+  runDoctor,
+  snapshotExitCode,
+} from './cli/ops.js';
+import { existsSync, readFileSync } from 'node:fs';
 
 function usage(): void {
   process.stdout.write(
@@ -46,7 +68,14 @@ function usage(): void {
       'Usage: obsidian-core <command> [options]',
       '',
       'Commands:',
+      '  init                Create or confirm the network in --data-dir (idempotent; --generate-gate-key on the first node)',
+      '  join                Adopt a network from a peer: --peer <http url> --genesis-id <40 hex> (the id is pinned by you)',
       '  start | node        Run a full node (the default command; it still needs --network)',
+      '  status | peers      Show what a running node reports (live connections, not saved peers)',
+      '  sync [status]       Show local height against connected peers',
+      '  doctor              Diagnose config, ports, keys, manifest, a running node and the interface',
+      '  mainnet <command>   Shorthand for --network mainnet (also testnet | staging | devnet), e.g. `mainnet init`',
+      '  node <command>      `node status`, `node peers`, `node sync status`, `node doctor`, `node start`',
       '  keygen              Create/show the node identity keystore',
       '  health              Query the local RPC health endpoint',
       '  finality            Query the local verified finality checkpoint',
@@ -73,6 +102,13 @@ function usage(): void {
       '  --mine              Enable block production (the default on every network)',
       '  --no-mine           Disable block production (follow and validate only)',
       '  --offline           Do not dial seed nodes',
+      '  --require-init      `start` refuses to create a NEW network here (or set OBSIDIAN_REQUIRE_INIT=1)',
+      '  --generate-gate-key `init`: create the mining gate authority key (passphrase: OBSIDIAN_GATE_KEYSTORE_PASSPHRASE[_FILE])',
+      '  --gate-dir <path>   `init`: where the encrypted gate key is written (default: <data-dir>/../gate-authority)',
+      '  --peer <url>        `join`: the peer\'s RPC base URL, e.g. http://203.0.113.5:8630',
+      '  --genesis-id <hex>  `join`: the genesis id you were given out of band (40 hex characters)',
+      '  --url <url>         `status|peers|sync|doctor`: ask this node instead of the configured local one',
+      '  --json              `status|peers|sync|doctor`: machine-readable output',
       '  -h, --help          Show this help',
       '',
       'Environment: OBSIDIAN_* (see .env.example)',
@@ -98,10 +134,17 @@ interface CliOptions {
   cors?: string;
   logLevel?: string;
   miningEnabled?: boolean;
+  requireInit: boolean;
+  generateGateKey: boolean;
+  gateDir?: string;
+  peer?: string;
+  genesisId?: string;
+  url?: string;
+  json: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
-  const options: CliOptions = { command: argv[0] ?? 'start', offline: false };
+  const options: CliOptions = { command: argv[0] ?? 'start', offline: false, requireInit: false, generateGateKey: false, json: false };
   const rest = argv.slice(1);
   options.sub = rest[0] && !rest[0].startsWith('--') ? rest[0] : undefined;
   for (let i = 0; i < rest.length; i += 1) {
@@ -163,6 +206,27 @@ function parseArgs(argv: string[]): CliOptions {
       case '--log-level':
         options.logLevel = value();
         break;
+      case '--require-init':
+        options.requireInit = true;
+        break;
+      case '--generate-gate-key':
+        options.generateGateKey = true;
+        break;
+      case '--gate-dir':
+        options.gateDir = value();
+        break;
+      case '--peer':
+        options.peer = value();
+        break;
+      case '--genesis-id':
+        options.genesisId = value();
+        break;
+      case '--url':
+        options.url = value();
+        break;
+      case '--json':
+        options.json = true;
+        break;
       case '--mine':
         options.miningEnabled = true;
         break;
@@ -177,6 +241,36 @@ function parseArgs(argv: string[]): CliOptions {
     }
   }
   return options;
+}
+
+const NETWORK_WORDS = ['mainnet', 'testnet', 'staging', 'devnet'];
+const COMMAND_WORDS = ['init', 'join', 'start', 'status', 'peers', 'sync', 'doctor', 'validate', 'keygen', 'health', 'finality'];
+
+/** A mistake in how the command was typed: exit code 2, not 1, so scripts can tell it from a failed operation. */
+class UsageError extends Error {}
+
+function failWith(error: unknown): void {
+  process.stderr.write(`${(error as Error).message}\n`);
+  process.exitCode = 1;
+}
+
+/** The gate keystore passphrase comes from the environment or a 0600 file, never from an argument (arguments show in `ps`). */
+function gatePassphraseFromEnv(): string {
+  const file = process.env.OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE;
+  return process.env.OBSIDIAN_GATE_KEYSTORE_PASSPHRASE ?? (file && existsSync(file) ? readFileSync(file, 'utf8').trim() : '');
+}
+
+/**
+ * `init` and `join` write the identity file, so they take the data-directory lock like a node does. If a node is
+ * already running there and the directory is already initialised, they only read, so the lock is not required.
+ */
+function lockIfCreating(dataDir: string): DataDirLock | undefined {
+  try {
+    return acquireDataDirLock(dataDir);
+  } catch (error) {
+    if (readManifest(dataDir)) return undefined;
+    throw error;
+  }
 }
 
 function loadFromCli(options: CliOptions, extra: { requireExplicitNetwork?: boolean } = {}): LoadedConfig {
@@ -203,13 +297,32 @@ async function main(): Promise<void> {
     usage();
     return;
   }
-  const options = parseArgs(argv);
+  // `mainnet init`, `testnet start`, ...: the network word is the same as --network, nothing more.
+  let impliedNetwork: string | undefined;
+  let args = argv;
+  if (NETWORK_WORDS.includes(args[0] ?? '')) {
+    impliedNetwork = args[0];
+    args = args.slice(1);
+    if (!args[0] || args[0].startsWith('-') || !COMMAND_WORDS.includes(args[0])) {
+      throw new UsageError(`\`${impliedNetwork}\` needs a command: ${COMMAND_WORDS.join(' | ')}`);
+    }
+  }
+  // `node status`, `node peers`, ... are the node commands; a bare `node` (or `node --network x`) is still `start`.
+  if (args[0] === 'node' && args[1] && COMMAND_WORDS.includes(args[1])) args = args.slice(1);
+  const options = parseArgs(args);
+  if (impliedNetwork) {
+    if (options.network && options.network !== impliedNetwork) {
+      throw new UsageError(`\`${impliedNetwork}\` conflicts with --network ${options.network}; give one of them`);
+    }
+    options.network = impliedNetwork;
+  }
   const command = options.command === 'node' ? 'start' : options.command;
+  const requireInit = options.requireInit || /^(1|true|yes)$/i.test(process.env.OBSIDIAN_REQUIRE_INIT ?? '');
 
   switch (command) {
     case 'start': {
       const loaded = loadFromCli(options, { requireExplicitNetwork: true });
-      const runtime = await startNode({ ...loaded, offline: options.offline });
+      const runtime = await startNode({ ...loaded, offline: options.offline, requireInit });
       let stopping = false;
       const shutdown = async (signal: string): Promise<void> => {
         // A second Ctrl+C while the first is still draining must not start a second shutdown.
@@ -226,6 +339,70 @@ async function main(): Promise<void> {
       };
       process.on('SIGINT', () => void shutdown('SIGINT'));
       process.on('SIGTERM', () => void shutdown('SIGTERM'));
+      return;
+    }
+
+    case 'init': {
+      const loaded = loadFromCli(options, { requireExplicitNetwork: true });
+      const lock = lockIfCreating(loaded.config.dataDir);
+      try {
+        const result = initNetwork(loaded, {
+          generateGateKey: options.generateGateKey,
+          gateDir: options.gateDir,
+          gatePassphrase: options.generateGateKey ? gatePassphraseFromEnv() : undefined,
+        });
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } catch (error) {
+        return failWith(error);
+      } finally {
+        lock?.release();
+      }
+      return;
+    }
+
+    case 'join': {
+      const loaded = loadFromCli(options, { requireExplicitNetwork: true });
+      if (!options.peer || !options.genesisId) {
+        throw new UsageError('join needs --peer <http url of a node RPC> and --genesis-id <40 hex> (the id the first node printed; it is how the keys are verified)');
+      }
+      const lock = lockIfCreating(loaded.config.dataDir);
+      try {
+        const result = await joinNetwork(loaded, {
+          peer: options.peer,
+          pinnedGenesisId: options.genesisId,
+          fetchJson: async (url) => {
+            const reply = await httpGetJson(url, { timeoutMs: 8000, maxBytes: 256 * 1024 });
+            if (reply.status !== 200) throw new NetworkIdentityError(`the peer answered HTTP ${reply.status} for ${url}`);
+            return (reply.body ?? {}) as PeerGenesisReply;
+          },
+        });
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } catch (error) {
+        return failWith(error);
+      } finally {
+        lock?.release();
+      }
+      return;
+    }
+
+    case 'status':
+    case 'peers':
+    case 'sync':
+    case 'doctor': {
+      if (command === 'sync' && options.sub !== undefined && options.sub !== 'status') {
+        throw new UsageError('usage: sync [status]');
+      }
+      const loaded = loadFromCli(options, { requireExplicitNetwork: true });
+      if (command === 'doctor') {
+        const checks = await runDoctor(loaded, { url: options.url });
+        process.stdout.write(options.json ? `${JSON.stringify(checks, null, 2)}\n` : renderDoctor(checks));
+        process.exitCode = doctorExitCode(checks);
+        return;
+      }
+      const snapshot = await collectSnapshot(localBaseUrl(loaded, options.url));
+      if (options.json) process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+      else process.stdout.write(command === 'peers' ? renderPeers(snapshot) : command === 'sync' ? renderSync(snapshot) : renderStatus(snapshot));
+      process.exitCode = snapshotExitCode(snapshot);
       return;
     }
 
@@ -419,6 +596,10 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  if (error instanceof UsageError) {
+    process.stderr.write(`${error.message}\n`);
+    process.exit(2);
+  }
   process.stderr.write(`fatal: ${(error as Error).message}\n`);
   if (process.env.OBSIDIAN_DEBUG) process.stderr.write(`${(error as Error).stack ?? ''}\n`);
   process.exit(1);
