@@ -29,7 +29,7 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BRANCH="${OBSIDIAN_TEST_BRANCH:-$(git -C "$ROOT" branch --show-current 2>/dev/null || true)}"
-BRANCH="${BRANCH:-arena/414b663a-obsidian-network}"
+BRANCH="${BRANCH:-arena/360d87d5-obsidian-network}"
 URL="${1:-file://$ROOT}"
 VERSION="$(node -p "require('$ROOT/obsidian-core/package.json').version")"
 FM="${OBSIDIAN_TEST_DIR:-${TMPDIR:-/tmp}/obsidian-fresh-test}"

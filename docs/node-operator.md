@@ -35,7 +35,7 @@ steps, with checksum verification, are in [LAUNCH-GUIDE.md](LAUNCH-GUIDE.md) §1
 **From source** (development, or if you want to build it yourself):
 
 ```bash
-git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git
+git clone --depth 1 --branch arena/360d87d5-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network/obsidian-core
 npm ci
 npm run build

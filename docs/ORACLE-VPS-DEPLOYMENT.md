@@ -281,7 +281,7 @@ no build tools on the machine. Pick one way to get them onto the server.
 **A. Clone the public repository on the server (simplest):**
 
 ```bash
-git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian-src
+git clone --depth 1 --branch arena/360d87d5-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian-src
 ```
 
 **B. Copy the archives from your phone or laptop (no Git on the server):**
@@ -904,7 +904,7 @@ GitHub → repository → **Settings** → **Deploy keys** → **Add deploy key*
 
 ```bash
 printf 'Host github-obsidian\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/obsidian_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
-git clone --depth 1 --branch arena/7c29c899-obsidian-network git@github-obsidian:EmoluxLabs/Obsidian-Network.git ~/obsidian-src
+git clone --depth 1 --branch arena/360d87d5-obsidian-network git@github-obsidian:EmoluxLabs/Obsidian-Network.git ~/obsidian-src
 ```
 
 The better answer is to keep no source on the server at all: use option B of §6 and copy only the verified archives.

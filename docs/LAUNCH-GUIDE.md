@@ -107,7 +107,7 @@ on a phone.
 ```bash
 rm -rf ~/obsidian/src; mkdir -p ~/obsidian; cd ~/obsidian
 G="git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60"
-for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
+for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/360d87d5-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
 cd src && for f in SHA256SUMS obsidian-node-operator-1.7.0.tar.gz obsidian-interface-selfhost-1.7.0.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
 ls -l releases
 ```
@@ -118,14 +118,14 @@ about three): keep Termux open and the screen on while it runs. If it does not l
 first line of the error and find it in the troubleshooting table at the end of this guide (§8), or use the
 browser route below. The first command removes any half-finished earlier attempt, so running this step
 again is always safe. `--branch` names the branch you are installing from; this release was delivered on
-`arena/7c29c899-obsidian-network`.
+`arena/360d87d5-obsidian-network`.
 
 **If your connection keeps dropping** (the sign is `Connection reset by peer` or `early EOF`, again and
 again), download the two archives with your phone's browser instead. A browser resumes an interrupted
 download; `git` and `curl` in Termux cannot. Open both links and let them finish (they land in Downloads):
 
-* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/7c29c899-obsidian-network/releases/obsidian-node-operator-1.7.0.tar.gz>
-* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/7c29c899-obsidian-network/releases/obsidian-interface-selfhost-1.7.0.tar.gz>
+* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/360d87d5-obsidian-network/releases/obsidian-node-operator-1.7.0.tar.gz>
+* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/360d87d5-obsidian-network/releases/obsidian-interface-selfhost-1.7.0.tar.gz>
 
 Then copy them where Step 5 expects them. `termux-setup-storage` asks for permission once; tap Allow. The
 last command fetches the checksum file (1 KB), in case the commands above did not get that far:
@@ -134,7 +134,7 @@ last command fetches the checksum file (1 KB), in case the commands above did no
 termux-setup-storage
 mkdir -p ~/obsidian/src/releases
 cp ~/storage/downloads/obsidian-node-operator-1.7.0.tar.gz ~/storage/downloads/obsidian-interface-selfhost-1.7.0.tar.gz ~/obsidian/src/releases/
-cd ~/obsidian/src/releases && curl -fL --retry 8 -o SHA256SUMS https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/7c29c899-obsidian-network/releases/SHA256SUMS
+cd ~/obsidian/src/releases && curl -fL --retry 8 -o SHA256SUMS https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/360d87d5-obsidian-network/releases/SHA256SUMS
 ls -l
 ```
 
@@ -147,7 +147,7 @@ where the built archives are. If you also want the whole project (source, script
 11 MB), clone it into a separate folder. Nothing in the install needs it:
 
 ```bash
-git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
+git clone --depth 1 --branch arena/360d87d5-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
 ```
 
 **Step 5 — verify the archives.** Do not skip this: an archive you have not checked is a
@@ -688,7 +688,7 @@ and everything stops cleanly. It needs `git`, `curl`, `sha256sum`, `tar` and `se
 `pkg install util-linux`), the default ports free, and about four minutes. It lives in the whole project, which Step 4 did not download, so the first line fetches that (about 11 MB):
 
 ```bash
-rm -rf ~/obsidian/full; git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
+rm -rf ~/obsidian/full; git clone --depth 1 --branch arena/360d87d5-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
 cd ~/obsidian/full && bash scripts/fresh-machine-test.sh
 ```
 

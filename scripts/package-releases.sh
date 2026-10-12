@@ -223,19 +223,22 @@ stage() {
 echo "→ staging archives under $STAGING"
 
 # ── 1. obsidian-core: the node, with its built dist ──────────────────────────
-# `.github/workflows/ci.yml` is staged because one shipped test reads it: the
-# compliance test takes CI's removed-feature list from the workflow and asks the
-# running node to report every one of those names absent, so the two can never
-# drift apart. The archive is verified on its own — `verify-release.sh
-# --with-tests` extracts it and runs the suite there — and without this file that
-# command, which the release notes print for every operator, failed with ENOENT.
 stage "$STAGING/obsidian-core" \
   obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/tsconfig.json obsidian-core/tsconfig.test.json obsidian-core/vitest.config.ts \
   obsidian-core/src obsidian-core/tests obsidian-core/dist obsidian-core/config \
-  obsidian-core/deployment obsidian-core/README.md .env.example \
-  .github/workflows/ci.yml 2>/dev/null || true
+  obsidian-core/deployment obsidian-core/README.md .env.example 2>/dev/null || true
 cp LICENSE "$STAGING/obsidian-core/" 2>/dev/null || true
+# One shipped test compares the node's compliance audit with the removed-feature list CI carries
+# (tests/security/rpc-hardening.test.ts reads ../../../.github/workflows/ci.yml — the same
+# repository-relative path inside this archive). Without the file,
+# `verify-release.sh obsidian-core-<version>.tar.gz --with-tests` — the command the generated
+# release notes tell a reader to run — fails on a correct archive, so the suite's one repo-level
+# input ships with it, at the path the test resolves.
+if [ -f .github/workflows/ci.yml ]; then
+  mkdir -p "$STAGING/obsidian-core/.github/workflows"
+  cp .github/workflows/ci.yml "$STAGING/obsidian-core/.github/workflows/ci.yml"
+fi
 # ── 2. obsidian-interface: server, built bundles and the site shells ─────────
 stage "$STAGING/obsidian-interface" \
   obsidian-interface/package.json obsidian-interface/package-lock.json \
