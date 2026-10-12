@@ -1,0 +1,154 @@
+{
+  "product": "Obsidian Network",
+  "version": "1.8.2",
+  "commit": "1a21858924bd76b07a7d711cb27e83e76de7619a",
+  "builtAt": "2026-10-12T14:57:04Z",
+  "protocolVersion": "1.8.0",
+  "paramsHash": "1d6cba55f0975f8b0d6345658f1c1cb1",
+  "forkChoice": "FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH",
+  "finality": {
+    "voteType": "POT_FINALITY",
+    "quorumNumerator": 2,
+    "quorumDenominator": 3,
+    "maxValidators": 256,
+    "maxPendingVotes": 512,
+    "maxCandidatesPerHeight": 8,
+    "maxEvidenceRecords": 256,
+    "maxEvidenceBytes": 16384,
+    "bootstrapSetStabilityBlocks": 64
+  },
+  "networks": {
+    "mainnet": {
+      "networkId": "obsidian-mainnet-1",
+      "chainId": 7777,
+      "addressPrefix": "obs",
+      "rpcPort": 8630,
+      "p2pPort": 8631,
+      "genesisId": "3722ae03f8e74d1ebd5f0dc70addc5122d7d7c70",
+      "genesisBlockHash": "e7f470233adc821ac55820b8749455e35f766e6691d760f0ff8a027e2513aeac"
+    },
+    "testnet": {
+      "networkId": "obsidian-testnet-1",
+      "chainId": 7778,
+      "addressPrefix": "tobs",
+      "rpcPort": 18630,
+      "p2pPort": 18631,
+      "genesisId": "7a5b20e504d6c0a278bf23799a7394d17470856f",
+      "genesisBlockHash": "d590b54e29a4186bd0faa3185f2195d3643da4d1177cf547367260d322af07e9"
+    },
+    "staging": {
+      "networkId": "obsidian-staging-1",
+      "chainId": 7779,
+      "addressPrefix": "sobs",
+      "rpcPort": 28630,
+      "p2pPort": 28631,
+      "genesisId": "3c4461cff67c0306d97ff8de150dcb8937eb2a5a",
+      "genesisBlockHash": "1f7d5fc5e59944e5a0e7e622a5d7f5d41412493d6126dddf8e4055ff1c145297"
+    },
+    "devnet": {
+      "networkId": "obsidian-devnet-1",
+      "chainId": 7780,
+      "addressPrefix": "dobs",
+      "rpcPort": 38630,
+      "p2pPort": 38631,
+      "genesisId": "9e56e977b443aec428f3b59ce4880062250e7236",
+      "genesisBlockHash": "6495b4eccb631069b492b483c9341b3cadfbac116b74d3deb394fdfabc091d99"
+    }
+  },
+  "maximumSupplyObs": "21000000",
+  "genesisAllocationObs": "100000",
+  "assets": [
+    {
+      "name": "obsidian-app-web-1.8.2.tar.gz",
+      "bytes": 467432
+    },
+    {
+      "name": "obsidian-app-web-1.8.2.zip",
+      "bytes": 500015
+    },
+    {
+      "name": "obsidian-cloudflare-1.8.2.tar.gz",
+      "bytes": 222466
+    },
+    {
+      "name": "obsidian-cloudflare-1.8.2.zip",
+      "bytes": 259354
+    },
+    {
+      "name": "obsidian-core-1.8.2.tar.gz",
+      "bytes": 888261
+    },
+    {
+      "name": "obsidian-core-1.8.2.zip",
+      "bytes": 1119614
+    },
+    {
+      "name": "obsidian-extension-1.8.2.tar.gz",
+      "bytes": 708185
+    },
+    {
+      "name": "obsidian-extension-1.8.2.zip",
+      "bytes": 731213
+    },
+    {
+      "name": "obsidian-interface-1.8.2.tar.gz",
+      "bytes": 1703994
+    },
+    {
+      "name": "obsidian-interface-1.8.2.zip",
+      "bytes": 1902248
+    },
+    {
+      "name": "obsidian-interface-selfhost-1.8.2.tar.gz",
+      "bytes": 1505835
+    },
+    {
+      "name": "obsidian-interface-selfhost-1.8.2.zip",
+      "bytes": 1665391
+    },
+    {
+      "name": "obsidian-network-source-1.8.2.tar.gz",
+      "bytes": 4368444
+    },
+    {
+      "name": "obsidian-node-desktop-1.8.2.tar.gz",
+      "bytes": 2120880
+    },
+    {
+      "name": "obsidian-node-desktop-1.8.2.zip",
+      "bytes": 2161818
+    },
+    {
+      "name": "obsidian-node-operator-1.8.2.tar.gz",
+      "bytes": 685544
+    },
+    {
+      "name": "obsidian-node-operator-1.8.2.zip",
+      "bytes": 873199
+    },
+    {
+      "name": "obsidian-wallet-web-1.8.2.tar.gz",
+      "bytes": 432658
+    },
+    {
+      "name": "obsidian-wallet-web-1.8.2.zip",
+      "bytes": 446931
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "sbom-core-1.8.2.cdx.json",
+      "sha256": "dcb86ff97433bc881c5b5d88e6c3a55690fc507f4c74a790a0bfe4172073f782"
+    },
+    {
+      "name": "sbom-interface-1.8.2.cdx.json",
+      "sha256": "70d68ea253f855155e6a9d3f99d123e80cc53186eb2923115327aacb5d887f09"
+    }
+  ],
+  "sourceDateEpoch": 1791817024,
+  "toolchain": {
+    "node": "v22.22.3",
+    "npm": null
+  },
+  "verification": "node scripts/release-tool.mjs verify --fingerprint <pinned publisher fingerprint> --repo . --tag v<version> (docs/release-signing.md)"
+}
