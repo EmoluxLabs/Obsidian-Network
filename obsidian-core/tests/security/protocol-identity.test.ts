@@ -144,7 +144,10 @@ describe('A — the published identity moves as one thing', () => {
     // A build that ships a new rule set under an old protocol version is the
     // exact failure this file exists to prevent, so the three versions that a
     // peer compares are asserted to be the same string.
-    expect(CORE_VERSION).toBe('1.8.0');
+    // 1.8.1 is a software release on protocol 1.8.0: the software version may run ahead of the protocol version, and
+    // MIN_CORE_VERSION stays at the oldest software that speaks the same rules. They must never be BEHIND each other.
+    expect(CORE_VERSION).toBe('1.8.1');
+    expect(compareVersions(CORE_VERSION, PROTOCOL_VERSION)).toBeGreaterThanOrEqual(0);
     expect(PROTOCOL_VERSION).toBe('1.8.0');
     expect(MIN_CORE_VERSION).toBe('1.8.0');
     expect(CONSENSUS_PARAMS.protocolVersion).toBe(PROTOCOL_VERSION);
