@@ -112,7 +112,11 @@ Environment:
   OBSIDIAN_INTERFACE_ALLOWED_ORIGINS, OBSIDIAN_INTERFACE_TRUST_OFFICIAL_DOMAINS,
   OBSIDIAN_INTERFACE_MAX_INVITES, OBSIDIAN_INTERFACE_TRUST_PROXY,
   OBSIDIAN_INTERFACE_LOG_LEVEL,
-  OBSIDIAN_INTERFACE_ROLE (primary | edge, default primary), OBSIDIAN_INTERFACE_PRIMARY_URL
+  OBSIDIAN_INTERFACE_ROLE (primary | edge, default primary), OBSIDIAN_INTERFACE_PRIMARY_URL,
+  OBSIDIAN_INTERFACE_PRIMARY_URLS (edge: comma list of every primary-capable host, probed for the current leader)
+  OBSIDIAN_INTERFACE_LEASE_DIR (primary: shared directory for the leader lease; with OBSIDIAN_INTERFACE_DATA_DIR on the
+    same shared durable volume), OBSIDIAN_INTERFACE_LEASE_TTL_MS (default 15000, min 3000),
+    OBSIDIAN_INTERFACE_MAX_CLOCK_SKEW_MS (default 2000), OBSIDIAN_INTERFACE_ADVERTISE_URL (this host's public URL)
 
 Roles (protocol 1.8.0 — the account store lives on ONE host):
   primary  holds the accounts, wallet links and the gate key. Run exactly one per network.
@@ -229,6 +233,42 @@ export function loadInterfaceConfig(argv: string[] = process.argv.slice(2), env 
       throw new Error('OBSIDIAN_INTERFACE_PRIMARY_URL must be an http(s) URL without credentials');
     }
   }
+  const urlList = (name: string, raw: string): string[] =>
+    raw
+      .split(',')
+      .map((item) => item.trim().replace(/\/+$/, ''))
+      .filter(Boolean)
+      .map((item) => {
+        let parsed: URL | undefined;
+        try {
+          parsed = new URL(item);
+        } catch {
+          parsed = undefined;
+        }
+        if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password) {
+          throw new Error(`${name} must be a comma list of http(s) URLs without credentials`);
+        }
+        return item;
+      });
+  const primaryUrls = urlList('OBSIDIAN_INTERFACE_PRIMARY_URLS', env.OBSIDIAN_INTERFACE_PRIMARY_URLS ?? '');
+  const advertiseList = urlList('OBSIDIAN_INTERFACE_ADVERTISE_URL', env.OBSIDIAN_INTERFACE_ADVERTISE_URL ?? '');
+  if (advertiseList.length > 1) throw new Error('OBSIDIAN_INTERFACE_ADVERTISE_URL takes one URL');
+  const leaseDir = (env.OBSIDIAN_INTERFACE_LEASE_DIR ?? '').trim();
+  const intEnv = (name: string, fallback: number, min: number, max: number): number => {
+    const raw = env[name];
+    if (raw === undefined || raw === '') return fallback;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${name} must be an integer from ${min} to ${max}`);
+    return value;
+  };
+  const leaseTtl = intEnv('OBSIDIAN_INTERFACE_LEASE_TTL_MS', 15_000, 3_000, 600_000);
+  const leaseSkew = intEnv('OBSIDIAN_INTERFACE_MAX_CLOCK_SKEW_MS', 2_000, 0, 60_000);
+  if (leaseDir && role === 'edge') {
+    throw new Error('OBSIDIAN_INTERFACE_LEASE_DIR is for primary-capable hosts: an edge must never be given the shared account/lease volume');
+  }
+  if (leaseDir && leaseTtl <= 4 * leaseSkew) {
+    throw new Error('OBSIDIAN_INTERFACE_LEASE_TTL_MS must exceed four times OBSIDIAN_INTERFACE_MAX_CLOCK_SKEW_MS');
+  }
   const siteRoot = resolve(String(flags.siteRoot ?? env.OBSIDIAN_INTERFACE_SITE_ROOT ?? defaultSiteRoot(cwd)));
   const config: InterfaceConfig = {
     ...DEFAULT_INTERFACE_CONFIG,
@@ -248,6 +288,10 @@ export function loadInterfaceConfig(argv: string[] = process.argv.slice(2), env 
     trustProxy: flags.trustProxy === 'true' || env.OBSIDIAN_INTERFACE_TRUST_PROXY === 'true',
     role,
     primaryUrl,
+    ...(primaryUrls.length > 0 ? { primaryUrls } : {}),
+    ...(leaseDir
+      ? { lease: { dir: resolve(leaseDir), ttlMs: leaseTtl, maxSkewMs: leaseSkew, ...(advertiseList[0] ? { advertiseUrl: advertiseList[0] } : {}) } }
+      : {}),
     logLevel: logLevel as InterfaceConfig['logLevel'],
   };
 
@@ -315,6 +359,8 @@ export function describeInterfaceConfig(loaded: LoadedInterfaceConfig): Record<s
     trustProxy: config.trustProxy,
     role: config.role,
     primaryUrl: config.primaryUrl ?? null,
+    primaryUrls: config.primaryUrls ?? [],
+    lease: config.lease ? { dir: config.lease.dir, ttlMs: config.lease.ttlMs, maxSkewMs: config.lease.maxSkewMs } : null,
     logLevel: config.logLevel,
   };
 }

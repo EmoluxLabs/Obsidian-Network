@@ -31,12 +31,16 @@ STAGING="$RELEASES/staging"
 SKIP_BUILD=0
 SKIP_E2E=0
 ALLOW_DIRTY=0
+NO_TESTS=0
 
 for arg in "$@"; do
   case "$arg" in
     --skip-build) SKIP_BUILD=1 ;;
     --skip-e2e) SKIP_E2E=1 ;;
     --allow-dirty) ALLOW_DIRTY=1 ;;
+    # A reproduction build: build everything from the commit but run no suite. The archives do not depend on the
+    # test results, so this is what scripts/reproduce-release.sh uses to rebuild and compare byte for byte.
+    --no-tests) NO_TESTS=1 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -55,7 +59,11 @@ fi
 
 COMMIT="$(git rev-parse HEAD)"
 COMMIT_SHORT="$(git rev-parse --short HEAD)"
-BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Reproducibility: every timestamp that ends up in an artifact is the COMMIT's, never the wall clock, so two builds of
+# the same commit on different days produce byte-identical archives (scripts/reproduce-release.sh compares them).
+SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+export SOURCE_DATE_EPOCH
+BUILT_AT="$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ)"
 
 echo "packaging Obsidian Network $VERSION from $COMMIT_SHORT"
 
@@ -88,6 +96,7 @@ echo "gate logs: $LOGS"
 # worse than no gate at all.
 gate() {
   local label="$1" log="$2"; shift 2
+  if [ "$NO_TESTS" = 1 ]; then echo "→ $label: SKIPPED (--no-tests)"; : > "$log"; return 0; fi
   echo "→ $label"
   if ! "$@" >"$log" 2>&1; then
     echo "" >&2
@@ -129,7 +138,8 @@ if [ "$SKIP_BUILD" = 0 ]; then
   gate "web wallet tests" "$LOGS/wallet-web.log" bash -c 'cd obsidian-wallet-web && node --test tests/*.test.mjs'
   gate "extension tests" "$LOGS/extension.log" bash -c 'cd obsidian-extension && node --test tests/*.test.mjs'
   for product_log in app-web wallet-web extension; do
-    PRODUCT_TESTS=$((PRODUCT_TESTS + $(count_node_test "$LOGS/$product_log.log")))
+    product_count="$(count_node_test "$LOGS/$product_log.log")"
+    PRODUCT_TESTS=$((PRODUCT_TESTS + ${product_count:-0}))
   done
 
   # The verification script is what a stranger runs before trusting this
@@ -187,17 +197,17 @@ if [ "$SKIP_BUILD" = 0 ]; then
   NETWORK_TESTS="${NETWORK_TESTS:-0}"
   INVITE_TESTS="${INVITE_TESTS:-0}"
   CONSISTENCY_TESTS="${CONSISTENCY_TESTS:-0}"
-  for pair in "products:$PRODUCT_TESTS" "core:$CORE_TESTS" "interface:$INTERFACE_TESTS" "edge:$EDGE_TESTS" "signing:$SIGNING_TESTS" "soak:$SOAK_TESTS" "invitation:$INVITE_TESTS" "consistency:$CONSISTENCY_TESTS"; do
+  [ "$NO_TESTS" = 1 ] || for pair in "products:$PRODUCT_TESTS" "core:$CORE_TESTS" "interface:$INTERFACE_TESTS" "edge:$EDGE_TESTS" "signing:$SIGNING_TESTS" "soak:$SOAK_TESTS" "invitation:$INVITE_TESTS" "consistency:$CONSISTENCY_TESTS"; do
     if [ "${pair#*:}" = "0" ]; then
       echo "no tests ran for ${pair%%:*} — refusing to package" >&2
       exit 1
     fi
   done
-  if [ "$SKIP_E2E" = 0 ] && [ "$CLUSTER_TESTS" = "0" ]; then
+  if [ "$NO_TESTS" = 0 ] && [ "$SKIP_E2E" = 0 ] && [ "$CLUSTER_TESTS" = "0" ]; then
     echo "the cluster end-to-end test reported no passes — refusing to package" >&2
     exit 1
   fi
-  if [ "$SKIP_E2E" = 0 ] && [ "$NETWORK_TESTS" = "0" ]; then
+  if [ "$NO_TESTS" = 0 ] && [ "$SKIP_E2E" = 0 ] && [ "$NETWORK_TESTS" = "0" ]; then
     echo "the four-network isolation test reported no passes — refusing to package" >&2
     exit 1
   fi
@@ -210,10 +220,13 @@ rm -rf "$RELEASES"/*.zip "$RELEASES"/*.tar.gz "$STAGING"
 mkdir -p "$STAGING"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+# Deterministic: fixed mtimes, sorted entries, no owner, no gzip timestamp, no zip extra fields.
 archive() {
   local name="$1" dir="$2"
-  ( cd "$dir" && zip -qr "$RELEASES/${name}.zip" . -x '*.git*' )
-  ( cd "$dir" && tar --exclude='.git' -czf "$RELEASES/${name}.tar.gz" . )
+  find "$dir" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+  rm -f "$RELEASES/${name}.zip" "$RELEASES/${name}.tar.gz"
+  ( cd "$dir" && find . -mindepth 1 ! -path '*/.git/*' ! -name .git | LC_ALL=C sort | zip -qX -@ "$RELEASES/${name}.zip" )
+  ( cd "$dir" && tar --exclude='.git' --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --format=gnu -cf - . | gzip -n -9 > "$RELEASES/${name}.tar.gz" )
   echo "  ${name}.zip / ${name}.tar.gz"
 }
 
@@ -314,7 +327,9 @@ stage "$STAGING/obsidian-node-desktop" \
 
 # ── 6. the whole source tree, straight from git ──────────────────────────────
 echo "→ source archive"
-git archive --format=tar.gz --prefix="obsidian-network-$VERSION/" -o "$RELEASES/obsidian-network-source-$VERSION.tar.gz" HEAD
+# releases/ is excluded: the source archive must be a function of the SOURCE commit alone, not of the archives that
+# are committed after it (otherwise it could never be rebuilt from the commit it claims to be built from).
+git archive --format=tar --prefix="obsidian-network-$VERSION/" HEAD -- . ':(exclude)releases' | gzip -n -9 > "$RELEASES/obsidian-network-source-$VERSION.tar.gz"
 
 # ── archives ────────────────────────────────────────────────────────────────
 echo "→ archives"
@@ -328,10 +343,20 @@ archive "obsidian-app-web-$VERSION" "$STAGING/obsidian-app-web"
 archive "obsidian-extension-$VERSION" "$STAGING/obsidian-extension"
 archive "obsidian-node-desktop-$VERSION" "$STAGING/obsidian-node-desktop"
 
+# ── SBOM: runtime dependency inventory straight from the lockfiles ───────────
+echo "→ SBOM (CycloneDX, from the lockfiles)"
+rm -f "$RELEASES"/sbom-*.cdx.json
+for pkg in obsidian-core obsidian-interface; do
+  npm --prefix "$pkg" sbom --sbom-format cyclonedx --package-lock-only --omit dev > "$RELEASES/sbom-${pkg#obsidian-}-$VERSION.cdx.json"
+  # npm stamps a random serial number and the wall clock; neither belongs in a reproducible artifact.
+  node -e "const f=process.argv[1],fs=require('fs'),j=JSON.parse(fs.readFileSync(f,'utf8'));j.serialNumber='urn:uuid:00000000-0000-0000-0000-000000000000';j.metadata.timestamp=new Date(process.env.SOURCE_DATE_EPOCH*1000).toISOString();fs.writeFileSync(f,JSON.stringify(j,null,2)+'\\n')" "$RELEASES/sbom-${pkg#obsidian-}-$VERSION.cdx.json"
+done
+
 # ── manifest and checksums ──────────────────────────────────────────────────
 echo "→ manifest and checksums"
 node - "$VERSION" "$COMMIT" "$BUILT_AT" <<'NODE'
-import { readdirSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { blockHash } from './obsidian-core/dist/blockchain/block.js';
 import { PARAMS_HASH } from './obsidian-core/dist/blockchain/state-root.js';
@@ -343,6 +368,8 @@ const [version, commit, builtAt] = process.argv.slice(2);
 const dir = 'releases';
 const files = readdirSync(dir).filter((name) => /\.(zip|tar\.gz)$/.test(name)).sort();
 const assets = files.map((name) => ({ name, bytes: statSync(join(dir, name)).size }));
+const artifacts = readdirSync(dir).filter((name) => /^sbom-.*\.cdx\.json$/.test(name)).sort()
+  .map((name) => ({ name, sha256: createHash('sha256').update(readFileSync(join(dir, name))).digest('hex') }));
 const networks = Object.fromEntries(Object.entries(NETWORKS).map(([name, net]) => {
   const document = genesisDocumentFor(net);
   return [name, {
@@ -370,14 +397,21 @@ const manifest = {
   maximumSupplyObs: '21000000',
   genesisAllocationObs: '100000',
   assets,
-  verification: 'sha256sum -c SHA256SUMS, then compare the digests with the published release notes',
+  artifacts,
+  sourceDateEpoch: Number(process.env.SOURCE_DATE_EPOCH),
+  // Recorded, not asserted: an independent rebuild on another patch level should still match byte for byte, and
+  // scripts/reproduce-release.sh is the test of that, not this line.
+  toolchain: { node: process.version, npm: process.env.npm_config_user_agent ?? null },
+  verification: 'node scripts/release-tool.mjs verify --fingerprint <pinned publisher fingerprint> --repo . --tag v<version> (docs/release-signing.md)',
 };
 writeFileSync(join(dir, 'MANIFEST.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 NODE
 
 ( cd "$RELEASES" && sha256sum $(ls *.zip *.tar.gz | sort) > SHA256SUMS )
 
-if [ "$SKIP_BUILD" = 0 ] && [ "$SKIP_E2E" = 0 ]; then
+if [ "$NO_TESTS" = 1 ]; then
+  TEST_SUMMARY="* No tests were run for this build (--no-tests, a reproduction build). The published release notes carry the test results of the build that was tested."
+elif [ "$SKIP_BUILD" = 0 ] && [ "$SKIP_E2E" = 0 ]; then
   TEST_SUMMARY="* ${TOTAL_TESTS} automated tests, all of them run immediately before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), web app, web wallet and extension (${PRODUCT_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}), soak verdict rules (${SOAK_TESTS}), the genesis invitation generator (${INVITE_TESTS}), repository consistency (${CONSISTENCY_TESTS}), the three-node cluster end-to-end suite (${CLUSTER_TESTS}) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (${NETWORK_TESTS})"
 elif [ "$SKIP_BUILD" = 0 ]; then
   TEST_SUMMARY="* $((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS + SOAK_TESTS + INVITE_TESTS + CONSISTENCY_TESTS + PRODUCT_TESTS)) automated tests run before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}), the soak verdict rules (${SOAK_TESTS}), the genesis invitation generator (${INVITE_TESTS}) and repository consistency (${CONSISTENCY_TESTS}). The cluster and four-network end-to-end suites were skipped (--skip-e2e): run \`node --test tests/e2e/cluster.test.mjs tests/e2e/networks.test.mjs tests/e2e/ecosystem.test.mjs tests/scripts/network-script.test.mjs tests/scripts/termux-quickstart.test.mjs\` before trusting this build."
@@ -399,9 +433,16 @@ cat MANIFEST.json          # asset sizes, networks, protocol constants
 bash ../scripts/verify-release.sh obsidian-core-$VERSION.tar.gz --with-tests
 \`\`\`
 
-This locally produced candidate is **unsigned**. SHA-256 verifies integrity, not
-publisher authorship. Do not treat it as an independently reproduced or signed
-public release.
+SHA-256 verifies integrity, not publisher authorship. A release is **authenticated**
+only when it carries \`RELEASE-SIGNATURE.json\` and you verify it against a publisher
+fingerprint you obtained out of band:
+
+\`\`\`bash
+node scripts/release-tool.mjs verify --releases releases --fingerprint '<pinned fingerprint>' --repo . --tag v$VERSION --require-sbom
+\`\`\`
+
+Without that file this is an unsigned candidate. Reproduce it independently with
+\`scripts/reproduce-release.sh\` (docs/release-signing.md).
 
 ## Assets
 
@@ -464,6 +505,21 @@ See \`docs/security-model.md\` (trust boundaries and honest limitations) and
 \`docs/DEPLOYMENT-GUIDE.md\` "What I should deploy first" (the remaining risks) for the
 verification boundary, and \`.github/workflows/ci.yml\` for what every gate checks.
 NOTES
+
+# Self-check: the pipeline fails if what it just wrote disagrees with itself (stale archive, wrong embedded version,
+# digest mismatch, missing SBOM) - the same verifier an operator runs, minus the publisher key.
+echo "→ verifying the release directory (integrity, versions, SBOM)"
+node scripts/release-tool.mjs verify --releases "$RELEASES" --integrity-only --require-sbom
+
+# Signing is the PUBLISHER's act: the private key stays outside the repository and outside CI logs. Set
+# OBSIDIAN_RELEASE_KEY to the key file to sign; without it the release is left unsigned, and says so.
+if [ -n "${OBSIDIAN_RELEASE_KEY:-}" ]; then
+  echo "→ signing with the publisher key (path not logged)"
+  node scripts/release-tool.mjs sign --releases "$RELEASES" --key "$OBSIDIAN_RELEASE_KEY"
+else
+  rm -f "$RELEASES/RELEASE-SIGNATURE.json"
+  echo "→ NOT SIGNED: OBSIDIAN_RELEASE_KEY is not set. This is an unsigned candidate (integrity only)."
+fi
 
 echo "→ release notes and digests"
 ls -la "$RELEASES" | sed -n '1,40p'

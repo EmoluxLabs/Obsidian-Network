@@ -18,10 +18,11 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { InterfaceServer, WALLET_LINK_DOMAIN, type InterfaceConfig } from '../server/index.js';
 import { loadInterfaceConfig } from '../server/config.js';
 import { AccountStore } from '../server/store.js';
+import { FileLeaseBackend, LeaderElector } from '../server/lease.js';
 import { newGenesisInvitation } from '../server/genesis-invite.js';
 import { loadGateIssuer, gatePassphraseFromEnv, type GateIssuer } from '../server/gate-issuer.js';
 // The node's own keystore writer and the chain's own certificate verifier: the platform's issuer must interoperate with them.
@@ -63,6 +64,8 @@ interface Harness {
   setGateKeys: (keys: string[] | undefined) => void;
   /** The gate issuer this harness serves with (only when started with `gate: true`). */
   gateIssuer?: GateIssuer;
+  elector?: LeaderElector;
+  store?: AccountStore;
   /** Make the server's transaction decoder fail to load, as if web/core were missing. */
   breakCore: () => void;
   close: () => Promise<void>;
@@ -173,7 +176,12 @@ async function testGateIssuer(): Promise<{ issuer: GateIssuer; path: string }> {
   return { issuer: await loadGateIssuer({ keystorePath: path, passphrase: GATE_PASSPHRASE, coreDir: REAL_CORE }), path };
 }
 
-async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[]; dataDir?: string; gate?: boolean; role?: 'primary' | 'edge'; primaryUrl?: string } = {}): Promise<Harness> {
+interface HaOptions {
+  holder: string;
+  clock: { now: () => number; mono: () => number };
+}
+
+async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[]; dataDir?: string; gate?: boolean; role?: 'primary' | 'edge'; primaryUrl?: string; ha?: HaOptions } = {}): Promise<Harness> {
   // Every harness gets its own Genesis Invitation: the first account on a
   // deployment must present one, so the tests need the plaintext.
   const genesis = newGenesisInvitation();
@@ -294,10 +302,25 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
     logLevel: 'error',
   };
 
-  const store = new AccountStore({ dataDir: config.dataDir });
+  const elector = options.ha
+    ? new LeaderElector({
+        backend: new FileLeaseBackend(join(config.dataDir, 'lease')),
+        holder: options.ha.holder,
+        ttlMs: 10_000,
+        maxSkewMs: 1_000,
+        now: options.ha.clock.now,
+        mono: options.ha.clock.mono,
+        onPromote: () => {
+          store.reload();
+          store.configureGenesisInvite(genesis.hash);
+        },
+        onDemote: () => store.dropDeferred(),
+      })
+    : undefined;
+  const store = new AccountStore({ dataDir: config.dataDir, fence: elector?.guard });
   const gateIssuer = options.gate ? (await testGateIssuer()).issuer : undefined;
   if (options.gate) config.network = 'devnet';
-  const server = new InterfaceServer({ config, store, gateIssuer });
+  const server = new InterfaceServer({ config, store, gateIssuer, elector });
   const port = await server.listen();
   const origin = `http://127.0.0.1:${port}`;
 
@@ -308,6 +331,8 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
     nodeUrl,
     genesisCode: genesis.code,
     gateIssuer,
+    elector,
+    store,
     mailbox,
     signIn: (name: string, signInOptions: { inviteCode?: string; password?: string; email?: string } = {}) =>
       fetch(`${origin}/api/auth/register`, {
@@ -340,7 +365,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
 
 const running: Harness[] = [];
 
-async function harness(options: { stubStatusFails?: number; nodeUrls?: string[]; gate?: boolean; role?: 'primary' | 'edge'; primaryUrl?: string } = {}): Promise<Harness> {
+async function harness(options: { stubStatusFails?: number; nodeUrls?: string[]; gate?: boolean; role?: 'primary' | 'edge'; primaryUrl?: string; ha?: HaOptions; dataDir?: string } = {}): Promise<Harness> {
   const created = await startHarness(options);
   running.push(created);
   return created;
@@ -1800,5 +1825,115 @@ describe('site directories', () => {
       const staged = new Set(line.trim().replace(/\\$/, '').trim().split(/\s+/));
       for (const site of generated) expect(staged.has(site)).toBe(true);
     }
+  });
+});
+
+
+describe('primary failover: lease, fencing, fail-closed standby (in-process; real processes are in tests/e2e/failover.test.mjs)', () => {
+  const CLAIM_ID = 'ab'.repeat(32);
+  const clock = () => {
+    const state = { t: 2_000_000 };
+    return { state, now: () => state.t, mono: () => state.t };
+  };
+  const tickAll = (...hosts: Harness[]) => hosts.forEach((host) => host.elector!.tick());
+
+  async function pair() {
+    const c = clock();
+    const dataDir = scratch();
+    const a = await harness({ gate: true, dataDir, ha: { holder: 'host-a', clock: c } });
+    const b = await harness({ gate: true, dataDir, ha: { holder: 'host-b', clock: c } });
+    tickAll(a, b);
+    expect(a.elector!.isLeader()).toBe(true);
+    expect(b.elector!.isLeader()).toBe(false);
+    return { a, b, c, dataDir };
+  }
+  const json = (cookie?: string) => ({ 'content-type': 'application/json', ...(cookie ? { cookie } : {}) });
+
+  it('a standby refuses every account route before touching anything, and says it is retryable', async () => {
+    const { a, b } = await pair();
+    for (const [method, path] of [['POST', '/api/auth/register'], ['POST', '/api/auth/login'], ['GET', '/api/auth/me'], ['POST', '/api/wallet/link/challenge'], ['POST', '/api/mining/certificate']] as const) {
+      const response = await fetch(`${b.origin}${path}`, { method, headers: json(), body: method === 'POST' ? '{}' : undefined });
+      expect(response.status, path).toBe(503);
+      expect(response.headers.get('x-obsidian-standby')).toBe('1');
+      expect(response.headers.get('retry-after')).toBe('2');
+      const body = (await response.json()) as { code: string; retryable: boolean };
+      expect(body.code).toBe('ERR_NOT_LEADER');
+      expect(body.retryable).toBe(true);
+    }
+    // The leader serves them.
+    expect((await a.signIn('founder', { inviteCode: a.genesisCode })).status).toBe(200);
+    // Readiness is what a load balancer routes on: only the leader is ready for account traffic.
+    expect((await fetch(`${a.origin}/api/ready`)).status).toBe(200);
+    const standbyReady = await fetch(`${b.origin}/api/ready`);
+    expect(standbyReady.status).toBe(503);
+    expect(((await standbyReady.json()) as { leader: { state: string } }).leader.state).toBe('standby');
+    expect((await fetch(`${b.origin}/api/health`)).status).toBe(200);
+  });
+
+  it('a standby also refuses a mining claim transaction (it has no account state it may act on)', async () => {
+    const { b } = await pair();
+    await b.poolCheck();
+    const signed = signedTxHex(TxType.MINING_CLAIM, KEYS.mine);
+    const response = await fetch(`${b.origin}/api/rpc?path=/tx/submit`, { method: 'POST', headers: json(), body: JSON.stringify({ tx: signed }) });
+    expect(response.status).toBe(503);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_NOT_LEADER');
+  });
+
+  it('after failover the new leader serves the dead leader\'s accounts and sessions; the old one cannot', async () => {
+    const { a, b, c } = await pair();
+    const created = await a.signIn('founder', { inviteCode: a.genesisCode });
+    const cookie = (created.headers.get('set-cookie') ?? '').split(';')[0]!;
+    a.store!.flush(); // sessions are written within ~2 s; a real crash inside that window costs a re-login (documented)
+    a.elector!.stop(); // a crash would be the same after the ttl; a clean stop skips the wait
+    c.state.t += 2_000;
+    b.elector!.tick();
+    expect(b.elector!.isLeader()).toBe(true);
+    expect(b.elector!.status().token).toBe(2);
+    const me = await fetch(`${b.origin}/api/auth/me`, { headers: json(cookie) });
+    expect(me.status).toBe(200);
+    // Logging out on the new leader is durable and visible to the next one: sessions revoke across failover.
+    expect((await fetch(`${b.origin}/api/auth/logout`, { method: 'POST', headers: json(cookie), body: '{}' })).status).toBe(200);
+    expect((await fetch(`${b.origin}/api/auth/me`, { headers: json(cookie) })).status).toBe(401);
+  });
+
+  it('a leader that lost the lease while a certificate request was in flight does NOT sign', async () => {
+    const wallA = clock();
+    const dataDir = scratch();
+    const a = await harness({ gate: true, dataDir, ha: { holder: 'host-a', clock: { now: () => wallA.state.t, mono: () => 5 } } }); // A's monotonic clock never advances: it believes it still leads
+    a.elector!.tick();
+    const created = await a.signIn('founder', { inviteCode: a.genesisCode });
+    const cookie = (created.headers.get('set-cookie') ?? '').split(';')[0]!;
+    // Link a wallet and enable MFA, as the real flow does.
+    expect((await proveLink(a, cookie, KEYS.mine)).status).toBe(200);
+    const setup = (await (await fetch(`${a.origin}/api/auth/mfa/setup`, { method: 'POST', headers: jsonHeaders(cookie), body: '{}' })).json()) as { secret: string };
+    expect((await fetch(`${a.origin}/api/auth/mfa/confirm`, { method: 'POST', headers: jsonHeaders(cookie), body: JSON.stringify({ totp: totpNow(setup.secret) }) })).status).toBe(200);
+    const issue = vi.spyOn(a.gateIssuer!, 'issue');
+    const ask = () => fetch(`${a.origin}/api/mining/certificate`, { method: 'POST', headers: json(cookie), body: JSON.stringify({ address: KEYS.mine.address, claimId: CLAIM_ID }) });
+    expect((await ask()).status).toBe(200);
+    expect(issue).toHaveBeenCalledTimes(1);
+
+    // Another host takes the lease (A never noticed: frozen / partitioned).
+    const record = JSON.parse(readFileSync(join(dataDir, 'lease', 'lease.json'), 'utf8'));
+    writeFileSync(join(dataDir, 'lease', 'lease.json'), JSON.stringify({ ...record, holder: 'host-b', token: record.token + 1 }));
+    const refused = await ask();
+    expect(refused.status).toBe(503);
+    expect(((await refused.json()) as { code: string }).code).toBe('ERR_NOT_LEADER');
+    expect(issue).toHaveBeenCalledTimes(1); // the key was not used
+  });
+
+  it('an account write that is fenced mid-request leaves the file untouched and answers a retryable 503, not a 500', async () => {
+    const { a, dataDir } = await pair().then((p) => ({ ...p }));
+    const file = join(dataDir, 'interface-accounts.json');
+    const created = await a.signIn('founder', { inviteCode: a.genesisCode });
+    expect(created.status).toBe(200);
+    const before = readFileSync(file, 'utf8');
+    const cookie = (created.headers.get('set-cookie') ?? '').split(';')[0]!;
+    const record = JSON.parse(readFileSync(join(dataDir, 'lease', 'lease.json'), 'utf8'));
+    writeFileSync(join(dataDir, 'lease', 'lease.json'), JSON.stringify({ ...record, holder: 'host-z', token: record.token + 1 }));
+    const response = await fetch(`${a.origin}/api/auth/invites`, { method: 'POST', headers: json(cookie), body: '{}' });
+    expect(response.status).toBe(503);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_NOT_LEADER');
+    expect(readFileSync(file, 'utf8')).toBe(before);
+    expect(a.elector!.isLeader()).toBe(false);
   });
 });

@@ -134,8 +134,17 @@ export type GenesisRedemption =
   | { ok: true }
   | { ok: false; reason: 'NOT_CONFIGURED' | 'ALREADY_USED' | 'INVALID' };
 
+/**
+ * Gate for every durable write when several hosts share one account store (see server/lease.ts). `write` runs `fn`
+ * only if this host still holds the lease, and throws FencingError otherwise. Without a fence the store is single-host.
+ */
+export interface WriteFence {
+  write(fn: () => void): void;
+}
+
 export interface StoreOptions {
   dataDir: string;
+  fence?: WriteFence;
   /** How long a session stays valid. Default 14 days. */
   sessionTtlSeconds?: number;
 }
@@ -154,10 +163,12 @@ export class AccountStore {
   private readonly sessionTtl: number;
   private flushTimer?: NodeJS.Timeout;
   private dirty = false;
+  private readonly fence?: WriteFence;
 
   constructor(options: StoreOptions) {
     this.path = join(options.dataDir, 'interface-accounts.json');
     this.sessionTtl = options.sessionTtlSeconds ?? 14 * 24 * 3600;
+    this.fence = options.fence;
     this.load();
   }
 
@@ -187,7 +198,7 @@ export class AccountStore {
           this.byWallet.set(address, account.accountId);
         }
       }
-      if (withdrawn) this.persist();
+      if (withdrawn) this.persistIfLeader();
       for (const invite of parsed.invites ?? []) this.invites.set(normalise(invite.code), invite);
       for (const stored of parsed.sessions ?? []) {
         // A version-1 file kept the raw token; it is hashed here and the file is
@@ -202,11 +213,27 @@ export class AccountStore {
         });
       }
       this.genesisInvite = parsed.genesisInvite ?? null;
-      if (parsed.version === 1 && this.accounts.size > 0) this.persist();
+      if (parsed.version === 1 && this.accounts.size > 0) this.persistIfLeader();
     } catch {
       // A corrupt access list must not brick the interface: start empty and
-      // keep the damaged file for the operator to inspect.
-      if (existsSync(this.path)) renameSync(this.path, `${this.path}.corrupt-${Date.now()}`);
+      // keep the damaged file for the operator to inspect. A host that does not hold the lease must not touch a
+      // shared file at all, so it only keeps the (empty) view; the leader moves the file aside when it loads.
+      this.accounts.clear();
+      this.byCanonicalEmail.clear();
+      this.byWallet.clear();
+      this.invites.clear();
+      this.sessions.clear();
+      this.genesisInvite = null;
+      const aside = (): void => {
+        if (existsSync(this.path)) renameSync(this.path, `${this.path}.corrupt-${Date.now()}`);
+      };
+      if (this.fence) {
+        try {
+          this.fence.write(aside);
+        } catch (error) {
+          if (!(error instanceof Error) || error.name !== 'FencingError') throw error;
+        }
+      } else aside();
     }
   }
 
@@ -225,7 +252,41 @@ export class AccountStore {
       sessions: [...this.sessions.values()].filter((session) => session.expiresAt > Date.now()),
       genesisInvite: this.genesisInvite,
     };
-    writeFileDurable(this.path, JSON.stringify(file, null, 2));
+    const data = JSON.stringify(file, null, 2);
+    if (this.fence) this.fence.write(() => writeFileDurable(this.path, data));
+    else writeFileDurable(this.path, data);
+    this.dirty = false;
+  }
+
+  /** Migration writes during `load`: a host that is not the leader must neither write nor fail because of it. */
+  private persistIfLeader(): void {
+    try {
+      this.persist();
+    } catch (error) {
+      if (!(error instanceof Error) || error.name !== 'FencingError') throw error;
+    }
+  }
+
+  /**
+   * Discard memory and read the shared file again. Called when this host becomes the leader (the previous leader wrote
+   * the file, not us) so that no decision is made from a stale snapshot. Deferred changes are dropped: they belong to a
+   * lease that is gone.
+   */
+  reload(): void {
+    this.dropDeferred();
+    this.accounts.clear();
+    this.byCanonicalEmail.clear();
+    this.byWallet.clear();
+    this.invites.clear();
+    this.sessions.clear();
+    this.genesisInvite = null;
+    this.load();
+  }
+
+  /** Forget unwritten changes (leadership was lost: they must not be flushed under someone else's lease). */
+  dropDeferred(): void {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = undefined;
     this.dirty = false;
   }
 
@@ -240,7 +301,14 @@ export class AccountStore {
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
       this.flushTimer = undefined;
-      if (this.dirty) this.persist();
+      if (!this.dirty) return;
+      try {
+        this.persist();
+      } catch (error) {
+        // A fenced write must not become an uncaught exception in a timer: the changes are dropped, on purpose.
+        if (error instanceof Error && error.name === 'FencingError') this.dropDeferred();
+        else throw error;
+      }
     }, 2_000);
     this.flushTimer.unref?.();
   }
@@ -251,7 +319,14 @@ export class AccountStore {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
     }
-    if (this.dirty) this.persist();
+    if (this.dirty) {
+      try {
+        this.persist();
+      } catch (error) {
+        if (error instanceof Error && error.name === 'FencingError') this.dropDeferred();
+        else throw error;
+      }
+    }
   }
 
   get accountCount(): number {
@@ -503,7 +578,7 @@ export class AccountStore {
     if (this.genesisInvite?.redeemedBy) return;
     if (this.genesisInvite?.hash === hash) return;
     this.genesisInvite = { hash, createdAt: Date.now() };
-    this.persist();
+    this.persistIfLeader();
   }
 
   /** Status for operators. Deliberately exposes no part of the secret. */

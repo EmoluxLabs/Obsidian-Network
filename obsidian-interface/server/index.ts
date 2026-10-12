@@ -23,6 +23,8 @@ import { existsSync, statSync, createReadStream } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { AccountStore, provenWallet, type Account } from './store.js';
+import { FencingError, FileLeaseBackend, LeaderElector } from './lease.js';
+import { PrimaryDiscovery } from './primary-discovery.js';
 import { newInviteCode, newSecret } from './auth.js';
 import { NodePool } from './nodes.js';
 import type { GateIssuer } from './gate-issuer.js';
@@ -90,6 +92,13 @@ export interface InterfaceConfig {
   role: 'primary' | 'edge';
   /** Where an edge tells visitors to sign in (optional, shown in the refusal). */
   primaryUrl?: string;
+  /** Edge only: every primary-capable host. The edge probes them and reports whichever one currently holds the lease. */
+  primaryUrls?: string[];
+  /**
+   * Primary-capable hosts that share one account store elect a leader through a lease with a fencing token
+   * (server/lease.ts, docs/failover-and-gateways.md). Unset = a single primary, no failover, no lease.
+   */
+  lease?: { dir: string; ttlMs: number; maxSkewMs: number; advertiseUrl?: string };
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   /**
    * Per-client request budgets as [burst, refill per second]. The defaults suit
@@ -175,6 +184,10 @@ export interface InterfaceDependencies {
   gateIssuer?: GateIssuer;
   /** Test seam: how the transaction decoder is loaded. Defaults to `config.coreDir`. */
   loadCore?: () => Promise<TxCore>;
+  /** Primary-capable hosts: who holds the account/gate lease. Built from `config.lease` when not supplied. */
+  elector?: LeaderElector;
+  /** Edge hosts: which configured primary currently holds the lease. Built from `config.primaryUrls`. */
+  discovery?: PrimaryDiscovery;
 }
 
 /**
@@ -292,8 +305,25 @@ export class InterfaceServer {
       const line = JSON.stringify({ ts: new Date().toISOString(), level, component: 'interface', message, ...fields });
       process.stdout.write(`${line}\n`);
     });
+    // Leader election must exist BEFORE the store, because the store's every durable write is fenced by it.
+    let elector = dependencies.elector;
+    if (!elector && this.config.lease && this.config.role === 'primary') {
+      elector = new LeaderElector({
+        backend: new FileLeaseBackend(this.config.lease.dir),
+        url: this.config.lease.advertiseUrl,
+        ttlMs: this.config.lease.ttlMs,
+        maxSkewMs: this.config.lease.maxSkewMs,
+        log: (level, message, fields) => log(level, message, fields),
+        onPromote: () => this.onPromoted(),
+        onDemote: () => this.dependencies.store.dropDeferred(),
+      });
+    }
+    const discovery =
+      dependencies.discovery ?? (this.config.role === 'edge' && this.config.primaryUrls?.length ? new PrimaryDiscovery(this.config.primaryUrls) : undefined);
     this.dependencies = {
-      store: dependencies.store ?? new AccountStore({ dataDir: this.config.dataDir }),
+      store: dependencies.store ?? new AccountStore({ dataDir: this.config.dataDir, fence: elector?.guard }),
+      elector,
+      discovery,
       pool:
         dependencies.pool ??
         new NodePool({
@@ -312,9 +342,46 @@ export class InterfaceServer {
     // Install the Genesis Invitation hash, if the operator configured one.
     // Only the hash ever reaches the store; a redeemed invitation is never
     // replaced, so restarting with the same hash cannot revive a spent code.
-    if (this.config.genesisInviteHash) {
+    // With a lease, only the leader may write, so the invitation is installed when leadership is taken (onPromoted).
+    if (this.config.genesisInviteHash && !this.dependencies.elector) {
       this.dependencies.store.configureGenesisInvite(this.config.genesisInviteHash);
     }
+  }
+
+  /** This host just became the leader: the previous leader wrote the shared file, so read it before deciding anything. */
+  private onPromoted(): void {
+    this.dependencies.store.reload();
+    if (this.config.genesisInviteHash) this.dependencies.store.configureGenesisInvite(this.config.genesisInviteHash);
+  }
+
+  /** Null when this host may serve accounts, wallet links, certificates and claims; otherwise why not. */
+  private accountServiceRefusal(): { code: string; message: string } | null {
+    if (this.config.role === 'edge') return { code: 'ERR_EDGE_READ_ONLY', message: 'edge' };
+    const elector = this.dependencies.elector;
+    if (elector && !elector.isLeader()) return { code: 'ERR_NOT_LEADER', message: 'standby' };
+    return null;
+  }
+
+  private refuseAccountService(response: ServerResponse): void {
+    const refusal = this.accountServiceRefusal();
+    if (refusal?.code === 'ERR_NOT_LEADER') this.notLeader(response);
+    else this.edgeRefusal(response);
+  }
+
+  /**
+   * Fail closed. This host holds no valid lease, so it knows nothing it may act on. Nothing was read or written before
+   * this answer, which is what makes a retry (or a proxy's retry on the next upstream) safe.
+   */
+  private notLeader(response: ServerResponse): void {
+    const seen = this.dependencies.elector?.status().leader;
+    response.setHeader('retry-after', '2');
+    response.setHeader('x-obsidian-standby', '1');
+    this.json(response, 503, {
+      error: 'this host is a standby: it does not hold the account lease right now. Retry; the platform will route you to the active host.',
+      code: 'ERR_NOT_LEADER',
+      retryable: true,
+      ...(seen?.url ? { leader: seen.url } : {}),
+    });
   }
 
   get pool(): NodePool {
@@ -340,6 +407,8 @@ export class InterfaceServer {
       this.server!.listen(this.config.port, this.config.host, () => resolvePromise());
     });
     this.dependencies.pool.start();
+    this.dependencies.elector?.start();
+    this.dependencies.discovery?.start();
     const address = this.server.address();
     const port = typeof address === 'object' && address ? address.port : this.config.port;
     this.dependencies.log('info', 'interface listening', { host: this.config.host, port, nodes: this.config.nodeUrls.length });
@@ -348,8 +417,11 @@ export class InterfaceServer {
 
   async close(): Promise<void> {
     this.dependencies.pool.stop();
+    this.dependencies.discovery?.stop();
     // Sessions and last-seen times are written lazily; do not lose them on a clean stop.
     this.dependencies.store.flush();
+    // After the flush (which is fenced) and before exit: hand the lease back so a standby does not wait out the ttl.
+    this.dependencies.elector?.stop();
     await new Promise<void>((resolvePromise) => {
       if (!this.server) return resolvePromise();
       this.server.close(() => resolvePromise());
@@ -417,6 +489,11 @@ export class InterfaceServer {
     } catch (error) {
       if (error instanceof BodyTooLargeError) {
         if (!response.headersSent) this.json(response, error.status, { error: error.message, code: error.code });
+        return;
+      }
+      if (error instanceof FencingError) {
+        // Leadership was lost in the middle of a request: nothing durable was written (the write itself was refused).
+        if (!response.headersSent) this.notLeader(response);
         return;
       }
       this.dependencies.log('error', 'interface request failed', {
@@ -598,13 +675,29 @@ export class InterfaceServer {
     if (path === '/api/ready') {
       const healthyNodes = this.dependencies.pool.summary().filter((node) => node.healthy).length;
       const mismatch = this.dependencies.pool.genesisMismatch;
-      const ready = healthyNodes > 0 && !mismatch;
+      const elector = this.dependencies.elector;
+      const leader = elector?.status();
+      // A standby is healthy and alive but must not receive account traffic, so a load balancer that routes on this
+      // endpoint sends accounts only to the leader. Edges and single primaries are unaffected.
+      const ready = healthyNodes > 0 && !mismatch && (!elector || leader?.state === 'leader');
       this.json(response, ready ? 200 : 503, {
         status: ready ? 'ready' : 'not-ready',
         network: this.config.network ?? null,
         role: this.config.role,
         healthyNodes,
         genesisMismatch: mismatch,
+        ...(leader
+          ? {
+              leader: {
+                state: leader.state,
+                token: leader.token,
+                validForMs: leader.validForMs,
+                current: leader.leader ? { url: leader.leader.url ?? null, token: leader.leader.token, expiresInMs: leader.leader.expiresInMs } : null,
+                lastError: leader.lastError ? 'lease backend unavailable' : null,
+              },
+            }
+          : {}),
+        ...(this.dependencies.discovery ? { primary: this.dependencies.discovery.current() } : {}),
       });
       return;
     }
@@ -630,8 +723,8 @@ export class InterfaceServer {
 
     // An edge host has no account store of its own, and must not grow one. Everything that reads or writes accounts,
     // wallet links or mining certificates is refused here, before any handler can touch the store.
-    if (this.config.role === 'edge' && this.isStatefulRoute(path)) {
-      this.edgeRefusal(response);
+    if (this.isStatefulRoute(path) && this.accountServiceRefusal()) {
+      this.refuseAccountService(response);
       return;
     }
 
@@ -1474,8 +1567,8 @@ export class InterfaceServer {
     }
     if (tx.type !== core.miningClaimType) return true;
     // A claim needs the account store (signed-in account, linked wallet), which an edge host does not have.
-    if (this.config.role === 'edge') {
-      this.edgeRefusal(response);
+    if (this.accountServiceRefusal()) {
+      this.refuseAccountService(response);
       return false;
     }
 
@@ -1567,11 +1660,18 @@ export class InterfaceServer {
       return;
     }
     try {
+      // The last check before the key is used, with no await after it: a host that lost the lease while the questions
+      // above were being answered must not sign. (The chain cannot tell leaders apart; this is the only place to stop it.)
+      this.dependencies.elector?.assertLeader();
       const issuedAt = Math.floor(Date.now() / 1000);
       const gate = issuer.issue({ networkId: network.networkId, chainId: network.chainId, address, claimId }, issuedAt);
       this.dependencies.log('info', 'mining certificate issued', { account: account.accountId, claimId });
       this.json(response, 200, { gate, issuer: issuer.publicKey, issuedAt });
     } catch (error) {
+      if (error instanceof FencingError) {
+        this.notLeader(response);
+        return;
+      }
       this.dependencies.log('error', 'mining certificate could not be issued', { error: (error as Error).message });
       this.json(response, 503, { error: 'the mining gate could not issue a certificate right now', code: 'ERR_GATE_UNAVAILABLE' });
     }
@@ -1614,7 +1714,11 @@ export class InterfaceServer {
         (this.config.primaryUrl ? ` (${this.config.primaryUrl})` : ''),
       code: 'ERR_EDGE_READ_ONLY',
       role: 'edge',
-      ...(this.config.primaryUrl ? { primary: this.config.primaryUrl } : {}),
+      ...(this.dependencies.discovery?.current().url
+        ? { primary: this.dependencies.discovery.current().url }
+        : this.config.primaryUrl
+          ? { primary: this.config.primaryUrl }
+          : {}),
     });
   }
 
