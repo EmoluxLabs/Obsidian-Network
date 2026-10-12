@@ -73,7 +73,7 @@ read it from `GET /health`): devnet `9e56e977b443aec428f3b59ce4880062250e7236`, 
 
 ---
 
-## [1.7.0] — 2026-10-09
+## Background: what 1.7.0 introduced (carried forward; this entry is the record of the gate rule)
 
 **Consensus-breaking, new-genesis release for a pre-launch network.** Protocol and core version are `1.7.0`,
 the params hash is `bffeacb35532ba3df70cda8c27ed6c96`, and the genesis snapshot format is 4. A 1.7.0 node rejects
