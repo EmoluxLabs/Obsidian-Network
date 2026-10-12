@@ -11,7 +11,7 @@
  */
 
 import { webcrypto } from 'node:crypto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   InsecureContextError,
   LegacyVaultError,
@@ -22,7 +22,8 @@ import {
   type VaultPayload,
 } from '../web/src/lib/wallet.js';
 import { deriveWallet, generateRecoveryPhrase } from '../web/core/crypto/mnemonic.js';
-import { addressFromPublicKey } from '../web/core/crypto/keys.js';
+import { addressFromPublicKey, verifyDigest, verifyMessage } from '../web/core/crypto/keys.js';
+import { decodeSignedTxFromBytes, signingDigest } from '../web/core/transactions/encode.js';
 
 const STORAGE_KEY = 'obsidian.vault.v1';
 const PASSPHRASE = 'a passphrase long enough for the vault';
@@ -167,4 +168,118 @@ describe('a page the browser gives no cryptography to', () => {
     expect((failure as Error).message).toMatch(/127\.0\.0\.1/);
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
+});
+
+// ── Adversarial: what happens when the stored vault is not what this build wrote ─────────────────────────────
+
+const readStored = (): VaultFile => JSON.parse(window.localStorage.getItem(STORAGE_KEY)!) as VaultFile;
+const writeStored = (vault: unknown): void => window.localStorage.setItem(STORAGE_KEY, typeof vault === 'string' ? vault : JSON.stringify(vault));
+
+describe('a stored vault that was damaged, altered or written by something else', () => {
+  it('round-trips, and the phrase is nowhere in storage in the clear', async () => {
+    const created = await Wallet.create('dobs', PASSPHRASE);
+    const raw = window.localStorage.getItem(STORAGE_KEY)!;
+    for (const word of created.revealPhrase().split(' ').slice(0, 6)) expect(raw).not.toContain(word);
+    expect(raw).not.toContain(created.revealPrivateKey(0));
+    expect((await Wallet.unlock(PASSPHRASE)).address).toBe(created.address);
+  }, 30_000);
+
+  it('refuses an unsupported version, an unknown KDF, and says so (instead of guessing)', async () => {
+    await writeVault(honestPayload(), PASSPHRASE);
+    const good = readStored();
+    writeStored({ ...good, version: 2 });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/version 2.*not supported/);
+    writeStored({ ...good, version: undefined });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/not supported/);
+    writeStored({ ...good, kdf: 'scrypt' });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/cannot open/);
+  });
+
+  it('refuses an iteration count outside the accepted range BEFORE spending the work (a modified vault cannot freeze the page)', async () => {
+    await writeVault(honestPayload(), PASSPHRASE);
+    const good = readStored();
+    for (const iterations of [2_000_000_000, 1, 0, -5, 99_999, 10_000_001, 1.5, '600000', null]) {
+      writeStored({ ...good, iterations });
+      const started = Date.now();
+      await expect(Wallet.unlock(PASSPHRASE), String(iterations)).rejects.toThrow(/outside the accepted range/);
+      expect(Date.now() - started, `iterations ${String(iterations)} must be refused immediately`).toBeLessThan(250);
+    }
+  });
+
+  it('says "damaged" for unreadable JSON, a non-object, bad base64, and truncated fields', async () => {
+    await writeVault(honestPayload(), PASSPHRASE);
+    const good = readStored();
+    writeStored('{"version":1,"kdf"');
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/damaged/);
+    writeStored('null');
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/damaged/);
+    writeStored('[]');
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/not supported|damaged/);
+    writeStored({ ...good, salt: '***not base64***' });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/damaged/);
+    writeStored({ ...good, iv: good.iv.slice(0, 8) });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/damaged/);
+    writeStored({ ...good, ciphertext: good.ciphertext.slice(0, 12) });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/damaged/);
+    writeStored({ ...good, salt: Buffer.alloc(4096).toString('base64') });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/damaged/);
+  });
+
+  it('detects a flipped ciphertext bit or a swapped salt as "wrong passphrase (or modified)", never as a wallet', async () => {
+    await writeVault(honestPayload(), PASSPHRASE);
+    const good = readStored();
+    const bytes = Buffer.from(good.ciphertext, 'base64');
+    bytes[Math.floor(bytes.length / 2)]! ^= 0x01;
+    writeStored({ ...good, ciphertext: bytes.toString('base64') });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/wrong passphrase \(or the vault was modified\)/);
+    const salt = Buffer.from(good.salt, 'base64');
+    salt[0]! ^= 0xff;
+    writeStored({ ...good, salt: salt.toString('base64') });
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toThrow(/wrong passphrase/);
+  });
+
+  it('refuses a vault whose payload is not a wallet even when it decrypts', async () => {
+    await writeVault({ phrase: 'abandon abandon abandon', addressHrp: 'dobs', accounts: [{ address: 'dobs1x', publicKey: '00', label: 'x', createdAt: 1, account: 0, index: 0 }] } as VaultPayload, PASSPHRASE);
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toBeInstanceOf(Error);
+  });
+
+  it('writes no secret to the console while creating, unlocking and failing to unlock', async () => {
+    const seen: string[] = [];
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) => vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void seen.push(args.map(String).join(' '))));
+    try {
+      const created = await Wallet.create('dobs', PASSPHRASE);
+      const phrase = created.revealPhrase();
+      const priv = created.revealPrivateKey(0);
+      await Wallet.unlock(PASSPHRASE);
+      await Wallet.unlock('a completely wrong passphrase').catch(() => undefined);
+      const text = seen.join('\n');
+      expect(text).not.toContain(PASSPHRASE);
+      expect(text).not.toContain(priv);
+      for (const word of phrase.split(' ').slice(0, 4)) expect(text).not.toContain(word);
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
+  }, 30_000);
+});
+
+describe('signing is domain-separated', () => {
+  it('a wallet-link proof is not a transaction signature, and a transaction for one chain is not valid on another', async () => {
+    const wallet = await Wallet.create('dobs', PASSPHRASE);
+    const proof = wallet.signMessageFor(wallet.address, 'OBSIDIAN:WALLET_LINK:v1', 'link me to account 7');
+    // The same bytes under any other domain do not verify: the proof cannot be replayed as something else.
+    expect(verifyMessage('OBSIDIAN:WALLET_LINK:v1', new TextEncoder().encode('link me to account 7'), proof.signature, proof.publicKey)).toBe(true);
+    for (const other of ['OBSIDIAN:TX:v1', 'OBSIDIAN:MINING_GATE:v1', 'OBSIDIAN:WALLET_LINK:v2', '']) {
+      expect(verifyMessage(other, new TextEncoder().encode('link me to account 7'), proof.signature, proof.publicKey), `domain ${other}`).toBe(false);
+    }
+    expect(verifyMessage('OBSIDIAN:WALLET_LINK:v1', new TextEncoder().encode('link me to account 8'), proof.signature, proof.publicKey)).toBe(false);
+
+    const body = new Uint8Array([1, 2, 3]);
+    const input = { protocolVersion: '1.8.0', type: 1 as never, nonce: 0, gas: 0n, body, validUntil: 2_000_000_000 };
+    const forDev = decodeSignedTxFromBytes(wallet.sign({ ...input, chainId: 7780 }));
+    const forMain = decodeSignedTxFromBytes(wallet.sign({ ...input, chainId: 7777 }));
+    expect(verifyDigest(signingDigest(forDev), forDev.signature.signature, forDev.signature.publicKey)).toBe(true);
+    // Re-labelling the signed transaction with another chain id invalidates the signature.
+    expect(verifyDigest(signingDigest({ ...forDev, chainId: 7777 }), forDev.signature.signature, forDev.signature.publicKey)).toBe(false);
+    expect(forDev.signature.signature).not.toBe(forMain.signature.signature);
+  }, 30_000);
 });

@@ -35,6 +35,69 @@ Additional hosts therefore serve only the chain-facing and static traffic. The g
 hold their keys and transaction relay keep working on the others; sign-in and new mining claims wait for the primary
 (or for a restore of its account store and keystore onto a standby, which is a manual operation).
 
+## 1b. Automatic primary failover (1.8.1): a lease, not a DNS record
+
+Version 1.8.0 made the primary a manual role. 1.8.1 lets **several primary-capable hosts share one durable account
+store and elect exactly one leader**, so a dead primary is replaced without an operator and without two hosts ever
+writing the store or signing certificates at once. DNS and health checks decide where traffic *goes*; they are never
+what decides who is *allowed to issue*.
+
+**How it works** (`server/lease.ts`, `store.ts`, `index.ts`):
+
+* The hosts point `OBSIDIAN_INTERFACE_LEASE_DIR` at one shared directory. The leader holds a lease there
+  (`lease.json`: holder, advertised url, fencing token, renewed-at, expires-at), taken and renewed under a lock
+  directory (`lease.lock`).
+* The leader keeps its authority only for `ttl - 2*skew` of **monotonic** time counted from the *start* of its last
+  successful renewal. A follower takes over only when the **wall clock** passes `expiresAt + skew`. The two windows do
+  not overlap, which needs `ttl > 4*skew` (defaults: ttl 15 s, skew 2 s; the server refuses a configuration that breaks
+  this). A leader that cannot renew stops acting as leader **before** anyone else can start.
+* Every store write re-checks the lease under the lock and carries the fencing token. A host that lost the lease
+  without noticing (a paused VM, a long GC, a partition) gets a `FencingError` on its next write and the shared file is
+  left untouched. The certificate issuer calls `assertLeader()` immediately before signing, so a deposed host cannot
+  issue.
+* A standby answers account, wallet-link, certificate and claim routes with **503 `ERR_NOT_LEADER`**
+  (`Retry-After: 2`, `X-Obsidian-Standby: 1`, `leader` naming the current leader). `GET /api/ready` is 503 on a standby
+  (so a load balancer sends account traffic only to the leader) and reports `leader{...}`; `GET /api/health` stays 200.
+  A promoted host re-reads the store, then starts issuing. A clean shutdown releases the lease so takeover is immediate.
+* An unreadable or corrupt lease file never counts as "free": nobody takes over until the file is readable or an
+  operator intervenes.
+
+| Variable | Meaning |
+|---|---|
+| `OBSIDIAN_INTERFACE_LEASE_DIR` | Shared directory holding the lease and the account store. Enables election. Refused on an `edge`. |
+| `OBSIDIAN_INTERFACE_LEASE_TTL_MS` | 3000-600000, default 15000. |
+| `OBSIDIAN_INTERFACE_MAX_CLOCK_SKEW_MS` | 0-60000, default 2000. Hosts must keep clocks within this (use NTP/chrony). |
+| `OBSIDIAN_INTERFACE_ADVERTISE_URL` | The URL other hosts and edges should use to reach this host. |
+| `OBSIDIAN_INTERFACE_PRIMARY_URLS` | For an **edge**: the candidate primaries it probes. It names a primary only when exactly one host claims leadership; two claimants, a redirect, or no answer means "no primary" and it fails closed. |
+
+**What survives a failover.**
+
+| Item | Survives? |
+|---|---|
+| Accounts, wallet links, invites, one-time Genesis Invitation, mining enrolment | **Yes**, they are in the shared store. |
+| Sessions (cookie logins) | **Yes**, but sessions are flushed about every 2 s. A crash inside that window costs the affected users a re-login, and can equally undo a logout made inside that window (the session returns until it expires or is logged out again). Critical account writes (registration, recovery, wallet link) are persisted on the spot, not on the timer. |
+| Gate certificates already issued | Stay valid until their 15-minute expiry. They are bound to a wallet and claim id and the chain accepts a given claim once, so they cannot be spent twice. |
+| In-flight requests to the dead primary | Fail; the client retries against the new leader (`Retry-After: 2`). No request is duplicated by the failover itself. |
+| Gate keystore | Every primary-capable host needs its own copy of the gate keystore and passphrase (each is allowed to become leader). **That multiplies the places the gate key lives.** Keep the set of primary-capable hosts small, treat each as a key-holding machine, and prefer a 3-of-5 gate set so one compromised host is revocable. |
+
+**What this is not.**
+
+* **The file lease is not safe on NFS or most network file systems** (lock and rename semantics vary, and attribute
+  caching can let two hosts both believe they hold the lock). Use a local disk shared by processes on **one machine**,
+  or a file system with proper POSIX locking you have tested. **For genuinely separate machines, put the lease in a
+  system built for it (etcd, or a Postgres advisory lock / row with a fencing token)**; the `LeaderElector` interface
+  is small, but that adapter is **not implemented** here.
+* It is not a database. The store is still one JSON file; a corrupt disk is a restore-from-backup event.
+* It provides **application** availability for the account/gate tier. Availability of DNS, TLS certificates, the
+  machines, the network and the chain nodes behind it is infrastructure you operate (sections 3-5).
+
+**Tested** (`tests/lease.test.ts`, `tests/ha-config.test.ts`, `tests/server.test.ts` "primary failover",
+`tests/e2e/failover.test.mjs`): election, renewal, expiry, takeover, stale and skewed clocks, a deposed leader's write
+fenced, a throwing promotion hook, no duplicate issuance across a promotion, standby refusal, an unreadable lease file,
+two hosts claiming leadership, and **real OS processes**: SIGKILL of the leader under request load with the standby
+taking over, restart of the old leader as a standby, a paused leader that wakes up fenced, partition-then-heal. **Not
+tested:** NFS or any multi-machine file system; real DNS/CDN/TLS; a kill of the *machine* (only the process).
+
 ## 2. nginx in front of several interface hosts (untested across hosts)
 
 ```nginx
@@ -62,6 +125,28 @@ server {
     location /            { proxy_pass http://obsidian_read;     include proxy_common.conf; }
 }
 ```
+
+**With automatic failover (section 1b), untested:** list every primary-capable host in the accounts upstream and let a
+standby's 503 move the request on. A standby refuses before it touches anything, so retrying a `POST` on `503` cannot
+duplicate an action (the lease, not nginx, is what prevents two hosts from issuing).
+
+```nginx
+upstream obsidian_accounts {
+    server iface-a.internal:8788 max_fails=0;   # max_fails=0: a standby's 503 is expected, do not eject it
+    server iface-b.internal:8788 max_fails=0;
+}
+location /api/auth/ {
+    proxy_pass http://obsidian_accounts;
+    include proxy_common.conf;
+    proxy_next_upstream error timeout http_503 non_idempotent;   # POST is retried only on connect failure or a 503
+    proxy_next_upstream_tries 2;
+    proxy_connect_timeout 2s;
+}
+# repeat for /api/wallet/ and /api/mining/
+```
+
+`non_idempotent` also retries a `POST` that failed after being sent on a `timeout`; if you cannot accept that, drop
+`timeout` from the list and let the client retry. This configuration has **not been run against real nginx**.
 
 Open-source nginx has only **passive** health checks (`max_fails`). Active checks use `GET /api/ready` and need
 either NGINX Plus, HAProxy (`option httpchk GET /api/ready`), or the health checker of the DNS/CDN provider. Use

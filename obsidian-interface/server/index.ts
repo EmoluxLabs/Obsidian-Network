@@ -949,7 +949,11 @@ export class InterfaceServer {
    * Admit an account: issue the session cookie and answer with the account.
    * Shared by registration, password login and recovery.
    */
-  private admit(response: ServerResponse, account: Account, extra: Record<string, unknown> = {}): void {
+  private admit(request: IncomingMessage, response: ServerResponse, account: Account, extra: Record<string, unknown> = {}): void {
+    // A session the client presented while signing in is ended, never inherited: the cookie after sign-in always carries
+    // a freshly generated secret (so a planted value cannot become a credential), and the old one stops working.
+    const presented = readCookie(request, SESSION_COOKIE);
+    if (presented) this.dependencies.store.destroySession(presented);
     const token = newSecret(32);
     this.dependencies.store.createSession(account.accountId, token);
     this.dependencies.store.touch(account.accountId);
@@ -1125,7 +1129,7 @@ export class InterfaceServer {
 
     // The only time these codes exist in plaintext. They are not stored, not
     // logged and cannot be re-displayed.
-    this.admit(response, account, {
+    this.admit(request, response, account, {
       recoveryCodes: recovery.codes,
       recoveryCodesWarning:
         'Write these down offline now. They are shown once, they are the only way to recover this mining account, and no one can reissue them.',
@@ -1205,7 +1209,7 @@ export class InterfaceServer {
     account.failedLogins = 0;
     account.lockedUntil = undefined;
     store.saveAccount(account, { critical: false });
-    this.admit(response, account);
+    this.admit(request, response, account);
   }
 
   /** Begin MFA enrolment: issue a TOTP secret for an authenticator app. */
@@ -1315,7 +1319,7 @@ export class InterfaceServer {
     // it. Every session signed in before this moment is ended; only the one
     // issued by `admit` below survives.
     store.destroyAccountSessions(account.accountId);
-    this.admit(response, account, {
+    this.admit(request, response, account, {
       recovered: true,
       recoveryCodesRemaining: account.recoveryCodesRemaining ?? 0,
       nextStep: 'SET_UP_MFA',

@@ -180,3 +180,25 @@ test('the stored envelope never contains the phrase or the passphrase in the cle
   assert.deepEqual(Object.keys(sealed).sort(), ['address', 'addressHrp', 'ciphertext', 'createdAt', 'iterations', 'iv', 'kdf', 'salt', 'version']);
   assert.equal(readFileSync(resolve(here, '../web/vault.mjs'), 'utf8').includes('fetch('), false, 'the vault module never touches the network');
 });
+
+test('a vault envelope that was altered or damaged is refused up front, without running the key stretch', async () => {
+  const sealed = await vault.createVault(PHRASE, PASS, 'dobs');
+  // Header fields are not covered by AES-GCM, so each is checked before the passphrase is touched.
+  for (const iterations of [2_000_000_000, 1, 0, -1, 99_999, 10_000_001, 1.5, '600000', null, undefined]) {
+    const started = Date.now();
+    await assert.rejects(vault.openVault({ ...sealed, iterations }, PASS), /outside the accepted range/, String(iterations));
+    assert.ok(Date.now() - started < 250, `iterations ${String(iterations)} must be refused immediately`);
+  }
+  await assert.rejects(vault.openVault({ ...sealed, version: 2 }, PASS), /version 2.*not supported/);
+  await assert.rejects(vault.openVault({ ...sealed, kdf: 'scrypt' }, PASS), /cannot open/);
+  await assert.rejects(vault.openVault({ ...sealed, salt: '***' }, PASS), /damaged/);
+  await assert.rejects(vault.openVault({ ...sealed, iv: sealed.iv.slice(0, 8) }, PASS), /damaged/);
+  await assert.rejects(vault.openVault({ ...sealed, ciphertext: sealed.ciphertext.slice(0, 10) }, PASS), /damaged/);
+  await assert.rejects(vault.openVault(null, PASS), /damaged/);
+  // A flipped ciphertext bit is "wrong passphrase", never a phrase.
+  const bytes = Buffer.from(sealed.ciphertext, 'base64');
+  bytes[bytes.length >> 1] ^= 1;
+  await assert.rejects(vault.openVault({ ...sealed, ciphertext: bytes.toString('base64') }, PASS), { name: 'PassphraseError' });
+  // And the untouched envelope still opens.
+  assert.equal(await vault.openVault(sealed, PASS), PHRASE);
+});

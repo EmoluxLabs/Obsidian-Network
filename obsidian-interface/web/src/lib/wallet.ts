@@ -209,7 +209,10 @@ export class Wallet {
   static async unlock(passphrase: string): Promise<Wallet> {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) throw new Error('no wallet exists in this browser');
-    const vault = JSON.parse(stored) as VaultFile;
+    // Nothing in the stored envelope is trusted before it has been checked: the iteration count is read from it and fed
+    // straight to the key-derivation function, so an unchecked value is a way to freeze the page (or to learn that a
+    // downgrade was attempted). AES-GCM authenticates the CIPHERTEXT; these header fields it does not cover.
+    const vault = parseVaultEnvelope(stored);
     const salt = base64ToBytes(vault.salt);
     const iv = base64ToBytes(vault.iv) as unknown as BufferSource;
     const ciphertext = base64ToBytes(vault.ciphertext) as unknown as BufferSource;
@@ -390,6 +393,40 @@ export class Wallet {
     await persist(this.payload, passphrase);
     return address;
   }
+}
+
+/** The bounds a vault envelope must be within before any of it reaches the key-derivation function. */
+export const VAULT_LIMITS = { minIterations: 100_000, maxIterations: 10_000_000, ivBytes: 12, minSaltBytes: 8, maxSaltBytes: 64, maxCiphertextBytes: 256 * 1024 } as const;
+
+/** Parse and validate a stored vault. Every failure is a plain, specific error: never a raw SyntaxError or a hang. */
+export function parseVaultEnvelope(stored: string): VaultFile {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stored);
+  } catch {
+    throw new Error('the stored vault is damaged (it is not readable); restore it from your recovery phrase');
+  }
+  if (!raw || typeof raw !== 'object') throw new Error('the stored vault is damaged; restore it from your recovery phrase');
+  const vault = raw as Partial<VaultFile>;
+  if (vault.version !== 1) throw new Error(`this vault format (version ${String(vault.version)}) is not supported by this build`);
+  if (vault.kdf !== 'PBKDF2-SHA256') throw new Error(`this vault was sealed with ${String(vault.kdf)}, which this build cannot open`);
+  if (!Number.isInteger(vault.iterations) || vault.iterations! < VAULT_LIMITS.minIterations || vault.iterations! > VAULT_LIMITS.maxIterations) {
+    throw new Error('the stored vault declares a key-stretching cost outside the accepted range; it was modified or is damaged');
+  }
+  let salt: Uint8Array;
+  let iv: Uint8Array;
+  let ciphertext: Uint8Array;
+  try {
+    salt = base64ToBytes(String(vault.salt));
+    iv = base64ToBytes(String(vault.iv));
+    ciphertext = base64ToBytes(String(vault.ciphertext));
+  } catch {
+    throw new Error('the stored vault is damaged (bad encoding); restore it from your recovery phrase');
+  }
+  if (salt.length < VAULT_LIMITS.minSaltBytes || salt.length > VAULT_LIMITS.maxSaltBytes || iv.length !== VAULT_LIMITS.ivBytes || ciphertext.length < 17 || ciphertext.length > VAULT_LIMITS.maxCiphertextBytes) {
+    throw new Error('the stored vault is damaged (truncated or altered); restore it from your recovery phrase');
+  }
+  return vault as VaultFile;
 }
 
 async function persist(payload: VaultPayload, passphrase: string): Promise<void> {

@@ -25,7 +25,8 @@ and a different `--network` is a usage error.
 | `doctor` | Checks configuration, ports, keys, manifest, a running node and the interface; says what to fix. |
 | `validate` | Replays and verifies a data directory (existing command). |
 
-Options added for these commands: `--require-init`, `--generate-gate-key`, `--gate-dir <path>`, `--peer <url>`,
+Options added for these commands: `--require-init`, `--generate-gate-key`, `--gate-key-count <n>` (mainnet needs 3+),
+`--allow-single-gate-key` (explicit, recorded override), `--gate-dir <path>`, `--peer <url>`,
 `--genesis-id <hex>`, `--url <http url>` (ask this node instead of the local one), `--json`.
 
 **Exit codes.** `0` success. `1` failure (a refused operation, an unreachable or not-ready node, a failed check).
@@ -39,11 +40,12 @@ Do this once, on the machine that will be the first node of the network.
 ```bash
 export OBSIDIAN_KEYSTORE_PASSPHRASE='...at least 12 characters...'      # the node's own identity key
 export OBSIDIAN_GATE_KEYSTORE_PASSPHRASE='...another 12+ characters...' # the mining gate authority key
-obsidian mainnet init --data-dir ~/obsidian-data/mainnet --generate-gate-key
+obsidian mainnet init --data-dir ~/obsidian-data/mainnet --generate-gate-key --gate-key-count 3
 obsidian mainnet start --require-init --data-dir ~/obsidian-data/mainnet
 ```
 
-`init` prints the **genesis id**, the genesis hash, the public gate key(s), and where the encrypted gate keystore was
+`init` refuses mainnet with fewer than three gate keys (see [gate-authority.md](gate-authority.md)); it writes one
+keystore per key, to be handed to **different** people or machines. It prints the **genesis id**, the genesis hash, the public gate key(s), and where the encrypted gate keystore was
 written (`<data-dir>/../gate-authority/<network>-mining-gate.keystore.json`, mode 0600, outside the node's data
 directory). Give the genesis id to everyone who will join, **through a channel other than the first node** (a
 published announcement, a signed release note). That id is the root of trust (section 2).
@@ -133,6 +135,25 @@ node answers there, so it never reports a port "in use" about itself); RPC bound
 | `GET /api/health` | interface | The interface process is up, how many nodes it sees. |
 | `GET /api/ready` | interface | 200 only when it reaches at least one healthy node of its own network, with no genesis mismatch. |
 
+**What `/readyz` tells apart (1.8.1).** One answer is not enough to run a network, so the body reports each dimension
+separately under `checks`, and only the first three decide the status code:
+
+| Question | Where to read it | Decides 200/503? |
+|---|---|---|
+| Is the process alive? | `GET /livez` | (separate endpoint) |
+| Is RPC ready? | `checks.rpc` | no (if you got an answer, it is) |
+| Is the chain loaded? | `checks.chain` (`height`, `headHash`) | **yes** |
+| Syncing, or synced? | `checks.sync` (`syncing`, `behindBy`) | **yes** |
+| Is the P2P listener up? How many peers? | `checks.p2p` | **yes** (listener); peers only `degraded: no-peers` |
+| Is it the network I pinned? | `checks.identity` (`genesisId`, `networkId`); a mismatch adds `identity-mismatch` to `degraded` | no, but `status` becomes `ready-degraded` |
+| Is consensus alive? | `checks.lastBlockAgeSeconds` | no |
+| Is finality progressing? | `checks.finality` (`finalizedHeight`, `lag`, `maxLag` 64); a lag adds `finality-lagging` to `advisories` | no |
+| Is the gate authority sound? | `checks.gateAuthority` (`open`, `activeKeys`, `quorum`, `epoch`, `warnings`) | no (`advisories`: `gate-closed`, `gate-single-key`, `gate-below-three-keys`) |
+| Interface role and its dependencies | interface `GET /api/ready` (`role`, `leader`, nodes) | its own 200/503 |
+
+`degraded` lists things that make the node less useful; `advisories` lists things an operator should fix that never
+justify draining a node. A load balancer should key on the status code; a dashboard should graph the dimensions.
+
 `/readyz` returns no address, key or peer list. **`/peers` (1.8.0)** gives the full peer detail only to a caller on the
 node's own machine (a loopback connection with no forwarding headers: `X-Forwarded-*`, `Forwarded`, `Via`, `X-Real-IP`);
 anyone else gets counts only. The interface proxy marks its requests with `Via`, so the public never receives detail
@@ -194,7 +215,7 @@ linked into the node process.
   [gate-authority.md](gate-authority.md).
 * **Recovery.** Back up each encrypted keystore and its passphrase separately and offline. Lost or stolen key: the
   remaining majority replaces it. **If a majority is lost, no update is possible and the recovery is a new network
-  with a new genesis** (stated, not hidden).
+  with a new genesis** (stated, not hidden). The step-by-step runbook is [gate-recovery-runbook.md](gate-recovery-runbook.md).
 
 ## 7. Disposable validation
 
@@ -203,3 +224,33 @@ To try all of this without touching a real directory, use a temp directory and s
 ```bash
 node --test tests/e2e/operations.test.mjs        # needs: npm --prefix obsidian-core run build
 ```
+
+## 8. Restarting, backing up, and upgrading without losing the network
+
+**What a restart loads.** `start` resumes the identity recorded in `<data-dir>/network.json` (network, chain id, genesis
+id, the public gate and bootstrap keys), re-checks that the key list still derives that genesis id, replays and verifies
+the chain it finds, restores the finality checkpoint (a corrupt or incompatible one makes startup fail rather than
+continue), and rebuilds the active gate set from the chain, so a rotation or revocation made before the restart is still
+in force. **A restart never regenerates a genesis or a key**: `init` is idempotent and refuses to overwrite a keystore,
+and `--require-init` turns a wrong or empty data directory into an error.
+
+**What to back up** (separately, offline, and test a restore):
+
+| Item | Where | Why |
+|---|---|---|
+| Node data directory | `<data-dir>` (chain, `network.json`, finality checkpoint, peers) | Fast restore. Replaceable by re-syncing from peers against your pinned genesis id. |
+| Node identity keystore + passphrase | per `OBSIDIAN_KEYSTORE_*` | Your node's identity and, if you run a validator, your validator key. **Not replaceable.** |
+| Gate keystores + passphrases | `<data-dir>/../gate-authority/*.keystore.json` | Not replaceable; one per holder. |
+| Interface account store | `interface-accounts.json` under the interface data dir | Accounts, wallet links, sessions. Back it up while the interface is stopped or from a consistent snapshot. |
+| Genesis id and the public key list | wherever you published them | The root of trust for any rebuild. |
+
+A user's wallet vault is in **their** browser, and their recovery phrase is theirs; the platform keeps neither
+(see [wallet-custody.md](wallet-custody.md)).
+
+**Upgrading in place (1.8.0 to 1.8.1).** The protocol, params hash and genesis ids do not change, so data directories,
+keystores and wallets carry over untouched: stop the node, replace the binaries, start it (`--require-init`), and check
+`obsidian status` and `/readyz`. See [upgrading-1.8.1.md](upgrading-1.8.1.md) for the checklist and how to roll back.
+
+**Not tested here:** a full disk and torn writes at the filesystem level (the code writes finality state and keystores
+by atomic replace and the tests simulate a crash between steps, but nobody has filled a disk or pulled a plug),
+a restore of an AWS volume, and a restart under production load.

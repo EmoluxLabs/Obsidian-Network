@@ -142,12 +142,31 @@ export async function createVault(phrase, passphrase, addressHrp) {
  * "that passphrase is wrong" and not a corrupted wallet.
  */
 export async function openVault(vault, passphrase) {
+  if (!vault || typeof vault !== 'object') throw new Error('The stored vault is damaged; restore it from your recovery phrase.');
   if (vault.kdf !== KDF) {
     throw new Error(`This vault was sealed with ${vault.kdf}, which this build cannot open.`);
   }
-  const salt = fromB64(vault.salt);
-  const iv = fromB64(vault.iv);
-  const ciphertext = fromB64(vault.ciphertext);
+  // The envelope is read from storage and its iteration count goes straight to the key-derivation function: check it
+  // first, or a modified value freezes the page. AES-GCM covers the ciphertext, not these header fields.
+  if (vault.version !== undefined && vault.version !== 1) {
+    throw new Error(`This vault format (version ${vault.version}) is not supported by this build.`);
+  }
+  if (!Number.isInteger(vault.iterations) || vault.iterations < 100_000 || vault.iterations > 10_000_000) {
+    throw new Error('The stored vault declares a key-stretching cost outside the accepted range; it was modified or is damaged.');
+  }
+  let salt;
+  let iv;
+  let ciphertext;
+  try {
+    salt = fromB64(vault.salt);
+    iv = fromB64(vault.iv);
+    ciphertext = fromB64(vault.ciphertext);
+  } catch {
+    throw new Error('The stored vault is damaged (bad encoding); restore it from your recovery phrase.');
+  }
+  if (salt.length < 8 || salt.length > 64 || iv.length !== 12 || ciphertext.length < 17 || ciphertext.length > 256 * 1024) {
+    throw new Error('The stored vault is damaged (truncated or altered); restore it from your recovery phrase.');
+  }
   const decrypt = async (normalise) =>
     new Uint8Array(
       await crypto.subtle.decrypt(

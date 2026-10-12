@@ -39,7 +39,7 @@ The arrow never points backwards. Concretely:
    `docs/mining.md`; anyone reading it carefully will see that early issuance is
    deliberately small.
 3. **A weak keystore passphrase is a weak wallet.** The vault uses
-   PBKDF2-SHA256 (210,000 iterations) + AES-256-GCM. That is strong against casual
+   PBKDF2-SHA256 (600,000 iterations; vaults written with the earlier 210,000 still open) + AES-256-GCM. That is strong against casual
    attacks and not against a serious cracker. Use a long passphrase.
 6. **A malicious node can lie to you about state; it cannot forge a signature.**
    If you need certainty, run a node and compare. The interface mitigates this by

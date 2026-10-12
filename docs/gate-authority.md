@@ -34,6 +34,29 @@ The transaction's own sender decides nothing: authority comes only from the appr
 with a throwaway key and no balance is needed. The mempool holds at most 16 pending updates and 2 per sender; gossip,
 RPC submission and block assembly all check an update against current state first.
 
+## The safe minimum (1.8.1 policy; no consensus change)
+
+The threshold is `floor(n/2) + 1`, so the number of keys is the whole security argument:
+
+| Active keys | Approvals needed | What one stolen key can do | What losing keys does |
+| --- | --- | --- | --- |
+| 1 | 1 | **Everything**: sign certificates for any wallet, and replace itself so the real operator is locked out | Losing it ends the gate: new genesis |
+| 2 | 2 | Sign certificates until revoked, but cannot revoke or replace anything alone | Losing either one means the other cannot rotate: new genesis |
+| 3 | 2 | Sign certificates until the other two revoke it | One lost or stolen key is recoverable; two lost is not |
+| 5 | 3 | Same, with a wider margin | Two lost or stolen are recoverable |
+
+A single-key authority has no recovery path, so **mainnet `init --generate-gate-key` refuses fewer than 3 keys**
+(`--gate-key-count 3`), before it writes anything. `--allow-single-gate-key` overrides that for an operator who accepts
+the risk in writing; the override is recorded in the init output. Testnet, staging and devnet accept 1. Keys that
+arrive by configuration (`OBSIDIAN_MINING_GATE_PUBLIC_KEYS`) are not blocked, because the chain, not this tool, owns
+that decision; they are **warned about** instead: `/gate` carries `warnings` and `/readyz` carries `advisories` with
+`gate-closed` (no keys: nobody can mine), `gate-single-key` and `gate-below-three-keys`. Advisories never change the
+`ready` answer, so a load balancer does not pull a node out of service for a governance concern.
+
+Three keys on one machine are still one failure. `--gate-key-count 3` writes **three separate keystores**; move each to
+a different person, machine and backup before you rely on the quorum. The disaster-recovery procedures are in
+[gate-recovery-runbook.md](gate-recovery-runbook.md).
+
 ## Operating it
 
 First network start: create **three or more** keys, held by different people or machines, so one stolen key can be
@@ -77,5 +100,10 @@ chain would refuse. Restart it with the replacement key's keystore (`OBSIDIAN_GA
 Implemented and tested: the update rules, state root, snapshot round trip, quorum edge cases, replay and cross-network
 rejection, mempool quotas, the certificate cut-over at the including block, the RPC `/gate`, `/tx/encode|decode` and the
 CLI proposal/sign/submit flow (`tests/security/gate-authority.test.ts`, `tests/unit/gate-cli.test.ts`).
+The recovery properties (rotated set and revocations survive a restart, an offline node catches up through a rotation to
+the same state root, two fresh nodes converge, a lost key is replaced, a "restored" revoked key can never approve or be
+re-added, quorum loss fails safe, conflicting same-epoch updates leave exactly one winner, cross-network approvals are
+refused, no gate private key is ever in the data directory) are `tests/security/gate-recovery.test.ts`; the minimum-key
+policy is `tests/unit/network-manifest.test.ts`; the `/readyz` dimensions are `tests/integration/readiness.test.ts`.
 Residual risk: compromise of a majority of keys; loss of a majority (recoverable only by a new network); gossip may reject
 a brand-new update on a node that is one block behind (the update is re-relayed and accepted once it catches up).

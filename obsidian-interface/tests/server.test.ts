@@ -815,6 +815,39 @@ describe('sessions', () => {
     expect(after.status).toBe(401);
   });
 
+  it('a planted session cookie is no credential, and signing in ends the session it was presented with (fixation)', async () => {
+    const h = await harness();
+    const founder = await h.signIn('founder', { inviteCode: h.genesisCode });
+    const first = (founder.headers.get('set-cookie') ?? '').split(';')[0]!;
+    expect((await fetch(`${h.origin}/api/auth/me`, { headers: { cookie: first } })).status).toBe(200);
+
+    // An attacker who can set a cookie in the victim's browser picks the value; the server never accepts a value it did not issue.
+    const planted = 'obsidian_session=' + 'a'.repeat(64);
+    expect((await fetch(`${h.origin}/api/auth/me`, { headers: { cookie: planted } })).status).toBe(401);
+    const login = async (cookie?: string) =>
+      fetch(`${h.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: jsonHeaders(cookie),
+        body: JSON.stringify({ email: h.mailbox('founder'), password: TEST_PASSWORD }),
+      });
+    const afterPlanted = await login(planted);
+    expect(afterPlanted.status).toBe(200);
+    const issued = (afterPlanted.headers.get('set-cookie') ?? '').split(';')[0]!;
+    expect(issued).not.toBe(planted);
+    expect(issued).toMatch(/^obsidian_session=[0-9a-f]{64}$/);
+    expect((await fetch(`${h.origin}/api/auth/me`, { headers: { cookie: planted } })).status).toBe(401);
+    expect((await fetch(`${h.origin}/api/auth/me`, { headers: { cookie: issued } })).status).toBe(200);
+
+    // Signing in again while presenting a live session replaces it: the earlier token stops working.
+    const again = await login(issued);
+    const replacement = (again.headers.get('set-cookie') ?? '').split(';')[0]!;
+    expect(replacement).not.toBe(issued);
+    expect((await fetch(`${h.origin}/api/auth/me`, { headers: { cookie: issued } })).status).toBe(401);
+    expect((await fetch(`${h.origin}/api/auth/me`, { headers: { cookie: replacement } })).status).toBe(200);
+    // A session that was not presented is untouched: other devices stay signed in.
+    expect((await fetch(`${h.origin}/api/auth/me`, { headers: { cookie: first } })).status).toBe(200);
+  });
+
   it('links a proven wallet address but never stores key material', async () => {
     const h = await harness();
     const signedIn = await h.signIn('founder', { inviteCode: h.genesisCode });

@@ -26,7 +26,7 @@ the data-directory lock, trusted domains) and the existing surfaces they depend 
 | T8 | An idle unauthenticated socket makes a node look connected, hiding isolation from the operator or a monitor | only handshake-verified links count as peers; the rest are `pendingHandshakes` | `p2p.test.ts` ("does NOT count a connection as a peer..."; fails on the old code) |
 | T9 | A saved peer is shown as connected; a dead node looks healthy | `peers`/`status` read live links; saved peers are a separate figure; an unreachable node is `UNREACHABLE`, exit 1 | e2e ("when A dies...") |
 | T10 | An isolated node (P2P listener failed) keeps receiving traffic | `/readyz` is 503 when the listener is down or the node is syncing; a balancer can drain it | `tests/integration/readiness.test.ts` |
-| T11 | A leaked or stolen gate private key | Encrypted at rest, mode 0600, outside the data dir, never in the manifest/output/peer traffic, refuses overwrite. **Not mitigated by this release inside consensus:** the key stays valid until a new genesis (see operations.md §6) | `network-manifest.test.ts` (gate key tests) |
+| T11 | A leaked or stolen gate private key | Encrypted at rest, mode 0600, outside the data dir, never in the manifest/output/peer traffic, refuses overwrite. Since 1.8.0 a stolen or lost key is revoked on chain by a majority of the others (`gate-recovery-runbook.md`); mainnet `init` now refuses fewer than 3 keys so that a majority exists to do it | `network-manifest.test.ts` (gate key tests) |
 | T12 | A lookalike domain is trusted (`mineobs.network.attacker.example`, `evilmineobs.network`, userinfo tricks, other ports, HTTP, extra labels) | one exact-hostname policy, parsed with the URL parser; no wildcard on a public suffix; HTTPS only | `tests/security/trusted-origins.test.ts` (22), `obsidian-interface/tests/server.test.ts` |
 | T13 | A trusted origin is used to act as a signed-in user | trusted origins get public reads and signed-tx relay only; no credentials header; account routes need an operator-listed origin | `obsidian-interface/tests/server.test.ts` |
 | T14 | Sensitive RPC exposed to the internet | the node RPC binds `127.0.0.1` by default; `doctor` warns otherwise; the node has no key- or admin-bearing HTTP route (POST routes are transaction submit/simulate/encode/gas, balance/quote queries and JSON-RPC); a public read-only node can set `rpcAllowSubmit=false` | `tests/security/rpc-hardening.test.ts` (no route echoes key material) |
@@ -34,8 +34,8 @@ the data-directory lock, trusted domains) and the existing surfaces they depend 
 
 ## Not defended against (residual risk)
 
-* **Gate key compromise or loss** (T11): requires a new genesis. Certificates are short-lived, which narrows what a
-  stolen certificate does, not what a stolen key does.
+* **Gate key compromise or loss** (T11): recoverable by the remaining majority; a stolen or lost *majority* needs a new
+  genesis. Certificates are short-lived, which narrows what a stolen certificate does, not what a stolen key does.
 * **Domain takeover** of `mineobs.network` or `obsmainnet.us.ci`: the policy trusts the name.
 * **A wrong pinned id**: if the operator pins an id obtained from an attacker, `join` adopts the attacker's network.
   The pin is only as good as the channel it came by.
@@ -44,5 +44,42 @@ the data-directory lock, trusted domains) and the existing surfaces they depend 
   honest chain. Use several independent seeds.
 * **Peer list**: since 1.8.0 `/peers` shows addresses only to a local caller; a proxy that adds no forwarding header would look local. `/nodes` still lists known peers by design.
 * **PID reuse** can make a stale lock look held (the safe direction: the start is refused until it is cleared).
-* **Multi-host interface**: account state is per host, so run one `primary` and make every other host `edge` (read-only, no accounts, no gate key). Accounts are not replicated (failover-and-gateways.md §1).
+* **Multi-host interface**: account state is one store. Either run one `primary` with `edge` hosts, or share a store and a lease between primary-capable hosts (1.8.1, failover-and-gateways.md §1b); a file lease is not safe on NFS.
 * **Gate keys**: a majority of keys stolen lets an attacker rewrite the set; a majority lost makes the set unchangeable (a new network is the only recovery).
+
+## 1.8.1 additions
+
+| # | Threat | Control | Evidence |
+|---|---|---|---|
+| T16 | Two interface hosts both believe they are primary and both issue gate certificates or write accounts (split brain) | lease with fencing token, monotonic self-expiry shorter than the takeover window, write-time fence, `assertLeader()` before signing, standby refuses (503) | `lease.test.ts`, `server.test.ts` "primary failover", `e2e/failover.test.mjs` (real processes: SIGKILL under load, paused leader wakes up fenced, partition/heal) |
+| T17 | A deposed or paused leader overwrites the shared account store | `FencingError` on a write whose token is no longer current; the file is untouched | `lease.test.ts`, `failover.test.mjs` |
+| T18 | A clock skewed by more than the configured bound steals or keeps leadership | `ttl > 4*skew` enforced at startup; leader trusts itself only `ttl - 2*skew` of monotonic time; follower waits `expiresAt + skew` | `lease.test.ts` (stale and skewed clocks), `ha-config.test.ts` |
+| T19 | A mainnet authority is created with a single gate key that can replace itself and cannot be recovered | `init` refuses fewer than 3 keys on mainnet (explicit `--allow-single-gate-key`); `/gate` and `/readyz` warn about 0, 1 or 2 keys from any source | `network-manifest.test.ts`, `gate-cli.test.ts`, `readiness.test.ts` |
+| T20 | A restart, offline period or rotation leaves a node on a stale or different gate set | the set is rebuilt from the chain; catch-up through rotation and revocation reaches the same state root; replayed, skipped, conflicting and cross-network updates are refused for the stated reason | `tests/security/gate-recovery.test.ts` (9), `gate-authority.test.ts` (25) |
+| T21 | A node health check says "ready" while finality, the gate or the identity is broken | `/readyz` reports identity, finality, gate authority and last-block age separately, with `degraded` and `advisories` | `readiness.test.ts` |
+| T22 | A tampered or damaged wallet vault freezes the page (huge iteration count) or is accepted in a downgraded form | the envelope is validated before any key derivation (version, KDF, iteration range, field sizes) | `wallet-vault.test.ts`, `vault-interop.test.mjs` |
+| T23 | A planted or stale session cookie survives sign-in | fresh secret on every sign-in, the presented session is ended, only server-issued tokens are accepted | `server.test.ts` "planted session cookie" |
+| T24 | A release archive or manifest is swapped, or a release is signed by an unknown party | Ed25519 signature over SHA256SUMS + MANIFEST.json + version + commit; the verifier trusts only a fingerprint **it** pinned; integrity, version, tag, changelog and embedded-binary agreement checked | `release-tool.test.mjs` (12) |
+| T25 | A credential is committed | `scripts/scan-secrets.mjs` over every tracked file, current tree and (once, by hand) history; findings print rule and line only | `scan-secrets.test.mjs` |
+| T26 | A known-vulnerable dependency ships | `npm audit` on every package with a lockfile (0 vulnerabilities at 1.8.1); wallet-web and the extension have no dependencies | audit evidence in `docs/remediation-1.8.1.md` |
+
+## Residual-risk register (1.8.1)
+
+Severity is the authors' judgement. "Owner" is who has to act. Nothing here is closed by code in this repository.
+
+| ID | Risk | Severity | Why it is open | Owner / action |
+|---|---|---|---|---|
+| R1 | **No publisher signing key exists**, so no release is authenticated; all published archives are unsigned | High | A key must be created and held by the publisher; this project must not invent one | Publisher: `release-tool.mjs keygen` offline, publish the fingerprint in two independent places, `sign`, attach (release-signing.md) |
+| R2 | The file lease is not safe on NFS or most network file systems | High for multi-machine HA | Needs a real coordination service | Operator: keep primary-capable hosts on one machine/local disk, or implement an etcd/Postgres elector |
+| R3 | Every primary-capable host holds the gate keystore | Medium | Needed so any of them can lead | Operator: keep the set small, use a 3-of-5 gate set |
+| R4 | Majority of gate keys stolen or lost | High | By design: the chain cannot tell a thief from the owners | Operator: separate holders, tested backups (runbook) |
+| R5 | Consensus is reviewed only by its authors; no formal model; no hostile-network test | High | Needs independent reviewers | Commission an external review of `src/consensus` and `src/blockchain` |
+| R6 | Testnet's 3-validator committee has quorum 3: one offline validator halts finality | Medium | Parameter choice | Operator: run a 4th validator or accept it |
+| R7 | The vault header is not authenticated data (a locked page can be made to *display* another address) | Low | Needs a new vault version across four products | Future change, versioned and migrated |
+| R8 | Script on the wallet origin can read an unlocked wallet | Medium | Inherent to a browser wallet | Never add third-party script to the wallet origin; use a clean browser profile for large balances |
+| R9 | Domain takeover; wrong pinned genesis id; eclipse by hostile seeds | Medium | Trust roots outside the code | Operator: pin ids from two channels, use several independent seeds |
+| R10 | A crash inside the ~2 s session flush window can undo a login or a logout | Low | Performance trade-off | Accepted, documented |
+| R11 | Full-disk and torn-write behaviour, and real power loss, are untested | Medium | No filesystem fault injection | Operator: monitor disk, keep backups |
+| R12 | Reproducible builds are not demonstrated for every artifact (see remediation-1.8.1.md for what was compared) | Medium | Independent build environments were not available | Third party: rebuild with `reproduce-release.sh` on another machine |
+| R13 | AWS testnet nodes still run code without the 1.8.x fixes | Medium | Outside the repository and the sandbox | Operator: deploy the fixed build, restart Node 2 with mining disabled, without resetting data |
+| R14 | Desktop installers are not built or signed here | Medium | Per-platform build, signing identities | Operator: build and sign per platform |
