@@ -1,6 +1,6 @@
 # Security remediation — 1.8.0 → 1.8.1
 
-**Scope.** What was found in the 1.8.0 tree, what was changed in the 1.8.1 line (released as **1.8.2**: tag `v1.8.1` was cut first
+**Scope.** What was found in the 1.8.0 tree, what was changed in the 1.8.1 line (released as **1.8.2**: the 1.8.1 tag was cut first
 and then superseded, see F-11), how each
 change was tested, and what is still open. Every claim names a test or an
 executed command; anything that could not be done here says so and names the

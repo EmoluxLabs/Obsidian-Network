@@ -1,7 +1,7 @@
 # Upgrading from 1.8.0 to 1.8.1 (install 1.8.2)
 
-> **Install 1.8.2, not 1.8.1.** Tag `v1.8.1` exists and its archives are intact, but they predate one more fix: a race in
-> the data-directory lock (F-11 in [remediation-1.8.1.md](remediation-1.8.1.md)) that CI caught in `v1.8.1`'s own test run.
+> **Install 1.8.2, not 1.8.1.** The 1.8.1 tag exists and its archives are intact, but they predate one more fix: a race in
+> the data-directory lock (F-11 in [remediation-1.8.1.md](remediation-1.8.1.md)) that CI caught in the 1.8.1 tag's own test run.
 > 1.8.2 differs from 1.8.1 only by that fix. Everything below applies to both; read "1.8.1" as "the 1.8.1 line".
 
 **1.8.1 is a software release, not a protocol change.** The protocol version stays `1.8.0`, the params hash stays

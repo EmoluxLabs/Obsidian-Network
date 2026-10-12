@@ -577,7 +577,7 @@ The last two commands must print the **same** commit id.
 ### B6b. Rebuild the archives from the tag
 
 Because the tag points at the commit you are already standing on, you do **not**
-need to check the tag out — and you should not, because `git checkout v1.8.1`
+need to check the tag out — and you should not, because `git checkout v1.8.2`
 puts you in "detached HEAD", a state that confuses beginners and makes any
 accidental commit hard to find. Just build where you are:
 
