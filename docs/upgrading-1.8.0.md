@@ -9,7 +9,7 @@ first (none is provided).
 ## What a node operator does
 
 1. Keep the 1.7.0 data directory where it is (do not delete it until the new node is healthy). 1.8.0 refuses to open it.
-2. Install the 1.8.0 archive (`releases/obsidian-node-operator-1.8.1.tar.gz`, verified with `scripts/verify-release.sh`).
+2. Install the 1.8.0 archive (`releases/obsidian-node-operator-1.8.2.tar.gz`, verified with `scripts/verify-release.sh`).
 3. Create the network on a **fresh** data directory with **three or more** gate keys, held by different people:
    `obsidian init --network <name> --generate-gate-key --gate-key-count 3 --data-dir <new dir>` (see
    [gate-authority.md](gate-authority.md)). Other nodes `join` it with the genesis id you publish.

@@ -281,7 +281,9 @@ try { const l = acquireDataDirLock(dir); process.stdout.write('OK\\n'); await ne
 catch { process.stdout.write('REFUSED\\n'); }
 `,
       );
-      for (let trial = 0; trial < 3; trial += 1) {
+      // 8 trials of 12 simultaneous starters: a takeover race that deleted a freshly created lock showed up in 2 of 40
+      // trials of 16 under CPU load, so a handful of trials is the least that can notice it.
+      for (let trial = 0; trial < 8; trial += 1) {
         const dir = join(work, `data${trial}`);
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, 'LOCK'), '999999\n'); // a pid nobody owns
@@ -290,7 +292,7 @@ catch { process.stdout.write('REFUSED\\n'); }
         // loaded machine was slow to start a late child), so the count below is exact however slow the machine is.
         const children: ReturnType<typeof spawn>[] = [];
         const outcomes = await Promise.all(
-          Array.from({ length: 8 }, () =>
+          Array.from({ length: 12 }, () =>
             new Promise<string>((resolve) => {
               const child = spawn(process.execPath, [join(work, 'child.mjs'), dir, String(startAt)]);
               children.push(child);
@@ -306,7 +308,7 @@ catch { process.stdout.write('REFUSED\\n'); }
         for (const child of children) child.stdin!.end();
         await Promise.all(children.map((child) => new Promise((done) => (child.exitCode !== null ? done(null) : child.on('close', done)))));
         expect(outcomes.filter((o) => o === 'OK')).toHaveLength(1);
-        expect(outcomes.filter((o) => o === 'REFUSED')).toHaveLength(7);
+        expect(outcomes.filter((o) => o === 'REFUSED')).toHaveLength(11);
       }
     } finally {
       rmSync(work, { recursive: true, force: true });

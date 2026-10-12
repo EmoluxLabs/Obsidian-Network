@@ -47,14 +47,14 @@ because a browser resumes an interrupted download and `git` in Termux cannot.
 rm -rf ~/obsidian/src; mkdir -p ~/obsidian; cd ~/obsidian
 G="git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60"
 for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
-cd src && for f in SHA256SUMS obsidian-node-operator-1.8.1.tar.gz obsidian-interface-selfhost-1.8.1.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
+cd src && for f in SHA256SUMS obsidian-node-operator-1.8.2.tar.gz obsidian-interface-selfhost-1.8.2.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
 ls -l releases
 cd ~/obsidian/src/releases
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
-You must see three files listed, then `OK` for `obsidian-interface-selfhost-1.8.1.tar.gz` and
-`obsidian-node-operator-1.8.1.tar.gz` and nothing else. If any line says `FAILED`, or the answer is
+You must see three files listed, then `OK` for `obsidian-interface-selfhost-1.8.2.tar.gz` and
+`obsidian-node-operator-1.8.2.tar.gz` and nothing else. If any line says `FAILED`, or the answer is
 `no file was verified`, stop, delete `~/obsidian` and start again; do not run the code. (An archive
 you have not checked is a download, not a release.) Do not use GitHub's "Download ZIP": it leaves out
 `releases/`. To go further and have the archive re-run its own test suite, which takes a few minutes
@@ -63,7 +63,7 @@ on a phone, clone the whole project into its own folder (about 11 MB) and run th
 ```bash
 rm -rf ~/obsidian/full; git clone --depth 1 --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
 cd ~/obsidian/full
-./scripts/verify-release.sh releases/obsidian-node-operator-1.8.1.tar.gz
+./scripts/verify-release.sh releases/obsidian-node-operator-1.8.2.tar.gz
 ```
 
 ## 3. Unpack and install (internet — the last step that needs it)
@@ -74,8 +74,8 @@ script, the self-host archive is the built interface and the nine sites.
 ```bash
 mkdir -p ~/obsidian/run
 cd ~/obsidian/src/releases
-tar xzf obsidian-node-operator-1.8.1.tar.gz      -C ~/obsidian/run
-tar xzf obsidian-interface-selfhost-1.8.1.tar.gz -C ~/obsidian/run
+tar xzf obsidian-node-operator-1.8.2.tar.gz      -C ~/obsidian/run
+tar xzf obsidian-interface-selfhost-1.8.2.tar.gz -C ~/obsidian/run
 
 cd ~/obsidian/run/obsidian-core
 npm ci --omit=dev --fetch-retries=10

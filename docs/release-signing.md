@@ -1,6 +1,6 @@
 # Release signing, publisher fingerprint, verification and reproduction
 
-**State at 1.8.1, stated plainly: no publisher key exists, so no Obsidian release is signed and *authenticated
+**State at 1.8.2, stated plainly: no publisher key exists, so no Obsidian release is signed and *authenticated
 publication is incomplete*.** The pipeline below is built and tested with throw-away keys; it has never signed a real
 release, because creating the publisher's identity is the publisher's act, not something this project or its CI may do.
 Until a key exists you can verify **integrity** (the archives match the checksums and each other) but not **authorship**.
@@ -59,7 +59,7 @@ the repository or the environment's contents, and it refuses to sign a tree whos
 The signing step refuses to sign a release that fails its own integrity check (a signature over stale digests is worse than none).
 
 **Attaching the assets.** `gh release create v<version> releases/*.zip releases/*.tar.gz releases/SHA256SUMS releases/MANIFEST.json releases/RELEASE-SIGNATURE.json releases/sbom-*.cdx.json releases/RELEASE-NOTES-<version>.md`.
-In the build sandbox for 1.8.0 and 1.8.1 uploads to `uploads.github.com` were unreachable, so those releases are
+In the build sandbox for 1.8.0, 1.8.1 and 1.8.2 uploads to `uploads.github.com` were unreachable, so those releases are
 **notes-only** on GitHub; the canonical location of the artifacts is the `releases/` directory at the release tag in
 this repository (and the CI artifact `obsidian-release-archives`). Attach them from a machine that can reach GitHub.
 

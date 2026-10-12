@@ -1,6 +1,7 @@
 # Security remediation — 1.8.0 → 1.8.1
 
-**Scope.** What was found in the 1.8.0 tree, what was changed in 1.8.1, how each
+**Scope.** What was found in the 1.8.0 tree, what was changed in the 1.8.1 line (released as **1.8.2**: tag `v1.8.1` was cut first
+and then superseded, see F-11), how each
 change was tested, and what is still open. Every claim names a test or an
 executed command; anything that could not be done here says so and names the
 action that remains. 1.8.1 is a **software** release: the protocol is still 1.8.0,
@@ -26,6 +27,7 @@ branch was created, nothing was force-pushed, no history was rewritten, and the
 | F-08 | Session fixation: a pre-set session cookie survived sign-in | Medium | **Fixed** |
 | F-09 | Operator documents named the previous release and described removed behaviour | Low | **Fixed**, and a test now fails when they drift |
 | F-10 | No scanner for committed credentials | Low | **Fixed** (`scripts/scan-secrets.mjs`, CI) |
+| F-11 | Data-directory lock: a second takeover race let two processes run on one chain directory | High (rare trigger) | **Fixed in 1.8.2** |
 
 Severity is the authors' own judgement of impact if exploited or hit in
 operation, not a scored rating.
@@ -107,7 +109,7 @@ operation, not a scored rating.
   `npm ci` and the packaging script, built 44 s apart: every `.zip`, every
   `.tar.gz`, both SBOMs and `SHA256SUMS` were byte-identical (`cmp`). The final
   release is additionally checked with `scripts/reproduce-release.sh`; see
-  `releases/REPRODUCTION-1.8.1.txt` for what that run compared.
+  `releases/REPRODUCTION-1.8.2.txt` for what that run compared.
 - **Residual.** Both builds were made by the authors on the same machine and
   toolchain. That shows the build is deterministic here; it is weaker than a
   third party reproducing it on a different machine (R12). The 1.8.0 archives were
@@ -183,6 +185,23 @@ inline marker. Test:
 `tests/scripts/scan-secrets.test.mjs`; also run in CI. Result on this tree: 0
 findings (the scan covers tracked files; history was scanned separately, also clean).
 
+### F-11 — Data-directory lock takeover race (High, rare trigger)
+
+- **Found by.** The multi-process lock test failed once in CI on the 1.8.1 commit (it had passed in the packaging gate on
+  the same commit). It was treated as a defect, not as flakiness: a stress harness reproduced it locally.
+- **Root cause.** `obsidian-core/src/storage/lock.ts`: takeover of a stale `LOCK` is serialised by a guard file, but a
+  process that obtained the guard *after* the previous taker released it and *before* that taker created its new lock found
+  no file, treated "absent" as "stale", and unlinked the lock the other process created a moment later. Both then held it.
+- **Scenario.** Two or more nodes (or a node and `validate`) started at the same instant on one data directory after a
+  crash. The result is two writers on one chain directory, the corruption the lock exists to prevent.
+- **Fix.** Under the guard, an absent lock is never removed and a lock whose creator has not yet written its pid (younger
+  than 2 s) is respected.
+- **Evidence.** Before: 2 of 40 trials (16 simultaneous starters, four CPU-bound competitors) ended with a number of holders
+  other than one. After: 0 of 80 under the same load. Regression: `obsidian-core/tests/unit/storage-safety.test.ts`
+  now runs 8 trials of 12 starters (a probabilistic detector: it can pass by luck, which is why the harness numbers above are given). The harness is a throw-away script in the sandbox, not shipped.
+- **Residual.** The lock is a pid file: it does not protect a data directory shared between machines or containers with
+  separate pid namespaces. Each node needs its own directory.
+
 ## 3. Consensus (workstream C)
 
 No consensus rule was changed. The assumptions the safety argument rests on are
@@ -223,6 +242,12 @@ the publisher identity and is not in the repository. The exit codes listed under
 were observed on a copy of the packaged archives.
 
 ## 5. Not fixed, not done, or not possible here
+
+**CI note.** On the pushed 1.8.1 commit the *Wallet web CI* browser end-to-end job failed and its logs could not be fetched
+from the sandbox. The same suite was run locally against the same tree with a real headless browser and a real devnet:
+32 passed, 0 failed. The cause of the CI failure is **unexplained**; the workflow has failed and then passed on earlier
+commits as well. It could not be re-run from here (the token cannot re-run workflows). The 1.8.2 push triggers a new run.
+
 
 | Item | State | Exact remaining action |
 | --- | --- | --- |

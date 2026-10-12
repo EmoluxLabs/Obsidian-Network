@@ -1,4 +1,8 @@
-# Upgrading from 1.8.0 to 1.8.1
+# Upgrading from 1.8.0 to 1.8.1 (install 1.8.2)
+
+> **Install 1.8.2, not 1.8.1.** Tag `v1.8.1` exists and its archives are intact, but they predate one more fix: a race in
+> the data-directory lock (F-11 in [remediation-1.8.1.md](remediation-1.8.1.md)) that CI caught in `v1.8.1`'s own test run.
+> 1.8.2 differs from 1.8.1 only by that fix. Everything below applies to both; read "1.8.1" as "the 1.8.1 line".
 
 **1.8.1 is a software release, not a protocol change.** The protocol version stays `1.8.0`, the params hash stays
 `1d6cba55f0975f8b0d6345658f1c1cb1`, every genesis id is unchanged, the state snapshot format stays 5 and
@@ -8,8 +12,8 @@ so nodes can be upgraded one at a time with no coordinated cut-over. No data is 
 ## Node operator
 
 1. Back up the data directory, the node keystore and the gate keystores first (see [operations.md](operations.md) section 8).
-2. Stop the node. Replace the binaries with the 1.8.1 archive (verify it first: [release-signing.md](release-signing.md);
-   **the 1.8.1 release is not signed because no publisher key exists yet**, so you can check integrity but not authorship).
+2. Stop the node. Replace the binaries with the 1.8.2 archive (verify it first: [release-signing.md](release-signing.md);
+   **the 1.8.2 release is not signed because no publisher key exists yet**, so you can check integrity but not authorship).
 3. Start it as before, with `--require-init`. `obsidian status` and `GET /readyz` should say `ready`. `/readyz` now also
    carries `checks.identity`, `checks.finality`, `checks.gateAuthority` and `advisories`; read the advisories.
 4. **Mainnet only, new creation:** `init --generate-gate-key` now needs `--gate-key-count 3` or more. An existing network

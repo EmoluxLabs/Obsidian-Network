@@ -119,8 +119,8 @@ release.
 ```bash
 cd releases
 sha256sum -c SHA256SUMS                                  # integrity
-../scripts/verify-release.sh obsidian-core-1.8.1.tar.gz --with-tests
-../scripts/verify-release.sh obsidian-node-operator-1.8.1.tar.gz
+../scripts/verify-release.sh obsidian-core-1.8.2.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-node-operator-1.8.2.tar.gz
 ```
 
 `verify-release.sh` refuses any archive not listed in `SHA256SUMS`, extracts into

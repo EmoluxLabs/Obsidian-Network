@@ -69,7 +69,18 @@ function takeOverStaleLock(path: string, seenOwner: number): boolean {
     return false; // somebody else is taking over; the caller looks again
   }
   try {
+    // Look at the lock again now that the guard is ours. A lock that is GONE is not stale: its taker released the guard
+    // and is about to create a fresh one, and unlinking "the stale lock" here would delete that live lock (the second
+    // takeover race, 2 of 40 trials under CPU load before this check). Only an existing file may be removed, and since
+    // nobody can create one while it exists and every remover holds this guard, what is read here is what is unlinked.
+    let ageMs: number;
+    try {
+      ageMs = Date.now() - statSync(path).mtimeMs;
+    } catch {
+      return false;
+    }
     const owner = readOwner(path);
+    if (!Number.isFinite(owner) && ageMs < 2_000) return false; // a lock its creator has not finished writing
     if (Number.isFinite(owner) && owner !== seenOwner && processIsAlive(owner)) return false; // replaced by a live owner
     if (Number.isFinite(owner) && processIsAlive(owner) && owner !== process.pid) return false;
     try {

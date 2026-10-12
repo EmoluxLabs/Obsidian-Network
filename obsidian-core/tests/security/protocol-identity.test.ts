@@ -146,7 +146,7 @@ describe('A — the published identity moves as one thing', () => {
     // peer compares are asserted to be the same string.
     // 1.8.1 is a software release on protocol 1.8.0: the software version may run ahead of the protocol version, and
     // MIN_CORE_VERSION stays at the oldest software that speaks the same rules. They must never be BEHIND each other.
-    expect(CORE_VERSION).toBe('1.8.1');
+    expect(CORE_VERSION).toBe('1.8.2');
     expect(compareVersions(CORE_VERSION, PROTOCOL_VERSION)).toBeGreaterThanOrEqual(0);
     expect(PROTOCOL_VERSION).toBe('1.8.0');
     expect(MIN_CORE_VERSION).toBe('1.8.0');

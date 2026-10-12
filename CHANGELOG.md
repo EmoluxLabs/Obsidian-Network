@@ -7,9 +7,22 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.8.0 and 1.8.1 that is `1d6cba55f0975f8b0d6345658f1c1cb1` (1.7.0 was `bffeacb35532ba3df70cda8c27ed6c96`).
+a node running it. For 1.8.0, 1.8.1 and 1.8.2 that is `1d6cba55f0975f8b0d6345658f1c1cb1` (1.7.0 was `bffeacb35532ba3df70cda8c27ed6c96`).
 
 ---
+
+## [1.8.2] — 2026-10-12
+
+Software release; **protocol still 1.8.0**, no genesis change, `MIN_CORE_VERSION` 1.8.0 (a 1.8.2 node peers with 1.8.0 and 1.8.1 nodes).
+**Use 1.8.2 rather than 1.8.1.**
+
+### Fixed
+- **Data-directory lock: a second takeover race.** When two or more processes started at once on a data directory holding a
+  stale `LOCK`, one could delete the lock another process had just created, and both then ran on the same chain directory
+  (2 of 40 trials with 16 simultaneous starters under CPU load; found because the unit test failed once in CI on the 1.8.1
+  commit). The takeover now re-checks, once it holds the guard, that the lock still exists and is not a half-written file;
+  0 of 80 trials failed after the fix. Regression: the multi-process test in `tests/unit/storage-safety.test.ts` now runs
+  more trials with more starters. Present since the lock was introduced; unrelated to 1.8.1's other changes.
 
 ## [1.8.1] — 2026-10-12
 
