@@ -73,7 +73,16 @@ const currentDocs = () => docFiles();
 test('the current docs claim the shipped protocol version, not an older one', () => {
   const coreVersion = json('obsidian-core/package.json').version;
   const protocolVersion = read('obsidian-core/src/version.ts').match(/PROTOCOL_VERSION\s*=\s*'([^']+)'/)[1];
-  assert.equal(protocolVersion, coreVersion, 'protocol and software version ship together in this release');
+  // A software release that changes no consensus rule keeps the protocol version (1.8.1 is protocol 1.8.0). The protocol
+  // may never be NEWER than the software, and must stay on the same major.minor line.
+  const [cMaj, cMin, cPatch] = coreVersion.split('.').map(Number);
+  const [pMaj, pMin, pPatch] = protocolVersion.split('.').map(Number);
+  assert.deepEqual([pMaj, pMin], [cMaj, cMin], 'protocol and software are on the same major.minor line');
+  assert.ok(pPatch <= cPatch, 'the protocol version is never ahead of the software version');
+  const minCore = read('obsidian-core/src/version.ts').match(/MIN_CORE_VERSION\s*=\s*'([^']+)'/)[1];
+  const order = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let k = 0; k < 3; k += 1) if (x[k] !== y[k]) return x[k] - y[k]; return 0; };
+  assert.ok(order(minCore, coreVersion) <= 0, 'MIN_CORE_VERSION is not newer than this build');
+  assert.ok(minCore.split('.').map(Number).every((n, i) => n <= [cMaj, cMin, cPatch][i] || [cMaj, cMin, cPatch].slice(0, i).some((v, j) => v > minCore.split('.').map(Number)[j])), 'MIN_CORE_VERSION is not newer than this build');
   // The shapes a reader takes as "the version of the software I am about to
   // run". Package versions (@noble/hashes@1.5.0), IP addresses, `1.5.x` upgrade
   // notes and lines explicitly marked historical are not claims about this
@@ -93,7 +102,7 @@ test('the current docs claim the shipped protocol version, not an older one', ()
       if (lower.includes('historical note') || lower.includes('historical record')) return;
       for (const shape of shapes) {
         for (const match of line.matchAll(new RegExp(shape.source, 'g'))) {
-          if (match[1] !== coreVersion) stale.push(`${file}:${index + 1}: ${match[1]} (shipping ${coreVersion})`);
+          if (match[1] !== protocolVersion) stale.push(`${file}:${index + 1}: ${match[1]} (shipping protocol ${protocolVersion})`);
         }
       }
     });
@@ -156,8 +165,16 @@ test('the tree carries nothing older than the release it ships', () => {
   assert.deepEqual(stale, [], `release artefacts from a version that no longer ships:\n${stale.join('\n')}`);
   const headings = [...read('CHANGELOG.md').matchAll(/^##\s+\[?(\d+\.\d+\.\d+)\]?/gm)].map((match) => match[1]);
   assert.ok(headings.length >= 1, 'the CHANGELOG records this release');
-  assert.deepEqual([...new Set(headings)], [version],
-    `the CHANGELOG keeps entries for ${[...new Set(headings)].join(', ')}; this repository records only ${version}`);
+  // The history starts at the protocol line this tree ships: the newest entry is this release, and any older entry is a
+  // release of the SAME protocol (a patch release keeps its predecessor's notes, because an operator upgrading needs them).
+  const protocol = read('obsidian-core/src/version.ts').match(/PROTOCOL_VERSION\s*=\s*'([^']+)'/)[1];
+  assert.equal(headings[0], version, 'the newest CHANGELOG entry is this release');
+  assert.equal(new Set(headings).size, headings.length, 'no CHANGELOG entry is listed twice');
+  const cmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i += 1) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+  for (const [i, heading] of headings.entries()) {
+    assert.ok(cmp(heading, protocol) >= 0, `the CHANGELOG records ${heading}, older than protocol ${protocol}, the line this repository starts at`);
+    if (i > 0) assert.ok(cmp(headings[i - 1], heading) > 0, 'CHANGELOG entries are newest first');
+  }
 });
 
 const lines = (text) => text.split('\n');
@@ -266,13 +283,15 @@ test('the release version a current doc tags or reads its notes from is the ship
   // gets "bad object". Only the shipping version may be named — Node's own
   // v20.x.y runtimes are a runtime requirement, not a claim about a release.
   const version = json('obsidian-core/package.json').version;
+  const protocolVersion = read('obsidian-core/src/version.ts').match(/PROTOCOL_VERSION\s*=\s*'([^']+)'/)[1];
   const stale = [];
   for (const file of [...currentDocs(), 'releases/README.md']) {
     if (!exists(file)) continue;
     lines(read(file)).forEach((line, index) => {
       if (/\bv2\d\.\d+\.\d+/.test(line)) return;   // Node's runtime, e.g. v20.10.0
       for (const match of line.matchAll(/\bv(\d+\.\d+\.\d+)\b/g)) {
-        if (match[1] !== version) stale.push(`${file}:${index + 1}: v${match[1]} (shipping v${version})`);
+        // The shipping release and the tag that introduced its protocol (a patch release keeps its predecessor's tag).
+        if (match[1] !== version && match[1] !== protocolVersion) stale.push(`${file}:${index + 1}: v${match[1]} (shipping v${version}, protocol v${protocolVersion})`);
       }
       for (const match of line.matchAll(/RELEASE-NOTES-(\d+\.\d+\.\d+)\.md/g)) {
         if (match[1] !== version) stale.push(`${file}:${index + 1}: RELEASE-NOTES-${match[1]}.md (shipping ${version})`);

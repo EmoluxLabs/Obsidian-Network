@@ -39,6 +39,12 @@ less than you might hope, which are called out explicitly rather than buried.
 | [self-hosting.md](self-hosting.md) | Anyone running the interface: systemd, Docker, nginx, Cloudflare |
 | [trusted-domains.md](trusted-domains.md) | Which browser origins a node or interface answers: the project's own domain by default, how to add yours (exact origins and wildcards), what is refused |
 | [upgrading-1.8.0.md](upgrading-1.8.0.md) | Moving from 1.7.0 to 1.8.0: a new chain, what operators do, what does not migrate |
+| [upgrading-1.8.1.md](upgrading-1.8.1.md) | Moving from 1.8.0 to 1.8.1: a software release with no protocol change, what operators do, how to roll back |
+| [remediation-1.8.1.md](remediation-1.8.1.md) | The 1.8.1 security remediation: every finding, its fix, its test, what was verified, what is partial, what is blocked on someone else |
+| [consensus-assumptions.md](consensus-assumptions.md) | What consensus and finality assume, what the tests establish and where safety cannot be justified (no independent verification is claimed) |
+| [gate-recovery-runbook.md](gate-recovery-runbook.md) | Gate key theft, loss, lost majority, lost node, lost platform host: the steps |
+| [wallet-custody.md](wallet-custody.md) | Who holds wallet keys, the vault format, what was reviewed and what was not |
+| [release-signing.md](release-signing.md) | Signing a release, pinning the publisher fingerprint, verifying on a clean machine, reproducing a build |
 | [gate-authority.md](gate-authority.md) | Rotating, revoking and recovering the mining gate keys on chain (1.8.0): the update rule, `gate propose/sign/submit`, playbooks |
 | [operations.md](operations.md) | Bootstrap a network (`init`), join one (`join`), `status` / `peers` / `sync` / `doctor`, health endpoints, ports, the gate authority and its limits |
 | [failover-and-gateways.md](failover-and-gateways.md) | Running several interface hosts: what can fail over, nginx upstreams, the DNS/TLS work that is outside the repository (untested) |

@@ -28,7 +28,7 @@ import { PeerStore } from '../../src/networking/peer-store.js';
 import { getNetwork } from '../../src/protocol/networks.js';
 import { TxType } from '../../src/protocol/types.js';
 import { signTransaction } from '../../src/transactions/encode.js';
-import { CORE_VERSION, PROTOCOL_VERSION } from '../../src/version.js';
+import { CORE_VERSION, MIN_CORE_VERSION, PROTOCOL_VERSION } from '../../src/version.js';
 import { randomBytes } from 'node:crypto';
 
 const net = getNetwork('devnet');
@@ -395,6 +395,23 @@ describe('the handshake gate', () => {
     await waitFor(()=>peer.received.some(message=>message.t==='reject'));
     expect((peer.received.find(message=>message.t==='reject') as {code:string}).code).toBe('ERR_VERSION_MISMATCH');
     expect(a.p2p.peerCount).toBe(0);
+  });
+
+  it('a node on the previous patch release (same protocol) is accepted; one below the minimum core is refused', async () => {
+    // 1.8.1 changed no consensus rule, so a 1.8.0 node must keep peering: a patch release is not a network split.
+    const a = await startNode();
+    const okKeys = generateKeyPair(net.addressHrp);
+    const previous = await rawPeer(a.port);
+    await waitFor(() => challengeOf(previous) !== '');
+    previous.send(helloFor(a, okKeys, challengeOf(previous), { version: MIN_CORE_VERSION }));
+    await waitFor(() => handshakeDone(a));
+    expect(previous.received.some((message) => message.t === 'reject')).toBe(false);
+
+    const old = await rawPeer(a.port);
+    await waitFor(() => challengeOf(old) !== '');
+    old.send(helloFor(a, generateKeyPair(net.addressHrp), challengeOf(old), { version: '1.7.9' }));
+    await waitFor(() => old.received.some((message) => message.t === 'reject'));
+    expect((old.received.find((message) => message.t === 'reject') as { code: string }).code).toBe('ERR_VERSION_MISMATCH');
   });
 
   it('rejects a hello for a different network before anything else', async () => {

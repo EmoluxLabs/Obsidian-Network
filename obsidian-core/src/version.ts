@@ -9,9 +9,13 @@
 import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
-export const CORE_VERSION = '1.8.0';
+export const CORE_VERSION = '1.8.1';
 
-/** Consensus protocol version implemented by this build. */
+/**
+ * Consensus protocol version implemented by this build. It is part of the genesis id and of every finality vote, so it
+ * changes only with a consensus change. A software release that changes no consensus rule (1.8.1) leaves it alone: a
+ * 1.8.1 node and a 1.8.0 node are the same protocol and peer with each other.
+ */
 export const PROTOCOL_VERSION = '1.8.0';
 
 /**

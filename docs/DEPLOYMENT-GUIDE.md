@@ -391,7 +391,7 @@ Expect 11 lines, each ending `OK`.
 Then verify an archive properly:
 
 ```bash
-../scripts/verify-release.sh obsidian-core-1.8.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.8.1.tar.gz --with-tests
 ```
 
 This checks the digest, extracts to a temporary folder (never over your work),
@@ -577,7 +577,7 @@ The last two commands must print the **same** commit id.
 ### B6b. Rebuild the archives from the tag
 
 Because the tag points at the commit you are already standing on, you do **not**
-need to check the tag out — and you should not, because `git checkout v1.8.0`
+need to check the tag out — and you should not, because `git checkout v1.8.1`
 puts you in "detached HEAD", a state that confuses beginners and makes any
 accidental commit hard to find. Just build where you are:
 
@@ -597,7 +597,7 @@ cd ~/Obsidian-Network
    the counts back from the runs themselves.
 6. Produces the archives with `git archive`, so what you download is exactly
    what was committed.
-7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-1.8.0.md`.
+7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-1.8.1.md`.
 
 Expect it to take several minutes; the cluster test alone starts three real
 nodes. It is the slow step on purpose.
@@ -630,7 +630,7 @@ It must show the same id as `git rev-parse v1.8.0^{commit}`.
 Then verify an archive the way a stranger would, including running its tests:
 
 ```bash
-../scripts/verify-release.sh obsidian-core-1.8.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.8.1.tar.gz --with-tests
 ```
 
 This exits non-zero on a digest mismatch or an unlisted archive, so it is safe
@@ -639,7 +639,7 @@ to use as a gate in a script.
 Finally, read the generated notes:
 
 ```bash
-head -20 RELEASE-NOTES-1.8.0.md
+head -20 RELEASE-NOTES-1.8.1.md
 ```
 
 The test counts in there are **counted live during packaging**, not typed by
@@ -1318,8 +1318,8 @@ inside the state transition.
 ```bash
 cd releases
 sha256sum -c SHA256SUMS
-../scripts/verify-release.sh obsidian-node-operator-1.8.0.tar.gz
-../scripts/verify-release.sh obsidian-core-1.8.0.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-node-operator-1.8.1.tar.gz
+../scripts/verify-release.sh obsidian-core-1.8.1.tar.gz --with-tests
 ```
 
 The operator package ships `dist/` without tests, so `--with-tests` reports
@@ -1494,7 +1494,7 @@ compile the server.
 - `obsidian-interface/dist/` (the server), unless you are hosting statics only
 
 The ready-made bundle of exactly this is the release archive
-`obsidian-interface-selfhost-1.8.0.tar.gz`.
+`obsidian-interface-selfhost-1.8.1.tar.gz`.
 
 ### F3. Where they should live
 
@@ -1886,7 +1886,7 @@ Follow `docs/node-operator.md`; this is the short version.
 
 1. **Hardware**: §D1 above.
 2. **OS**: Linux. Install Node.js 20.10+.
-3. **Install**: clone and build, or use `obsidian-node-operator-1.8.0.tar.gz`
+3. **Install**: clone and build, or use `obsidian-node-operator-1.8.1.tar.gz`
    (built `dist/`, deployment recipes, docs, `verify-release.sh`,
    `check-invariants.mjs`).
 4. **Keys**: `node dist/index.js keygen`. Set
@@ -2456,7 +2456,7 @@ server; the third logs in. After that, no password.
 
 ```bash
 # phone -> server
-scp releases/obsidian-node-operator-1.8.0.tar.gz user@server:/home/user/
+scp releases/obsidian-node-operator-1.8.1.tar.gz user@server:/home/user/
 
 # server -> phone
 scp user@server:/home/user/node-key.json.backup ~/storage/shared/
@@ -2560,9 +2560,9 @@ ssh user@your-server-ip
 ### N6. Deploy
 
 ```bash
-scp releases/obsidian-node-operator-1.8.0.tar.gz user@server:/home/user/
+scp releases/obsidian-node-operator-1.8.1.tar.gz user@server:/home/user/
 ssh user@server
-tar -xzf obsidian-node-operator-1.8.0.tar.gz
+tar -xzf obsidian-node-operator-1.8.1.tar.gz
 cd obsidian-core && npm ci --omit=dev
 ```
 
@@ -2571,9 +2571,9 @@ Then follow §D6–D8.
 ### N7. Frontend deployment
 
 ```bash
-scp releases/obsidian-interface-selfhost-1.8.0.tar.gz user@server:/home/user/
+scp releases/obsidian-interface-selfhost-1.8.1.tar.gz user@server:/home/user/
 ssh user@server
-tar -xzf obsidian-interface-selfhost-1.8.0.tar.gz
+tar -xzf obsidian-interface-selfhost-1.8.1.tar.gz
 cd obsidian-interface && npm ci --omit=dev
 ```
 

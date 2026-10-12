@@ -18,8 +18,8 @@ test('finds well-known token shapes and private-key armour, by rule and line onl
 });
 
 test('finds a literal bound to a secret-sounding name, and ignores placeholders and short values', () => {
-  assert.equal(scanText('const passphrase = "Zq7vK2mP9xL4nR8tW3yB6cD1"').length, 1);
-  assert.equal(scanText('"apiKey": "Zq7vK2mP9xL4nR8tW3yB6cD1"').length, 1);
+  assert.equal(scanText('const passphrase = "Zq7vK2mP9xL4nR8tW3yB6cD1"').length, 1); // scan-secrets:allow synthetic fixture
+  assert.equal(scanText('"apiKey": "Zq7vK2mP9xL4nR8tW3yB6cD1"').length, 1); // scan-secrets:allow synthetic fixture
   assert.equal(scanText('password = "xxxxxxxxxxxxxxxxxxxxxxxxxxxx"').length, 0);
   assert.equal(scanText('passphrase = "short"').length, 0);
   assert.equal(scanText('const x = readSecret()').length, 0);

@@ -7,9 +7,56 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.8.0 that is `1d6cba55f0975f8b0d6345658f1c1cb1` (1.7.0 was `bffeacb35532ba3df70cda8c27ed6c96`).
+a node running it. For 1.8.0 and 1.8.1 that is `1d6cba55f0975f8b0d6345658f1c1cb1` (1.7.0 was `bffeacb35532ba3df70cda8c27ed6c96`).
 
 ---
+
+## [1.8.1] — 2026-10-12
+
+**Remediation release. No consensus change:** the protocol is still `1.8.0`, the params hash is still
+`1d6cba55f0975f8b0d6345658f1c1cb1`, every genesis id is unchanged, `MIN_CORE_VERSION` stays `1.8.0`, and 1.8.0 and 1.8.1
+nodes peer with each other. Data directories, keystores and wallets carry over unchanged ([upgrading-1.8.1.md](docs/upgrading-1.8.1.md)).
+Per-finding detail, evidence and residual risk: [docs/remediation-1.8.1.md](docs/remediation-1.8.1.md).
+
+### Interface: automatic primary failover (new)
+- Several primary-capable interface hosts can share one account store and elect exactly one leader through a lease with a
+  fencing token (`OBSIDIAN_INTERFACE_LEASE_DIR`, `..._LEASE_TTL_MS`, `..._MAX_CLOCK_SKEW_MS`, `..._ADVERTISE_URL`,
+  `..._PRIMARY_URLS`). A deposed leader cannot write the store or issue a gate certificate; a standby answers 503
+  `ERR_NOT_LEADER`; `/api/ready` reports the leader. Sessions survive a failover (about a 2 s flush window).
+  **Not safe on NFS**; use a local disk or build an etcd/Postgres elector. Without the variables nothing changes.
+
+### Gate authority governance
+- `init --generate-gate-key` on **mainnet refuses fewer than 3 gate keys** unless `--allow-single-gate-key` is passed.
+  `/gate` carries `warnings`; `/readyz` carries `advisories` (`gate-closed`, `gate-single-key`, `gate-below-three-keys`).
+- New disaster-recovery runbook and recovery tests (restart, offline catch-up, lost/replaced key, quorum loss, conflicting
+  updates, cross-network approvals).
+
+### Health
+- `/readyz` reports identity, finality, gate authority and last-block age as separate checks, plus `advisories[]`.
+  The HTTP status is still decided only by chain, sync and P2P.
+
+### Wallet and sessions
+- The wallet vault envelope is validated before any key derivation (version, KDF, iteration range 100k-10M, field sizes,
+  encoding) in the platform wallet and the web-app/extension vault: a modified vault can no longer freeze the page or
+  surface a raw parser error.
+- Signing in ends the session presented with the request; a planted cookie is never accepted.
+
+### Release engineering
+- `scripts/release-tool.mjs`: Ed25519 `keygen | sign | verify | fingerprint`. `verify` checks integrity, signature, a
+  **caller-pinned** publisher fingerprint, and that version, tag, changelog, manifest, archives and the embedded binary
+  agree. **No publisher key exists yet, so the 1.8.1 release is unsigned and authenticated publication is incomplete.**
+- `scripts/package-releases.sh`: deterministic archives and SBOM, `--no-tests`, a self-check, optional signing with a key
+  supplied at run time. `scripts/reproduce-release.sh` rebuilds from the manifest's commit in a clean clone and compares.
+- `scripts/scan-secrets.mjs`: tripwire for committed credentials (prints rule and line, never the match).
+
+### Documentation
+- New: `consensus-assumptions.md`, `gate-recovery-runbook.md`, `wallet-custody.md`, `release-signing.md`,
+  `remediation-1.8.1.md`, `upgrading-1.8.1.md`. Updated: threat model and residual-risk register, operations (health
+  dimensions, restart and backup), failover, gate authority, security model (stale iteration count), the mainnet `init` example.
+
+### Tests
+- Core +20 (gate recovery 9, consensus properties 8, policy and readiness 3), interface HA and wallet/session tests,
+  release-tool 12, secret scanner 3. Consensus properties are seeded samples, not a proof; see `docs/consensus-assumptions.md`.
 
 ## [1.8.0] — 2026-10-12
 
