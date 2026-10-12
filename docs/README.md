@@ -8,6 +8,7 @@ less than you might hope, which are called out explicitly rather than buried.
 
 | Document | What it answers |
 | --- | --- |
+| [Obsidian-Network-Technical-Paper.pdf](Obsidian-Network-Technical-Paper.pdf) | The whole network in one readable PDF: architecture, Proof of Time consensus, finality, mining and the gate, economics, node rewards, security model and limitations (a summary of the documents below, not a replacement) |
 | [protocol.md](protocol.md) | How the chain works: blocks, transactions, state roots, consensus, the four networks |
 | [consensus.md](consensus.md) | Block validity, fork choice, reorganisation, the validator set and jailing |
 | [economics.md](economics.md) | Issuance, every OBS-denominated fee, the exact 90/10 ONS revenue split, node runner rewards and the supply invariant |
