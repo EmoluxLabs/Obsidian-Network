@@ -281,7 +281,7 @@ no build tools on the machine. Pick one way to get them onto the server.
 **A. Clone the public repository on the server (simplest):**
 
 ```bash
-git clone --depth 1 --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian-src
+git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian-src
 ```
 
 **B. Copy the archives from your phone or laptop (no Git on the server):**
@@ -304,10 +304,13 @@ sudo tar xzf obsidian-node-operator-1.7.0.tar.gz      -C /opt/obsidian --no-same
 sudo tar xzf obsidian-interface-selfhost-1.7.0.tar.gz -C /opt/obsidian --no-same-owner
 sudo chown -R root:root /opt/obsidian
 cd /opt/obsidian/obsidian-core && sudo npm ci --omit=dev --no-audit --no-fund
+cd /opt/obsidian/obsidian-interface && sudo npm ci --omit=dev --no-audit --no-fund
 ```
 
 `--no-same-owner` stops the archive's own file owners from being applied, and `chown root:root` makes the code
-read-only to the service account. `--omit=dev` installs only the runtime libraries (six small packages, no native code) and no build tools.
+read-only to the service account. `--omit=dev` installs only the runtime libraries (six small packages for the
+node, and the four crypto packages it already downloaded for the interface) and no build tools — the interface
+loads the synced core for gate-certificate signing and transaction decoding, so it needs those four by name.
 
 ```bash
 ls /opt/obsidian                                   # obsidian-core obsidian-interface obsidian-network.sh new-genesis-invite.mjs landing ...
@@ -901,7 +904,7 @@ GitHub → repository → **Settings** → **Deploy keys** → **Add deploy key*
 
 ```bash
 printf 'Host github-obsidian\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/obsidian_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
-git clone --depth 1 --branch arena/414b663a-obsidian-network git@github-obsidian:EmoluxLabs/Obsidian-Network.git ~/obsidian-src
+git clone --depth 1 --branch arena/7c29c899-obsidian-network git@github-obsidian:EmoluxLabs/Obsidian-Network.git ~/obsidian-src
 ```
 
 The better answer is to keep no source on the server at all: use option B of §6 and copy only the verified archives.

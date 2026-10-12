@@ -46,7 +46,7 @@ because a browser resumes an interrupted download and `git` in Termux cannot.
 ```bash
 rm -rf ~/obsidian/src; mkdir -p ~/obsidian; cd ~/obsidian
 G="git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60"
-for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
+for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
 cd src && for f in SHA256SUMS obsidian-node-operator-1.7.0.tar.gz obsidian-interface-selfhost-1.7.0.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
 ls -l releases
 cd ~/obsidian/src/releases
@@ -61,7 +61,7 @@ you have not checked is a download, not a release.) Do not use GitHub's "Downloa
 on a phone, clone the whole project into its own folder (about 11 MB) and run the script from there:
 
 ```bash
-rm -rf ~/obsidian/full; git clone --depth 1 --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
+rm -rf ~/obsidian/full; git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git ~/obsidian/full
 cd ~/obsidian/full
 ./scripts/verify-release.sh releases/obsidian-node-operator-1.7.0.tar.gz
 ```
@@ -79,14 +79,19 @@ tar xzf obsidian-interface-selfhost-1.7.0.tar.gz -C ~/obsidian/run
 
 cd ~/obsidian/run/obsidian-core
 npm ci --omit=dev --fetch-retries=10
+cd ~/obsidian/run/obsidian-interface
+npm ci --omit=dev --fetch-retries=10
 ```
 
-`--omit=dev` installs only the node's runtime libraries (five, plus the one small package they share: about 4 MB, no native code) and no compiler or build
-tool, which is what makes this work on Android. The interface has **no** runtime packages. If
+`--omit=dev` installs only the runtime libraries (six small packages for the node, and the four crypto
+packages it already downloaded for the interface: about 4 MB in all, no native code) and no compiler or build
+tool, which is what makes this work on Android. If
 `npm ci` fails on your mirror:
 
 ```bash
-npm install --omit=dev --no-audit --no-fund --fetch-retries=10 @noble/curves@1.6.1 @noble/hashes@1.5.0 @scure/bip32@1.5.0 @scure/bip39@1.4.0 ws@8.22.0
+npm install --omit=dev --no-audit --no-fund --fetch-retries=10 @noble/curves@1.6.0 @noble/hashes@1.5.0 @scure/bip32@1.5.0 @scure/bip39@1.4.0 ws@8.22.0
+cd ~/obsidian/run/obsidian-interface
+npm install --omit=dev --no-audit --no-fund --fetch-retries=10 @noble/curves@1.6.0 @noble/hashes@1.5.0 @scure/bip32@1.5.0 @scure/bip39@1.4.0
 ```
 
 ## 4. The devnet Genesis Invitation (offline)
@@ -287,9 +292,11 @@ Each node needs its **own** data directory; sharing one is refused (the second s
 `is in use by another Obsidian process`). Node 1 above is the seed. In a second session:
 
 ```bash
-cd ~/obsidian/run/obsidian-core
-OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network devnet --data-dir ~/obsidian-data/devnet/node2 --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631
+cd ~/obsidian/run && GATE_KEY="$(bash obsidian-network.sh devnet gate-key)" && cd obsidian-core && OBSIDIAN_MINING_GATE_PUBLIC_KEYS="$GATE_KEY" OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network devnet --data-dir ~/obsidian-data/devnet/node2 --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631
 ```
+
+The mining gate key is part of the genesis id (protocol 1.7.0), so a node started without it is
+a different chain: node 1 refuses it (peers stay at 0) and it could accept no mining claim.
 
 `--seeds` takes **P2P** ports (`38631`), never RPC ports. After about twenty seconds both nodes
 should agree:

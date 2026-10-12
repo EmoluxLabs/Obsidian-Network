@@ -25,14 +25,17 @@ mainnet node with headroom and alert on both.
 ## 2. Install
 
 **From the release archives** (recommended; nothing is compiled on the machine): unpack
-`obsidian-node-operator-<version>.tar.gz`, then `cd obsidian-core && npm ci --omit=dev`. The
+`obsidian-node-operator-<version>.tar.gz`, then `cd obsidian-core && npm ci --omit=dev`. If the
+interface is unpacked beside it, install its packages too (`cd obsidian-interface && npm ci --omit=dev`):
+it loads the synced core for gate-certificate signing and transaction decoding, and that code imports
+the four crypto packages by name. The
 steps, with checksum verification, are in [LAUNCH-GUIDE.md](LAUNCH-GUIDE.md) §1 and
 [ORACLE-VPS-DEPLOYMENT.md](ORACLE-VPS-DEPLOYMENT.md) §6.
 
 **From source** (development, or if you want to build it yourself):
 
 ```bash
-git clone --depth 1 --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git
+git clone --depth 1 --branch arena/7c29c899-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git
 cd Obsidian-Network/obsidian-core
 npm ci
 npm run build
@@ -196,7 +199,7 @@ are the one who must upgrade.
 | --- | --- |
 | `Unsupported state or unable to authenticate data` | wrong keystore passphrase, or a keystore from another node. Point `--keystore` at this node's file; do not reuse one between nodes. |
 | `peers: 0`, height frozen | seeds unreachable (firewall on 8631?) or the network changed. Check `OBSIDIAN_SEED_NODES`, then `--offline` to confirm the node itself is healthy. |
-| A warning `the node at … is on another network or version than this one` (`code` `ERR_WRONG_NETWORK`, `ERR_WRONG_CHAIN_ID` or `ERR_VERSION_MISMATCH`) | a seed or peer you configured follows a different network, or an incompatible version. Fix `--seeds` / `OBSIDIAN_SEED_NODES` so every entry is the **P2P** port of a node on this network. It is logged once per address per ten minutes, however often the node retries; peers that dial *in* from another network are refused silently. |
+| A warning `the node at … is on another network or version than this one` (`code` `ERR_WRONG_NETWORK`, `ERR_WRONG_CHAIN_ID` or `ERR_VERSION_MISMATCH`) | a seed or peer you configured follows a different network, an incompatible version, or a **different mining gate issuer key list** — protocol 1.7.0 hashes `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` into the genesis id, so every node of one network must be given the same list. Fix `--seeds` / `OBSIDIAN_SEED_NODES` so every entry is the **P2P** port of a node on this network, and give every node the same list (`bash obsidian-network.sh <network> gate-key` prints this machine's). It is logged once per address per ten minutes, however often the node retries; peers that dial *in* from another network are refused silently. |
 | A refusal at startup saying the data directory belongs to another network | you pointed `--data-dir` at a directory another network wrote. Use a separate directory per network. |
 | Node exits on start with a `fatal:` line | configuration validation. The message names the setting. |
 | `fatal: no network selected` | there is no default network: add `--network` (or set `OBSIDIAN_NETWORK`) |

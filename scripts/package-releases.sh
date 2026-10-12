@@ -225,6 +225,16 @@ stage "$STAGING/obsidian-core" \
   obsidian-core/src obsidian-core/tests obsidian-core/dist obsidian-core/config \
   obsidian-core/deployment obsidian-core/README.md .env.example 2>/dev/null || true
 cp LICENSE "$STAGING/obsidian-core/" 2>/dev/null || true
+# One shipped test compares the node's compliance audit with the removed-feature list CI carries
+# (tests/security/rpc-hardening.test.ts reads ../../../.github/workflows/ci.yml — the same
+# repository-relative path inside this archive). Without the file,
+# `verify-release.sh obsidian-core-<version>.tar.gz --with-tests` — the command the generated
+# release notes tell a reader to run — fails on a correct archive, so the suite's one repo-level
+# input ships with it.
+if [ -f .github/workflows/ci.yml ]; then
+  mkdir -p "$STAGING/obsidian-core/.github/workflows"
+  cp .github/workflows/ci.yml "$STAGING/obsidian-core/.github/workflows/ci.yml"
+fi
 
 # ── 2. obsidian-interface: server, built bundles and the site shells ─────────
 stage "$STAGING/obsidian-interface" \
@@ -382,8 +392,21 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   proposer/vote equivocation evidence
 * fork choice is finalized anchor → fixed PoT weight → height → the lowest
   block hash, so equal-height ties resolve identically on every node
-* protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data; it does not
-  include a live-chain migration
+* a mining claim is valid only with a certificate from the mining gate: the
+  issuer public keys are committed in genesis and hashed into the genesis id, so
+  every node of a network must be given the same list, and a chain that commits
+  none accepts no claim (it fails closed)
+* protocol $VERSION is genesis-bound and rejects peers and data directories of
+  earlier protocol versions at the handshake; it does not include a live-chain
+  migration
+* name registry reads are bounded (\`limit\`/\`offset\`/\`prefix\` on \`GET /names\`,
+  \`getnames\` over JSON-RPC), and block sync no longer stalls when a peer serves
+  fewer blocks than the requested overlap
+* four applications ship in this release: \`obsidian-app-web/\` (the web app),
+  \`obsidian-wallet-web/\` (Obsidian Wallet, the non-custodial browser wallet),
+  \`obsidian-extension/\` (Obsidian Node Extension, MV3) and
+  \`obsidian-node-desktop/\` (Obsidian Node, the Electron app whose installers
+  are built by \`.github/workflows/desktop-release.yml\`)
 ${TEST_SUMMARY}
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%

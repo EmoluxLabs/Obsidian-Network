@@ -61,6 +61,13 @@ cd ../obsidian-interface && npm ci && npm run build && npm test
 # edge: the gateway is a cache and a proxy, never an authority
 cd .. && node --test cloudflare/test/worker.test.mjs
 
+# the applications: the web app, Obsidian Wallet, the extension and the desktop node
+cd obsidian-app-web && npm ci && npm test
+cd ../obsidian-wallet-web && npm run build && npm test && npm run lint
+cd ../obsidian-extension && npm run build && npm test && npm run package && npm run lint:webext   # web-ext comes from npx
+cd ../obsidian-node-desktop && npm ci && npm run stage:core && npm test && npm run lint && npm run typecheck
+cd ..
+
 # scripts and live nodes: signing, the helper script, three nodes, four networks side by side
 node --test tests/scripts/*.test.mjs tests/e2e/cluster.test.mjs tests/e2e/networks.test.mjs tests/e2e/ecosystem.test.mjs
 node scripts/check-invariants.mjs
