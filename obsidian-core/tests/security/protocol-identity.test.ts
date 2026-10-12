@@ -144,14 +144,14 @@ describe('A — the published identity moves as one thing', () => {
     // A build that ships a new rule set under an old protocol version is the
     // exact failure this file exists to prevent, so the three versions that a
     // peer compares are asserted to be the same string.
-    expect(CORE_VERSION).toBe('1.7.0');
-    expect(PROTOCOL_VERSION).toBe('1.7.0');
-    expect(MIN_CORE_VERSION).toBe('1.7.0');
+    expect(CORE_VERSION).toBe('1.8.0');
+    expect(PROTOCOL_VERSION).toBe('1.8.0');
+    expect(MIN_CORE_VERSION).toBe('1.8.0');
     expect(CONSENSUS_PARAMS.protocolVersion).toBe(PROTOCOL_VERSION);
     // The state shape changed (the validator-mode indicator, the jail term), so
     // the snapshot format changed with it: an old snapshot is refused below
     // rather than read as if it described the new state.
-    expect(STATE_SNAPSHOT_VERSION).toBe(4);
+    expect(STATE_SNAPSHOT_VERSION).toBe(5);
     // Computed, not declared. A hand-edited hash would let the rules change
     // without the identity changing, which is the whole attack.
     expect(PARAMS_HASH).toBe(computeParamsHash(CONSENSUS_PARAMS));
@@ -161,6 +161,8 @@ describe('A — the published identity moves as one thing', () => {
     expect(CONSENSUS_PARAMS.consensus.slashLiabilityFollowsRegistration).toBe(true);
     expect(CONSENSUS_PARAMS.consensus.jailSlots).toBe(10_080);
     expect(PARAMS_HASH).not.toBe('4a2883b210c4a7aeb873f9d669e2476f'); // the 1.6.0 hash
+    expect(PARAMS_HASH).not.toBe('bffeacb35532ba3df70cda8c27ed6c96'); // the 1.7.0 hash: gate authority moved it
+    expect(CONSENSUS_PARAMS.miningGate.maxRevoked).toBe(64);
   });
 });
 
@@ -310,7 +312,7 @@ describe('E — genesis and snapshot identity follow the version', () => {
     expect(document.protocolVersion).toBe(PROTOCOL_VERSION);
     // Published identity, measured on this build: the id is a function of the
     // document, so moving the protocol version moves the chain.
-    expect(genesisId(document, mainnet)).toBe('2dc198e4e57cb482df4e0f89e3a28daaf427ccff');
+    expect(genesisId(document, mainnet)).toBe('3722ae03f8e74d1ebd5f0dc70addc5122d7d7c70');
     expect(genesisId({ ...document, protocolVersion: '1.6.0' }, mainnet)).toBe(
       '9a104f428d447e4c916fccf2c8b5c0bef4827d4f',
     );
@@ -346,9 +348,10 @@ describe('F — a mixed-version network cannot form', () => {
     // rejected, a 1.6.1 peer is not, and a newer one is not mistaken for a peer.
     expect(compareVersions('1.6.0', PROTOCOL_VERSION)).not.toBe(0);
     expect(compareVersions('1.6.1', PROTOCOL_VERSION)).not.toBe(0); // accepts claims from any key: a different rule set
-    expect(compareVersions('1.7.0', PROTOCOL_VERSION)).toBe(0);
+    expect(compareVersions('1.7.0', PROTOCOL_VERSION)).not.toBe(0); // no GATE_AUTHORITY, no live issuer set in the root
+    expect(compareVersions('1.8.0', PROTOCOL_VERSION)).toBe(0);
     expect(compareVersions('1.6.1', MIN_CORE_VERSION)).toBeLessThan(0);
-    expect(compareVersions('1.7.0', MIN_CORE_VERSION)).toBe(0);
-    expect(compareVersions('1.8.0', CORE_VERSION)).toBeGreaterThan(0);
+    expect(compareVersions('1.8.0', MIN_CORE_VERSION)).toBe(0);
+    expect(compareVersions('1.9.0', CORE_VERSION)).toBeGreaterThan(0);
   });
 });

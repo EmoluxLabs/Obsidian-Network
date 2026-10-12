@@ -133,8 +133,12 @@ node answers there, so it never reports a port "in use" about itself); RPC bound
 | `GET /api/health` | interface | The interface process is up, how many nodes it sees. |
 | `GET /api/ready` | interface | 200 only when it reaches at least one healthy node of its own network, with no genesis mismatch. |
 
-`/readyz` returns no address, key or peer list. `/peers` does list peer addresses and is public on a node that exposes
-its RPC; see the audit's low-severity note.
+`/readyz` returns no address, key or peer list. **`/peers` (1.8.0)** gives the full peer detail only to a caller on the
+node's own machine (a loopback connection with no forwarding headers: `X-Forwarded-*`, `Forwarded`, `Via`, `X-Real-IP`);
+anyone else gets counts only. The interface proxy marks its requests with `Via`, so the public never receives detail
+through it. To publish the detail anyway set `rpcPublicPeerDetail` / `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL=true`. A reverse
+proxy in front of the node must add a forwarding header (the shipped nginx file sets `X-Forwarded-For`); a bare TCP
+proxy that adds none would look local. `/nodes` still lists known peers by design (it is how peers are found).
 
 ## 4. Peer discovery and the handshake
 
@@ -166,9 +170,16 @@ outside. The node RPC stays on `127.0.0.1`: it carries the transaction relay and
 it is bound elsewhere. Public traffic reaches chain data through the interface (`/api/rpc`, `/api/nodes`) or a reverse
 proxy that exposes only the read routes. Do not publish the RPC port directly.
 
-Interface per node: `scripts/obsidian-network.sh <network> start` starts the node and the interface together by default;
-`OBSIDIAN_NODE_ONLY=1` is the explicit opt-out. The interface is a separate process that talks to the node over its
-loopback RPC; it is not linked into the node process.
+Interface per node (1.8.0): **`obsidian start` hosts the interface by default.** It supervises
+`obsidian-interface/dist/server/main.js` as a child process (found through `OBSIDIAN_INTERFACE_DIR`, then
+`../obsidian-interface`, then `./obsidian-interface`), on the network's interface port, with its data beside the node's
+(`OBSIDIAN_INTERFACE_DATA_DIR`, default `<node data dir>/../interface`), output prefixed `[interface]`. If the files are
+not built or not found, the node runs alone and says so. If an interface already answers on that port, nothing is started.
+A crashed interface is restarted with a backoff (1 s up to 60 s); after 8 failures in a row the supervisor stops trying
+and the node carries on. **The interface can never stop or slow the node.** Opt out with `--no-interface` or
+`OBSIDIAN_NODE_ONLY=1` (the systemd units, `scripts/obsidian-network.sh`, which manages its own interface, and the
+test harnesses all do). The interface is a separate process that talks to the node over its loopback RPC; it is not
+linked into the node process.
 
 ## 6. Gate authority: provisioning, rotation, revocation, recovery
 
@@ -176,16 +187,14 @@ loopback RPC; it is not linked into the node process.
   outside the data directory, never put in the manifest, never sent to a peer. The public key goes into the genesis.
 * **Which host holds it.** The machine that runs the account platform (`OBSIDIAN_GATE_KEYSTORE` with
   `OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE`). Nodes only verify; they hold the public key.
-* **Rotation and revocation: bounded by consensus.** The gate key set (up to 8 keys) is committed in the genesis id.
-  Within one genesis you can issue from any key of that set, so a set created with a spare key lets you stop using a
-  compromised one operationally (stop issuing with it), **but a compromised key stays valid for consensus** because
-  validity is "issuer is in the genesis set and the certificate is fresh". Removing a key, or adding one, changes the
-  genesis id, which is a different network. That is a consensus change and is not something a CLI flag can do safely;
-  it is not implemented here. Certificates are short-lived (valid from 60 s before to 900 s after issue), which limits
-  what a leaked certificate can do, not what a leaked key can do.
-* **Recovery.** Back up the encrypted keystore and its passphrase separately and offline. Without the key nobody can
-  issue certificates and no claim can be accepted; a node cannot recreate it. If it is lost or compromised the recovery
-  is a new network with a new genesis (documented as such, not hidden).
+* **Rotation and revocation (1.8.0): on chain.** The keys in genesis are only the starting set. A majority of the
+  *current* keys can add and revoke keys with a `GATE_AUTHORITY` transaction, no new genesis needed:
+  `gate status | propose | sign | submit`. A revoked key's certificates stop being valid at the next block. Create three or
+  more keys at `init` (`--gate-key-count 3`) so a stolen one can be revoked by the others. Full procedure and playbooks:
+  [gate-authority.md](gate-authority.md).
+* **Recovery.** Back up each encrypted keystore and its passphrase separately and offline. Lost or stolen key: the
+  remaining majority replaces it. **If a majority is lost, no update is possible and the recovery is a new network
+  with a new genesis** (stated, not hidden).
 
 ## 7. Disposable validation
 

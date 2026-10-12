@@ -130,7 +130,8 @@ describe('committed bootstrap committees', () => {
     //          identity (no issuer key committed yet); a live network's id also includes its issuer keys.
     //   1.6.1: the value below, moved by PROTOCOL_VERSION alone (the committee,
     //          the genesis instant and the note are untouched).
-    expect(shipped).toBe('2dc198e4e57cb482df4e0f89e3a28daaf427ccff');
+    //   1.8.0: moved again by PROTOCOL_VERSION alone (GATE_AUTHORITY, the live issuer set in the state root).
+    expect(shipped).toBe('3722ae03f8e74d1ebd5f0dc70addc5122d7d7c70');
     expect(genesisId({ ...genesisDocumentFor(mainnet), protocolVersion: '1.6.0' }, mainnet))
       .toBe('9a104f428d447e4c916fccf2c8b5c0bef4827d4f');
   });

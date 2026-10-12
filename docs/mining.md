@@ -50,10 +50,10 @@ Rejections you may see, and what they mean:
 | `ERR_MINING_GATE_INVALID` | the certificate is expired, dated after the block, signed by a key the chain did not commit, or issued for another wallet, claim id or network |
 | `ERR_BAD_NONCE` / `REPLAY` | the same signed claim is being replayed, e.g. from a second tab |
 
-### The gate certificate (protocol 1.7.0)
+### The gate certificate (since 1.7.0; the keys are changeable since 1.8.0)
 
-A claim is valid only with a certificate from the **mining gate**: a signature, by an issuer key committed in the
-genesis document, over `GATE|networkId|chainId|address|claimId|issuedAt`. The platform issues it
+A claim is valid only with a certificate from the **mining gate**: a signature, by an **active** issuer key (the genesis
+keys, as changed by [gate-authority.md](gate-authority.md) updates), over `GATE|networkId|chainId|address|claimId|issuedAt`. The platform issues it
 (`POST /api/mining/certificate {address, claimId}`) to a signed-in, MFA-confirmed account whose one linked wallet is
 `address`, and the wallet puts it in the claim before signing. It is valid from 60 s before to 15 minutes after
 `issuedAt` (measured against the block that includes the claim), for that one claim id only. `GET /mining/status`

@@ -69,7 +69,7 @@ function cli(args, env = {}) {
 function launch(label, args, env = {}, entry = ENTRY) {
   const child = spawn(process.execPath, [entry, ...args], {
     cwd: CORE,
-    env: { ...process.env, OBSIDIAN_KEYSTORE_PASSPHRASE: NODE_PASS, ...env },
+    env: { ...process.env, OBSIDIAN_NODE_ONLY: '1', OBSIDIAN_KEYSTORE_PASSPHRASE: NODE_PASS, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const record = { label, child, log: [], code: null };
@@ -133,6 +133,7 @@ test('init creates the network once, and a second init writes nothing', { skip }
   assert.equal(created.miningGatePublicKeys.length, 1);
   ctx.genesisId = created.genesisId;
   ctx.gateKey = created.miningGatePublicKeys[0];
+  ctx.gateKeystore = created.gateAuthority.keystore;
   const manifest = readFileSync(join(ctx.dirA, 'network.json'), 'utf8');
   const keystore = readFileSync(created.gateAuthority.keystore, 'utf8');
 
@@ -184,6 +185,44 @@ test('node A starts from the initialised directory with the recorded identity', 
   const gate = (await get(A.rpc, '/genesis')).body.document.miningGatePublicKeys;
   assert.deepEqual(gate, [ctx.gateKey]);
   assert.equal((await get(A.rpc, '/livez')).status, 200);
+});
+
+test('the gate authority flow works against a live node: status, propose, sign, dry-run, submit (protocol 1.8.0)', { skip }, async () => {
+  const url = ['--network', 'mainnet', '--url', `http://127.0.0.1:${A.rpc}`];
+  const status = cli(['gate', 'status', ...url, '--json']);
+  assert.equal(status.code, 0, status.err);
+  const live = JSON.parse(status.out);
+  assert.deepEqual(live.issuerKeys, [ctx.gateKey]);
+  assert.equal(live.epoch, 0);
+
+  const { generateKeyPair } = await import(join(CORE, 'dist', 'crypto', 'keys.js'));
+  const fresh = generateKeyPair('obs').publicKey;
+  const file = join(ctx.rootA, 'gate-proposal.json');
+  const proposed = cli(['gate', 'propose', ...url, '--add', fresh, '--out', file]);
+  assert.equal(proposed.code, 0, proposed.err);
+
+  const wrong = cli(['gate', 'sign', '--network', 'mainnet', '--proposal', file, '--keystore', ctx.gateKeystore], { OBSIDIAN_GATE_KEYSTORE_PASSPHRASE: 'not-the-passphrase-at-all' });
+  assert.notEqual(wrong.code, 0, 'a wrong passphrase must not sign');
+  const unsigned = cli(['gate', 'submit', ...url, '--proposal', file, '--dry-run']);
+  assert.notEqual(unsigned.code, 0, 'a proposal without a quorum must be refused before it is sent');
+
+  const signed = cli(['gate', 'sign', '--network', 'mainnet', '--proposal', file, '--keystore', ctx.gateKeystore]);
+  assert.equal(signed.code, 0, signed.err);
+  for (const text of [signed.out, signed.err, readFileSync(file, 'utf8')]) {
+    assert.ok(!text.includes(GATE_PASS), 'the passphrase never appears');
+    assert.ok(!/privateKey|secretKey/i.test(text), 'no private material appears');
+  }
+  const dry = cli(['gate', 'submit', ...url, '--proposal', file, '--dry-run']);
+  assert.equal(dry.code, 0, dry.err);
+  assert.equal(JSON.parse(dry.out).accepted, false);
+
+  const sent = cli(['gate', 'submit', ...url, '--proposal', file]);
+  assert.equal(sent.code, 0, sent.err);
+  assert.equal(JSON.parse(sent.out).accepted, true, 'the live node admitted the update');
+  // This node is not producing blocks (--no-mine), so the set cannot change here: the update waits in the mempool.
+  const after = (await get(A.rpc, '/gate')).body;
+  assert.deepEqual(after.issuerKeys, [ctx.gateKey]);
+  assert.equal(after.epoch, 0);
 });
 
 test('status, peers and sync report an isolated node honestly (degraded, zero live peers)', { skip }, () => {

@@ -149,7 +149,7 @@ ignored.
 
 Measured on this tree by running a chain (`chain.status()`), not transcribed:
 
-The 1.6.1 identity values were superseded by protocol 1.7.0, which changed the params hash and every genesis
+The 1.6.1 identity values were superseded by 1.7.0, which changed the params hash and every genesis
 identity (the mining gate keys are committed in genesis). The live values are the ones `genesis init --network <name>`
 prints and the CHANGELOG records; they are deliberately not repeated here, so this report cannot drift from them.
 

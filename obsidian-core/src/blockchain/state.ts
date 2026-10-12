@@ -54,6 +54,9 @@ export function emptyGenesisState(): GenesisState {
     amount: CONSENSUS_PARAMS.genesisAllocation,
     bootstrapValidatorKeys: [],
     miningGateKeys: [],
+    gateKeysActive: [],
+    gateKeysRevoked: [],
+    gateEpoch: 0,
   };
 }
 
@@ -229,6 +232,9 @@ export class WorldState {
         ...this.s.genesis,
         bootstrapValidatorKeys: [...this.s.genesis.bootstrapValidatorKeys],
         miningGateKeys: [...this.s.genesis.miningGateKeys],
+        gateKeysActive: [...this.s.genesis.gateKeysActive],
+        gateKeysRevoked: [...this.s.genesis.gateKeysRevoked],
+        gateEpoch: this.s.genesis.gateEpoch,
       },
       names: Object.fromEntries([...this.s.names.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
       oracle: { ...this.s.oracle, observations: { ...this.s.oracle.observations } },
@@ -267,10 +273,23 @@ export class WorldState {
           `this build requires snapshot format ${STATE_SNAPSHOT_VERSION}`,
       );
     }
+    if (
+      !Array.isArray(snapshot.genesis.gateKeysActive) ||
+      !Array.isArray(snapshot.genesis.gateKeysRevoked) ||
+      !Number.isSafeInteger(snapshot.genesis.gateEpoch)
+    ) {
+      throw new Error(
+        `state snapshot is missing the gate authority state (format ${snapshot.snapshotVersion ?? 'unknown'}); ` +
+          `this build requires snapshot format ${STATE_SNAPSHOT_VERSION}`,
+      );
+    }
     s.genesis = {
       ...snapshot.genesis,
       bootstrapValidatorKeys: [...(snapshot.genesis.bootstrapValidatorKeys ?? [])],
       miningGateKeys: [...snapshot.genesis.miningGateKeys],
+      gateKeysActive: [...snapshot.genesis.gateKeysActive],
+      gateKeysRevoked: [...snapshot.genesis.gateKeysRevoked],
+      gateEpoch: snapshot.genesis.gateEpoch,
     };
     for (const [k, v] of Object.entries(snapshot.names)) s.names.set(k, { ...v });
     s.oracle = { ...snapshot.oracle, observations: { ...snapshot.oracle.observations } };
@@ -806,6 +825,16 @@ export class WorldState {
     if (!Number.isSafeInteger(offenceHeight) || offenceHeight < tenure.from) return false;
     if (tenure.to !== undefined && offenceHeight > tenure.to) return false;
     return true;
+  }
+
+  /** Install the result of a verified gate authority update. The caller has already checked every rule. */
+  applyGateUpdate(next: { active: string[]; revoked: string[]; epoch: number; added: string[]; removed: string[] }): void {
+    this.s.genesis.gateKeysActive = [...next.active];
+    this.s.genesis.gateKeysRevoked = [...next.revoked];
+    this.s.genesis.gateEpoch = next.epoch;
+    for (const key of next.removed) this.delta('SET', `genesis.gateKeys.revoked.${key}`, true, 'GATE_AUTHORITY');
+    for (const key of next.added) this.delta('SET', `genesis.gateKeys.active.${key}`, true, 'GATE_AUTHORITY');
+    this.delta('SET', 'genesis.gateEpoch', next.epoch, 'GATE_AUTHORITY');
   }
 
   applyEquivocationSlash(

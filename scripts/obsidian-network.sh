@@ -343,7 +343,8 @@ cmd_start() {
     resolve_passphrase
     export OBSIDIAN_MINING_GATE_PUBLIC_KEYS="$GATE_PUBLIC_KEYS"
     announce_seeds
-    local args=(dist/index.js start --network "$NETWORK" --data-dir "$NODE_DATA" --rpc-port "$RPC" --p2p-port "$P2P")
+    # This script manages the interface itself (pid file, invitation, gate settings), so the node must not also host one.
+    local args=(dist/index.js start --network "$NETWORK" --data-dir "$NODE_DATA" --rpc-port "$RPC" --p2p-port "$P2P" --no-interface)
     [ -z "${OBSIDIAN_NO_MINE:-}" ] || args+=(--no-mine)
     [ -z "${OBSIDIAN_SEED_NODES:-}" ] || args+=(--seeds "$OBSIDIAN_SEED_NODES")
     say "starting the $NETWORK node:  (cd $CORE_DIR && node ${args[*]})"

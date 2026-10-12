@@ -21,7 +21,9 @@ Error shape is stable:
 | `GET /version` | version metadata and the minimum supported core version |
 | `GET /genesis` | the genesis document, its id and hash |
 | `GET /supply` | total, maximum, mining pool, treasury, per-metric breakdown, invariant result |
-| `GET /nodes`, `GET /peers` | known peers with height, genesis id, latency, direction |
+| `GET /nodes` | known peers with height, genesis id, latency, direction (public by design) |
+| `GET /peers` | peer **counts** for the public; full detail (addresses, direction, latency) only for a local caller, or when `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL` is set |
+| `GET /gate` | the live mining gate set: `issuerKeys` (active), `revokedKeys`, `epoch`, `quorum`, network and chain ids; public keys only |
 | `GET /network` | network name, chain id, address prefix, p2p magic, genesis id, params hash and versions. `domains` lists the official hostnames **of this network only** (mainnet: `obsmainnet.us.ci`, `api.obsmainnet.us.ci` and its sites; devnet: `devnet.obsmainnet.us.ci`; testnet and staging likewise), so a practice chain cannot vouch for the names people use to check a mainnet address. `trust` says whether this node answers pages on the official domain and by which patterns; see [trusted-domains.md](trusted-domains.md) |
 | `GET /oracle` | current median price, sources, submission ages |
 | `GET /validators` | validator records, bonds, commission, missed slots, and the slashing rule: `slashing` (the parameter, the derived amount, the Mining Pool destination, a `treasuryShareObs` of zero, who may submit) plus `appliedSlashes` — the most recent page of slashes this chain applied, with canonical evidence ids, alongside `slashing.count` (the exact total) and `slashing.shown` (the page size). The ledger itself is unbounded consensus state; the HTTP answer is not |
@@ -74,6 +76,11 @@ identity on every node (`ERR_BAD_SIGNATURE`, `ERR_UNAUTHORIZED`,
 `ERR_WRONG_NETWORK`, `ERR_WRONG_CHAIN_ID`, `ERR_NOT_YET_VALID` for evidence about
 a height the chain has not reached, `ERR_REPLAY` for evidence already applied).
 See [consensus.md](consensus.md) §4.3.
+
+Changes to the mining gate keys are submitted as a signed transaction of type `GATE_AUTHORITY` (13), encoded with
+`POST /tx/encode` using `"type": "GATE_AUTHORITY"` (and decoded with the same route and a `body`). It carries no value and
+pays no gas; it is valid only with approvals from a majority of the current gate keys for the next epoch. Use
+`obsidian gate propose|sign|submit` rather than building it by hand. See [gate-authority.md](gate-authority.md).
 
 A node never accepts a transaction it cannot verify: signature, nonce, gas,
 balance, replay status, network id and protocol version are all checked before the

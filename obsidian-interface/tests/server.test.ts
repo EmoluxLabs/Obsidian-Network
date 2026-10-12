@@ -11,7 +11,7 @@
 import { createServer, type Server } from 'node:http';
 import { createHmac } from 'node:crypto';
 import { connect } from 'node:net';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -57,6 +57,10 @@ interface Harness {
   poolCheck: () => Promise<void>;
   /** Every request the stub node received, as `METHOD /path`. */
   requests: string[];
+  /** The `via` header the fake node saw on each request, in order (undefined when absent). */
+  upstreamVia: (string | undefined)[];
+  /** What the fake node answers for `/gate`: the active issuer keys, or undefined for 404 (an older node). */
+  setGateKeys: (keys: string[] | undefined) => void;
   /** The gate issuer this harness serves with (only when started with `gate: true`). */
   gateIssuer?: GateIssuer;
   /** Make the server's transaction decoder fail to load, as if web/core were missing. */
@@ -169,7 +173,7 @@ async function testGateIssuer(): Promise<{ issuer: GateIssuer; path: string }> {
   return { issuer: await loadGateIssuer({ keystorePath: path, passphrase: GATE_PASSPHRASE, coreDir: REAL_CORE }), path };
 }
 
-async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[]; dataDir?: string; gate?: boolean } = {}): Promise<Harness> {
+async function startHarness(options: { stubStatusFails?: number; nodeUrls?: string[]; dataDir?: string; gate?: boolean; role?: 'primary' | 'edge'; primaryUrl?: string } = {}): Promise<Harness> {
   // Every harness gets its own Genesis Invitation: the first account on a
   // deployment must present one, so the tests need the plaintext.
   const genesis = newGenesisInvitation();
@@ -189,9 +193,22 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
   }
 
   const requests: string[] = [];
+  const upstreamVia: (string | undefined)[] = [];
+  let fakeGateKeys: string[] | undefined;
   let statusFailures = options.stubStatusFails ?? 0;
   const fakeNode = createServer((request, response) => {
     requests.push(`${request.method} ${request.url}`);
+    upstreamVia.push(request.headers.via as string | undefined);
+    if (request.url === '/gate' && fakeGateKeys) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ issuerKeys: fakeGateKeys, epoch: 1 }));
+      return;
+    }
+    if (request.url === '/peers') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ p2p: {}, connected: [], known: [], detail: 'counts-only' }));
+      return;
+    }
     if (request.url === '/status' && statusFailures > 0) {
       statusFailures -= 1;
       response.writeHead(500, { 'content-type': 'application/json' });
@@ -272,6 +289,8 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
     maxInvitesPerAccount: 5,
     genesisInviteHash: genesis.hash,
     trustProxy: false,
+    role: options.role ?? 'primary',
+    primaryUrl: options.primaryUrl,
     logLevel: 'error',
   };
 
@@ -305,6 +324,11 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
       await server.pool.checkNow();
     },
     requests,
+    upstreamVia,
+    setGateKeys: (keys) => {
+      fakeGateKeys = keys;
+      (server as unknown as { gateKeysCache?: unknown }).gateKeysCache = undefined;
+    },
     breakCore: () => {
       const failed = Promise.reject(new Error('core is missing'));
       failed.catch(() => undefined);
@@ -316,7 +340,7 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
 
 const running: Harness[] = [];
 
-async function harness(options: { stubStatusFails?: number; nodeUrls?: string[]; gate?: boolean } = {}): Promise<Harness> {
+async function harness(options: { stubStatusFails?: number; nodeUrls?: string[]; gate?: boolean; role?: 'primary' | 'edge'; primaryUrl?: string } = {}): Promise<Harness> {
   const created = await startHarness(options);
   running.push(created);
   return created;
@@ -784,7 +808,70 @@ describe('sessions', () => {
   });
 });
 
+describe('an edge host (the account store lives on ONE primary)', () => {
+  const statefulRoutes: [string, string][] = [
+    ['POST', '/api/auth/register'],
+    ['POST', '/api/auth/login'],
+    ['GET', '/api/auth/me'],
+    ['GET', '/api/auth/config'],
+    ['POST', '/api/auth/recover'],
+    ['POST', '/api/auth/mfa/setup'],
+    ['POST', '/api/auth/invites'],
+    ['POST', '/api/wallet/link/challenge'],
+    ['POST', '/api/wallet/link'],
+    ['POST', '/api/mining/certificate'],
+  ];
+
+  it('refuses every account, wallet-link and certificate route with a clear code, and creates no account', async () => {
+    const dataDir = scratch();
+    const h = await harness({ role: 'edge', primaryUrl: 'https://app.example.test', gate: true, dataDir } as never);
+    for (const [method, path] of statefulRoutes) {
+      const response = await fetch(`${h.origin}${path}`, { method, headers: { 'content-type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+      expect(response.status, `${method} ${path}`).toBe(503);
+      const body = (await response.json()) as { code: string; role: string; primary?: string };
+      expect(body.code).toBe('ERR_EDGE_READ_ONLY');
+      expect(body.role).toBe('edge');
+      expect(body.primary).toBe('https://app.example.test');
+    }
+    // The registration that WOULD have worked on a primary left nothing behind.
+    const created = await h.signIn('founder', { inviteCode: h.genesisCode });
+    expect(created.status).toBe(503);
+    const file = join(dataDir, 'interface-accounts.json');
+    const stored = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { accounts?: unknown[] }) : { accounts: [] };
+    expect(stored.accounts ?? []).toHaveLength(0);
+  });
+
+  it('still serves the chain reads, the transaction relay for non-claims, and reports its role', async () => {
+    const h = await harness({ role: 'edge' } as never);
+    await h.poolCheck();
+    expect((await fetch(`${h.origin}/api/rpc?path=/names`)).status).toBe(200);
+    expect((await fetch(`${h.origin}/api/health`)).status).toBe(200);
+    const ready = await fetch(`${h.origin}/api/ready`);
+    expect((await ready.json() as { role: string }).role).toBe('edge');
+  });
+
+  it('a primary says so, and answers the same routes normally', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const ready = await fetch(`${h.origin}/api/ready`);
+    expect((await ready.json() as { role: string }).role).toBe('primary');
+    expect((await fetch(`${h.origin}/api/auth/config`)).status).toBe(200);
+  });
+});
+
 describe('node proxy', () => {
+  it('marks every call it makes to a node as proxied, so a node on this host does not show its peer addresses to visitors', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const before = h.upstreamVia.length;
+    const response = await fetch(`${h.origin}/api/rpc?path=/peers`);
+    expect(response.status).toBe(200);
+    expect(h.upstreamVia.slice(before)).toEqual(['1.1 obsidian-interface']);
+    // And so does a read of anything else the proxy passes through.
+    await fetch(`${h.origin}/api/rpc?path=/names`);
+    expect(h.upstreamVia.slice(before).every((v) => v === '1.1 obsidian-interface')).toBe(true);
+  });
+
   it('proxies an allowlisted read and says which node answered', async () => {
     const h = await harness();
     await h.poolCheck();
@@ -1198,6 +1285,21 @@ describe('the mining certificate (protocol 1.7.0: the chain refuses a claim with
     expect(() => assertMiningGate(keys, gate, subject(KEYS.other.address), gate.issuedAt + 5)).toThrow();
     expect(() => assertMiningGate(keys, gate, subject(KEYS.mine.address, 'cd'.repeat(32)), gate.issuedAt + 5)).toThrow();
     expect(() => assertMiningGate(keys, gate, subject(KEYS.mine.address), gate.issuedAt + 3600)).toThrow(/expired/);
+  });
+
+  it('refuses to issue when the chain says this platform key is no longer an active issuer, and issues again when it is', async () => {
+    const h = await harness({ gate: true });
+    const cookie = await account(h, { link: KEYS.mine, mfa: true });
+    await h.poolCheck();
+    h.setGateKeys(['02' + 'ab'.repeat(32)]); // the chain rotated this platform's key out
+    const refused = await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID }, cookie);
+    expect(refused.status).toBe(503);
+    expect(await code(refused)).toBe('ERR_GATE_KEY_INACTIVE');
+    h.setGateKeys([h.gateIssuer!.publicKey, '02' + 'ab'.repeat(32)]);
+    expect((await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID }, cookie)).status).toBe(200);
+    // A node that cannot say (an older node, or none reachable) does not stop issuance: the chain stays the authority.
+    h.setGateKeys(undefined);
+    expect((await ask(h, { address: KEYS.mine.address, claimId: CLAIM_ID }, cookie)).status).toBe(200);
   });
 
   it('issues nothing without a session', async () => {

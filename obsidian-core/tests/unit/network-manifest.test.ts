@@ -28,6 +28,7 @@ import {
   writeManifest,
 } from '../../src/config/network-manifest.js';
 import { generateKeyPair } from '../../src/crypto/keys.js';
+import { Keystore } from '../../src/crypto/keystore.js';
 import { getNetwork } from '../../src/protocol/networks.js';
 
 const NET = getNetwork('devnet');
@@ -224,6 +225,51 @@ describe('the gate authority key', () => {
   it('refuses to generate a second authority when gate keys are already configured', () => {
     const loaded = loadedFor(scratch(), { miningGatePublicKeys: [pub()] });
     expect(() => initNetwork(loaded, { generateGateKey: true, gatePassphrase: PASS })).toThrow(/already configured/);
+  });
+});
+
+describe('several gate authority keys', () => {
+  it('creates N independent encrypted keystores, commits all N public keys, and says how many approvals a change needs', () => {
+    const loaded = loadedFor(scratch());
+    const result = initNetwork(loaded, { generateGateKey: true, gatePassphrase: PASS, gateKeyCount: 3 });
+    const keys = result.gateAuthority!.keys;
+    expect(keys).toHaveLength(3);
+    expect(new Set(keys.map((k) => k.keystore)).size).toBe(3);
+    expect(new Set(keys.map((k) => k.publicKey)).size).toBe(3);
+    expect(result.miningGatePublicKeys).toEqual(keys.map((k) => k.publicKey).sort());
+    expect(result.gateAuthority!.quorum).toBe(2);
+    for (const { keystore, publicKey } of keys) {
+      expect(statSync(keystore).mode & 0o077).toBe(0);
+      expect(Keystore.read(keystore, PASS).publicKey).toBe(publicKey);
+      expect(readFileSync(keystore, 'utf8')).not.toContain(PASS);
+    }
+    expect(result.notes.join(' ')).not.toMatch(/WARNING/);
+  });
+
+  it('warns that fewer than three keys cannot protect a key from its own holder', () => {
+    const one = initNetwork(loadedFor(scratch()), { generateGateKey: true, gatePassphrase: PASS });
+    expect(one.notes.join(' ')).toMatch(/WARNING: 1 gate key/);
+    expect(one.gateAuthority!.quorum).toBe(1);
+  });
+
+  it('refuses a count outside 1..8 and writes nothing', () => {
+    for (const count of [0, 9, -1, 1.5]) {
+      const loaded = loadedFor(scratch());
+      expect(() => initNetwork(loaded, { generateGateKey: true, gatePassphrase: PASS, gateKeyCount: count })).toThrow(/1 to 8/);
+      expect(existsSync(manifestPath(loaded.config.dataDir))).toBe(false);
+    }
+  });
+
+  it('will not overwrite ANY of the keystore files, and writes nothing if one exists', () => {
+    const root = scratch();
+    const loaded = loadedFor(root);
+    const gateDir = join(root, 'gate');
+    mkdirSync(gateDir, { recursive: true });
+    const second = join(gateDir, 'devnet-mining-gate-2.keystore.json');
+    writeFileSync(second, 'precious');
+    expect(() => initNetwork(loaded, { generateGateKey: true, gatePassphrase: PASS, gateDir, gateKeyCount: 3 })).toThrow(NetworkIdentityError);
+    expect(readdirSync(gateDir)).toEqual(['devnet-mining-gate-2.keystore.json']);
+    expect(readFileSync(second, 'utf8')).toBe('precious');
   });
 });
 

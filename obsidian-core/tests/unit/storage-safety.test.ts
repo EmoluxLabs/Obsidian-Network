@@ -277,7 +277,7 @@ describe('data directory lock under contention (separate processes)', () => {
         `import { acquireDataDirLock } from './lock.mjs';
 const [dir, startAt] = [process.argv[2], Number(process.argv[3])];
 while (Date.now() < startAt) {}
-try { const l = acquireDataDirLock(dir); process.stdout.write('OK\\n'); await new Promise((r) => setTimeout(r, 900)); l.release(); }
+try { const l = acquireDataDirLock(dir); process.stdout.write('OK\\n'); await new Promise((r) => { process.stdin.on('end', r); process.stdin.resume(); setTimeout(r, 20000).unref(); }); l.release(); }
 catch { process.stdout.write('REFUSED\\n'); }
 `,
       );
@@ -286,16 +286,25 @@ catch { process.stdout.write('REFUSED\\n'); }
         mkdirSync(dir, { recursive: true });
         writeFileSync(join(dir, 'LOCK'), '999999\n'); // a pid nobody owns
         const startAt = Date.now() + 800;
+        // A winner holds the lock until the parent has heard from every starter (it cannot release early because a
+        // loaded machine was slow to start a late child), so the count below is exact however slow the machine is.
+        const children: ReturnType<typeof spawn>[] = [];
         const outcomes = await Promise.all(
           Array.from({ length: 8 }, () =>
             new Promise<string>((resolve) => {
               const child = spawn(process.execPath, [join(work, 'child.mjs'), dir, String(startAt)]);
+              children.push(child);
               let out = '';
-              child.stdout.on('data', (d) => (out += d));
+              child.stdout!.on('data', (d) => {
+                out += d;
+                if (out.includes('\n')) resolve(out.trim());
+              });
               child.on('close', () => resolve(out.trim()));
             }),
           ),
         );
+        for (const child of children) child.stdin!.end();
+        await Promise.all(children.map((child) => new Promise((done) => (child.exitCode !== null ? done(null) : child.on('close', done)))));
         expect(outcomes.filter((o) => o === 'OK')).toHaveLength(1);
         expect(outcomes.filter((o) => o === 'REFUSED')).toHaveLength(7);
       }

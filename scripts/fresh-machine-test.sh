@@ -181,7 +181,7 @@ done
 
 log "8. a second devnet node, from the guide's own command"
 export OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters'
-( cd obsidian-core && exec setsid nohup node dist/index.js start --network devnet --data-dir "$FM/data/devnet/node2" --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631 </dev/null >"$FM/node2.log" 2>&1 ) &
+( cd obsidian-core && OBSIDIAN_NODE_ONLY=1 exec setsid nohup node dist/index.js start --network devnet --data-dir "$FM/data/devnet/node2" --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631 </dev/null >"$FM/node2.log" 2>&1 ) &
 echo $! > "$FM/node2.pid"
 unset OBSIDIAN_KEYSTORE_PASSPHRASE
 sleep 24
@@ -194,7 +194,7 @@ kill "$(cat "$FM/node2.pid")" 2>/dev/null; sleep 2
 
 log "9. networks refuse each other"
 export OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters'
-( cd obsidian-core && exec setsid nohup node dist/index.js start --network devnet --data-dir "$FM/data/devnet/node3" --rpc-port 38660 --p2p-port 38661 --seeds 127.0.0.1:8631 </dev/null >"$FM/node3.log" 2>&1 ) &
+( cd obsidian-core && OBSIDIAN_NODE_ONLY=1 exec setsid nohup node dist/index.js start --network devnet --data-dir "$FM/data/devnet/node3" --rpc-port 38660 --p2p-port 38661 --seeds 127.0.0.1:8631 </dev/null >"$FM/node3.log" 2>&1 ) &
 echo $! > "$FM/node3.pid"
 unset OBSIDIAN_KEYSTORE_PASSPHRASE
 sleep 30

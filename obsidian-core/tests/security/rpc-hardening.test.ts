@@ -243,6 +243,36 @@ describe('RPC request limits', () => {
     expect(unknown.body).toMatchObject({ error: 'unknown transaction type NOT_A_TYPE', code: 'ERR_MALFORMED' });
   });
 
+  it('encodes and decodes a GATE_AUTHORITY body, and answers 400 (never 500) to bytes that are not one', async () => {
+    const key = (n: number): string => `02${String(n).padStart(2, '0').repeat(32)}`;
+    const payload = { op: 1, epoch: 1, add: [key(1)], remove: [key(2), key(3)], approvals: [{ key: key(4), signature: 'ab'.repeat(64) }] };
+    const encoded = await post('/tx/encode', { type: 'GATE_AUTHORITY', payload });
+    expect(encoded.status).toBe(200);
+    expect(encoded.body.body).toMatch(/^[0-9a-f]+$/);
+    const decoded = await post('/tx/encode', { type: 'GATE_AUTHORITY', body: encoded.body.body });
+    expect(decoded.status).toBe(200);
+    expect(decoded.body.decoded).toEqual(payload);
+
+    for (const garbage of ['00', 'ff'.repeat(40), '01' + '00000001' + 'ffffffff']) {
+      const bad = await post('/tx/encode', { type: 'GATE_AUTHORITY', body: garbage });
+      expect(bad.status, garbage).toBe(400);
+      expect(bad.body.code).toBe('ERR_MALFORMED');
+    }
+    // more keys than one update may carry is refused when decoding, not left for consensus to find
+    const big = await post('/tx/encode', { type: 'GATE_AUTHORITY', payload: { ...payload, add: Array.from({ length: 9 }, (_, i) => key(10 + i)) } });
+    const tooMany = await post('/tx/encode', { type: 'GATE_AUTHORITY', body: big.body.body });
+    expect(tooMany.status).toBe(400);
+  });
+
+  it('publishes the live gate set without any secret', async () => {
+    const response = await get('/gate');
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty('epoch', 0);
+    expect(Array.isArray(response.body.issuerKeys)).toBe(true);
+    expect(Array.isArray(response.body.revokedKeys)).toBe(true);
+    expect(JSON.stringify(response.body)).not.toMatch(/private|secret|passphrase/i);
+  });
+
   it('requires a valid address for balance lookups', async () => {
     const bad = await post('/wallet/balance', { address: 'obs1notarealaddress' });
     expect(bad.status).toBe(400);

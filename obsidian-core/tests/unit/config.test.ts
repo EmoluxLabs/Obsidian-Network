@@ -166,7 +166,7 @@ describe('one network, named once', () => {
     if (!existsSync(CLI)) return;
     const result = spawnSync(process.execPath, [CLI, 'start', '--network', 'devnet', '--offline'], {
       encoding: 'utf8',
-      env: { ...process.env, OBSIDIAN_NETWORK: 'mainnet' },
+      env: { ...process.env, OBSIDIAN_NETWORK: 'mainnet', OBSIDIAN_NODE_ONLY: '1' },
       timeout: 20_000,
     });
     expect(result.status).toBe(1);

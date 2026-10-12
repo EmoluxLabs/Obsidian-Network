@@ -49,12 +49,20 @@ export interface MempoolOptions {
   maxEvidencePerSender: number;
   /** Total canonical evidence bytes the pool will hold. */
   maxEvidenceBytes: number;
+  /**
+   * Gate authority updates (protocol 1.8.0) are free to submit and cost up to a handful of signature checks, like
+   * evidence. Only one can ever apply per epoch, so the pool needs very few of them.
+   */
+  maxPendingGateUpdates: number;
+  maxGateUpdatesPerSender: number;
 }
 
 export const DEFAULT_MEMPOOL_OPTIONS: MempoolOptions = {
   maxPendingEvidence: 256,
   maxEvidencePerSender: 8,
   maxEvidenceBytes: 4 * 1024 * 1024,
+  maxPendingGateUpdates: 16,
+  maxGateUpdatesPerSender: 2,
   maxTransactions: 10_000,
   maxBytes: 32 * 1024 * 1024,
   maxPerSender: 64,
@@ -69,6 +77,8 @@ export class Mempool {
   private evidenceCount = 0;
   private evidenceBytes = 0;
   private readonly evidencePerSender = new Map<string, number>();
+  private gateCount = 0;
+  private readonly gatePerSender = new Map<string, number>();
 
   constructor(private readonly options: MempoolOptions = DEFAULT_MEMPOOL_OPTIONS) {}
 
@@ -106,6 +116,15 @@ export class Mempool {
       this.evidenceBytes += evidenceSize;
       this.evidencePerSender.set(tx.sender, perSender + 1);
     }
+    if (tx.type === TxType.GATE_AUTHORITY) {
+      const perSender = this.gatePerSender.get(tx.sender) ?? 0;
+      if (this.gateCount >= this.options.maxPendingGateUpdates) {
+        return { accepted: false, reason: `pending gate update quota (${this.options.maxPendingGateUpdates}) reached` };
+      }
+      if (perSender >= this.options.maxGateUpdatesPerSender) {
+        return { accepted: false, reason: `sender gate update quota (${this.options.maxGateUpdatesPerSender}) reached` };
+      }
+    }
     if (this.byId.size >= this.options.maxTransactions || this.bytes + bytes > this.options.maxBytes) {
       if (!this.evictFor(bytes, tx.gas)) {
         return {
@@ -117,6 +136,10 @@ export class Mempool {
     this.sequence += 1;
     const entry: MempoolEntry = { tx, bytes, receivedAt, seq: this.sequence };
     this.byId.set(tx.id, entry);
+    if (tx.type === TxType.GATE_AUTHORITY) {
+      this.gateCount += 1;
+      this.gatePerSender.set(tx.sender, (this.gatePerSender.get(tx.sender) ?? 0) + 1);
+    }
     senderSet.add(tx.id);
     this.bySender.set(tx.sender, senderSet);
     this.bytes += bytes;
@@ -159,6 +182,12 @@ export class Mempool {
       const perSender = this.evidencePerSender.get(entry.tx.sender) ?? 0;
       if (perSender <= 1) this.evidencePerSender.delete(entry.tx.sender);
       else this.evidencePerSender.set(entry.tx.sender, perSender - 1);
+    }
+    if (entry.tx.type === TxType.GATE_AUTHORITY) {
+      this.gateCount = Math.max(0, this.gateCount - 1);
+      const perSender = this.gatePerSender.get(entry.tx.sender) ?? 0;
+      if (perSender <= 1) this.gatePerSender.delete(entry.tx.sender);
+      else this.gatePerSender.set(entry.tx.sender, perSender - 1);
     }
     const senderSet = this.bySender.get(entry.tx.sender);
     senderSet?.delete(txId);

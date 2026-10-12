@@ -59,6 +59,8 @@ import {
   snapshotExitCode,
 } from './cli/ops.js';
 import { existsSync, readFileSync } from 'node:fs';
+import { InterfaceSupervisor } from './cli/interface-supervisor.js';
+import { describeProposal, fetchGate, proposeGateUpdate, readProposal, renderGate, signProposal, submitProposal, writeProposal } from './cli/gate.js';
 
 function usage(): void {
   process.stdout.write(
@@ -74,6 +76,7 @@ function usage(): void {
       '  status | peers      Show what a running node reports (live connections, not saved peers)',
       '  sync [status]       Show local height against connected peers',
       '  doctor              Diagnose config, ports, keys, manifest, a running node and the interface',
+      '  gate <sub>          Mining gate authority: `gate status`, `gate propose --add k --remove k --out f`, `gate sign --proposal f --keystore k`, `gate submit --proposal f`',
       '  mainnet <command>   Shorthand for --network mainnet (also testnet | staging | devnet), e.g. `mainnet init`',
       '  node <command>      `node status`, `node peers`, `node sync status`, `node doctor`, `node start`',
       '  keygen              Create/show the node identity keystore',
@@ -102,9 +105,13 @@ function usage(): void {
       '  --mine              Enable block production (the default on every network)',
       '  --no-mine           Disable block production (follow and validate only)',
       '  --offline           Do not dial seed nodes',
+      '  --no-interface      `start`: run the node alone (or OBSIDIAN_NODE_ONLY=1); by default a built interface next to the node is run and supervised',
       '  --require-init      `start` refuses to create a NEW network here (or set OBSIDIAN_REQUIRE_INIT=1)',
       '  --generate-gate-key `init`: create the mining gate authority key (passphrase: OBSIDIAN_GATE_KEYSTORE_PASSPHRASE[_FILE])',
       '  --gate-dir <path>   `init`: where the encrypted gate key is written (default: <data-dir>/../gate-authority)',
+      '  --gate-key-count <n> `init --generate-gate-key`: create n gate keys (1-8, default 1; use 3+ so a stolen key can be revoked)',
+      '  --add/--remove <k,k> `gate propose`: compressed public keys to add or to revoke',
+      '  --proposal <file>   `gate sign|submit`: the proposal file (`--out <file>` on propose/sign; `--dry-run` on submit checks only)',
       '  --peer <url>        `join`: the peer\'s RPC base URL, e.g. http://203.0.113.5:8630',
       '  --genesis-id <hex>  `join`: the genesis id you were given out of band (40 hex characters)',
       '  --url <url>         `status|peers|sync|doctor`: ask this node instead of the configured local one',
@@ -141,10 +148,17 @@ interface CliOptions {
   genesisId?: string;
   url?: string;
   json: boolean;
+  add?: string;
+  remove?: string;
+  proposal?: string;
+  out?: string;
+  gateKeyCount?: number;
+  dryRun: boolean;
+  noInterface: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
-  const options: CliOptions = { command: argv[0] ?? 'start', offline: false, requireInit: false, generateGateKey: false, json: false };
+  const options: CliOptions = { command: argv[0] ?? 'start', offline: false, requireInit: false, generateGateKey: false, json: false, dryRun: false, noInterface: false };
   const rest = argv.slice(1);
   options.sub = rest[0] && !rest[0].startsWith('--') ? rest[0] : undefined;
   for (let i = 0; i < rest.length; i += 1) {
@@ -221,6 +235,27 @@ function parseArgs(argv: string[]): CliOptions {
       case '--genesis-id':
         options.genesisId = value();
         break;
+      case '--add':
+        options.add = value();
+        break;
+      case '--remove':
+        options.remove = value();
+        break;
+      case '--proposal':
+        options.proposal = value();
+        break;
+      case '--out':
+        options.out = value();
+        break;
+      case '--gate-key-count':
+        options.gateKeyCount = whole();
+        break;
+      case '--no-interface':
+        options.noInterface = true;
+        break;
+      case '--dry-run':
+        options.dryRun = true;
+        break;
       case '--url':
         options.url = value();
         break;
@@ -244,7 +279,7 @@ function parseArgs(argv: string[]): CliOptions {
 }
 
 const NETWORK_WORDS = ['mainnet', 'testnet', 'staging', 'devnet'];
-const COMMAND_WORDS = ['init', 'join', 'start', 'status', 'peers', 'sync', 'doctor', 'validate', 'keygen', 'health', 'finality'];
+const COMMAND_WORDS = ['init', 'join', 'start', 'status', 'peers', 'sync', 'doctor', 'gate', 'validate', 'keygen', 'health', 'finality'];
 
 /** A mistake in how the command was typed: exit code 2, not 1, so scripts can tell it from a failed operation. */
 class UsageError extends Error {}
@@ -323,6 +358,20 @@ async function main(): Promise<void> {
     case 'start': {
       const loaded = loadFromCli(options, { requireExplicitNetwork: true });
       const runtime = await startNode({ ...loaded, offline: options.offline, requireInit });
+      // The interface is a separate, supervised process (see cli/interface-supervisor.ts). It follows the node: it is
+      // started after the node is up and stopped before it goes down. Never fatal: a node without an interface is a node.
+      const interfaceHost = new InterfaceSupervisor({
+        network: loaded.net.name,
+        nodeUrl: localBaseUrl(loaded),
+        nodeDataDir: loaded.config.dataDir,
+        portOffset: loaded.config.portOffset,
+        log: (level, message, fields) => process.stdout.write(`${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${message}${fields && Object.keys(fields).length ? ` ${JSON.stringify(fields)}` : ''}\n`),
+      });
+      try {
+        await interfaceHost.start(options.noInterface);
+      } catch (error) {
+        process.stderr.write(`interface not started: ${(error as Error).message}\n`);
+      }
       let stopping = false;
       const shutdown = async (signal: string): Promise<void> => {
         // A second Ctrl+C while the first is still draining must not start a second shutdown.
@@ -330,6 +379,7 @@ async function main(): Promise<void> {
         stopping = true;
         process.stdout.write(`\nreceived ${signal}, shutting down\n`);
         try {
+          await interfaceHost.stop();
           await runtime.stop();
           process.exit(0);
         } catch (error) {
@@ -350,6 +400,7 @@ async function main(): Promise<void> {
           generateGateKey: options.generateGateKey,
           gateDir: options.gateDir,
           gatePassphrase: options.generateGateKey ? gatePassphraseFromEnv() : undefined,
+          gateKeyCount: options.gateKeyCount,
         });
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       } catch (error) {
@@ -452,16 +503,19 @@ async function main(): Promise<void> {
       // chain (or on nothing), so say which one.
       const loaded = loadFromCli(options, { requireExplicitNetwork: true });
       const url = `http://${loaded.config.rpcHost === '0.0.0.0' ? '127.0.0.1' : loaded.config.rpcHost}:${loaded.config.rpcPort}/health`;
-      const response = await fetch(url);
-      process.stdout.write(`${JSON.stringify(await response.json(), null, 2)}\n`);
-      process.exitCode = response.ok ? 0 : 1;
+      const reply = await httpGetJson(url, { timeoutMs: 8000 });
+      process.stdout.write(`${JSON.stringify(reply.body, null, 2)}\n`);
+      process.exitCode = reply.status >= 200 && reply.status < 300 ? 0 : 1;
       return;
     }
 
     case 'finality': {
       const loaded = loadFromCli(options,{requireExplicitNetwork:true});
       const url=`http://${loaded.config.rpcHost==='0.0.0.0'?'127.0.0.1':loaded.config.rpcHost}:${loaded.config.rpcPort}/finality`;
-      const response=await fetch(url); process.stdout.write(`${JSON.stringify(await response.json(),null,2)}\n`); process.exitCode=response.ok?0:1; return;
+      const reply = await httpGetJson(url, { timeoutMs: 8000 });
+      process.stdout.write(`${JSON.stringify(reply.body, null, 2)}\n`);
+      process.exitCode = reply.status >= 200 && reply.status < 300 ? 0 : 1;
+      return;
     }
 
     case 'genesis': {
@@ -534,6 +588,49 @@ async function main(): Promise<void> {
         )}\n`,
       );
       return;
+    }
+
+    case 'gate': {
+      const loaded = loadFromCli(options, { requireExplicitNetwork: true });
+      const base = localBaseUrl(loaded, options.url);
+      try {
+        switch (options.sub) {
+          case 'status': {
+            const info = await fetchGate(base);
+            process.stdout.write(options.json ? `${JSON.stringify(info, null, 2)}\n` : renderGate(info));
+            return;
+          }
+          case 'propose': {
+            if (!options.add && !options.remove) throw new UsageError('gate propose needs --add <keys> and/or --remove <keys> (comma separated compressed public keys)');
+            const proposal = await proposeGateUpdate(base, { add: options.add, remove: options.remove });
+            if (options.out) {
+              writeProposal(options.out, proposal);
+              process.stdout.write(`${describeProposal(proposal)}\nwritten to ${options.out}. Send it to the key holders; each runs \`gate sign\`.\n`);
+            } else {
+              process.stdout.write(`${JSON.stringify(proposal, null, 2)}\n`);
+            }
+            return;
+          }
+          case 'sign': {
+            if (!options.proposal || !options.keystorePath) throw new UsageError('gate sign needs --proposal <file> and --keystore <the gate keystore file>');
+            const result = signProposal(readProposal(options.proposal), options.keystorePath, gatePassphraseFromEnv());
+            writeProposal(options.out ?? options.proposal, result.proposal);
+            process.stdout.write(`${describeProposal(result.proposal)}\nsigned as ${result.signer}; saved to ${options.out ?? options.proposal}\n`);
+            return;
+          }
+          case 'submit': {
+            if (!options.proposal) throw new UsageError('gate submit needs --proposal <file>');
+            const result = await submitProposal(base, readProposal(options.proposal), { dryRun: options.dryRun });
+            process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+            return;
+          }
+          default:
+            throw new UsageError('usage: gate status | propose | sign | submit (see --help)');
+        }
+      } catch (error) {
+        if (error instanceof UsageError) throw error;
+        return failWith(error);
+      }
     }
 
     case 'wallet': {

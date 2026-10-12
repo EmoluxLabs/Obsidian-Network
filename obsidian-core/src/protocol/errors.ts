@@ -50,6 +50,8 @@ export enum ErrCode {
   MINING_GATE_REQUIRED = 'ERR_MINING_GATE_REQUIRED',
   /** The gate certificate is malformed, expired, from an unknown issuer, or does not match this claim. */
   MINING_GATE_INVALID = 'ERR_MINING_GATE_INVALID',
+  /** A gate authority update is malformed, stale, unauthorised or would leave the gate unusable. */
+  GATE_AUTHORITY_INVALID = 'ERR_GATE_AUTHORITY_INVALID',
 
   // Genesis
   GENESIS_ALREADY_CLAIMED = 'ERR_GENESIS_ALREADY_CLAIMED',
@@ -156,6 +158,7 @@ export const ERR_MESSAGES: Record<ErrCode, string> = {
   [ErrCode.MINING_CLAIM_REPLAY]: 'This mining claim has already been accepted.',
   [ErrCode.MINING_GATE_REQUIRED]: 'A mining claim must carry a certificate from the mining gate (a signed-in, verified account).',
   [ErrCode.MINING_GATE_INVALID]: 'The mining gate certificate is not valid for this claim.',
+  [ErrCode.GATE_AUTHORITY_INVALID]: 'The mining gate authority update is not valid.',
   [ErrCode.GENESIS_ALREADY_CLAIMED]: 'The Genesis Allocation has already been claimed by another wallet.',
   [ErrCode.GENESIS_NOT_ELIGIBLE]: 'This wallet is not eligible for the Genesis Allocation.',
   [ErrCode.UNKNOWN_TX_TYPE]: 'Unknown transaction type for this protocol version.',

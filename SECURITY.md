@@ -78,7 +78,7 @@ stolen funds:
 * The node identity keystore signs metadata, heartbeats and attestations. It is
   not a wallet and should never hold funds.
 
-## The mining sign-up gate is a consensus rule (protocol 1.7.0)
+## The mining sign-up gate is a consensus rule (since 1.7.0)
 
 Account sign-up, invitations, MFA and "one wallet per account" are enforced by the platform
 (`obsidian-interface`), and since 1.7.0 the chain enforces that **only the platform can open the door**: a

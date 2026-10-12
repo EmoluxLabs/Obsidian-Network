@@ -111,7 +111,14 @@ Environment:
   OBSIDIAN_INTERFACE_PUBLIC_DIR, OBSIDIAN_INTERFACE_CORE_DIR,
   OBSIDIAN_INTERFACE_ALLOWED_ORIGINS, OBSIDIAN_INTERFACE_TRUST_OFFICIAL_DOMAINS,
   OBSIDIAN_INTERFACE_MAX_INVITES, OBSIDIAN_INTERFACE_TRUST_PROXY,
-  OBSIDIAN_INTERFACE_LOG_LEVEL
+  OBSIDIAN_INTERFACE_LOG_LEVEL,
+  OBSIDIAN_INTERFACE_ROLE (primary | edge, default primary), OBSIDIAN_INTERFACE_PRIMARY_URL
+
+Roles (protocol 1.8.0 — the account store lives on ONE host):
+  primary  holds the accounts, wallet links and the gate key. Run exactly one per network.
+  edge     serves the chain, explorer and wallet pages from its own nodes and refuses sign-in, account, wallet-link and
+           mining routes with ERR_EDGE_READ_ONLY (503), so a second host can take read traffic without a second,
+           diverging account store. Never give an edge the gate keystore.
 
 Mining gate (protocol 1.7.0 — the chain refuses a mining claim without a certificate from this key):
   OBSIDIAN_GATE_KEYSTORE                  encrypted issuer keystore (node scripts/generate-mining-gate-key.mjs)
@@ -206,6 +213,22 @@ export function loadInterfaceConfig(argv: string[] = process.argv.slice(2), env 
     throw new Error(`invalid --log-level: ${logLevel}`);
   }
 
+  const role = String(env.OBSIDIAN_INTERFACE_ROLE ?? 'primary').trim().toLowerCase();
+  if (role !== 'primary' && role !== 'edge') {
+    throw new Error(`OBSIDIAN_INTERFACE_ROLE must be "primary" or "edge", received "${role}"`);
+  }
+  const primaryUrl = (env.OBSIDIAN_INTERFACE_PRIMARY_URL ?? '').trim().replace(/\/+$/, '');
+  if (primaryUrl) {
+    let parsed: URL | undefined;
+    try {
+      parsed = new URL(primaryUrl);
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || parsed.username || parsed.password) {
+      throw new Error('OBSIDIAN_INTERFACE_PRIMARY_URL must be an http(s) URL without credentials');
+    }
+  }
   const siteRoot = resolve(String(flags.siteRoot ?? env.OBSIDIAN_INTERFACE_SITE_ROOT ?? defaultSiteRoot(cwd)));
   const config: InterfaceConfig = {
     ...DEFAULT_INTERFACE_CONFIG,
@@ -223,6 +246,8 @@ export function loadInterfaceConfig(argv: string[] = process.argv.slice(2), env 
     // The HASH only. The plaintext Genesis Invitation never enters the process.
     genesisInviteHash: (flags.genesisInviteHash ?? env.OBSIDIAN_GENESIS_INVITE_HASH) as string | undefined,
     trustProxy: flags.trustProxy === 'true' || env.OBSIDIAN_INTERFACE_TRUST_PROXY === 'true',
+    role,
+    primaryUrl,
     logLevel: logLevel as InterfaceConfig['logLevel'],
   };
 
@@ -288,6 +313,8 @@ export function describeInterfaceConfig(loaded: LoadedInterfaceConfig): Record<s
     // Presence only: never log the hash, and certainly never the code.
     genesisInvite: config.genesisInviteHash ? 'configured' : 'not configured',
     trustProxy: config.trustProxy,
+    role: config.role,
+    primaryUrl: config.primaryUrl ?? null,
     logLevel: config.logLevel,
   };
 }

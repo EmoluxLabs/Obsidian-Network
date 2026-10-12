@@ -278,7 +278,7 @@ test('a key made by hand opens only with the passphrase it was made with, and th
     // Start a staging node by hand, the way "the same thing by hand" in the guide does, long enough to make its key.
     spawnSync(process.execPath, ['dist/index.js', 'start', '--network', 'staging', '--data-dir', join(dir, 'staging', 'node'), '--rpc-port', '59930', '--p2p-port', '59931', '--log-level', 'warn'], {
       cwd: core,
-      env: { ...baseEnv, OBSIDIAN_KEYSTORE_PASSPHRASE: 'a-passphrase-made-by-hand' },
+      env: { ...baseEnv, OBSIDIAN_NODE_ONLY: '1', OBSIDIAN_KEYSTORE_PASSPHRASE: 'a-passphrase-made-by-hand' },
       timeout: 6_000,
     });
     assert.ok(existsSync(join(dir, 'staging', 'node', 'node-key.json')), 'the by-hand node made its key');

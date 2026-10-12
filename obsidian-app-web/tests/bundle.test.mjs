@@ -76,7 +76,7 @@ test('the bundle exports the surface the app imports', options, () => {
   }
   assert.equal(obsidian.TxType.MINING_CLAIM, 7);
   assert.equal(obsidian.OnsOp.REGISTER, 1);
-  assert.equal(obsidian.PROTOCOL_VERSION, '1.7.0');
+  assert.equal(obsidian.PROTOCOL_VERSION, '1.8.0');
 });
 
 test('the bundle derives the pinned address', options, () => {
@@ -99,7 +99,7 @@ test('the bundle signs and submits a real claim', options, async () => {
     loadVault: () => obsidian.loadVault(),
     loadAddress: () => ADDRESS,
     requestPassphrase: async () => 'correct horse battery staple',
-    getContext: async () => ({ chainId: 7777, protocolVersion: '1.7.0', protocolTime: 1_700_000_000 }),
+    getContext: async () => ({ chainId: 7777, protocolVersion: '1.8.0', protocolTime: 1_700_000_000 }),
     getNonce: async () => 7,
     getMiningStatus: async () => ({
       eligible: true,
@@ -130,7 +130,7 @@ test('the bundle refuses a wrong passphrase rather than signing garbage', option
     loadVault: () => obsidian.loadVault(),
     loadAddress: () => ADDRESS,
     requestPassphrase: async () => 'wrong',
-    getContext: async () => ({ chainId: 7777, protocolVersion: '1.7.0', protocolTime: 1_700_000_000 }),
+    getContext: async () => ({ chainId: 7777, protocolVersion: '1.8.0', protocolTime: 1_700_000_000 }),
     getNonce: async () => 7,
     getMiningStatus: async () => ({ eligible: true, nextClaimId: 'ab'.repeat(32), nextClaimSequence: 3 }),
     submit: async () => ({}),

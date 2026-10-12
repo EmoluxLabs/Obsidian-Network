@@ -7,17 +7,51 @@ consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
 The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.7.0 that is `bffeacb35532ba3df70cda8c27ed6c96` (see the note in 1.7.0 about gate keys).
+a node running it. For 1.8.0 that is `1d6cba55f0975f8b0d6345658f1c1cb1` (1.7.0 was `bffeacb35532ba3df70cda8c27ed6c96`).
 
 ---
 
-## [Unreleased]
+## [1.8.0] — 2026-10-12
 
-**Not consensus-breaking.** The params hash, the genesis documents and the genesis ids are unchanged (the 1.7.0
-ids in this file still apply) and the handshake is untouched. Nothing here changes a block, a transaction or a
-rule.
+**Consensus-breaking, new-genesis release for a pre-launch network.** Protocol and core version are `1.8.0`,
+the params hash is `1d6cba55f0975f8b0d6345658f1c1cb1`, `MIN_CORE_VERSION` is `1.8.0` and the state snapshot format is 5.
+A 1.8.0 node rejects 1.7.x and older peers at the handshake and refuses an older data directory; there is no
+migration, so this is for an unstarted network (or a disposable one reset on purpose). `v1.7.0` is untouched.
+Genesis ids of the built-in configurations at 1.8.0 (a real network commits its own gate keys and so has its own id;
+read it from `GET /health`): devnet `9e56e977b443aec428f3b59ce4880062250e7236`, testnet
+`7a5b20e504d6c0a278bf23799a7394d17470856f`, staging `3c4461cff67c0306d97ff8de150dcb8937eb2a5a`, mainnet
+`3722ae03f8e74d1ebd5f0dc70addc5122d7d7c70`.
 
-### Operations
+### Consensus: the mining gate keys can be rotated, revoked and recovered
+- New transaction type `GATE_AUTHORITY` (13), gas 0: adds and/or revokes gate issuer keys with approvals from a
+  strict majority of the current keys, for exactly the next epoch, bound to the network and chain
+  (domain `OBSIDIAN:GATE_AUTHORITY:v1`). At most 8 changes per direction, 1-8 active keys, revoked keys are permanent.
+- New state: `gateKeysActive`, `gateKeysRevoked`, `gateEpoch` (in the state root; `miningGateKeys` stays the immutable
+  genesis record). Certificates are checked against the ACTIVE set at the including block.
+- A lost majority cannot be recovered except by a new genesis (stated in `docs/gate-authority.md`).
+- Operator flow: `init --generate-gate-key --gate-key-count N`, `gate status|propose|sign|submit`; `/gate` publishes the live
+  set; `/tx/encode|decode` support the new type; the interface refuses to issue certificates (503
+  `ERR_GATE_KEY_INACTIVE`) when its own key is no longer active. See `docs/gate-authority.md`.
+
+### The node hosts the interface
+- `obsidian start` supervises the interface (found beside the core, or `OBSIDIAN_INTERFACE_DIR`) with restart backoff;
+  it never affects the node. Opt out: `--no-interface` or `OBSIDIAN_NODE_ONLY=1`. The helper script, the systemd units
+  and the test harnesses opt out because they manage their own interface.
+
+### Interface roles (the safe multi-host story)
+- `OBSIDIAN_INTERFACE_ROLE=primary|edge`. One `primary` holds accounts, wallet links and the gate key; an `edge` is
+  read-only and refuses account, wallet-link, certificate and mining-claim routes (503 `ERR_EDGE_READ_ONLY`).
+  Account state is deliberately **not** replicated. `/api/ready` reports the role.
+
+### Security
+- `/peers` (audit finding 6): full detail only to a local caller; the public gets counts. `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL`
+  restores the old behaviour. The interface proxy marks its requests so it never leaks the detail.
+- `health` and `finality` CLI commands are time-bounded (audit finding 7).
+
+### Release
+- The archives gain the web wallet, the web app, the extension and the desktop sources.
+
+### Operations (the work that followed 1.7.0)
 - `init`, `join`, `status`, `peers`, `sync [status]`, `doctor`, the `<network> <command>` and `node <command>` forms,
   `--require-init`, and an `obsidian` binary name next to `obsidian-core`. `init` records the network identity in
   `<data-dir>/network.json` and is idempotent; `join` adopts a network from a peer only if its keys reproduce a genesis
@@ -25,7 +59,7 @@ rule.
 - Node `GET /livez` and `GET /readyz`; interface `GET /api/ready`.
 - `start` resumes the network a directory was created as, and refuses a conflicting key list or network by name.
 
-### Security
+### Security (the same work)
 - **High:** the data-directory lock's stale-takeover was racy and could leave two processes holding it. Fixed and
   tested (`docs/security-audit-master.md`, finding 1).
 - **Medium:** `peers` counted sockets that had not finished the handshake. Only verified links are peers now; the rest

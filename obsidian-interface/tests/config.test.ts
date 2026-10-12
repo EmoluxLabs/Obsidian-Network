@@ -124,3 +124,22 @@ describe('configuration validation', () => {
     expect(config.siteRoot).toBe(explicit);
   });
 });
+
+describe('the interface role (protocol 1.8.0: the account store lives on one primary host)', () => {
+  const base = ['--network', 'devnet', '--nodes', 'http://127.0.0.1:38630'];
+  it('is primary unless the operator says edge', () => {
+    expect(loadInterfaceConfig(base, {}).config.role).toBe('primary');
+    expect(loadInterfaceConfig(base, { OBSIDIAN_INTERFACE_ROLE: 'edge' }).config.role).toBe('edge');
+    expect(loadInterfaceConfig(base, { OBSIDIAN_INTERFACE_ROLE: ' EDGE ' }).config.role).toBe('edge');
+  });
+  it('refuses a role it does not know, instead of quietly running as a primary', () => {
+    expect(() => loadInterfaceConfig(base, { OBSIDIAN_INTERFACE_ROLE: 'replica' })).toThrow(/primary" or "edge/);
+    expect(() => loadInterfaceConfig(base, { OBSIDIAN_INTERFACE_ROLE: 'secondary' })).toThrow();
+  });
+  it('accepts a primary URL, and refuses one with credentials or another scheme', () => {
+    expect(loadInterfaceConfig(base, { OBSIDIAN_INTERFACE_ROLE: 'edge', OBSIDIAN_INTERFACE_PRIMARY_URL: 'https://app.example.test/' }).config.primaryUrl).toBe('https://app.example.test');
+    expect(() => loadInterfaceConfig(base, { OBSIDIAN_INTERFACE_PRIMARY_URL: 'https://user:pw@app.example.test' })).toThrow(/credentials/);
+    expect(() => loadInterfaceConfig(base, { OBSIDIAN_INTERFACE_PRIMARY_URL: 'javascript:alert(1)' })).toThrow();
+    expect(() => loadInterfaceConfig(base, { OBSIDIAN_INTERFACE_PRIMARY_URL: 'not a url' })).toThrow();
+  });
+});

@@ -37,6 +37,8 @@ Group=obsidian
 WorkingDirectory=/opt/obsidian/obsidian-core
 EnvironmentFile=/etc/obsidian/%i/node.env
 Environment=NODE_ENV=production
+# The interface has its own unit; a node started by systemd does not also host one (see docs/operations.md).
+Environment=OBSIDIAN_NODE_ONLY=1
 StateDirectory=obsidian/%i
 StateDirectoryMode=0700
 ExecStart=/usr/bin/node dist/index.js start --network %i --data-dir /var/lib/obsidian/%i/node

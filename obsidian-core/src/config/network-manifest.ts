@@ -34,6 +34,8 @@ import { join } from 'node:path';
 import { atomicWriteFile } from '../storage/atomic.js';
 import { Keystore } from '../crypto/keystore.js';
 import { generateKeyPair } from '../crypto/keys.js';
+import { gateQuorum } from '../mining/gate-authority.js';
+import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import { blockHash } from '../blockchain/block.js';
 import {
   buildGenesisBlock,
@@ -244,6 +246,12 @@ export interface InitOptions {
   gateDir?: string;
   /** Passphrase for the gate keystore (at least 12 characters). Never logged. */
   gatePassphrase?: string;
+  /**
+   * How many gate authority keys to create (1..maxIssuers, default 1). A key can later be rotated or revoked only by a
+   * majority of the active keys, so 1 key means that key can replace itself and nothing else protects it: use 3 or
+   * more, held by different people or machines, for any network that matters.
+   */
+  gateKeyCount?: number;
 }
 
 export interface InitResult {
@@ -258,7 +266,16 @@ export interface InitResult {
   manifest: string;
   miningGatePublicKeys: string[];
   bootstrapValidatorPublicKeys: string[];
-  gateAuthority?: { generated: boolean; keystore: string; publicKey: string };
+  gateAuthority?: {
+    generated: boolean;
+    /** The first key's keystore and public key (kept for scripts written against 1.7.0). */
+    keystore: string;
+    publicKey: string;
+    /** Every key created, in order. */
+    keys: { keystore: string; publicKey: string }[];
+    /** Approvals a later rotation or revocation will need. */
+    quorum: number;
+  };
   notes: string[];
 }
 
@@ -309,29 +326,56 @@ export function initNetwork(loaded: LoadedConfig, options: InitOptions = {}): In
       throw new NetworkIdentityError('set OBSIDIAN_GATE_KEYSTORE_PASSPHRASE (or OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE) to at least 12 characters before generating the gate authority');
     }
     const gateDir = options.gateDir ?? join(config.dataDir, '..', 'gate-authority');
-    const target = join(gateDir, `${net.name}-mining-gate.keystore.json`);
-    if (existsSync(target)) {
-      throw new NetworkIdentityError(
-        `${target} already exists but no network is recorded here. Refusing to overwrite an issuer key: move it aside, or ` +
-          'configure its public key explicitly (OBSIDIAN_MINING_GATE_PUBLIC_KEYS) to adopt it.',
-      );
+    const count = options.gateKeyCount ?? 1;
+    if (!Number.isSafeInteger(count) || count < 1 || count > CONSENSUS_PARAMS.miningGate.maxIssuers) {
+      throw new NetworkIdentityError(`--gate-key-count must be a whole number from 1 to ${CONSENSUS_PARAMS.miningGate.maxIssuers}`);
+    }
+    const targets = Array.from({ length: count }, (_, i) =>
+      join(gateDir, count === 1 ? `${net.name}-mining-gate.keystore.json` : `${net.name}-mining-gate-${i + 1}.keystore.json`),
+    );
+    for (const target of targets) {
+      if (existsSync(target)) {
+        throw new NetworkIdentityError(
+          `${target} already exists but no network is recorded here. Refusing to overwrite an issuer key: move it aside, or ` +
+            'configure its public key explicitly (OBSIDIAN_MINING_GATE_PUBLIC_KEYS) to adopt it.',
+        );
+      }
     }
     mkdirSync(gateDir, { recursive: true, mode: 0o700 });
-    const pair = generateKeyPair(net.addressHrp);
-    Keystore.write(target, pair.privateKey, passphrase);
-    // Prove the file decrypts to the key we are about to publish before the network depends on it.
-    const check = Keystore.read(target, passphrase);
-    if (check.publicKey !== pair.publicKey) throw new Error('the gate keystore did not round-trip; nothing was recorded');
-    gateAuthority = { generated: true, keystore: target, publicKey: pair.publicKey };
+    const created: { keystore: string; publicKey: string }[] = [];
+    for (const target of targets) {
+      const pair = generateKeyPair(net.addressHrp);
+      Keystore.write(target, pair.privateKey, passphrase);
+      // Prove the file decrypts to the key we are about to publish before the network depends on it.
+      const check = Keystore.read(target, passphrase);
+      if (check.publicKey !== pair.publicKey) throw new Error('the gate keystore did not round-trip; nothing was recorded');
+      created.push({ keystore: target, publicKey: pair.publicKey });
+    }
+    const publicKeys = created.map((entry) => entry.publicKey);
+    gateAuthority = {
+      generated: true,
+      keystore: created[0]!.keystore,
+      publicKey: created[0]!.publicKey,
+      keys: created,
+      quorum: gateQuorum(count),
+    };
     finalIdentity = {
       ...identity,
-      loaded: { ...identity.loaded, config: { ...identity.loaded.config, miningGatePublicKeys: [pair.publicKey] } },
-      derived: deriveGenesis(net, identity.loaded.config.bootstrapValidatorPublicKeys, [pair.publicKey]),
+      loaded: { ...identity.loaded, config: { ...identity.loaded.config, miningGatePublicKeys: publicKeys } },
+      derived: deriveGenesis(net, identity.loaded.config.bootstrapValidatorPublicKeys, publicKeys),
     };
+    if (count < 3) {
+      notes.push(
+        `WARNING: ${count} gate key(s). A compromised key is removed by a majority of the active keys (${gateQuorum(count)} of ${count}), ` +
+          'so with fewer than 3 keys one holder can replace the whole set, and losing the only key closes mining for good. ' +
+          'Use --gate-key-count 3 or more, keep each keystore with a different person or machine, and back each one up.',
+      );
+    }
     notes.push(
-      'The gate PRIVATE key is in the keystore file above, encrypted. It belongs only on the machine that runs the account ' +
-        'platform (OBSIDIAN_GATE_KEYSTORE / OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE). It is never sent to a peer and nodes never need it: ' +
-        'they hold only the public key.',
+      'The gate PRIVATE key(s) are in the keystore file(s) above, encrypted, outside the node data directory. The key the account ' +
+        'platform signs certificates with goes on that machine only (OBSIDIAN_GATE_KEYSTORE / OBSIDIAN_GATE_KEYSTORE_PASSPHRASE_FILE); any ' +
+        'other key goes to the person or machine that holds its share of the authority. Keys are never sent to a peer and nodes never ' +
+        'need them: they hold only the public keys. Rotating or revoking a key needs a majority of them (`gate propose|sign|submit`).',
     );
   } else if (identity.loaded.config.miningGatePublicKeys.length === 0 && finalIdentity.derived.document.miningGatePublicKeys?.length === 0) {
     notes.push(

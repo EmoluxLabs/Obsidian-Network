@@ -58,7 +58,7 @@ export function issueMiningGateCertificate(
 
 /**
  * Reject the claim unless `certificate` is valid for `subject` at `protocolTime`.
- * `issuerKeys` are the keys committed in genesis (state.s.genesis.miningGateKeys).
+ * `issuerKeys` are the keys active NOW (state.s.genesis.gateKeysActive): the genesis keys, changed by any GATE_AUTHORITY updates.
  */
 export function assertMiningGate(
   issuerKeys: readonly string[],

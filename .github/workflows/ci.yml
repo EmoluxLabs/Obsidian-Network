@@ -238,7 +238,7 @@ jobs:
         run: |
           set -euo pipefail
           node dist/index.js start --network mainnet --data-dir "$RUNNER_TEMP/mainnet" \
-            --rpc-port 18630 --p2p-port 18631 --offline --no-mine &
+            --rpc-port 18630 --p2p-port 18631 --offline --no-mine --no-interface &
           pid=$!
           for i in $(seq 1 40); do
             curl -sf http://127.0.0.1:18630/health >/dev/null 2>&1 && break

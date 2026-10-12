@@ -16,6 +16,8 @@ export const DOMAIN = {
   STATE_ROOT: 'OBSIDIAN:STATE_ROOT:v1',
   GENESIS: 'OBSIDIAN:GENESIS:v1',
   GENESIS_ID: 'OBSIDIAN:GENESIS_ID:v1',
+  /** A majority of the current mining gate issuers authorises a change of the issuer set. */
+  GATE_AUTHORITY: 'OBSIDIAN:GATE_AUTHORITY:v1',
   PEER_HELLO: 'OBSIDIAN:PEER_HELLO:v1',
   PEER_ANNOUNCE: 'OBSIDIAN:PEER_ANNOUNCE:v1',
   NODE_METADATA: 'OBSIDIAN:NODE_METADATA:v1',

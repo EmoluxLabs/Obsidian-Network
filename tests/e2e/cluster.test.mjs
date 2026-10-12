@@ -110,7 +110,7 @@ function startNode(node) {
   const child = spawn(process.execPath, args, {
     cwd: CORE,
     // Protocol 1.7.0: every node of the network commits the same mining gate issuer key (it is part of the genesis id).
-    env: { ...process.env, OBSIDIAN_KEYSTORE_PASSPHRASE: PASSPHRASE, OBSIDIAN_MINING_GATE_PUBLIC_KEYS: gate.publicKey },
+    env: { ...process.env, OBSIDIAN_NODE_ONLY: '1', OBSIDIAN_KEYSTORE_PASSPHRASE: PASSPHRASE, OBSIDIAN_MINING_GATE_PUBLIC_KEYS: gate.publicKey },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const record = { child, log: [], node, code: null, signal: null, dataDir };

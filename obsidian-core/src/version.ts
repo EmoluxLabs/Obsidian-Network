@@ -9,13 +9,16 @@
 import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
-export const CORE_VERSION = '1.7.0';
+export const CORE_VERSION = '1.8.0';
 
 /** Consensus protocol version implemented by this build. */
-export const PROTOCOL_VERSION = '1.7.0';
+export const PROTOCOL_VERSION = '1.8.0';
 
 /**
  * Current lossless consensus-state snapshot format.
+ *
+ * 5 adds the live mining-gate authority (`gateKeysActive`, `gateKeysRevoked`, `gateEpoch`) that GATE_AUTHORITY updates change;
+ * a 1.7.0 snapshot has none, and reading it as "no updates yet" would invent a state, so it is refused.
  *
  * 4 adds the committed mining-gate issuer keys (`miningGateKeys`); a 1.6.1 snapshot has none, and reading it as
  * "no keys" would be harmless but reading a 1.7 chain from it would not be meaningful, so it is refused.
@@ -26,7 +29,7 @@ export const PROTOCOL_VERSION = '1.7.0';
  * reading an old snapshot as a new one would hand a bootstrapped chain back to
  * permissionless production.
  */
-export const STATE_SNAPSHOT_VERSION = 4;
+export const STATE_SNAPSHOT_VERSION = 5;
 
 /** Wire/peer protocol version. */
 export const WIRE_PROTOCOL_VERSION = 1;
@@ -35,6 +38,9 @@ export const WIRE_PROTOCOL_VERSION = 1;
  * Minimum Obsidian Core version permitted to peer with this build.
  * Peers below this version are rejected during handshake (hard fork guard).
  *
+ * 1.8.0 adds the GATE_AUTHORITY transaction and puts the live issuer set into every state root, so a 1.7.0 peer (which
+ * has neither) cannot agree on a single block that touches the gate: the two cannot share a chain.
+ *
  * 1.7.0 gates MINING_CLAIM behind a certificate signed by a genesis-committed issuer key, so a 1.6.1 peer (which
  * accepts claims from any key) is rejected: the two cannot agree on a chain.
  *
@@ -42,7 +48,7 @@ export const WIRE_PROTOCOL_VERSION = 1;
  * slash liability window, evidence budgets), so a 1.6.0 peer is rejected: two
  * nodes that share a protocol id but not a rule set cannot agree on a chain.
  */
-export const MIN_CORE_VERSION = '1.7.0';
+export const MIN_CORE_VERSION = '1.8.0';
 
 /**
  * Build identifier — deterministic hash of the release identity triple.

@@ -80,6 +80,7 @@ import {
 import { committedBootstrapValidatorKeys } from '../genesis/bootstrap-keys.js';
 import { committedMiningGateKeys } from '../genesis/gate-keys.js';
 import { assertNetworkSafety } from '../protocol/networks.js';
+import { decodeGateAuthorityBody, verifyGateUpdate } from '../mining/gate-authority.js';
 import { CORE_VERSION, PROTOCOL_VERSION, STATE_SNAPSHOT_VERSION } from '../version.js';
 import { FinalityStore, type FinalityIdentity, type PersistedFinalityState } from '../storage/finality-store.js';
 import {
@@ -1589,6 +1590,17 @@ export class ChainManager extends EventEmitter {
       // is read and no verdict about the offence is formed here, because that
       // stays a consensus decision.
       if (tx.type === TxType.SLASH) decodeSlashBody(tx.body);
+      // A gate authority update is relayed only if it is valid against the state this node has: it carries no gas,
+      // so a stale or unauthorised one costs the network pool space and signature checks for nothing. A node a block
+      // behind may refuse a genuinely new update for a moment; the submitter's own node, and the next gossip, retry.
+      if (tx.type === TxType.GATE_AUTHORITY) {
+        const g = this.state.s.genesis;
+        verifyGateUpdate(
+          { active: g.gateKeysActive, revoked: g.gateKeysRevoked, epoch: g.gateEpoch },
+          decodeGateAuthorityBody(tx.body),
+          { networkId: this.options.net.networkId, chainId: this.options.net.chainId },
+        );
+      }
       // Gas is the mempool's eviction priority. Refuse a peer's priority claim
       // unless the current state proves the sender can fund at least that much;
       // full type-specific validity is still decided at block execution.

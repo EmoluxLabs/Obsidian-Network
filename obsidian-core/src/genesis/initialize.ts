@@ -207,10 +207,12 @@ export function createGenesisState(
   state.s.protocolVersion = block.header.protocolVersion;
   state.s.height = block.header.height;
   state.s.timestamp = block.header.timestamp;
+  const gateKeys = normalizeMiningGatePublicKeys(miningGateKeys);
   state.s.genesis = {
     ...emptyGenesisState(),
     bootstrapValidatorKeys: normalizeBootstrapValidatorPublicKeys(bootstrapKeys),
-    miningGateKeys: normalizeMiningGatePublicKeys(miningGateKeys),
+    miningGateKeys: gateKeys,
+    gateKeysActive: [...gateKeys],
   };
   state.s.metrics.totalSupply = 0n;
   return state;

@@ -42,6 +42,7 @@ the data-directory lock, trusted domains) and the existing surfaces they depend 
 * **Eclipse by the first peers**: a node whose only seeds are hostile follows a chain the hostile peers serve, if that
   chain is valid for the genesis it pinned. It cannot be made to accept a different genesis; it can be starved of the
   honest chain. Use several independent seeds.
-* **Public peer list**: `/peers` exposes connected and known peer addresses on any node whose RPC is reachable.
+* **Peer list**: since 1.8.0 `/peers` shows addresses only to a local caller; a proxy that adds no forwarding header would look local. `/nodes` still lists known peers by design.
 * **PID reuse** can make a stale lock look held (the safe direction: the start is refused until it is cleared).
-* **Multi-host interface**: account state is per host (failover-and-gateways.md §1).
+* **Multi-host interface**: account state is per host, so run one `primary` and make every other host `edge` (read-only, no accounts, no gate key). Accounts are not replicated (failover-and-gateways.md §1).
+* **Gate keys**: a majority of keys stolen lets an attacker rewrite the set; a majority lost makes the set unchangeable (a new network is the only recovery).

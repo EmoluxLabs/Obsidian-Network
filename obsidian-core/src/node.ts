@@ -122,7 +122,7 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
     genesisId: genesisIdentifier,
   });
 
-  if (chain.world.s.genesis.miningGateKeys.length === 0) {
+  if (chain.world.s.genesis.gateKeysActive.length === 0) {
     logger.warn(
       'this chain commits no mining gate issuer key: the node runs and verifies blocks, but NO mining claim can be ' +
         'accepted. Set OBSIDIAN_MINING_GATE_PUBLIC_KEYS (the same list on every node) or commit the keys in genesis/gate-keys.ts.',

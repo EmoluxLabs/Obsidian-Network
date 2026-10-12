@@ -60,6 +60,11 @@ export interface NodeConfig {
   /** Trust X-Forwarded-For for rate limiting (only behind a reverse proxy). */
   rpcTrustProxy: boolean;
   /**
+   * Show peer addresses (`/peers`) to every caller. Default false: only a caller on this machine, with no proxy headers,
+   * sees who the node is connected to; everyone else gets counts. Set it on a node that is meant to publish its topology.
+   */
+  rpcPublicPeerDetail: boolean;
+  /**
    * Added to the network's default ports. Lets an operator run several nodes on
    * one host (`--port-offset 1` → 8632/8633 on mainnet) without hand-writing
    * every port, and keeps the two ports of a node adjacent.
@@ -112,6 +117,7 @@ export const DEFAULT_CONFIG: NodeConfig = {
   rpcAllowSubmit: true,
   rpcPublicUrl: '',
   rpcTrustProxy: false,
+  rpcPublicPeerDetail: false,
   portOffset: 0,
   p2pEnabled: true,
   p2pHost: '0.0.0.0',
@@ -311,6 +317,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Partial<Nod
   set('rpcAllowSubmit', env.OBSIDIAN_RPC_ALLOW_SUBMIT, (v) => asBoolean(v, true));
   set('rpcPublicUrl', env.OBSIDIAN_RPC_PUBLIC_URL, (v) => v);
   set('rpcTrustProxy', env.OBSIDIAN_RPC_TRUST_PROXY, (v) => asBoolean(v, false));
+  set('rpcPublicPeerDetail', env.OBSIDIAN_RPC_PUBLIC_PEER_DETAIL, (v) => asBoolean(v, false));
   set('portOffset', env.OBSIDIAN_PORT_OFFSET, (v) => asNumber(v, 0, 'OBSIDIAN_PORT_OFFSET'));
   set('p2pEnabled', env.OBSIDIAN_P2P_ENABLED, (v) => asBoolean(v, true));
   set('p2pHost', env.OBSIDIAN_P2P_HOST, (v) => v);

@@ -83,6 +83,13 @@ export interface InterfaceConfig {
   genesisInviteHash?: string;
   /** Set only when the operator terminates TLS elsewhere. */
   trustProxy: boolean;
+  /**
+   * `primary` holds the account store and the gate key. `edge` serves reads only and refuses every account, wallet-link
+   * and mining route: the store is one host's file, so two hosts that both accepted accounts would silently diverge.
+   */
+  role: 'primary' | 'edge';
+  /** Where an edge tells visitors to sign in (optional, shown in the refusal). */
+  primaryUrl?: string;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   /**
    * Per-client request budgets as [burst, refill per second]. The defaults suit
@@ -107,6 +114,7 @@ export const DEFAULT_INTERFACE_CONFIG: InterfaceConfig = {
   maxInvitesPerAccount: 5,
   genesisInviteHash: undefined,
   trustProxy: false,
+  role: 'primary',
   logLevel: 'info',
 };
 
@@ -594,6 +602,7 @@ export class InterfaceServer {
       this.json(response, ready ? 200 : 503, {
         status: ready ? 'ready' : 'not-ready',
         network: this.config.network ?? null,
+        role: this.config.role,
         healthyNodes,
         genesisMismatch: mismatch,
       });
@@ -616,6 +625,13 @@ export class InterfaceServer {
       if (!this.throttle(request, response, this.refreshLimiter, 'refresh', 1)) return;
       await this.dependencies.pool.checkAll();
       this.json(response, 200, { nodes: this.dependencies.pool.summary() });
+      return;
+    }
+
+    // An edge host has no account store of its own, and must not grow one. Everything that reads or writes accounts,
+    // wallet links or mining certificates is refused here, before any handler can touch the store.
+    if (this.config.role === 'edge' && this.isStatefulRoute(path)) {
+      this.edgeRefusal(response);
       return;
     }
 
@@ -1338,7 +1354,9 @@ export class InterfaceServer {
       try {
         const upstream = await fetch(`${node.url}${upstreamTarget}`, {
           method,
-          headers: payload ? { 'content-type': 'application/json' } : undefined,
+          // `via` marks this as a proxied call: a node on the same host would otherwise see loopback and show its
+          // peer addresses (`/peers`) to every visitor of this interface.
+          headers: { via: '1.1 obsidian-interface', ...(payload ? { 'content-type': 'application/json' } : {}) },
           body: payload,
           signal: controller.signal,
         });
@@ -1455,6 +1473,11 @@ export class InterfaceServer {
       return false;
     }
     if (tx.type !== core.miningClaimType) return true;
+    // A claim needs the account store (signed-in account, linked wallet), which an edge host does not have.
+    if (this.config.role === 'edge') {
+      this.edgeRefusal(response);
+      return false;
+    }
 
     const account = this.requireSession(request, response);
     if (!account) return false;
@@ -1531,6 +1554,18 @@ export class InterfaceServer {
       });
       return;
     }
+    // A key the chain has revoked or rotated away would produce a certificate every node refuses. Say so here, where
+    // it can be fixed, instead of letting the member sign and fail on-chain. This is a courtesy check: the chain is
+    // the authority, so if no node can say what the active keys are, the certificate is still issued.
+    const activeKeys = await this.activeGateKeys();
+    if (activeKeys && !activeKeys.includes(issuer.publicKey)) {
+      this.dependencies.log('error', 'this platform gate key is not an active issuer on the chain', { issuer: issuer.publicKey });
+      this.json(response, 503, {
+        error: 'this platform\'s mining gate key is no longer an active issuer on the chain (it was rotated or revoked), so certificates cannot be issued until the platform is given a current key',
+        code: 'ERR_GATE_KEY_INACTIVE',
+      });
+      return;
+    }
     try {
       const issuedAt = Math.floor(Date.now() / 1000);
       const gate = issuer.issue({ networkId: network.networkId, chainId: network.chainId, address, claimId }, issuedAt);
@@ -1540,6 +1575,47 @@ export class InterfaceServer {
       this.dependencies.log('error', 'mining certificate could not be issued', { error: (error as Error).message });
       this.json(response, 503, { error: 'the mining gate could not issue a certificate right now', code: 'ERR_GATE_UNAVAILABLE' });
     }
+  }
+
+  private gateKeysCache?: { keys: string[]; at: number };
+
+  /** The chain's current issuer keys, from the first node that answers `/gate`; cached briefly. Undefined if unknown. */
+  private async activeGateKeys(): Promise<string[] | undefined> {
+    const cached = this.gateKeysCache;
+    if (cached && Date.now() - cached.at < 15_000) return cached.keys;
+    for (const node of this.dependencies.pool.ordered()) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      try {
+        const upstream = await fetch(`${node.url}/gate`, { signal: controller.signal, headers: { via: '1.1 obsidian-interface' } });
+        if (upstream.status !== 200) continue;
+        const body = safeParse(await readCapped(upstream, 64 * 1024)) as { issuerKeys?: unknown } | null;
+        if (!body || !Array.isArray(body.issuerKeys)) continue;
+        const keys = body.issuerKeys.filter((key): key is string => typeof key === 'string');
+        this.gateKeysCache = { keys, at: Date.now() };
+        return keys;
+      } catch {
+        // try the next node
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return undefined;
+  }
+
+  private isStatefulRoute(path: string): boolean {
+    return path.startsWith('/api/auth/') || path.startsWith('/api/wallet/link') || path === '/api/mining/certificate';
+  }
+
+  private edgeRefusal(response: ServerResponse): void {
+    this.json(response, 503, {
+      error:
+        'this is a read-only edge host: accounts, wallet links and mining are served only by the primary platform' +
+        (this.config.primaryUrl ? ` (${this.config.primaryUrl})` : ''),
+      code: 'ERR_EDGE_READ_ONLY',
+      role: 'edge',
+      ...(this.config.primaryUrl ? { primary: this.config.primaryUrl } : {}),
+    });
   }
 
   private requireSession(request: IncomingMessage, response: ServerResponse): ReturnType<AccountStore['getAccount']> {

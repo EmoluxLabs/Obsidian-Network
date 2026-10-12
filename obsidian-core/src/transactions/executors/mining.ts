@@ -99,7 +99,7 @@ export function executeMiningClaim(ctx: ExecutorContext, tx: TxEnvelope): { gasB
   // about it is examined, and with a reason that says so. The certificate names this wallet and this exact claim id;
   // that the id is the canonical one for the wallet's state is checked below, as before.
   assertMiningGate(
-    state.s.genesis.miningGateKeys,
+    state.s.genesis.gateKeysActive,
     decoded.gate,
     {
       networkId: net.networkId,

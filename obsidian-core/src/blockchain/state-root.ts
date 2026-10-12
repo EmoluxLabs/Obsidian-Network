@@ -140,6 +140,15 @@ function encodeGenesis(w: Writer, g: GenesisState): void {
   const gateKeys = [...g.miningGateKeys].sort();
   w.u32(gateKeys.length);
   for (const publicKey of gateKeys) w.string(publicKey);
+  // Protocol 1.8.0: the keys that are valid now, the ones revoked, and how many updates got us here. Two nodes that
+  // disagree about any of them disagree about who may mine, so all three are committed in every state root.
+  const active = [...g.gateKeysActive].sort();
+  w.u32(active.length);
+  for (const publicKey of active) w.string(publicKey);
+  const revoked = [...g.gateKeysRevoked].sort();
+  w.u32(revoked.length);
+  for (const publicKey of revoked) w.string(publicKey);
+  w.u32(g.gateEpoch);
 }
 
 function encodeName(w: Writer, n: OnsRecord): void {

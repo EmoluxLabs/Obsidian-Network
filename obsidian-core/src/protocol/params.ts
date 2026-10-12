@@ -64,11 +64,15 @@ export const CONSENSUS_PARAMS = {
    * parameter hash changes with them: two nodes cannot share a protocol
    * identity and disagree about the rules.
    *
+   * 1.8.0 adds gate authority updates (rotate or revoke the mining gate issuer keys in consensus); the transaction type,
+   * the live issuer set in the state root and the `miningGate.maxRevoked`/`maxChangesPerUpdate` parameters all move the
+   * identity. A 1.7.0 node cannot peer with a 1.8.0 node.
+   *
    * 1.7.0 closes the account bypass: a MINING_CLAIM must carry a certificate from a genesis-committed issuer key
    * (see `miningGate` below), and the gate keys are part of the genesis id and of every state root. No economic rule
    * moves. A 1.6.1 node cannot peer with a 1.7.0 node.
    */
-  protocolVersion: '1.7.0',
+  protocolVersion: '1.8.0',
 
   /**
    * MINING GATE (1.7.0). A MINING_CLAIM is valid only with a certificate from an issuer key committed in genesis
@@ -84,8 +88,15 @@ export const CONSENSUS_PARAMS = {
     certificateTtlSeconds: 15 * 60,
     /** How far ahead of the including block's time an issuer's clock may be. */
     clockSkewSeconds: 60,
-    /** Most issuer keys a genesis may commit. */
+    /** Most issuer keys a genesis may commit, and the most that may be active at once after updates. */
     maxIssuers: 8,
+    /**
+     * Gate authority (protocol 1.8.0). An update needs approvals from a strict majority of the CURRENT issuer
+     * keys (floor(n/2)+1), changes at most `maxChangesPerUpdate` keys in each direction, and may never leave the
+     * set empty. Revoked keys are remembered so a compromised key cannot be put back; the list is bounded.
+     */
+    maxRevoked: 64,
+    maxChangesPerUpdate: 8,
   },
 
   // ── Proof of Time (PoT) ───────────────────────────────────────────────────

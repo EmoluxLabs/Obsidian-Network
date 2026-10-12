@@ -38,6 +38,8 @@ less than you might hope, which are called out explicitly rather than buried.
 | [node-runner-rewards.md](node-runner-rewards.md) | The 90/10 ONS revenue split, registering a reward wallet, how uptime and participation are measured without self-reporting, and how payouts are settled |
 | [self-hosting.md](self-hosting.md) | Anyone running the interface: systemd, Docker, nginx, Cloudflare |
 | [trusted-domains.md](trusted-domains.md) | Which browser origins a node or interface answers: the project's own domain by default, how to add yours (exact origins and wildcards), what is refused |
+| [upgrading-1.8.0.md](upgrading-1.8.0.md) | Moving from 1.7.0 to 1.8.0: a new chain, what operators do, what does not migrate |
+| [gate-authority.md](gate-authority.md) | Rotating, revoking and recovering the mining gate keys on chain (1.8.0): the update rule, `gate propose/sign/submit`, playbooks |
 | [operations.md](operations.md) | Bootstrap a network (`init`), join one (`join`), `status` / `peers` / `sync` / `doctor`, health endpoints, ports, the gate authority and its limits |
 | [failover-and-gateways.md](failover-and-gateways.md) | Running several interface hosts: what can fail over, nginx upstreams, the DNS/TLS work that is outside the repository (untested) |
 | [threat-model.md](threat-model.md) | Threats, controls and the tests that pin them, and the risks that remain |

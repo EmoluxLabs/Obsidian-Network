@@ -16,13 +16,22 @@ nodes. Two kinds of traffic go through it:
 | Static sites, explorer, wallet pages | none | **Yes.** |
 | `/api/rpc`, `/api/nodes`, `/api/health`, `/api/ready` | the chain, read from its own node pool | **Yes**, each host reads the chain itself. The chain is the shared truth; no host is the source of it. |
 | Signed transaction relay (`/api/rpc?path=/tx/submit`) | none (the transaction carries its own signature) | **Yes.** |
-| Sign-up, sign-in, sessions, invites, wallet link, mining gate certificates (`/api/auth/*`, `/api/wallet/*`, `/api/mining/certificate`) | the **account store**, a file local to one deployment, and the gate issuer key | **No, not today.** |
+| Sign-up, sign-in, sessions, invites, wallet link, mining gate certificates (`/api/auth/*`, `/api/wallet/*`, `/api/mining/certificate`) | the **account store**, a file local to one deployment, and the gate issuer key | **Only the one `primary` host.** An `edge` host refuses them (503 `ERR_EDGE_READ_ONLY`). |
 
 The account store is local to each interface deployment, and it enforces "one wallet per account, one account per
 wallet" and the one-time Genesis Invitation. Two hosts with two stores would each enforce that only among their own
-users, so account routes must not be load-balanced across independent hosts. Until the store is replicated (not
-implemented), run the account routes on **one primary**, and let additional hosts serve only the chain-facing and
-static traffic. The gate issuer key lives on the primary only. If the primary dies, chain reads, wallets that already
+users, so account routes must not be load-balanced across independent hosts. **The store is deliberately not
+replicated** (two writers would break "one wallet per account"); the safe multi-host design in 1.8.0 is a role:
+
+* `OBSIDIAN_INTERFACE_ROLE=primary` (the default): holds accounts, wallet links and the gate key. Run **exactly one** per
+  network.
+* `OBSIDIAN_INTERFACE_ROLE=edge`: read-only. Serves static pages, chain reads and the relay of signed transactions.
+  Refuses `/api/auth/*`, `/api/wallet/link*`, `/api/mining/certificate` and mining claims with 503 `ERR_EDGE_READ_ONLY`,
+  naming the primary when `OBSIDIAN_INTERFACE_PRIMARY_URL` is set. It creates no accounts and **must never be given the
+  gate keystore**. `/api/ready` reports the role. There is no dedicated edge page or redirect: account calls there fail with the 503 above, whose
+  message names the primary, so point users at the primary for account actions.
+
+Additional hosts therefore serve only the chain-facing and static traffic. The gate issuer key lives on the primary only. If the primary dies, chain reads, wallets that already
 hold their keys and transaction relay keep working on the others; sign-in and new mining claims wait for the primary
 (or for a restore of its account store and keystore onto a standby, which is a manual operation).
 

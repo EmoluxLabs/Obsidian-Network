@@ -70,6 +70,7 @@ CLUSTER_TESTS=0
 NETWORK_TESTS=0
 INVITE_TESTS=0
 CONSISTENCY_TESTS=0
+PRODUCT_TESTS=0
 
 # RELEASE_LOG_DIR keeps every gate's output: a failed release packaging run is
 # exactly when you want the node logs, not a cleaned-up temp directory.
@@ -116,6 +117,20 @@ if [ "$SKIP_BUILD" = 0 ]; then
 
   gate "edge worker tests" "$LOGS/edge.log" node --test cloudflare/test/worker.test.mjs
   EDGE_TESTS="$(count_node_test "$LOGS/edge.log")"
+
+  # The other products that speak this protocol: their tests and their builds are gated like the node's, and their
+  # built output is what the archives below carry.
+  echo "→ building the web app, the web wallet and the extension"
+  npm --prefix obsidian-app-web ci --silent
+  npm --prefix obsidian-app-web run build:web --silent >"$LOGS/app-web-build.log" 2>&1 || { tail -40 "$LOGS/app-web-build.log" >&2; exit 1; }
+  npm --prefix obsidian-wallet-web run build --silent >"$LOGS/wallet-web-build.log" 2>&1 || { tail -40 "$LOGS/wallet-web-build.log" >&2; exit 1; }
+  npm --prefix obsidian-extension run build --silent >"$LOGS/extension-build.log" 2>&1 || { tail -40 "$LOGS/extension-build.log" >&2; exit 1; }
+  gate "web app tests" "$LOGS/app-web.log" bash -c 'cd obsidian-app-web && node --test tests/*.test.mjs'
+  gate "web wallet tests" "$LOGS/wallet-web.log" bash -c 'cd obsidian-wallet-web && node --test tests/*.test.mjs'
+  gate "extension tests" "$LOGS/extension.log" bash -c 'cd obsidian-extension && node --test tests/*.test.mjs'
+  for product_log in app-web wallet-web extension; do
+    PRODUCT_TESTS=$((PRODUCT_TESTS + $(count_node_test "$LOGS/$product_log.log")))
+  done
 
   # The verification script is what a stranger runs before trusting this
   # build, so its behaviour is gated like any other shipped code.
@@ -172,7 +187,7 @@ if [ "$SKIP_BUILD" = 0 ]; then
   NETWORK_TESTS="${NETWORK_TESTS:-0}"
   INVITE_TESTS="${INVITE_TESTS:-0}"
   CONSISTENCY_TESTS="${CONSISTENCY_TESTS:-0}"
-  for pair in "core:$CORE_TESTS" "interface:$INTERFACE_TESTS" "edge:$EDGE_TESTS" "signing:$SIGNING_TESTS" "soak:$SOAK_TESTS" "invitation:$INVITE_TESTS" "consistency:$CONSISTENCY_TESTS"; do
+  for pair in "products:$PRODUCT_TESTS" "core:$CORE_TESTS" "interface:$INTERFACE_TESTS" "edge:$EDGE_TESTS" "signing:$SIGNING_TESTS" "soak:$SOAK_TESTS" "invitation:$INVITE_TESTS" "consistency:$CONSISTENCY_TESTS"; do
     if [ "${pair#*:}" = "0" ]; then
       echo "no tests ran for ${pair%%:*} — refusing to package" >&2
       exit 1
@@ -186,7 +201,7 @@ if [ "$SKIP_BUILD" = 0 ]; then
     echo "the four-network isolation test reported no passes — refusing to package" >&2
     exit 1
   fi
-  TOTAL_TESTS=$((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS + SOAK_TESTS + INVITE_TESTS + CONSISTENCY_TESTS + CLUSTER_TESTS + NETWORK_TESTS))
+  TOTAL_TESTS=$((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS + SOAK_TESTS + INVITE_TESTS + CONSISTENCY_TESTS + CLUSTER_TESTS + NETWORK_TESTS + PRODUCT_TESTS))
 else
   TOTAL_TESTS=0
 fi
@@ -274,6 +289,29 @@ stage "$STAGING/obsidian-interface-selfhost" \
   landing mine wallet explorer ons node developer app audit \
   docs LICENSE
 
+# ── 5b. the other products: web wallet, web app, extension, desktop node app ──
+# Source, tests and (where the product has one) its build, so one release holds every product that speaks to this
+# protocol version. Generated bundles are not committed, so they are taken from the build that the gates above ran.
+stage "$STAGING/obsidian-wallet-web" \
+  obsidian-wallet-web/package.json obsidian-wallet-web/README.md obsidian-wallet-web/public \
+  obsidian-wallet-web/scripts obsidian-wallet-web/tests obsidian-wallet-web/template \
+  docs/trusted-domains.md LICENSE
+stage "$STAGING/obsidian-app-web" \
+  obsidian-app-web/package.json obsidian-app-web/package-lock.json obsidian-app-web/README.md \
+  obsidian-app-web/public obsidian-app-web/web obsidian-app-web/server obsidian-app-web/scripts \
+  obsidian-app-web/tests docs/trusted-domains.md LICENSE
+stage "$STAGING/obsidian-extension" \
+  obsidian-extension/package.json obsidian-extension/manifest.json obsidian-extension/README.md \
+  obsidian-extension/src obsidian-extension/scripts obsidian-extension/tests obsidian-extension/dist \
+  obsidian-extension/template LICENSE
+stage "$STAGING/obsidian-node-desktop" \
+  obsidian-node-desktop/package.json obsidian-node-desktop/package-lock.json obsidian-node-desktop/README.md \
+  obsidian-node-desktop/DOWNLOAD.md obsidian-node-desktop/electron-builder.yml \
+  obsidian-node-desktop/tsconfig.json obsidian-node-desktop/tsconfig.renderer.json \
+  obsidian-node-desktop/src obsidian-node-desktop/renderer obsidian-node-desktop/scripts \
+  obsidian-node-desktop/tests obsidian-node-desktop/docs obsidian-node-desktop/build-resources \
+  obsidian-node-desktop/obsidian-node-design.zip LICENSE
+
 # ── 6. the whole source tree, straight from git ──────────────────────────────
 echo "→ source archive"
 git archive --format=tar.gz --prefix="obsidian-network-$VERSION/" -o "$RELEASES/obsidian-network-source-$VERSION.tar.gz" HEAD
@@ -285,6 +323,10 @@ archive "obsidian-interface-$VERSION" "$STAGING/obsidian-interface"
 archive "obsidian-cloudflare-$VERSION" "$STAGING/obsidian-cloudflare"
 archive "obsidian-node-operator-$VERSION" "$STAGING/obsidian-node-operator"
 archive "obsidian-interface-selfhost-$VERSION" "$STAGING/obsidian-interface-selfhost"
+archive "obsidian-wallet-web-$VERSION" "$STAGING/obsidian-wallet-web"
+archive "obsidian-app-web-$VERSION" "$STAGING/obsidian-app-web"
+archive "obsidian-extension-$VERSION" "$STAGING/obsidian-extension"
+archive "obsidian-node-desktop-$VERSION" "$STAGING/obsidian-node-desktop"
 
 # ── manifest and checksums ──────────────────────────────────────────────────
 echo "→ manifest and checksums"
@@ -336,9 +378,9 @@ NODE
 ( cd "$RELEASES" && sha256sum $(ls *.zip *.tar.gz | sort) > SHA256SUMS )
 
 if [ "$SKIP_BUILD" = 0 ] && [ "$SKIP_E2E" = 0 ]; then
-  TEST_SUMMARY="* ${TOTAL_TESTS} automated tests, all of them run immediately before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}), soak verdict rules (${SOAK_TESTS}), the genesis invitation generator (${INVITE_TESTS}), repository consistency (${CONSISTENCY_TESTS}), the three-node cluster end-to-end suite (${CLUSTER_TESTS}) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (${NETWORK_TESTS})"
+  TEST_SUMMARY="* ${TOTAL_TESTS} automated tests, all of them run immediately before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), web app, web wallet and extension (${PRODUCT_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}), soak verdict rules (${SOAK_TESTS}), the genesis invitation generator (${INVITE_TESTS}), repository consistency (${CONSISTENCY_TESTS}), the three-node cluster end-to-end suite (${CLUSTER_TESTS}) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (${NETWORK_TESTS})"
 elif [ "$SKIP_BUILD" = 0 ]; then
-  TEST_SUMMARY="* $((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS + SOAK_TESTS + INVITE_TESTS + CONSISTENCY_TESTS)) automated tests run before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}), the soak verdict rules (${SOAK_TESTS}), the genesis invitation generator (${INVITE_TESTS}) and repository consistency (${CONSISTENCY_TESTS}). The cluster and four-network end-to-end suites were skipped (--skip-e2e): run \`node --test tests/e2e/cluster.test.mjs tests/e2e/networks.test.mjs tests/e2e/ecosystem.test.mjs tests/scripts/network-script.test.mjs tests/scripts/termux-quickstart.test.mjs\` before trusting this build."
+  TEST_SUMMARY="* $((CORE_TESTS + INTERFACE_TESTS + EDGE_TESTS + SIGNING_TESTS + SOAK_TESTS + INVITE_TESTS + CONSISTENCY_TESTS + PRODUCT_TESTS)) automated tests run before packaging: core (${CORE_TESTS}), interface (${INTERFACE_TESTS}), edge worker (${EDGE_TESTS}), release verification and signing behaviour (${SIGNING_TESTS}), the soak verdict rules (${SOAK_TESTS}), the genesis invitation generator (${INVITE_TESTS}) and repository consistency (${CONSISTENCY_TESTS}). The cluster and four-network end-to-end suites were skipped (--skip-e2e): run \`node --test tests/e2e/cluster.test.mjs tests/e2e/networks.test.mjs tests/e2e/ecosystem.test.mjs tests/scripts/network-script.test.mjs tests/scripts/termux-quickstart.test.mjs\` before trusting this build."
 else
   TEST_SUMMARY="* No tests were run for this packaging pass (--skip-build). Treat these archives as source-only until you run the suites yourself."
 fi
@@ -372,6 +414,10 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
 | obsidian-cloudflare | the edge gateway: worker, tests, Terraform |
 | obsidian-node-operator | what an operator installs: built node, systemd/nginx/Docker recipes, docs |
 | obsidian-interface-selfhost | a ready-to-serve interface: built bundles, sites, systemd/nginx/Docker recipes |
+| obsidian-wallet-web | the browser wallet: source, tests, built page |
+| obsidian-app-web | the web app: source, tests, built bundle |
+| obsidian-extension | the browser extension: source, tests, unpacked build |
+| obsidian-node-desktop | the desktop node app: source and build recipe (installers are built per platform, not here) |
 | obsidian-network-source | the entire repository at this commit |
 
 ## What is in this release

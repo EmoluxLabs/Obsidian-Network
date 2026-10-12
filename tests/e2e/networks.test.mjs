@@ -81,7 +81,7 @@ function scratch(label) {
 function launch(label, entry, args, env = {}, cwd = ROOT) {
   const child = spawn(process.execPath, [entry, ...args], {
     cwd,
-    env: { ...process.env, OBSIDIAN_KEYSTORE_PASSPHRASE: PASSPHRASE, ...env },
+    env: { ...process.env, OBSIDIAN_NODE_ONLY: '1', OBSIDIAN_KEYSTORE_PASSPHRASE: PASSPHRASE, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const record = { label, child, log: [], code: null };

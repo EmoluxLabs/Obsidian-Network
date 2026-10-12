@@ -74,6 +74,35 @@ export enum TxType {
    * (src/consensus/slash-evidence.ts).
    */
   SLASH = 12,
+  /**
+   * Mining gate authority update (protocol 1.8.0): rotate or revoke the issuer keys that open the mining gate.
+   * Authorised by a majority of the CURRENT issuer keys, who sign the exact change; the submitter's own key and
+   * account decide nothing and no gas is paid (see src/mining/gate-authority.ts).
+   */
+  GATE_AUTHORITY = 13,
+}
+
+/** Operations inside a GATE_AUTHORITY transaction. */
+export enum GateAuthorityOp {
+  /** Add and/or remove issuer keys, signed by a majority of the current set. */
+  UPDATE = 1,
+}
+
+/** One current issuer's signature over a gate authority update. */
+export interface GateApproval {
+  /** Compressed public key of an issuer in the CURRENT active set. */
+  key: string;
+  /** Compact signature (128 hex) over the update message. */
+  signature: string;
+}
+
+export interface GateAuthorityBody {
+  op: GateAuthorityOp;
+  /** The epoch this update creates; must be exactly the chain's current epoch + 1 (so an update applies once). */
+  epoch: number;
+  add: string[];
+  remove: string[];
+  approvals: GateApproval[];
 }
 
 /** Operations inside a SLASH transaction. */
@@ -206,7 +235,7 @@ export interface MiningClaimBody {
 
 /** A short-lived statement, signed by a genesis-committed issuer key, that ONE wallet may make ONE specific claim. */
 export interface MiningGateCertificate {
-  /** Compressed public key of the issuer; must be one of the keys committed in genesis. */
+  /** Compressed public key of the issuer; must be one of the keys active when the claim is included (genesis keys, as changed by GATE_AUTHORITY updates). */
   issuer: string;
   /** Protocol time (seconds) at which the issuer signed. Valid for `miningGate.certificateTtlSeconds` after it. */
   issuedAt: number;
@@ -477,6 +506,15 @@ export interface GenesisState {
   bootstrapValidatorKeys: string[];
   /** Issuer keys committed by genesis whose certificates open the mining gate. Empty means no claim is possible. */
   miningGateKeys: string[];
+  /**
+   * The issuer keys that are valid NOW (protocol 1.8.0). Equals `miningGateKeys` until a GATE_AUTHORITY update
+   * rotates or revokes some. `miningGateKeys` itself never changes: it is what the genesis id commits to.
+   */
+  gateKeysActive: string[];
+  /** Keys removed by an update. A revoked key can never be added again. Bounded by `miningGate.maxRevoked`. */
+  gateKeysRevoked: string[];
+  /** Number of gate authority updates applied. */
+  gateEpoch: number;
 }
 
 export interface OnsRecord {

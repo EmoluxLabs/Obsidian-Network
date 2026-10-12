@@ -75,7 +75,7 @@ function fakeNode(overrides = {}) {
     requestPassphrase: async () => PASSPHRASE,
     getContext: async () => ({
       chainId: 7777,
-      protocolVersion: '1.7.0',
+      protocolVersion: '1.8.0',
       protocolTime: 1_700_000_000,
     }),
     getNonce: async () => 7,
@@ -380,7 +380,7 @@ test('the sender address is derived under the node’s prefix, not the mainnet d
     getContext: async () => ({
       chainId: 7780,
       addressHrp: 'dobs',
-      protocolVersion: '1.7.0',
+      protocolVersion: '1.8.0',
       protocolTime: 1_700_000_000,
     }),
   });

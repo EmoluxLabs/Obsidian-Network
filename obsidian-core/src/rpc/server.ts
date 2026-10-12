@@ -25,6 +25,7 @@ import { slashAmountFor } from '../consensus/slash-evidence.js';
 import { evaluateMining } from '../mining/rules.js';
 import { scheduleView, dailyRewardForActiveMiners, claimRewardForActiveMiners } from '../mining/schedule.js';
 import { decodeSignedTxFromBytes, encodeSignedTx } from '../transactions/encode.js';
+import { decodeGateAuthorityBody, encodeGateAuthorityBody, gateQuorum } from '../mining/gate-authority.js';
 import { simulateTransactions } from '../blockchain/state-machine.js';
 import { blockHash, summarizeBlock } from '../blockchain/block.js';
 import { paramsHashUtf8, PARAMS_HASH } from '../blockchain/state-root.js';
@@ -389,7 +390,7 @@ export class RpcServer {
     if (path === '/genesis') return this.genesis(response);
     if (path === '/supply') return this.supply(response);
     if (path === '/nodes') return this.nodes(response);
-    if (path === '/peers') return this.peers(response);
+    if (path === '/peers') return this.peers(request, response);
     if (path === '/oracle') return this.oracle(response);
     if (path === '/validators') return this.validators(response);
     if (path === '/blocks') return this.blocks(response, url);
@@ -410,6 +411,15 @@ export class RpcServer {
     if (path === '/revenue') return this.revenue(response);
     if (path === '/mining/schedule') return this.miningSchedule(response);
     if (path === '/mining/status') return this.miningStatus(response, url);
+    if (path === '/gate') {
+      return this.json(response, 200, {
+        ...this.gateSummary(),
+        network: this.options.net.name,
+        networkId: this.options.net.networkId,
+        chainId: this.options.net.chainId,
+        protocolTime: this.options.chain.protocolTime,
+      });
+    }
     if (path === '/mining/claims') return this.miningClaims(response, url);
     if (path === '/names') return this.names(response, url);
     if (path.startsWith('/names/')) return this.name(response, after('/names/'));
@@ -713,11 +723,36 @@ export class RpcServer {
     });
   }
 
-  private peers(response: ServerResponse): void {
+  /**
+   * True only for a caller on THIS machine that did not come through a proxy. A reverse proxy on the same host also
+   * connects from loopback, so a request that carries any forwarding header is NOT local (the nginx configs in
+   * deployment/ always set X-Forwarded-For; a proxy that sets none cannot be told from the operator, so such a
+   * proxy needs `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL=false` AND a forwarding header). Used for the route that discloses topology.
+   */
+  private isLocalCaller(request: IncomingMessage): boolean {
+    const ip = (request.socket.remoteAddress ?? '').replace(/^::ffff:/i, '');
+    if (ip !== '::1' && !/^127\.\d+\.\d+\.\d+$/.test(ip)) return false;
+    for (const header of ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'forwarded', 'via']) {
+      if (request.headers[header] !== undefined) return false;
+    }
+    return true;
+  }
+
+  private peers(request: IncomingMessage, response: ServerResponse): void {
+    const p2p = this.options.p2p;
+    if (this.options.config.rpcPublicPeerDetail || this.isLocalCaller(request)) {
+      this.json(response, 200, { p2p: p2p?.status(), connected: p2p?.activeConnections() ?? [], known: p2p?.knownPeers() ?? [], detail: 'full' });
+      return;
+    }
+    // Everyone else gets what a dashboard needs (how many, how healthy) and nothing that maps the network: no
+    // address, no node id, no recent error text (which can name a peer's address).
+    const status = p2p?.status();
     this.json(response, 200, {
-      p2p: this.options.p2p?.status(),
-      connected: this.options.p2p?.activeConnections() ?? [],
-      known: this.options.p2p?.knownPeers() ?? [],
+      p2p: status ? { ...status, lastError: status.lastError ? 'withheld' : null } : undefined,
+      connected: [],
+      known: [],
+      detail: 'counts-only',
+      note: 'Peer addresses are shown only to a caller on this machine. The operator can publish them with OBSIDIAN_RPC_PUBLIC_PEER_DETAIL=true.',
     });
   }
 
@@ -1279,12 +1314,29 @@ export class RpcServer {
     });
   }
 
-  private gateSummary(): { required: true; open: boolean; issuerKeys: string[]; certificateTtlSeconds: number; clockSkewSeconds: number } {
-    const issuerKeys = [...this.options.chain.world.s.genesis.miningGateKeys];
+  private gateSummary(): {
+    required: true;
+    open: boolean;
+    issuerKeys: string[];
+    epoch: number;
+    quorum: number | null;
+    revokedKeys: string[];
+    genesisKeys: string[];
+    certificateTtlSeconds: number;
+    clockSkewSeconds: number;
+  } {
+    const g = this.options.chain.world.s.genesis;
+    const issuerKeys = [...g.gateKeysActive];
     return {
       required: true,
       open: issuerKeys.length > 0,
+      /** The keys whose certificates the chain accepts right now. Rotation and revocation change this, not the genesis. */
       issuerKeys,
+      epoch: g.gateEpoch,
+      /** Approvals a gate update needs (a strict majority of the active keys); null when there is no issuer at all. */
+      quorum: issuerKeys.length > 0 ? gateQuorum(issuerKeys.length) : null,
+      revokedKeys: [...g.gateKeysRevoked],
+      genesisKeys: [...g.miningGateKeys],
       certificateTtlSeconds: CONSENSUS_PARAMS.miningGate.certificateTtlSeconds,
       clockSkewSeconds: CONSENSUS_PARAMS.miningGate.clockSkewSeconds,
     };
@@ -1837,6 +1889,8 @@ export function encodeBodyFor(type: string, payload: Record<string, unknown>): U
       return encodeNodeRegistryBody(payload as never);
     case 'SLASH':
       return encodeSlashBody(payload as never);
+    case 'GATE_AUTHORITY':
+      return encodeGateAuthorityBody(payload as never);
     default:
       throw new Error(type ? `unknown transaction type ${type}` : 'transaction type is required');
   }
@@ -1858,6 +1912,8 @@ export function decodeBodyFor(type: string, bytes: Uint8Array): unknown {
       return decodeNodeRegistryBody(bytes);
     case 'SLASH':
       return decodeSlashBody(bytes);
+    case 'GATE_AUTHORITY':
+      return decodeGateAuthorityBody(bytes);
     case 'ORACLE':
       return decodeOracleBody(bytes);
     default:
