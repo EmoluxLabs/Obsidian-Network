@@ -1,0 +1,252 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-12T14:29:54.000Z",
+    "lifecycles": [
+      {
+        "phase": "pre-build"
+      }
+    ],
+    "tools": [
+      {
+        "vendor": "npm",
+        "name": "cli",
+        "version": "10.9.8"
+      }
+    ],
+    "component": {
+      "bom-ref": "@obsidian/interface@1.8.1",
+      "type": "library",
+      "name": "obsidian-interface",
+      "version": "1.8.1",
+      "scope": "required",
+      "description": "Obsidian Interface — self-hostable, light, mobile-first web interface for the Obsidian Network (wallet, miner, explorer, ONS, node runners, audit).",
+      "purl": "pkg:npm/%40obsidian/interface@1.8.1",
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": ""
+        }
+      ],
+      "externalReferences": [],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "@noble/curves@1.6.0",
+      "type": "library",
+      "name": "@noble/curves",
+      "version": "1.6.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40noble/curves@1.6.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@noble/curves"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@noble/curves/-/curves-1.6.0.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4e56874570de849b91351f537d90cd438e663047797705309a272c69f7085f84ac362aa70872a313fd5a9583ddfe50d1561c5d854025bfcb8484c088e738c825"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@noble/hashes@1.5.0",
+      "type": "library",
+      "name": "@noble/hashes",
+      "version": "1.5.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40noble/hashes@1.5.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@noble/hashes"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@noble/hashes/-/hashes-1.5.0.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "d63ea44056fb411aeeede28ddd90ef45c3f5debba0c1dc59a828db8805597c8270823d80eb95264f84e00115c69578274643912d30d3aced7d644aedefe41780"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@scure/base@1.1.9",
+      "type": "library",
+      "name": "@scure/base",
+      "version": "1.1.9",
+      "scope": "required",
+      "purl": "pkg:npm/%40scure/base@1.1.9",
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@scure/base"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@scure/base/-/base-1.1.9.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "f182a197c18788d23fa54d9531aa1f6b64e8afb3c94408f040b041ba296427d2f9fb5df255b0bb24eff04bba628a802f3d2c11dc928cd4827fbb8c50cdb7172a"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@scure/bip32@1.5.0",
+      "type": "library",
+      "name": "@scure/bip32",
+      "version": "1.5.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40scure/bip32@1.5.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@scure/bip32"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@scure/bip32/-/bip32-1.5.0.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "f049c5624a8441d9e4b86055a42ccac722300c204b0d58f7a225f410a505adefed3a32ff1ea6dad43ea7ffc45c99a432e1ff79a9016b3b603c4abeb26e1e0d47"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "@scure/bip39@1.4.0",
+      "type": "library",
+      "name": "@scure/bip39",
+      "version": "1.4.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40scure/bip39@1.4.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@scure/bip39"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@scure/bip39/-/bip39-1.4.0.tgz"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "044126ea9f08b9e57f6537d02e9ff4be1c3834f9d3f6859fe7edbc9ef99e5080a33fdf5fe2faf677ea9cec05460c3b7045ea7a89f478dd879df444559a2213cf"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "@obsidian/interface@1.8.1",
+      "dependsOn": [
+        "@noble/curves@1.6.0",
+        "@noble/hashes@1.5.0",
+        "@scure/bip32@1.5.0",
+        "@scure/bip39@1.4.0"
+      ]
+    },
+    {
+      "ref": "@noble/curves@1.6.0",
+      "dependsOn": [
+        "@noble/hashes@1.5.0"
+      ]
+    },
+    {
+      "ref": "@noble/hashes@1.5.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "@scure/base@1.1.9",
+      "dependsOn": []
+    },
+    {
+      "ref": "@scure/bip32@1.5.0",
+      "dependsOn": [
+        "@noble/curves@1.6.0",
+        "@noble/hashes@1.5.0",
+        "@scure/base@1.1.9"
+      ]
+    },
+    {
+      "ref": "@scure/bip39@1.4.0",
+      "dependsOn": [
+        "@noble/hashes@1.5.0",
+        "@scure/base@1.1.9"
+      ]
+    }
+  ]
+}
