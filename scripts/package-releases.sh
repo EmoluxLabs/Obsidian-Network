@@ -428,8 +428,17 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   proposer/vote equivocation evidence
 * fork choice is finalized anchor → fixed PoT weight → height → the lowest
   block hash, so equal-height ties resolve identically on every node
-* protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data; it does not
-  include a live-chain migration
+* protocol $VERSION is genesis-bound: it rejects 1.7.x and older peers and data and includes no live-chain
+  migration (see docs/upgrading-1.8.0.md). \`v1.7.0\` is untouched
+* **new in 1.8.0, consensus:** the mining gate keys can be rotated, revoked and recovered on chain by a majority of the
+  current keys (\`GATE_AUTHORITY\`, \`obsidian gate status|propose|sign|submit\`, \`init --gate-key-count\`; docs/gate-authority.md).
+  A lost majority is recoverable only by a new genesis
+* **new in 1.8.0, operations:** \`obsidian start\` hosts the interface by default (\`--no-interface\` or
+  \`OBSIDIAN_NODE_ONLY=1\` opts out); interface roles \`primary\`/\`edge\` for several hosts (accounts are not replicated);
+  \`/peers\` detail is local-only; \`health\`/\`finality\` CLI reads are time-bounded; \`init\`, \`join\`, \`status\`, \`peers\`,
+  \`sync\`, \`doctor\`, \`/livez\`, \`/readyz\`; the \`mineobs.network\` trusted-origin policy
+* the archives now also carry the web app, the web wallet, the extension and the desktop sources
+* nothing is signed: no publisher key exists, so these archives prove integrity, not authorship
 ${TEST_SUMMARY}
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%
