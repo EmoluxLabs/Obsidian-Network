@@ -172,6 +172,38 @@ describe('RPC request limits', () => {
     }
   });
 
+  /**
+   * The rate limiter is keyed by an address the client effectively chooses
+   * (behind a trusted proxy, the last X-Forwarded-For entry). It used to forget
+   * a bucket only once that bucket had been idle for ten minutes, which is no
+   * ceiling at all: under a flood of fresh addresses none of them are ever ten
+   * minutes old, so the map grew with the flood, and every request past the
+   * threshold then walked the whole of it.
+   */
+  it('keeps a hard ceiling on the client addresses it remembers', async () => {
+    const buckets: Map<string, { tokens: number; updatedAt: number }> = (server as any).buckets;
+    buckets.clear();
+    const now = Date.now();
+    for (let i = 0; i < 9_995; i += 1) buckets.set(`198.51.100.${i}`, { tokens: 1, updatedAt: now });
+
+    config.rpcTrustProxy = true;
+    config.rpcRateLimitPerMinute = 600;
+    try {
+      for (let i = 0; i < 20; i += 1) await get('/status', { 'x-forwarded-for': `203.0.113.${i}` });
+      expect(buckets.size).toBeLessThanOrEqual(10_000);
+      expect(buckets.size).toBeGreaterThan(9_990);
+      // The newest addresses are the ones kept; the oldest were shed to make room.
+      expect(buckets.has('203.0.113.19')).toBe(true);
+      expect(buckets.has('198.51.100.0')).toBe(false);
+      // Every request above was still answered: shedding budgets is not a refusal.
+      expect((await get('/status', { 'x-forwarded-for': '203.0.113.19' })).status).toBe(200);
+    } finally {
+      config.rpcTrustProxy = false;
+      config.rpcRateLimitPerMinute = 0;
+      buckets.clear();
+    }
+  });
+
   it('rejects malformed JSON and unknown routes', async () => {
     const malformed = await post('/wallet/balance', '{not json');
     expect(malformed.status).toBeGreaterThanOrEqual(400);

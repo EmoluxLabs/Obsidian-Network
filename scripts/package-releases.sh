@@ -197,7 +197,11 @@ mkdir -p "$STAGING"
 # ── helpers ──────────────────────────────────────────────────────────────────
 archive() {
   local name="$1" dir="$2"
-  ( cd "$dir" && zip -qr "$RELEASES/${name}.zip" . -x '*.git*' )
+  # `*.git*` looked like "the git directory" and is not: zip's `*` crosses `/`,
+  # so it also matched every `.github/…` path. A staged `.github` was therefore
+  # written into the tarball and silently dropped from the zip. `.git/*` is what
+  # was meant, and it leaves `.github` alone.
+  ( cd "$dir" && zip -qr "$RELEASES/${name}.zip" . -x '.git/*' -x '.git' )
   ( cd "$dir" && tar --exclude='.git' -czf "$RELEASES/${name}.tar.gz" . )
   echo "  ${name}.zip / ${name}.tar.gz"
 }
@@ -219,23 +223,19 @@ stage() {
 echo "→ staging archives under $STAGING"
 
 # ── 1. obsidian-core: the node, with its built dist ──────────────────────────
+# `.github/workflows/ci.yml` is staged because one shipped test reads it: the
+# compliance test takes CI's removed-feature list from the workflow and asks the
+# running node to report every one of those names absent, so the two can never
+# drift apart. The archive is verified on its own — `verify-release.sh
+# --with-tests` extracts it and runs the suite there — and without this file that
+# command, which the release notes print for every operator, failed with ENOENT.
 stage "$STAGING/obsidian-core" \
   obsidian-core/package.json obsidian-core/package-lock.json \
   obsidian-core/tsconfig.json obsidian-core/tsconfig.test.json obsidian-core/vitest.config.ts \
   obsidian-core/src obsidian-core/tests obsidian-core/dist obsidian-core/config \
-  obsidian-core/deployment obsidian-core/README.md .env.example 2>/dev/null || true
+  obsidian-core/deployment obsidian-core/README.md .env.example \
+  .github/workflows/ci.yml 2>/dev/null || true
 cp LICENSE "$STAGING/obsidian-core/" 2>/dev/null || true
-# One shipped test compares the node's compliance audit with the removed-feature list CI carries
-# (tests/security/rpc-hardening.test.ts reads ../../../.github/workflows/ci.yml — the same
-# repository-relative path inside this archive). Without the file,
-# `verify-release.sh obsidian-core-<version>.tar.gz --with-tests` — the command the generated
-# release notes tell a reader to run — fails on a correct archive, so the suite's one repo-level
-# input ships with it.
-if [ -f .github/workflows/ci.yml ]; then
-  mkdir -p "$STAGING/obsidian-core/.github/workflows"
-  cp .github/workflows/ci.yml "$STAGING/obsidian-core/.github/workflows/ci.yml"
-fi
-
 # ── 2. obsidian-interface: server, built bundles and the site shells ─────────
 stage "$STAGING/obsidian-interface" \
   obsidian-interface/package.json obsidian-interface/package-lock.json \
@@ -353,6 +353,16 @@ else
   TEST_SUMMARY="* No tests were run for this packaging pass (--skip-build). Treat these archives as source-only until you run the suites yourself."
 fi
 
+# The protocol identity the notes state is read from the build being packaged,
+# never typed in. It was typed in once, and a literal is exactly what goes
+# stale: the 1.7.0 notes stated the 1.6.0 identity — a release this one refuses
+# to peer with — while the archives they described were shipping 1.7.0. A reader
+# checks that sentence against the node they just started.
+PROTOCOL_IDENTITY="$(node --input-type=module -e "
+import { PROTOCOL_VERSION, MIN_CORE_VERSION } from './obsidian-core/dist/version.js';
+process.stdout.write('protocol ' + PROTOCOL_VERSION + ' is genesis-bound and rejects anything below ' + MIN_CORE_VERSION + ' (peers at the handshake, data directories at startup); it does not include a live-chain migration');
+" 2>/dev/null || printf 'protocol %s is genesis-bound and rejects older peers and data directories; it does not include a live-chain migration' "$VERSION")"
+
 cat > "$RELEASES/RELEASE-NOTES-$VERSION.md" <<NOTES
 # Obsidian Network $VERSION
 
@@ -396,9 +406,7 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   issuer public keys are committed in genesis and hashed into the genesis id, so
   every node of a network must be given the same list, and a chain that commits
   none accepts no claim (it fails closed)
-* protocol $VERSION is genesis-bound and rejects peers and data directories of
-  earlier protocol versions at the handshake; it does not include a live-chain
-  migration
+* ${PROTOCOL_IDENTITY}
 * name registry reads are bounded (\`limit\`/\`offset\`/\`prefix\` on \`GET /names\`,
   \`getnames\` over JSON-RPC), and block sync no longer stalls when a peer serves
   fewer blocks than the requested overlap

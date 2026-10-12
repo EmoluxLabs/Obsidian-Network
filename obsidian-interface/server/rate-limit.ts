@@ -33,8 +33,31 @@ export class KeyedLimiter {
     const allowed = bucket.tokens >= cost;
     if (allowed) bucket.tokens -= cost;
     this.buckets.set(key, bucket);
-    if (this.buckets.size > this.maxKeys) this.sweep();
+    if (this.buckets.size > this.maxKeys) this.enforceKeyLimit();
     return allowed;
+  }
+
+  /**
+   * Keep the map to `maxKeys` entries, whatever the traffic looks like.
+   *
+   * `sweep()` alone is not a bound. It only forgets buckets that have refilled
+   * completely, and under a flood of new client addresses none of them have:
+   * every new key survives the sweep, so the map grows with every address an
+   * attacker can present, and every call past the limit then pays an O(n)
+   * sweep over it. Sweep first (it is cheap when it works), then drop the
+   * least-recently-inserted entries until the map is within the limit again.
+   * Shedding the oldest budget means a very busy deployment throttles a little
+   * early instead of running out of memory, which is the right way round.
+   */
+  private enforceKeyLimit(): void {
+    this.sweep();
+    let excess = this.buckets.size - this.maxKeys;
+    if (excess <= 0) return;
+    for (const key of this.buckets.keys()) {
+      this.buckets.delete(key);
+      excess -= 1;
+      if (excess <= 0) return;
+    }
   }
 
   /** Seconds until `key` could next spend `cost`. */

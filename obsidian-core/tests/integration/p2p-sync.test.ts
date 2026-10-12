@@ -607,3 +607,45 @@ describe('what stays enforced', () => {
     await waitFor(() => scoreOf(established) < 0, 5_000, 'the penalty');
   });
 });
+
+describe('the maps keyed by a stranger’s address stay bounded', () => {
+  /**
+   * Both of these are throttles over data the other side chooses: the address a
+   * connection arrives from, or the address a peer handed us to dial. Neither
+   * ceiling used to hold. The ban list only forgot an entry once that entry had
+   * EXPIRED, and the identity-mismatch throttle forgot nothing at all, so a host
+   * that could present many addresses — which IPv6 makes cheap — grew both
+   * without limit, and every further insert then walked the whole map.
+   */
+  it('the ban list and the identity-mismatch throttle have a ceiling that holds', async () => {
+    const node = await startNode();
+    const p2p = node.p2p as unknown as {
+      banIp: (ip: string, reason: string) => void;
+      isIpBanned: (ip: string) => boolean;
+      bannedIps: Map<string, number>;
+      identityReported: Map<string, number>;
+      reportIdentityMismatch: (link: { inbound: boolean; address: string }, code: string, detail: string) => void;
+    };
+
+    let lastBanned = '';
+    for (let i = 0; i < 5_000; i += 1) {
+      lastBanned = `2001:db8::${i.toString(16)}`;
+      p2p.banIp(lastBanned, 'test');
+    }
+    expect(p2p.bannedIps.size).toBeLessThanOrEqual(2_000);
+    // The ban just entered is in force; the ones shed to make room for it are
+    // not, which is what "shed the oldest" has to mean.
+    expect(p2p.isIpBanned(lastBanned)).toBe(true);
+    expect(p2p.isIpBanned('2001:db8::0')).toBe(false);
+
+    for (let i = 0; i < 5_000; i += 1) {
+      p2p.reportIdentityMismatch({ inbound: false, address: `203.0.113.${i}` }, 'ERR_WRONG_NETWORK', 'test');
+    }
+    expect(p2p.identityReported.size).toBeLessThanOrEqual(2_000);
+    // A second report of the newest one is still throttled, so the cap costs no
+    // operator the warning it exists to give.
+    const before = node.logs.filter((entry) => entry.message.includes('is on another network or version')).length;
+    p2p.reportIdentityMismatch({ inbound: false, address: '203.0.113.4999' }, 'ERR_WRONG_NETWORK', 'test');
+    expect(node.logs.filter((entry) => entry.message.includes('is on another network or version')).length).toBe(before);
+  }, 30_000);
+});

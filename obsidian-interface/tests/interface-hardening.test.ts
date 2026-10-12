@@ -238,6 +238,38 @@ describe('costly routes are rationed per client', () => {
     limiter.sweep();
     expect(limiter.size).toBe(0);
   });
+
+  it('keeps a hard ceiling on the clients it remembers, however many addresses arrive', () => {
+    // `sweep()` only forgets a bucket once it has refilled completely. Under a
+    // flood of one-shot client addresses none of them ever refill, so the map
+    // grew without bound — 5 000 addresses against a ceiling of 10 left 5 000
+    // entries — and every further call then swept that whole map. The ceiling
+    // has to hold even when nothing can be forgotten.
+    const clock = { now: 0 };
+    const limiter = new KeyedLimiter(1, 0.001, () => clock.now, 10);
+    for (let i = 0; i < 5_000; i += 1) limiter.allow(`198.51.100.${i}`);
+    expect(limiter.size).toBeLessThanOrEqual(10);
+
+    // The newest addresses are the ones kept: the last one is still being
+    // counted (it spent its token on the way in), while an address shed long
+    // ago starts again from a full bucket, as if it had never been seen.
+    expect(limiter.allow('198.51.100.4999')).toBe(false);
+    expect(limiter.allow('198.51.100.0')).toBe(true);
+    expect(limiter.size).toBeLessThanOrEqual(10);
+  });
+
+  it('forgets quiet clients in favour of the ones actually knocking', () => {
+    // The same ceiling in the ordinary case: a client that has been quiet long
+    // enough to refill is dropped before a live one is ever shed.
+    const clock = { now: 0 };
+    const limiter = new KeyedLimiter(2, 1, () => clock.now, 4);
+    for (const key of ['a', 'b', 'c', 'd']) limiter.allow(key);
+    expect(limiter.size).toBe(4);
+    clock.now += 60_000; // a, b, c and d are all full again by now
+    limiter.allow('e');
+    expect(limiter.size).toBe(1);
+    expect(limiter.allow('a')).toBe(true); // a starts from a fresh bucket
+  });
 });
 
 // ── hashing must not freeze the process ──────────────────────────────────────

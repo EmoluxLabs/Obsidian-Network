@@ -145,6 +145,12 @@ test('the tree carries nothing older than the release it ships', () => {
   // removed on purpose, so a reader cannot mistake an old artefact for this
   // release — and this test is what keeps one from being copied back in.
   const version = json('obsidian-core/package.json').version;
+  // `SECURITY-AUDIT-1.6.0-slashing.md` is the same kind of artefact as the two
+  // below — a dated report of a release this repository no longer ships — and
+  // survived only because it sat at the repository root rather than in `docs/`.
+  // Nothing referenced it: not the document index, not the changelog, not a
+  // test. It was shipped inside the source archive, where a reader would take it
+  // for a report on the release they had just downloaded.
   for (const gone of ['docs/IMPLEMENTATION-REPORT.md', 'docs/MAINNET-SECURITY-AUDIT.md', 'SECURITY-AUDIT-1.6.0-slashing.md']) {
     assert.ok(!exists(gone), `${gone} records an older release and must stay deleted`);
   }
@@ -577,7 +583,7 @@ test('the package versions the guides tell a reader to pin are the ones the lock
   assert.deepEqual(stale, [], `a guide names a package version this release does not ship:\n${stale.join('\n')}`);
 });
 
-test('the identity values in the docs are the ones `genesis init` prints', { skip: skipUnbuilt }, () => {
+test('the identity values in the docs and the scripts are the ones `genesis init` prints', { skip: skipUnbuilt }, () => {
   const good = new Map();
   for (const name of NETWORKS) {
     const out = spawnSync(process.execPath, [join(CORE, 'dist', 'index.js'), 'genesis', 'init', '--network', name], { encoding: 'utf8' });
@@ -592,9 +598,11 @@ test('the identity values in the docs are the ones `genesis init` prints', { ski
     // Operator documentation may contain only live network identities.
     ...currentDocs(),
     '.env.example',
-    // …and so may the scripts an operator runs. `fresh-machine-test.sh` asserted the 1.6.0 params
-    // hash and four superseded genesis ids for two releases (1.6.1 and 1.7.0) because only the docs
-    // were checked here: it reported a correct node as wrong, and nothing noticed.
+    // …and so may the operator-facing scripts. `fresh-machine-test.sh` carried a hand-typed table of the
+    // four genesis ids plus a params hash; all five were from a release before 1.7.0 (1f2fba9a… where
+    // 1.7.0 ships bffeacb3…), so it reported a healthy machine as broken eight checks in a row, for two
+    // releases, because only the docs were checked here. Identity values are derived from the build now,
+    // and this is what keeps them that way.
     ...walk(join(ROOT, 'scripts'), () => true).map((p) => relative(ROOT, p)),
     ...walk(join(ROOT, 'obsidian-core', 'deployment'), () => true).map((p) => relative(ROOT, p)),
     ...walk(join(ROOT, 'obsidian-interface', 'deployment'), () => true).map((p) => relative(ROOT, p)),
@@ -618,6 +626,21 @@ test('the identity values in the docs are the ones `genesis init` prints', { ski
   for (const [value, label] of good) {
     if (label.startsWith('mainnet') && /genesisId|genesisHash/.test(label)) assert.ok(mainnetLaunch.includes(value), `mainnet-launch.md does not state the ${label}`);
   }
+});
+
+test('the fresh-machine harness installs the runtime packages of every archive it then starts', () => {
+  // The archives ship the built node and the built interface but not their node_modules, and the
+  // harness starts both. It used to install only the node's six packages, so the interface died at
+  // startup on "Cannot find package '@noble/curves'" and 33 checks failed on a machine whose
+  // archives were fine — a harness that cries wolf is worse than none, because nobody trusts it.
+  const sh = read('scripts/fresh-machine-test.sh');
+  for (const pkg of ['obsidian-core', 'obsidian-interface']) {
+    assert.ok(
+      new RegExp(`cd ${pkg} && npm ci --omit=dev`).test(sh),
+      `the fresh-machine harness never runs "npm ci --omit=dev" in ${pkg}, so the ${pkg} it starts cannot run`,
+    );
+  }
+  assert.ok(/obsidian-interface\/node_modules/.test(sh), 'nothing checks what the interface install brought in');
 });
 
 // ── the four networks never mixed ───────────────────────────────────────────
@@ -974,6 +997,43 @@ test('every RPC route the node serves is in the API reference', () => {
   };
   const missing = [...routes].filter((route) => route !== '/' && !pattern(route).test(api)).sort();
   assert.deepEqual(missing, [], `routes the node serves and docs/api.md never names:\n${missing.join('\n')}`);
+});
+
+test('the release notes state the protocol version they were generated for', () => {
+  // The release notes are generated for one release, so the protocol identity
+  // they state has to come from that build. It was a literal once, and a
+  // literal is exactly what goes stale: the 1.7.0 notes told the reader that
+  // "protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data" while the
+  // archives shipped 1.7.0, which rejects 1.6.x. A reader checks that sentence
+  // against the node they just started, so it has to be true of that node.
+  const version = json('obsidian-core/package.json').version;
+  const files = ['scripts/package-releases.sh', `releases/RELEASE-NOTES-${version}.md`].filter(exists);
+  const stale = [];
+  for (const file of files) {
+    lines(read(file)).forEach((line, index) => {
+      for (const match of line.matchAll(/\bprotocol(?: version)?\s+(\d+\.\d+\.\d+)\b/g)) {
+        if (match[1] !== version) stale.push(`${file}:${index + 1}: ${match[0]} (packaging ${version})`);
+      }
+    });
+  }
+  assert.deepEqual(stale, [], `a release note names another protocol version:\n${stale.join('\n')}`);
+});
+
+test('the core archive carries what its own tests read from outside the package', () => {
+  // `verify-release.sh --with-tests` — the command the release notes print for
+  // every operator — extracts obsidian-core-<version>.tar.gz on its own and runs
+  // the shipped suite there. One of those tests reads the removed-feature list
+  // out of `.github/workflows/ci.yml` and asks the running node to report every
+  // one of those names absent, so CI and the node's compliance audit can never
+  // drift apart. The archive did not contain that file, so the suite failed with
+  // ENOENT the moment an operator ran the documented command.
+  const script = read('scripts/package-releases.sh');
+  const stage = script.slice(script.indexOf('stage "$STAGING/obsidian-core"'), script.indexOf('# ── 2.'));
+  assert.ok(stage.length > 100, 'the core staging list must be found in scripts/package-releases.sh');
+  assert.match(stage, /\.github\/workflows\/ci\.yml/, 'the core archive must ship the workflow its test suite reads');
+  // ...and the zip must not silently drop it again: `*.git*` is not "the git
+  // directory" — zip's `*` crosses `/`, so it matched `.github/…` too.
+  assert.doesNotMatch(script, /zip [^\n]*-x\s+'\*\.git\*'/, "the zip exclude pattern '*.git*' excludes .github/ as well as .git/");
 });
 
 test('the helper, the packaging gate and CI all run this test', () => {
