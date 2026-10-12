@@ -181,6 +181,13 @@ export class RpcServer {
         this.respondIfOpen(response, 400, { error: message, code: 'ERR_MALFORMED' });
         return;
       }
+      if (isClientAbort(error)) {
+        // The caller left (browser tab closed, connection dropped) while its
+        // request was still being read. Nobody is waiting for a response and
+        // nothing went wrong here: see `isClientAbort`.
+        this.options.log('debug', 'rpc request aborted by the client', { path: request.url });
+        return;
+      }
       if (error instanceof ProtocolError) {
         this.respondIfOpen(response, 400, { error: message, code: error.code });
         return;
@@ -1784,6 +1791,28 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
   const value = Number.parseInt(raw, 10);
   if (!Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Did the CLIENT go away mid-request?
+ *
+ * A browser tab closed during an upload, a phone that loses its network, a
+ * scanner that hangs up: Node reports all of them by failing the request stream
+ * (message `aborted`, code `ECONNRESET`, or a premature close). None of them is
+ * a node fault, so none of them may be logged as one — an operator who alerts
+ * on error-level log lines would otherwise page on ordinary client behaviour,
+ * which is exactly the misattribution the status mapping above avoids. There is
+ * also nobody left to answer, so the caller must write no response at all.
+ */
+function isClientAbort(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return (
+    error.message === 'aborted' ||
+    code === 'ECONNRESET' ||
+    code === 'ABORT_ERR' ||
+    code === 'ERR_STREAM_PREMATURE_CLOSE'
+  );
 }
 
 /**

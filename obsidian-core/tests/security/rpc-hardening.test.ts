@@ -10,6 +10,7 @@
 
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ChainManager } from '../../src/blockchain/chain.js';
@@ -750,6 +751,89 @@ describe('GET /metrics', () => {
       expect(body.toLowerCase()).not.toContain('passphrase');
       expect(body.toLowerCase()).not.toContain('recipient');
       expect(body.toLowerCase()).not.toContain('privatekey');
+    }
+  });
+});
+
+/**
+ * A client that hangs up mid-request is not a node failure.
+ *
+ * Every aborted upload reached the central handler as an error and was recorded
+ * as `level: "error", message: "rpc handler failed"` — the caller's own action
+ * reported as an internal fault, on the exact signal an operator alerts on, and
+ * a misdiagnosis for anyone reading the node log. The node must stay quiet at
+ * that level, must not answer 5xx to a client that has merely left, and must go
+ * on serving everybody else.
+ */
+describe('client aborts (spec §66)', () => {
+  it('records a client that disconnects mid-body as a client abort, never as a node failure', async () => {
+    const abortDir = mkdtempSync(join(tmpdir(), 'obsidian-abort-'));
+    const entries: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = [];
+    const abortChain = new ChainManager({
+      dataDir: abortDir,
+      net: NET,
+      genesisDocument: {
+        networkId: NET.networkId,
+        chainId: NET.chainId,
+        protocolVersion: PROTOCOL_VERSION,
+        timestamp: 1_767_225_600,
+        note: 'abort suite',
+      },
+    });
+    await abortChain.init();
+    const abortServer = new RpcServer({
+      chain: abortChain,
+      indexer: new Indexer(abortDir),
+      net: NET,
+      config: {
+        ...DEFAULT_CONFIG,
+        network: 'devnet',
+        rpcPort: 0,
+        rpcHost: '127.0.0.1',
+        rpcRateLimitPerMinute: 0,
+        dataDir: abortDir,
+      },
+      genesisId: computeGenesisId(abortChain.genesisDocument, NET),
+      log: (level, message, fields) => entries.push({ level, message, fields }),
+    });
+    try {
+      const port = await abortServer.listen();
+      // Declare a body, send part of it, then vanish: a closed browser tab or a
+      // dropped mobile connection looks exactly like this to the server.
+      await new Promise<void>((resolve) => {
+        const socket = createConnection(port, '127.0.0.1');
+        socket.on('connect', () => {
+          socket.write(
+            'POST /tx/submit HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 512\r\n\r\n{"tx":"00',
+          );
+          setTimeout(() => {
+            socket.destroy();
+            resolve();
+          }, 50);
+        });
+        socket.on('error', () => resolve());
+      });
+
+      // Wait for the server's handler to observe the abort, bounded. `rpc
+      // listening` is logged while the listener is coming up, so the wait has
+      // to look past it for the entry the request itself produces.
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline && !entries.some((entry) => entry.message !== 'rpc listening')) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(
+        entries.filter((entry) => entry.level === 'error').map((entry) => `${entry.message}: ${JSON.stringify(entry.fields)}`),
+        'an aborted upload was reported as a node failure',
+      ).toEqual([]);
+      expect(entries.map((entry) => entry.message)).toContain('rpc request aborted by the client');
+
+      // The node is untouched: the next request, on a fresh connection, is served.
+      const after = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(after.status).toBe(200);
+    } finally {
+      await abortServer.close();
+      rmSync(abortDir, { recursive: true, force: true });
     }
   });
 });
