@@ -1,8 +1,8 @@
 {
   "product": "Obsidian Network",
   "version": "1.8.0",
-  "commit": "2da363bfdec4406f5ebce29d724dde738d4874b2",
-  "builtAt": "2026-10-12T12:24:15Z",
+  "commit": "e8dd71e701036e20192a8bec418213ad05031bc7",
+  "builtAt": "2026-10-12T12:37:18Z",
   "protocolVersion": "1.8.0",
   "paramsHash": "1d6cba55f0975f8b0d6345658f1c1cb1",
   "forkChoice": "FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH",
@@ -60,7 +60,7 @@
   "assets": [
     {
       "name": "obsidian-app-web-1.8.0.tar.gz",
-      "bytes": 471612
+      "bytes": 471620
     },
     {
       "name": "obsidian-app-web-1.8.0.zip",
@@ -76,7 +76,7 @@
     },
     {
       "name": "obsidian-core-1.8.0.tar.gz",
-      "bytes": 885815
+      "bytes": 885808
     },
     {
       "name": "obsidian-core-1.8.0.zip",
@@ -84,7 +84,7 @@
     },
     {
       "name": "obsidian-extension-1.8.0.tar.gz",
-      "bytes": 709239
+      "bytes": 709242
     },
     {
       "name": "obsidian-extension-1.8.0.zip",
@@ -92,7 +92,7 @@
     },
     {
       "name": "obsidian-interface-1.8.0.tar.gz",
-      "bytes": 1654976
+      "bytes": 1655622
     },
     {
       "name": "obsidian-interface-1.8.0.zip",
@@ -100,7 +100,7 @@
     },
     {
       "name": "obsidian-interface-selfhost-1.8.0.tar.gz",
-      "bytes": 1474890
+      "bytes": 1474732
     },
     {
       "name": "obsidian-interface-selfhost-1.8.0.zip",
@@ -108,11 +108,11 @@
     },
     {
       "name": "obsidian-network-source-1.8.0.tar.gz",
-      "bytes": 4302100
+      "bytes": 4302528
     },
     {
       "name": "obsidian-node-desktop-1.8.0.tar.gz",
-      "bytes": 2122343
+      "bytes": 2122351
     },
     {
       "name": "obsidian-node-desktop-1.8.0.zip",
@@ -120,7 +120,7 @@
     },
     {
       "name": "obsidian-node-operator-1.8.0.tar.gz",
-      "bytes": 665594
+      "bytes": 665593
     },
     {
       "name": "obsidian-node-operator-1.8.0.zip",
@@ -128,7 +128,7 @@
     },
     {
       "name": "obsidian-wallet-web-1.8.0.tar.gz",
-      "bytes": 436551
+      "bytes": 436557
     },
     {
       "name": "obsidian-wallet-web-1.8.0.zip",

@@ -1,6 +1,6 @@
 # Obsidian Network 1.8.0
 
-Built from commit `2da363bfdec4406f5ebce29d724dde738d4874b2` at 2026-10-12T12:24:15Z.
+Built from commit `e8dd71e701036e20192a8bec418213ad05031bc7` at 2026-10-12T12:37:18Z.
 
 ## Verify before you run
 
@@ -58,9 +58,18 @@ public release.
   proposer/vote equivocation evidence
 * fork choice is finalized anchor → fixed PoT weight → height → the lowest
   block hash, so equal-height ties resolve identically on every node
-* protocol 1.6.0 is genesis-bound and rejects 1.5.x peers/data; it does not
-  include a live-chain migration
-* 1349 automated tests, all of them run immediately before packaging: core (635), interface (317), edge worker (17), web app, web wallet and extension (284), release verification and signing behaviour (6), soak verdict rules (5), the genesis invitation generator (3), repository consistency (29), the three-node cluster end-to-end suite (15) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (38)
+* protocol 1.8.0 is genesis-bound: it rejects 1.7.x and older peers and data and includes no live-chain
+  migration (see docs/upgrading-1.8.0.md). `v1.7.0` is untouched
+* **new in 1.8.0, consensus:** the mining gate keys can be rotated, revoked and recovered on chain by a majority of the
+  current keys (`GATE_AUTHORITY`, `obsidian gate status|propose|sign|submit`, `init --gate-key-count`; docs/gate-authority.md).
+  A lost majority is recoverable only by a new genesis
+* **new in 1.8.0, operations:** `obsidian start` hosts the interface by default (`--no-interface` or
+  `OBSIDIAN_NODE_ONLY=1` opts out); interface roles `primary`/`edge` for several hosts (accounts are not replicated);
+  `/peers` detail is local-only; `health`/`finality` CLI reads are time-bounded; `init`, `join`, `status`, `peers`,
+  `sync`, `doctor`, `/livez`, `/readyz`; the `mineobs.network` trusted-origin policy
+* the archives now also carry the web app, the web wallet, the extension and the desktop sources
+* nothing is signed: no publisher key exists, so these archives prove integrity, not authorship
+* 1352 automated tests, all of them run immediately before packaging: core (635), interface (317), edge worker (17), web app, web wallet and extension (284), release verification and signing behaviour (9), soak verdict rules (5), the genesis invitation generator (3), repository consistency (29), the three-node cluster end-to-end suite (15) and the four-network isolation suite, the interface-to-node ecosystem suite, the per-network helper script and the Termux quick-start page run as written (38)
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%
   node runners / 10% treasury, and the validator bond is exactly 20,000 OBS
