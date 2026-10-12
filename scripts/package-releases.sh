@@ -217,6 +217,8 @@ else
 fi
 
 rm -rf "$RELEASES"/*.zip "$RELEASES"/*.tar.gz "$STAGING"
+# Notes and signatures of any other version are stale the moment this build exists: a verifier must never meet them.
+find "$RELEASES" -maxdepth 1 -type f \( -name 'RELEASE-NOTES-*.md' ! -name "RELEASE-NOTES-$VERSION.md" -o -name RELEASE-SIGNATURE.json \) -delete
 mkdir -p "$STAGING"
 
 # ── helpers ──────────────────────────────────────────────────────────────────

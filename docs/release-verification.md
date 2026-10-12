@@ -21,6 +21,8 @@ RELEASE-NOTES-1.8.1.md
 
 ## 1b. Check who published it
 
+> **Preferred since 1.8.1:** `node scripts/release-tool.mjs verify --fingerprint <pinned fingerprint>` checks the digests, that every version in the release agrees, the Ed25519 signature **and** that the signing key is the one you pinned. A signature from an unpinned key is reported as `SIGNED_UNTRUSTED`, never as authenticated. Exit codes and procedures: [release-signing.md](release-signing.md). The GPG tooling below remains for operators who already use it, but it trusts whatever key is in the keyring or shipped beside the archive, so on its own it cannot establish authorship.
+
 A digest proves the bytes are intact. It proves nothing about **who** produced
 them: anyone who can replace an archive can replace the `SHA256SUMS` beside it.
 Authorship needs a signature.

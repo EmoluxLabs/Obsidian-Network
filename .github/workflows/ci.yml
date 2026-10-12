@@ -109,8 +109,13 @@ jobs:
       # exactly the failure this job makes impossible.
       - name: Signing and verification behaviour
         run: node --test tests/scripts/release-signing.test.mjs
+      - name: Release authentication (sign, verify, pinned fingerprint, tamper detection)
+        run: node --test tests/scripts/release-tool.test.mjs
       - name: Soak verdict rules
         run: node --test tests/scripts/soak-verdict.test.mjs
+      # A credential in a tracked file is found here, not by a stranger. Prints rule and line, never the match.
+      - name: No credentials in tracked files
+        run: node --test tests/scripts/scan-secrets.test.mjs
       # nginx is not installed on the runner, and a config nginx rejects is only found out
       # on the server, while an operator is trying to put HTTPS in front of a node. This
       # parses the shipped files, and the per-network sites the Oracle guide generates from
@@ -181,6 +186,9 @@ jobs:
       # The one-command-per-network helper the Termux and VPS guides use, run on
       # shifted ports (39330-39488, 19330-19488): its isolation promise is tested too.
       - run: node --test tests/scripts/network-script.test.mjs
+      # Interface primary failover with REAL processes: SIGKILL of the leader under load, restart, a paused leader that
+      # wakes up fenced, partition and heal. Needs the interface compiled (npm run build above).
+      - run: node --test tests/e2e/failover.test.mjs
       # docs/TERMUX-QUICKSTART.md: the commands in each network's section, pasted as written, in a stand-in for a
       # fresh Termux (its own home and temp directory, only the tools Termux ships), one network at a time.
       - run: node --test tests/scripts/termux-quickstart.test.mjs

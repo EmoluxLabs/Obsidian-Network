@@ -123,7 +123,12 @@ const ctx = {};
 test('init creates the network once, and a second init writes nothing', { skip }, () => {
   ctx.rootA = scratch('a');
   ctx.dirA = join(ctx.rootA, 'data', 'mainnet');
-  const base = ['mainnet', 'init', '--data-dir', ctx.dirA, '--generate-gate-key'];
+  // Since 1.8.1 mainnet refuses a one-key authority unless that is asked for by name; this flow needs a quorum of one
+  // so a single keystore can sign the proposal below. The refusal itself is asserted first, against a scratch directory.
+  const refused = cli(['mainnet', 'init', '--data-dir', join(scratch('single'), 'm'), '--generate-gate-key']);
+  assert.notEqual(refused.code, 0, 'mainnet must not silently create a single-key authority');
+  assert.match(refused.err + refused.out, /at least 3 gate keys/);
+  const base = ['mainnet', 'init', '--data-dir', ctx.dirA, '--generate-gate-key', '--allow-single-gate-key'];
   const first = cli(base);
   assert.equal(first.code, 0, first.err);
   const created = JSON.parse(first.out);

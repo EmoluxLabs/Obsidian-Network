@@ -137,6 +137,8 @@ but cannot be checked — is [release-verification.md](release-verification.md).
 
 ## 5. Signing
 
+> **1.8.1:** the authoritative procedure is [release-signing.md](release-signing.md) (`scripts/release-tool.mjs`: Ed25519 signature over the manifest, a pinned publisher fingerprint, version-agreement checks, byte-reproducible archives, `scripts/reproduce-release.sh`). The GPG flow below is the older, optional route and does not pin a key.
+
 Checksums prove integrity, not authorship: anyone who can replace an archive can
 replace the `SHA256SUMS` beside it. `scripts/sign-release.sh` produces a
 detached GPG signature over `SHA256SUMS` after **re-checking every digest**, so
