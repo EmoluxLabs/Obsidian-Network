@@ -303,6 +303,45 @@ describe('the handshake gate', () => {
     expect(ack?.hello.challenge).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  it('does NOT count a connection as a peer until the handshake has completed', async () => {
+    const a = await startNode();
+    const keys = generateKeyPair(net.addressHrp);
+    const idle = await rawPeer(a.port);
+    await waitFor(() => challengeOf(idle) !== '', 3_000, 'the challenge');
+    // An open socket that has proven nothing: it must not appear as a peer anywhere an operator or a monitor looks.
+    expect(a.p2p.peerCount).toBe(0);
+    expect(a.p2p.activeConnections()).toHaveLength(0);
+    const before = a.p2p.status().peers as { connected: number; pendingHandshakes: number };
+    expect(before.connected).toBe(0);
+    expect(before.pendingHandshakes).toBe(1);
+    // A second socket that DOES complete the handshake is counted, the idle one still is not.
+    const honest = await rawPeer(a.port);
+    await waitFor(() => challengeOf(honest) !== '');
+    honest.send(helloFor(a, keys, challengeOf(honest)));
+    await waitFor(() => a.p2p.peerCount === 1, 3_000, 'one verified peer');
+    const after = a.p2p.status().peers as { connected: number; pendingHandshakes: number };
+    expect(after.connected).toBe(1);
+    expect(after.pendingHandshakes).toBe(1);
+  });
+
+  it('keeps a bounded, secret-free record of the latest peer problems for diagnostics', async () => {
+    const theirs = await startNode({ network: getNetwork('testnet') });
+    const logs: LogEntry[] = [];
+    const ours = await startNode({ logs });
+    expect(ours.p2p.status().lastError).toBeNull();
+    await ours.p2p.connectTo(`127.0.0.1:${theirs.port}`, 'seed');
+    await waitFor(() => ours.p2p.recentEvents(10).length > 0, 8_000, 'the peer problem to be recorded');
+    const events = ours.p2p.recentEvents(10);
+    expect(events.length).toBeLessThanOrEqual(10);
+    expect(events[0]!.level).toBe('warn');
+    expect(events[0]!.message).toContain('another network');
+    expect(ours.p2p.status().lastError).not.toBeNull();
+    // Only scalars, and nothing that looks like key material, is retained.
+    const text = JSON.stringify(events).toLowerCase();
+    expect(text).not.toContain(ours.keys.privateKey.toLowerCase());
+    for (const event of events) for (const value of Object.values(event.fields)) expect(['string', 'number', 'boolean']).toContain(typeof value);
+  });
+
   it('rejects a RECORDED hello replayed on another connection', async () => {
     const a = await startNode();
     const keys = generateKeyPair(net.addressHrp);

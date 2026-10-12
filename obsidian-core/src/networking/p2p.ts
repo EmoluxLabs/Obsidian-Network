@@ -372,6 +372,8 @@ export class P2PService extends EventEmitter {
   private readonly syncBatch: number;
   private readonly syncTimeoutMs: number;
   private readonly sink: (level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Record<string, unknown>) => void;
+  /** The last few things that went wrong with a peer (bounded), so an operator can ask "why was that peer refused?". */
+  private readonly recent: Array<{ at: number; level: 'warn' | 'error'; message: string; fields: Record<string, string | number | boolean> }> = [];
   private host = '0.0.0.0';
   private port = 0;
   private advertiseHost = '';
@@ -405,7 +407,11 @@ export class P2PService extends EventEmitter {
     this.identity = { address, publicKey: options.identity.publicKey, privateKey: options.identity.privateKey };
     this.nodeId = options.identity.nodeId || nodeIdFor(address, options.chain.genesisId);
     this.nodeName = options.nodeName ?? `obsidian-${address.slice(-6)}`;
-    this.sink = options.log ?? (() => undefined);
+    const downstream = options.log ?? (() => undefined);
+    this.sink = (level, message, fields) => {
+      if (level === 'warn' || level === 'error') this.remember(level, message, fields);
+      downstream(level, message, fields);
+    };
     const advertised = (options.listenAddress ?? '').trim();
     if (advertised) {
       try {
@@ -437,14 +443,26 @@ export class P2PService extends EventEmitter {
     return this.identity.address;
   }
 
-  /** Number of live peer connections (bounded by maxInbound + maxOutbound). */
+  /**
+   * Number of peers that have COMPLETED the handshake (network, genesis, protocol and signature all verified).
+   * A socket that has connected but not yet proven who it is is not a peer: counting it let any idle connection
+   * inflate `peers` in /health and /status for as long as the handshake timeout lasted, so a node could report
+   * "connected" while talking to nobody. Connection LIMITS still count every socket (see `links.size`).
+   */
   get peerCount(): number {
-    return this.links.size;
+    let count = 0;
+    for (const link of this.links.values()) if (link.hello !== null) count += 1;
+    return count;
+  }
+
+  /** Sockets that are open but have not finished the handshake yet (bounded by the connection limits). */
+  get pendingHandshakes(): number {
+    return this.links.size - this.peerCount;
   }
 
   /** Live connections, newest state first — used by the API and the operator UI. */
   activeConnections(): Array<{ address: string; nodeId: string; height: number; inbound: boolean; version: string }> {
-    return [...this.links.values()].map((link) => ({
+    return [...this.links.values()].filter((link) => link.hello !== null).map((link) => ({
       address: link.address,
       nodeId: link.nodeId,
       height: link.height,
@@ -456,6 +474,23 @@ export class P2PService extends EventEmitter {
   /** Every peer hint this node knows, including ones it is not connected to. */
   knownPeers(): PeerRecord[] {
     return this.peers.all();
+  }
+
+  /** Remember a refusal or failure: bounded in count and in size, scalars only (never a message body or a key). */
+  private remember(level: 'warn' | 'error', message: string, fields?: Record<string, unknown>): void {
+    const flat: Record<string, string | number | boolean> = {};
+    for (const [key, value] of Object.entries(fields ?? {}).slice(0, 8)) {
+      if (/key|secret|pass|mnemonic|seed|token/i.test(key)) continue;
+      if (typeof value === 'number' || typeof value === 'boolean') flat[key] = value;
+      else if (typeof value === 'string') flat[key] = value.slice(0, 120);
+    }
+    this.recent.push({ at: this.now(), level, message: message.slice(0, 200), fields: flat });
+    if (this.recent.length > 50) this.recent.shift();
+  }
+
+  /** The most recent peer-level warnings and errors, newest last. */
+  recentEvents(limit = 20): Array<{ at: number; level: 'warn' | 'error'; message: string; fields: Record<string, string | number | boolean> }> {
+    return this.recent.slice(-Math.max(1, Math.min(50, limit)));
   }
 
   status(): Record<string, unknown> {
@@ -471,10 +506,12 @@ export class P2PService extends EventEmitter {
         connected: connected.length,
         inbound: connected.filter((peer) => peer.inbound).length,
         outbound: connected.filter((peer) => !peer.inbound).length,
+        pendingHandshakes: this.pendingHandshakes,
         known: this.peers.size,
         height: connected.reduce((max, peer) => Math.max(max, peer.height), 0),
       },
       wireProtocol: WIRE_VERSION,
+      lastError: this.recent.length > 0 ? this.recent[this.recent.length - 1] : null,
     };
   }
 

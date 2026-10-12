@@ -378,6 +378,8 @@ export class RpcServer {
     // Decode identifiers only after a registered route prefix has matched.
     const after = (prefix: string): string => decodeURIComponent(path.slice(prefix.length));
 
+    if (path === '/livez') return this.livez(response);
+    if (path === '/readyz') return this.readyz(response);
     if (path === '/' || path === '/health') return this.health(response);
     if (path === '/status') return this.status(response);
     if (path === '/finality') return this.finality(response);
@@ -430,6 +432,48 @@ export class RpcServer {
   }
 
   // ── Read endpoints ────────────────────────────────────────────────────────
+
+  /**
+   * Liveness: the process is up and answering. Does no chain work and cannot fail for chain reasons, so an
+   * orchestrator that restarts on a failing liveness check never restarts a node merely because it is syncing.
+   */
+  private livez(response: ServerResponse): void {
+    this.json(response, 200, { status: 'alive', uptimeSeconds: Math.floor(process.uptime()), timestamp: Math.floor(Date.now() / 1000) });
+  }
+
+  /**
+   * Readiness: this node can be trusted to answer for the chain right now. A web server that is merely online is
+   * not ready; a node that is catching up is not ready; a node with a listener that failed to open is not ready.
+   * Zero peers does NOT make a node unready (the first node of a network has none), but is reported as degraded.
+   * Constant-time: it reads counters and never walks state, so it returns promptly under load.
+   */
+  private readyz(response: ServerResponse): void {
+    const { chain, p2p, config } = this.options;
+    const tip = chain.tip;
+    const behindBy = p2p?.behindBy() ?? 0;
+    const syncing = chain.isSyncing || behindBy > 1;
+    const p2pStatus = (p2p?.status() ?? {}) as { listening?: boolean; peers?: { connected?: number } };
+    const connected = p2pStatus.peers?.connected ?? 0;
+    const chainOk = tip !== undefined && chain.height >= 0;
+    const p2pExpected = config.p2pEnabled !== false;
+    const p2pOk = !p2pExpected || p2pStatus.listening === true;
+    const degraded: string[] = [];
+    if (p2pExpected && connected === 0) degraded.push('no-peers');
+    const ready = chainOk && !syncing && p2pOk;
+    this.json(response, ready ? 200 : 503, {
+      status: ready ? (degraded.length > 0 ? 'ready-degraded' : 'ready') : 'not-ready',
+      checks: {
+        chain: { ok: chainOk, height: chain.height, headHash: tip?.hash ?? null },
+        sync: { ok: !syncing, syncing, behindBy },
+        p2p: { ok: p2pOk, enabled: p2pExpected, listening: p2pStatus.listening === true, connectedPeers: connected },
+        rpc: { ok: true },
+      },
+      degraded,
+      network: this.options.net.name,
+      genesisId: this.options.genesisId,
+      timestamp: Math.floor(Date.now() / 1000),
+    });
+  }
 
   private health(response: ServerResponse): void {
     const status = this.options.chain.status({ peers: this.options.p2p?.peerCount ?? 0 });

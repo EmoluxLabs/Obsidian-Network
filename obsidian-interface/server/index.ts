@@ -244,7 +244,7 @@ export class BodyTooLargeError extends Error {
  * What a trusted origin that the operator did NOT list may call: public chain reads, the transaction relay
  * and node health. None of these reads a cookie, so none of them can be used to act as a signed-in user.
  */
-const PUBLIC_API_PATHS: ReadonlySet<string> = new Set(['/api/rpc', '/api/nodes', '/api/health']);
+const PUBLIC_API_PATHS: ReadonlySet<string> = new Set(['/api/rpc', '/api/nodes', '/api/health', '/api/ready']);
 
 const SITES = [
   'landing',
@@ -581,6 +581,21 @@ export class InterfaceServer {
         healthyNodes: this.dependencies.pool.summary().filter((node) => node.healthy).length,
         consensusHeight: consensusHeight ?? null,
         genesisMismatch: this.dependencies.pool.genesisMismatch,
+      });
+      return;
+    }
+
+    // Readiness for a load balancer or a failover script: should traffic be sent to THIS interface? Only when it can
+    // reach at least one healthy node of its own network. /api/health stays 200 (the process is up) either way.
+    if (path === '/api/ready') {
+      const healthyNodes = this.dependencies.pool.summary().filter((node) => node.healthy).length;
+      const mismatch = this.dependencies.pool.genesisMismatch;
+      const ready = healthyNodes > 0 && !mismatch;
+      this.json(response, ready ? 200 : 503, {
+        status: ready ? 'ready' : 'not-ready',
+        network: this.config.network ?? null,
+        healthyNodes,
+        genesisMismatch: mismatch,
       });
       return;
     }

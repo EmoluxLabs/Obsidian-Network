@@ -59,6 +59,8 @@ beforeAll(async () => {
     rpcHost: '127.0.0.1',
     rpcCorsOrigins: [ALLOWED_ORIGIN],
     rpcRateLimitPerMinute: 0,
+    // This server is built without a P2P service, so /readyz must not expect one.
+    p2pEnabled: false,
     dataDir: dir,
   };
   server = new RpcServer({
@@ -456,6 +458,8 @@ describe('private material never crosses the wire', () => {
     const wallet = generateKeyPair();
     const routes = [
       '/health',
+      '/livez',
+      '/readyz',
       '/status',
       '/params',
       '/version',
