@@ -76,7 +76,9 @@ try {
 }
 
 const PORT = Number(process.env.APP_PORT ?? NETWORK?.appPort ?? 8790);
-const HOST = process.env.APP_HOST ?? '0.0.0.0';
+// Loopback unless told otherwise: the app is reached through a reverse proxy (TLS, the public hostname), and an
+// internal port must not also answer on the machine's public address. Set APP_HOST=0.0.0.0 on purpose (a container).
+const HOST = process.env.APP_HOST ?? '127.0.0.1';
 const RECHECK_MS = Number(process.env.APP_NETWORK_RECHECK_MS ?? 30_000);
 
 /**
@@ -100,7 +102,7 @@ const USAGE = `Obsidian app server
                         https://obsidian.example  (required)
   APP_PORT              port to listen on   (default per network:
                         mainnet 8790, testnet 18790, staging 28790, devnet 38790)
-  APP_HOST              address to bind              (default 0.0.0.0)
+  APP_HOST              address to bind              (default 127.0.0.1)
   APP_NETWORK_RECHECK_MS  how often the platform's network is re-verified (default 30000)
   APP_TRUST_PROXY       true ONLY behind a reverse proxy you control that writes X-Forwarded-For: the visitor's
                         address is then taken from it, so the platform rate-limits per visitor (default false)

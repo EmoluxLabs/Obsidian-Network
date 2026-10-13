@@ -9,7 +9,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { originAllowed, parseAllowedOrigins } from '../server/origin.mjs';
@@ -219,4 +219,11 @@ test('the web app keeps its policy and its whole API; a product that sets APP_AP
   bad.stderr.on('data', (d) => (err += d));
   assert.equal(await new Promise((r) => bad.on('exit', r)), 2);
   assert.match(err, /APP_API_ALLOW/);
+});
+
+test('an unconfigured server listens on loopback only, so its port is never public without a decision', async () => {
+  const { port } = await stack({ APP_HOST: undefined });
+  const listing = execFileSync('ss', ['-ltnH', `sport = :${port}`], { encoding: 'utf8' });
+  assert.match(listing, new RegExp(`127\\.0\\.0\\.1:${port}\\b`), listing);
+  assert.doesNotMatch(listing, /(?:0\.0\.0\.0|\*|\[::\]):\d+/, `must not bind a wildcard address: ${listing}`);
 });

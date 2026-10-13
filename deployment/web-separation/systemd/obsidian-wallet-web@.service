@@ -1,0 +1,48 @@
+# Obsidian Wallet web app (obsidian-wallet-web) as a systemd TEMPLATE: one instance per network.
+#
+#   sudo install -m 0644 obsidian-wallet-web@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now obsidian-wallet-web@mainnet
+#
+#   settings   /etc/obsidian/<network>/wallet-web.env  (YOU create it from env/wallet-web.env.example)
+#   port       APP_PORT in that file. mainnet 8791 (testnet 18791, staging 28791, devnet 38791)
+#   code       /opt/obsidian/obsidian-wallet-web, with /opt/obsidian/obsidian-app-web beside it: the wallet's
+#              entry point runs the web app's hardened server with the wallet's own public/ directory.
+#
+# Its OWN process on its OWN port. It forwards /api/rpc only (chain reads and transaction relay): there is no
+# sign-in and no account route behind this hostname. Keys are made and kept in the browser; this process never
+# sees one. Listens on 127.0.0.1 only; nginx (wallet.obsmainnet.us.ci) is the public door.
+[Unit]
+Description=Obsidian Wallet web app (%i)
+Documentation=https://github.com/EmoluxLabs/Obsidian-Network
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/obsidian/%i/wallet-web.env
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+WorkingDirectory=/opt/obsidian/obsidian-wallet-web
+EnvironmentFile=/etc/obsidian/%i/wallet-web.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node scripts/start.mjs %i
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

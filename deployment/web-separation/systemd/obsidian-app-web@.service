@@ -1,0 +1,52 @@
+# Obsidian Web App (obsidian-app-web) as a systemd TEMPLATE: one instance per network.
+#
+#   sudo install -m 0644 obsidian-app-web@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now obsidian-app-web@mainnet
+#
+#   settings   /etc/obsidian/<network>/app-web.env     (YOU create it from env/app-web.env.example)
+#   port       APP_PORT in that file. mainnet 8790 (testnet 18790, staging 28790, devnet 38790)
+#   code       /opt/obsidian/obsidian-app-web          (the obsidian-app-web archive, built: public/ present)
+#
+# It is its OWN process on its OWN port: it serves the app and forwards /api to the platform named by
+# OBSIDIAN_PLATFORM_URL. It listens on 127.0.0.1 only; nginx (app.obsmainnet.us.ci) is the public door.
+# It holds no keys, no chain data and no accounts, so stopping or restarting it cannot affect the node or the
+# platform.
+[Unit]
+Description=Obsidian Web App (%i)
+Documentation=https://github.com/EmoluxLabs/Obsidian-Network
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/obsidian/%i/app-web.env
+
+[Service]
+Type=simple
+User=obsidian
+Group=obsidian
+WorkingDirectory=/opt/obsidian/obsidian-app-web
+EnvironmentFile=/etc/obsidian/%i/app-web.env
+Environment=NODE_ENV=production
+# The entry point refuses to start if %i and OBSIDIAN_APP_NETWORK disagree, or if the platform behind it is on a
+# different network (exit 2 / 3). A bad start is a loud one.
+ExecStart=/usr/bin/node scripts/start.mjs %i
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+# NOT set: MemoryDenyWriteExecute=true (Node.js's JIT needs it off).
+# No ReadWritePaths: this service writes nothing.
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -94,6 +94,27 @@ for network, port in INTERFACES.items():
 
 check("all four generated sites together in one nginx", grammar_errors(wrap(INTERFACE_ZONES, *generated), "all four sites"))
 
+# The three-site layout (deployment/web-separation): conf.d + snippets + one vhost per hostname, laid out as they are
+# on a server so the relative `include snippets/...` lines resolve.
+SEPARATION = os.path.join(ROOT, "deployment", "web-separation", "nginx")
+tree = tempfile.mkdtemp()
+subprocess.run(["cp", "-r", SEPARATION + "/.", tree], check=True)
+with open(os.path.join(tree, "nginx.conf"), "w") as handle:
+    handle.write("events {}\nhttp {\n  include conf.d/*.conf;\n  include sites-available/*.conf;\n}\n")
+payload = crossplane.parse(os.path.join(tree, "nginx.conf"), check_ctx=True, check_args=True, strict=True, comments=False)
+problems = [f"web-separation: {os.path.basename(cfg['file'])} line {e.get('line')}: {e['error']}" for cfg in payload["config"] for e in cfg.get("errors", [])]
+hosts = []
+def walk(block):
+    for d in block:
+        if d["directive"] == "server_name":
+            hosts.append(d["args"][0])
+        walk(d.get("block", []))
+for cfg in payload["config"]:
+    walk(cfg["parsed"])
+if sorted(hosts) != sorted(["obsmainnet.us.ci"] * 2 + ["app.obsmainnet.us.ci"] * 2 + ["wallet.obsmainnet.us.ci"] * 2):
+    problems.append(f"web-separation: server_name set is wrong: {hosts}")
+check("the three-site layout (platform 8789, app 8790, wallet 8791) parses and names exactly its three hostnames", problems)
+
 if failures:
     sys.exit(f"\n{len(failures)} problem(s)")
 print("\nevery nginx file parses, and the generated per-network sites are distinct and correct")

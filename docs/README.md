@@ -38,6 +38,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | [node-operator.md](node-operator.md) | Anyone running a node: ports, keystore, seeds, monitoring, upgrades, backups |
 | [node-runner-rewards.md](node-runner-rewards.md) | The 90/10 ONS revenue split, registering a reward wallet, how uptime and participation are measured without self-reporting, and how payouts are settled |
 | [self-hosting.md](self-hosting.md) | Anyone running the interface: systemd, Docker, nginx, Cloudflare |
+| [web-separation.md](web-separation.md) | The main platform, the Web App and the Wallet web app as three services on three ports (8789 / 8790 / 8791) behind three nginx vhosts: install, port check, verification, rollback |
 | [trusted-domains.md](trusted-domains.md) | Which browser origins a node or interface answers: the project's own domain by default, how to add yours (exact origins and wildcards), what is refused |
 | [upgrading-1.8.0.md](upgrading-1.8.0.md) | Moving from 1.7.0 to 1.8.0: a new chain, what operators do, what does not migrate |
 | [upgrading-1.8.1.md](upgrading-1.8.1.md) | Moving from 1.8.0 to 1.8.1: a software release with no protocol change, what operators do, how to roll back |

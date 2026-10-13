@@ -116,6 +116,9 @@ jobs:
       # A credential in a tracked file is found here, not by a stranger. Prints rule and line, never the match.
       - name: No credentials in tracked files
         run: node --test tests/scripts/scan-secrets.test.mjs
+      # Three hostnames, three ports (8789 / 8790 / 8791), three vhosts: a hostname must only ever reach its own upstream.
+      - name: Web separation (vhosts, units, install/rollback against a scratch tree)
+        run: node --test tests/scripts/web-separation.test.mjs
       # nginx is not installed on the runner, and a config nginx rejects is only found out
       # on the server, while an operator is trying to put HTTPS in front of a node. This
       # parses the shipped files, and the per-network sites the Oracle guide generates from

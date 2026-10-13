@@ -624,6 +624,9 @@ function envNamesRead() {
     ...walk(join(IFACE, 'server'), (p) => p.endsWith('.ts')),
     ...walk(join(ROOT, 'scripts'), (p) => /\.(sh|mjs)$/.test(p)),
     ...walk(join(ROOT, 'cloudflare', 'src'), (p) => p.endsWith('.js')),
+    // The Web App and the Wallet web app read their own settings (OBSIDIAN_APP_NETWORK, OBSIDIAN_PLATFORM_URL).
+    ...walk(join(ROOT, 'obsidian-app-web', 'server'), (p) => p.endsWith('.mjs')),
+    ...walk(join(ROOT, 'obsidian-app-web', 'scripts'), (p) => p.endsWith('.mjs')),
     join(CORE, 'deployment', 'docker', 'entrypoint.sh'),
   ];
   for (const file of sources) for (const m of readFileSync(file, 'utf8').matchAll(/OBSIDIAN_[A-Z0-9_]+/g)) names.add(m[0]);

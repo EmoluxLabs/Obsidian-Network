@@ -11,6 +11,24 @@ a node running it. For 1.8.0, 1.8.1 and 1.8.2 that is `1d6cba55f0975f8b0d6345658
 
 ---
 
+## [Unreleased]
+
+Deployment only; **no protocol, consensus, genesis or data change.**
+
+### Added
+- `deployment/web-separation/` and `docs/web-separation.md`: the main platform (`obsmainnet.us.ci`, 8789), the Web App
+  (`app.obsmainnet.us.ci`, 8790) and the Wallet web app (`wallet.obsmainnet.us.ci`, 8791) as three services behind three
+  nginx vhosts, each with its own `server_name`, certificate and upstream. Port check, local and public verification,
+  an installer that backs up first, refuses when an old vhost still claims a name and restores itself if `nginx -t`
+  fails, and a rollback.
+
+### Changed
+- The Web App server (and so the Wallet web app, which runs it) binds `127.0.0.1` by default instead of `0.0.0.0`, so an
+  internal port is never public unless `APP_HOST` says so. Containers that relied on the old default set
+  `APP_HOST=0.0.0.0`.
+
+---
+
 ## [1.8.2] — 2026-10-12
 
 Software release; **protocol still 1.8.0**, no genesis change, `MIN_CORE_VERSION` 1.8.0 (a 1.8.2 node peers with 1.8.0 and 1.8.1 nodes).
