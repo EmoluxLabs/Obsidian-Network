@@ -29,7 +29,18 @@
  * Nothing is estimated, extrapolated or defaulted into looking plausible.
  */
 
-import { sealsToObs, formatDuration, formatTerm, formatTime, normaliseName, arg, MIN_PASSPHRASE_LENGTH } from './data.mjs';
+import {
+  displayObs,
+  displayObsWithUnit,
+  displayInteger,
+  formatDuration,
+  formatTerm,
+  formatTime,
+  normaliseName,
+  arg,
+  MIN_PASSPHRASE_LENGTH,
+} from './data.mjs';
+import { identifierHtml, bigAmountHtml } from './identifier.mjs';
 import { explorerScreen } from './explorer.mjs';
 
 // ── the design's own helpers ─────────────────────────────────────────────────
@@ -213,9 +224,9 @@ export const SCREENS = {
     rows([
       ['NETWORK', esc(orDash(s.network?.network?.name ?? s.status?.network))],
       ['CHAIN ID', esc(orDash(s.network?.network?.chainId ?? s.status?.chainId)), 'm'],
-      ['BLOCK HEIGHT', orDash(s.status?.height, (h) => `#${Number(h).toLocaleString()}`), 'm'],
-      ['SUPPLY', orDash(s.status?.supplyObs, (v) => `${esc(v)} OBS`), 'm'],
-      ['ACTIVE MINERS', esc(orDash(s.status?.mining?.activeMiners ?? s.schedule?.activeMiners)), 'm'],
+      ['BLOCK HEIGHT', orDash(s.status?.height, (h) => `#${displayInteger(h)}`), 'm'],
+      ['SUPPLY', esc(orDash(s.status?.supplyObs, displayObsWithUnit)), 'm'],
+      ['ACTIVE MINERS', esc(orDash(s.status?.mining?.activeMiners ?? s.schedule?.activeMiners, displayInteger)), 'm'],
     ]) +
     `<div class="lb">BUILT FOR PARTICIPATION</div>` +
     [
@@ -299,9 +310,7 @@ export const SCREENS = {
     (s.account && !s.account.mfaEnabled
       ? `<div class="card" style="margin-top:14px;padding:16px"><b style="letter-spacing:.1em">ADD A SECOND FACTOR</b><div class="mu" style="margin-top:4px;font-size:13.5px">Mining requires MFA on this platform. Add one now.</div><button class="btn p" style="margin-top:10px" onclick="ObsidianMfaSetup()">SET UP MFA</button></div>`
       : '') +
-    `<div class="card" style="margin-top:16px;padding:20px"><div class="lb" style="margin:0;color:var(--mu)">OBS BALANCE</div><div class="m" style="font-size:34px;font-weight:600;margin-top:6px">${esc(
-      s.balance ? sealsToObs(s.balance.balanceSeals, 6) : '—',
-    )}</div></div>` +
+    `<div class="card" style="margin-top:16px;padding:20px"><div class="lb" style="margin:0;color:var(--mu)">OBS BALANCE</div>${bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—', { extra: 'margin-top:6px' })}</div>` +
     `<div class="card" style="margin-top:10px">` +
     `<div class="row"><span>MINING</span><b class="${s.mining?.eligible ? 'ok' : 'mu'}">${
       s.mining ? (s.mining.eligible ? 'READY TO CLAIM' : 'NOT ELIGIBLE YET') : '—'
@@ -309,7 +318,7 @@ export const SCREENS = {
     `<div class="row"><span>WALLET ON THIS DEVICE</span><b class="${s.walletAddress ? 'ok' : 'mu'}">${
       s.walletAddress ? 'SET UP' : 'NOT SET UP'
     }</b></div>` +
-    `<div class="row"><span>BLOCK HEIGHT</span><b class="m">${orDash(s.status?.height, (h) => `#${Number(h).toLocaleString()}`)}</b></div>` +
+    `<div class="row"><span>BLOCK HEIGHT</span><b class="m">${orDash(s.status?.height, (h) => `#${displayInteger(h)}`)}</b></div>` +
     `</div>` +
     [['mine', 'MINING'], ['wallet', 'WALLET'], ['explorer', 'EXPLORER']]
       .map(([k, t]) => `<div class="big" onclick="ObsidianGo('${k}')">${t}<span>›</span></div>`)
@@ -324,9 +333,7 @@ export const SCREENS = {
     const ready = m?.eligible === true;
     return (
       header(s, 'MINING') +
-      `<div style="text-align:center"><div class="lb" style="margin:4px 0;color:var(--mu)">OBS BALANCE</div><div class="m" style="font-size:34px;font-weight:600">${esc(
-        s.balance ? sealsToObs(s.balance.balanceSeals, 6) : '—',
-      )}</div></div>` +
+      `<div style="text-align:center"><div class="lb" style="margin:4px 0;color:var(--mu)">OBS BALANCE</div>${bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—')}</div>` +
       ring(s, seconds, ready) +
       (s.error ? errorLine(s) : '') +
       noticeLine(s) +
@@ -338,17 +345,17 @@ export const SCREENS = {
               : 'The node has not answered. Mining eligibility is decided by the protocol, so there is nothing to show.'
           }</div></div>`) +
       `<div class="card" style="margin-top:16px">` +
-      `<div class="row"><span>REWARD PER CLAIM</span><b class="m">${esc(orDash(m?.rewardPerClaimObs, (v) => `${v} OBS`))}</b></div>` +
+      `<div class="row"><span>REWARD PER CLAIM</span><b class="m">${esc(orDash(m?.rewardPerClaimObs, displayObsWithUnit))}</b></div>` +
       `<div class="row"><span>CLAIM INTERVAL</span><b>${esc(
         orDash(s.params?.mining?.claimIntervalSeconds ?? s.schedule?.intervalSeconds, formatDuration),
       )}</b></div>` +
       `<div class="row"><span>CLAIMS THIS CYCLE</span><b class="m">${esc(
-        orDash(m ? `${m.claimsThisCycle} used · ${m.claimsRemainingInCycle} left` : null),
+        orDash(m ? `${displayInteger(m.claimsThisCycle)} used · ${displayInteger(m.claimsRemainingInCycle)} left` : null),
       )}</b></div>` +
-      `<div class="row"><span>TOTAL CLAIMS</span><b class="m">${esc(orDash(m?.totalClaims))}</b></div>` +
-      `<div class="row"><span>TOTAL EARNED</span><b class="m">${esc(orDash(m?.totalRewardObs, (v) => `${v} OBS`))}</b></div>` +
-      `<div class="row"><span>ACTIVE MINERS</span><b class="m">${esc(orDash(m?.activeMiners))}</b></div>` +
-      `<div class="row"><span>BLOCK HEIGHT</span><b class="m">${orDash(s.status?.height, (h) => `#${Number(h).toLocaleString()}`)}</b></div>` +
+      `<div class="row"><span>TOTAL CLAIMS</span><b class="m">${esc(orDash(m?.totalClaims, displayInteger))}</b></div>` +
+      `<div class="row"><span>TOTAL EARNED</span><b class="m">${esc(orDash(m?.totalRewardObs, displayObsWithUnit))}</b></div>` +
+      `<div class="row"><span>ACTIVE MINERS</span><b class="m">${esc(orDash(m?.activeMiners, displayInteger))}</b></div>` +
+      `<div class="row"><span>BLOCK HEIGHT</span><b class="m">${orDash(s.status?.height, (h) => `#${displayInteger(h)}`)}</b></div>` +
       `</div>` +
       (m?.note ? `<p class="mu" style="font-size:12px;margin-top:10px;text-align:center">${esc(m.note)}</p>` : '') +
       designNav('mine')
@@ -385,9 +392,9 @@ export const SCREENS = {
     `<h1 style="font-size:26px">OBSIDIAN NAME SERVICE</h1>` +
     `<p class="mu" style="line-height:1.55">A .obs name maps to a wallet address. The fee is fixed by consensus and is the protocol’s only revenue source.</p>` +
     `<div class="card" style="margin-top:12px"><div class="row"><span>REGISTRATION FEE</span><b class="m">${esc(
-      orDash(s.params?.ons?.registrationFeeObs, (v) => `${v} OBS`),
+      orDash(s.params?.ons?.registrationFeeObs, displayObsWithUnit),
     )}</b></div>` +
-    `<div class="row"><span>RENEWAL FEE</span><b class="m">${esc(orDash(s.params?.ons?.renewalFeeObs, (v) => `${v} OBS`))}</b></div>` +
+    `<div class="row"><span>RENEWAL FEE</span><b class="m">${esc(orDash(s.params?.ons?.renewalFeeObs, displayObsWithUnit))}</b></div>` +
     `<div class="row"><span>TERM</span><b>${esc(orDash(s.params?.ons?.termSeconds, formatTerm))}</b></div></div>` +
     designField('nm', 'NAME', 'text', 'Search an Obsidian name...') +
     `<button class="btn p" style="margin-top:10px" onclick="ObsidianNameSearch()">SEARCH</button>` +
@@ -637,15 +644,13 @@ function claimPanel(s, m, seconds, ready) {
 function walletCard(s) {
   return (
     `<div class="card" style="padding:20px"><div class="lb" style="margin:0;color:var(--mu)">OBS BALANCE</div>` +
-    `<div class="m" style="font-size:34px;font-weight:600;margin:6px 0 14px">${esc(
-      s.balance ? sealsToObs(s.balance.balanceSeals, 6) : '—',
-    )}</div>` +
-    `<div class="m" style="font-size:12.5px;word-break:break-all">${esc(
-      s.walletAddress || 'No wallet on this device',
-    )}</div>` +
+    bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—', { extra: 'margin:6px 0 14px' }) +
+    `<div style="font-size:12.5px">${
+      s.walletAddress ? identifierHtml(s.walletAddress, 'address', { label: 'Wallet address' }) : 'No wallet on this device'
+    }</div>` +
     (s.balance
       ? `<div class="card" style="margin-top:14px">` +
-        `<div class="row"><span>SPENDABLE</span><b class="m">${esc(sealsToObs(s.balance.spendableObs ?? s.balance.balanceSeals, 6))}</b></div>` +
+        `<div class="row"><span>SPENDABLE</span><b class="m">${esc(displayObs(s.balance.spendableObs ?? s.balance.balanceSeals))}</b></div>` +
         `<div class="row"><span>TRANSACTIONS</span><b class="m">${esc(orDash(s.balance.txCount))}</b></div>` +
         `<div class="row"><span>NEXT NONCE</span><b class="m">${esc(orDash(s.balance.nonce))}</b></div>` +
         `</div>`
@@ -658,7 +663,7 @@ function sendPanel(s) {
   if (!s.walletAddress) {
     return unavailable('Set up a wallet on this device to send. Sending is a signed payment; nothing here can sign for you.');
   }
-  const gasNote = s.params?.gas ? `Gas is ${esc(s.params.gas.basisPoints / 100)}% of the amount, capped at ${esc(s.params.gas.maxGasObs)} OBS.` : '';
+  const gasNote = s.params?.gas ? `Gas is ${esc(s.params.gas.basisPoints / 100)}% of the amount, capped at ${esc(displayObsWithUnit(s.params.gas.maxGasObs))}.` : '';
   return (
     designField('to', 'RECIPIENT', 'text', `${s.appConfig?.addressHrp ?? s.network?.network?.addressHrp ?? ''}1… or name.obs`) +
     `<button class="btn" id="scan-wallet" style="margin-top:8px" onclick="ObsidianScan()">SCAN WALLET QR</button>` +
@@ -667,8 +672,8 @@ function sendPanel(s) {
     designField('mm', 'MEMO (OPTIONAL)', 'text', '') +
     designField('pp', 'VAULT PASSPHRASE', 'password', 'The passphrase you sealed this wallet with') +
     `<p class="mu" style="font-size:12.5px;margin-top:10px">Available ${esc(
-      s.balance ? sealsToObs(s.balance.balanceSeals, 6) : '—',
-    )} OBS. ${gasNote}</p>` +
+      s.balance ? displayObsWithUnit(s.balance.balanceSeals) : '—',
+    )}. ${gasNote}</p>` +
     `<button class="btn p" style="margin-top:4px" onclick="ObsidianSend()">${busy('SIGN & SEND', s, 'send')}</button>`
   );
 }
@@ -699,7 +704,7 @@ function setupPanel(s) {
       `<div class="card" style="margin-top:14px;padding:18px"><div class="lb" style="margin:0 0 8px">WALLET ON THIS DEVICE</div>` +
       `<div class="m" style="font-size:13px;word-break:break-all">${esc(s.walletAddress)}</div>` +
       `<p class="mu" style="font-size:12.5px;margin:12px 0 0">The recovery phrase is sealed with ${esc(
-        s.vaultKdf ? `${s.vaultKdf.kdf} at ${Number(s.vaultKdf.iterations).toLocaleString()} iterations` : 'AES-GCM',
+        s.vaultKdf ? `${s.vaultKdf.kdf} at ${displayInteger(s.vaultKdf.iterations)} iterations` : 'AES-GCM',
       )}. This app can show it only with your passphrase, and it never leaves this device.</p></div>` +
       designField('pp', 'VAULT PASSPHRASE', 'password', 'To reveal the phrase') +
       `<button class="btn" onclick="ObsidianRevealPhrase()">REVEAL RECOVERY PHRASE</button>` +
@@ -778,12 +783,12 @@ function nameResult(s) {
     )}</b><span class="pill" style="${r.registered ? '' : 'background:#FBF6E8;color:var(--gd)'}">${status}</span></div>` +
     (r.record
       ? `<div class="card" style="margin-top:10px">` +
-        `<div class="row"><span>RESOLVES TO</span><b class="m" style="font-size:12px">${esc(short(r.record.address))}</b></div>` +
-        `<div class="row"><span>OWNER</span><b class="m" style="font-size:12px">${esc(short(r.record.owner))}</b></div>` +
+        `<div class="row"><span>RESOLVES TO</span><b class="m" style="font-size:12px">${identifierHtml(r.record.address, 'address', { label: 'Resolves to wallet address' })}</b></div>` +
+        `<div class="row"><span>OWNER</span><b class="m" style="font-size:12px">${identifierHtml(r.record.owner, 'address', { label: 'Owner wallet address' })}</b></div>` +
         `<div class="row"><span>EXPIRES</span><b>${esc(formatTime(r.record.expiresAt))}</b></div>` +
         `</div>`
       : `<div class="row" style="margin-top:8px"><span>REGISTRATION FEE</span><b class="m">${esc(
-          orDash(fee, (v) => `${v} OBS`),
+          orDash(fee, displayObsWithUnit),
         )}</b></div>`) +
     (!r.registered && s.walletAddress && fee
       ? designField('pp', 'VAULT PASSPHRASE', 'password', 'To sign the registration') +
@@ -816,10 +821,10 @@ function activity(s, limit) {
     .slice(0, limit)
     .map((t) => {
       const incoming = typeof t.kind === 'string' && /credit|reward|received/i.test(t.kind);
-      const amount = t.amount ? `${incoming ? '+' : ''}${t.amount} OBS` : '—';
+      const amount = t.amount ? `${incoming ? '+' : ''}${displayObsWithUnit(t.amount)}` : '—';
       return `<div class="row" onclick="ObsidianExOpen('tx','${arg(t.txId)}')" style="cursor:pointer"><div><b>${
         t.kind ? esc(prettyKind(t.kind)) : 'Transaction'
-      }</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(short(t.txId))} · ${esc(
+      }</b><div class="mu" style="font-size:12px;margin-top:3px">${identifierHtml(t.txId, 'hash', { interactive: false, label: 'Transaction id' })} · ${esc(
         formatTime(t.timestamp),
       )}</div></div><b class="m ${incoming ? 'ok' : ''}">${esc(amount)}</b></div>`;
     })
@@ -849,12 +854,6 @@ export function remainingSeconds(s) {
   const base = Number(s.mining.secondsRemaining ?? 0);
   const elapsed = (Date.now() - (s.miningAt ?? Date.now())) / 1000;
   return Math.max(0, Math.round(base - elapsed));
-}
-
-function short(value, head = 10, tail = 6) {
-  const text = String(value ?? '');
-  if (text.length <= head + tail + 1) return text;
-  return `${text.slice(0, head)}…${text.slice(-tail)}`;
 }
 
 function prettyKind(kind) {

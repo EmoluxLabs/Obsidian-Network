@@ -8,7 +8,8 @@
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
-import { el, spinner, kv, table, badge, toast, copyButton } from '../lib/ui.js';
+import { el, spinner, kv, table, badge, toast, copyButton, count } from '../lib/ui.js';
+import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
 const live = el('section', { class: 'card' }, spinner('asking the nodes…'));
@@ -117,10 +118,10 @@ void (async () => {
       kv([
         ['Node it is reading', 'chosen by health and height among the configured nodes'],
         ['Network', `${status.networkId} · chain ${status.chainId} · hrp ${network.network?.addressHrp ?? 'obs'}`],
-        ['Genesis id', el('span', { class: 'mono' }, status.genesisId)],
-        ['Params hash', el('span', { class: 'mono' }, status.paramsHash)],
+        ['Genesis id', identifier(status.genesisId, { kind: 'id', label: 'Genesis id' })],
+        ['Params hash', identifier(status.paramsHash, { kind: 'hash', label: 'Params hash' })],
         ['Protocol version', status.protocolVersion],
-        ['Height', status.height.toLocaleString()],
+        ['Height', count(status.height)],
         ['Peers', String(status.peers)],
         ['Peer detail', peers ? Object.keys(peers).join(', ') : 'unavailable'],
       ]),

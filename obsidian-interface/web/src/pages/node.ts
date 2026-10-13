@@ -21,7 +21,8 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient, ChainError } from '../lib/client.js';
 import type { NodeRewardsResponse, NodeStatusResponse } from '../lib/client.js';
 import { revenueTimingRows } from '../lib/revenue.js';
-import { el, obs, spinner, kv, badge, table, toast } from '../lib/ui.js';
+import { el, obs, obsUnit, spinner, kv, badge, table, toast } from '../lib/ui.js';
+import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
 
@@ -139,8 +140,8 @@ async function lookup(nodeId: string): Promise<void> {
     lookupResult.replaceChildren(
       el('h3', {}, 'Identity'),
       kv([
-        ['Node ID', el('span', { class: 'mono' }, status.nodeId)],
-        ['Reward wallet', el('span', { class: 'mono' }, status.rewardWallet)],
+        ['Node ID', identifier(status.nodeId, { kind: 'id', label: 'Node id' })],
+        ['Reward wallet', identifier(status.rewardWallet, { kind: 'address', label: 'Reward wallet address' })],
         ['Registered', status.registered ? badge('yes', 'ok') : badge(`deregistered at height ${status.deregisteredAtHeight}`, 'warn')],
         ['Registered at height', String(status.registeredAtHeight)],
         ['Endpoint hint', status.endpoint ?? '— (an endpoint is a hint, never the identity)'],
@@ -179,7 +180,7 @@ async function lookup(nodeId: string): Promise<void> {
               pct(entry.scoreBps),
               pct(entry.shareBps),
               obs(entry.amountObs),
-              el('span', { class: 'mono' }, entry.rewardWallet),
+              identifier(entry.rewardWallet, { kind: 'address', label: 'Reward wallet address' }),
             ]),
           )
         : el('p', { class: 'muted' }, 'No period has settled for this node yet.'),
@@ -248,7 +249,7 @@ void (async () => {
         ['Flow', 'Why it is excluded'],
         revenue.notOnsRevenue.map((entry) => [entry.kind, entry.because]),
       ),
-      el('p', { class: 'muted' }, `${revenue.gas.note} Lifetime gas to the Mining Pool: ${revenue.gas.lifetimeObs} OBS.`),
+      el('p', { class: 'muted' }, `${revenue.gas.note} Lifetime gas to the Mining Pool: ${obsUnit(revenue.gas.lifetimeObs)}.`),
     );
 
     settlements.replaceChildren(
@@ -283,8 +284,8 @@ void (async () => {
                   ? table(
                       ['Node', 'Wallet', 'Score', 'Share', 'Paid'],
                       settlement.payouts.map((payout) => [
-                        el('span', { class: 'mono' }, payout.nodeId),
-                        el('span', { class: 'mono' }, payout.rewardWallet),
+                        identifier(payout.nodeId, { kind: 'id', label: 'Node id' }),
+                        identifier(payout.rewardWallet, { kind: 'address', label: 'Reward wallet address' }),
                         pct(payout.scoreBps),
                         pct(payout.shareBps),
                         obs(payout.amountObs),
@@ -310,8 +311,8 @@ void (async () => {
         ? table(
             ['Node', 'Reward wallet', 'Heartbeats', 'Attesters', 'Blocks', 'Attested', 'Faults'],
             response.nodes.map((node) => [
-              el('span', { class: 'mono' }, node.nodeId),
-              el('span', { class: 'mono' }, node.rewardWallet),
+              identifier(node.nodeId, { kind: 'id', label: 'Node id' }),
+              identifier(node.rewardWallet, { kind: 'address', label: 'Reward wallet address' }),
               String(node.currentPeriod.heartbeats),
               String(node.currentPeriod.attesters),
               String(node.currentPeriod.blocksProduced),

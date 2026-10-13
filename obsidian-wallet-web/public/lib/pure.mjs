@@ -9,7 +9,7 @@
  * come from the web app's own data module, which is the one the rest of the product already uses.
  */
 
-import { parseObs, sealsToObs } from '../js/shared/data.mjs';
+import { parseObs, displaySeals, shortenIdentifier } from '../js/shared/data.mjs';
 
 // ── text ─────────────────────────────────────────────────────────────────────
 
@@ -27,14 +27,21 @@ export const isTestNetwork = (name) => name !== 'mainnet';
 
 // ── addresses ────────────────────────────────────────────────────────────────
 
-/** The explorer's own masking, which is how every counterparty in the node's history arrives: first 10, last 6. */
+/**
+ * The node's own masking, which is how every counterparty in its history arrives: first 10, last 6. This is a MATCHING
+ * rule, not a display rule: `classifyHistory` compares a row's sender and recipient with the mask of our own address to
+ * decide the direction of a payment, so it must stay exactly what the node produces. Never show it as the short form.
+ */
 export const maskAddress = (address) => {
   const a = String(address ?? '');
   return a.length <= 14 ? a : `${a.slice(0, 10)}…${a.slice(-6)}`;
 };
 
-/** A short form for a header or a list. Display only, never a value to send to. */
-export const shortAddress = maskAddress;
+/**
+ * The short form for a header or a list, the one every Obsidian interface uses (`obs1ijdn...slvgsi`). Display only,
+ * never a value to send to, compare with or sign.
+ */
+export const shortAddress = (address) => shortenIdentifier(address, 'address', 'narrow');
 
 /**
  * Read a recipient from text a person typed or a code carried.
@@ -71,11 +78,14 @@ export function parseRecipient(raw, { hrp, own, readScanned }) {
 
 // ── amounts ──────────────────────────────────────────────────────────────────
 
-/** Exact OBS text for seals: every digit the protocol holds, without trailing zeros. Never rounded. */
+/**
+ * OBS text for seals: every digit the protocol holds (18), trailing zeros and a dangling point removed, thousands
+ * grouped with commas, never rounded and never `0` for a real amount. The same function the main platform and the
+ * Web App use. Display only: it is never read back as a value (amounts are typed, parsed by parseAmount, and sent as
+ * seals).
+ */
 export function exactObs(seals) {
-  const full = sealsToObs(seals, 18);
-  if (full === '—') return '—';
-  return full.includes('.') ? full.replace(/0+$/, '').replace(/\.$/, '') : full;
+  return displaySeals(seals);
 }
 
 /**

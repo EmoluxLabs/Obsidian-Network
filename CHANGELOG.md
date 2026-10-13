@@ -13,9 +13,30 @@ a node running it. For 1.8.0, 1.8.1 and 1.8.2 that is `1d6cba55f0975f8b0d6345658
 
 ## [Unreleased]
 
-Deployment only; **no protocol, consensus, genesis or data change.**
+Deployment and display only; **no protocol, consensus, genesis or data change**, and no node restart is needed to ship it.
+
+### Fixed
+- **Amounts on screen.** The platform's page formatter floored every amount to 8 decimal places, so a real amount below
+  0.00000001 OBS (down to a single seal) was shown as `0`, and the 0.000166666666666666 OBS claim reward as `0.00016666`;
+  the Web App printed some node values raw (`0.050000000000000000 OBS`, `21000000.000000000000000000 OBS`) and others
+  through a six-place formatter; the wallet printed ungrouped digits. All of them now go through one exact formatter
+  (`obsidian-core/src/protocol/display.ts`, mirrored in `obsidian-app-web/public/data.mjs`): trailing zeros removed,
+  thousands grouped, zero is `0 OBS`, one seal is `0.000000000000000001 OBS`, nothing is scientific notation, and a
+  missing value is an em dash rather than zero. ONS fee `0.05 OBS`, supply cap `21,000,000 OBS`, genesis allocation
+  `100,000 OBS`. The platform's mining-schedule table used floating-point arithmetic and now uses the protocol's own
+  integer schedule.
+- **Long values overflowing on phones.** Flex and grid children could not shrink below one unbroken address or hash, and
+  the page hid the overflow instead of fixing it. Values now wrap inside their card, and the big balance steps its size
+  down only for long text without dropping a digit.
+- A fragment of the private key was shown in a toast when it was copied; the toast no longer shows any of it.
 
 ### Added
+- One address and identifier policy for every interface: `obs1ijdn...slvgsi` (first 8, last 6) on narrow screens and a
+  longer form on wide ones, the whole value on tap, a Copy button that copies the original, a tooltip and a screen-reader
+  label with the full value. The same for transaction ids, block ids and other long ids. Display only: stored,
+  transmitted, validated, signed and copied values are never touched. See `docs/numeric-display.md`.
+- Tests: `obsidian-core/tests/unit/display.test.ts`, shared vectors `tests/vectors/display.json` run by the core, the
+  platform, the Web App and the wallet, and source guards that fail on hand-formatted amounts or hand-shortened ids.
 - `deployment/web-separation/` and `docs/web-separation.md`: the main platform (`obsmainnet.us.ci`, 8789), the Web App
   (`app.obsmainnet.us.ci`, 8790) and the Wallet web app (`wallet.obsmainnet.us.ci`, 8791) as three services behind three
   nginx vhosts, each with its own `server_name`, certificate and upstream. Port check, local and public verification,

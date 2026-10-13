@@ -175,7 +175,8 @@ async function fill(page, id, value) {
 }
 const submit = (page, form) => page.evaluate((f) => document.querySelector(`form[data-submit="${f}"] button[type=submit]`).click(), form);
 const storage = (page) => page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage }, cookie: document.cookie }));
-const shownAddress = (page) => page.evaluate(() => document.getElementById('addr')?.innerText ?? '');
+// The home screen shows the short form and keeps the whole address in data-full (tap to expand); both are checked.
+const shownAddress = (page) => page.evaluate(() => document.getElementById('addr')?.dataset.full ?? '');
 const balanceText = (page) => page.evaluate(() => document.getElementById('bal')?.innerText ?? '');
 
 async function importPhrase(page, phrase, password) {

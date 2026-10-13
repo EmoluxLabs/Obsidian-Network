@@ -20,7 +20,7 @@ import {
 describe('seal counts → OBS', () => {
   it('formats the launch reward exactly (1e15 seals is 0.001 OBS, not 0)', () => {
     expect(obs('1000000000000000')).toBe('0.001');
-    expect(obs('166666666666666')).toBe('0.00016666');
+    expect(obs('166666666666666')).toBe('0.000166666666666666');
     expect(obs(1_000_000_000_000_000n)).toBe('0.001');
   });
 
@@ -32,17 +32,18 @@ describe('seal counts → OBS', () => {
   });
 
   it('formats one seal as the smallest visible amount, never as 0', () => {
-    expect(obs('1')).toBe('0');
-    // 1 seal is below the default 8-decimal display, so show it with full precision instead of lying
+    expect(obs('1')).toBe('0.000000000000000001');
     expect(obs('1', 18)).toBe('0.000000000000000001');
+    // a deliberately tight display cap still never turns a real amount into 0
+    expect(obs('1', 8)).toBe('<0.00000001');
   });
 });
 
 describe('OBS decimal strings (the node\'s other shape)', () => {
   it('passes exact decimals through without float rounding', () => {
     expect(obs('100000.000000000000000000')).toBe('100,000');
-    expect(obs('100166.666666666666000000')).toBe('100,166.66666666');
-    expect(obs('0.000166666666666666')).toBe('0.00016666');
+    expect(obs('100166.666666666666000000')).toBe('100,166.666666666666');
+    expect(obs('0.000166666666666666')).toBe('0.000166666666666666');
     expect(obs('0.0002')).toBe('0.0002');
   });
 
@@ -97,11 +98,11 @@ describe('mining schedule fields', () => {
       claimRewardObs: '0.000166666666666666',
     };
     expect(rewardLine(schedule)).toBe('0.001 OBS');
-    expect(rewardPerClaim(schedule)).toBe('0.00016666 OBS');
+    expect(rewardPerClaim(schedule)).toBe('0.000166666666666666 OBS');
   });
 
   it('still displays something honest when a node sends only seal counts', () => {
     expect(rewardLine({ dailyRewardSeals: '1000000000000000' })).toBe('0.001 OBS');
-    expect(rewardPerClaim({ claimRewardSeals: '166666666666666' })).toBe('0.00016666 OBS');
+    expect(rewardPerClaim({ claimRewardSeals: '166666666666666' })).toBe('0.000166666666666666 OBS');
   });
 });

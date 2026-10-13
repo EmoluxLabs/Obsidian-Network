@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bundle, newWallet } from './helpers.mjs';
 import {
-  esc, parseRecipient, parseAmount, exactObs, maskAddress, classifyHistory, confirmationsAt, nextTxState, isFinalState,
+  esc, parseRecipient, parseAmount, exactObs, maskAddress, shortAddress, classifyHistory, confirmationsAt, nextTxState, isFinalState,
   describeSubmitFailure, readBackup, BACKUP_LIMITS, checkNewPassword, normalisePhrase, createIdleLock, unlockDelaySeconds,
   readRecords, writeRecords, sanitiseRecord, SUBMITTED_KEY,
 } from '../public/lib/pure.mjs';
@@ -72,8 +72,14 @@ test('amounts are exact: no float, no rounding, no sign, no exponent', () => {
 
 test('exactObs shows every digit and agrees with the protocol formatter', () => {
   for (const seals of [0n, 1n, 166666666666666n, OBS, 12n * OBS + 1n, 21_000_000n * OBS]) {
-    assert.equal(exactObs(seals), bundle.formatObs(seals).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, ''));
+    // The protocol formatter prints all 18 digits; the screen drops trailing zeros and groups thousands, nothing else.
+    const ungrouped = exactObs(seals).replace(/,/g, '');
+    assert.equal(ungrouped, bundle.formatObs(seals).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, ''));
   }
+  assert.equal(exactObs(21_000_000n * OBS), '21,000,000');
+  assert.equal(exactObs(1n), '0.000000000000000001', 'one seal is never shown as zero');
+  assert.equal(exactObs(5n * 10n ** 16n), '0.05');
+  assert.equal(exactObs(100_000n * OBS), '100,000');
   assert.equal(exactObs(0n), '0');
   assert.equal(exactObs(OBS), '1');
   assert.equal(exactObs(166666666666666n), '0.000166666666666666');
@@ -248,4 +254,35 @@ test('submitted transactions are stored without any secret, and only for their o
   assert.equal(sanitiseRecord({ ...rec, txId: 'nothex' }), null);
   assert.equal(sanitiseRecord({ ...rec, amount: '1e5' }), null);
   assert.equal(sanitiseRecord({ ...rec, state: 'weird' }).state, 'submitted');
+});
+
+// ── one display policy, shared with the other interfaces ─────────────────────
+
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const vectors = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../tests/vectors/display.json'), 'utf8'));
+
+test('exactObs follows the shared display vectors for every seal-count vector', () => {
+  let checked = 0;
+  for (const v of vectors.obs) {
+    if (v.kind === 'decimal' || v.opts || !/^\d+$/.test(v.in)) continue;
+    assert.equal(exactObs(BigInt(v.in)), v.out, `seals ${v.in}`);
+    assert.equal(exactObs(v.in), v.out, `seals text ${v.in}`);
+    checked += 1;
+  }
+  assert.ok(checked >= 5, 'the vectors exercised something');
+});
+
+test('shortAddress is the platform-wide short form; maskAddress stays the node masking that history matching needs', () => {
+  const address = 'obs1ijdnq8k3m5x7v9c2z4b6n8t0w2e4r6y8slvgsi';
+  assert.equal(shortAddress(address), 'obs1ijdn...slvgsi');
+  assert.equal(maskAddress(address), `${address.slice(0, 10)}…${address.slice(-6)}`, 'the node\'s own mask is unchanged');
+  assert.equal(shortAddress('obs1short'), 'obs1short');
+  assert.equal(shortAddress(''), '—');
+  // a value the node already masked is left exactly as it came
+  assert.equal(shortAddress(maskAddress(address)), maskAddress(address));
+  // displaying never changes the address that is used
+  assert.equal(address, 'obs1ijdnq8k3m5x7v9c2z4b6n8t0w2e4r6y8slvgsi');
 });

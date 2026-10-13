@@ -74,6 +74,7 @@ import {
   getName,
   nameStatus,
   normaliseName,
+  shortenIdentifier,
 } from './data.mjs';
 import * as notify from './notify.mjs';
 import {
@@ -94,6 +95,7 @@ import {
   registerName,
 } from './wallet.mjs';
 import { SCREENS, remainingSeconds, networkBanner } from './screens.mjs';
+import { installDisplayStyles } from './identifier.mjs';
 import { scan } from './scanner.mjs';
 
 /** Screens that need a signed-in account. The chain itself is readable without one. */
@@ -500,6 +502,7 @@ async function withBusy(key, fn) {
 // ── installation ─────────────────────────────────────────────────────────────
 
 function install() {
+  installDisplayStyles();
   const g = window;
 
   // The two levers the design publishes as function declarations. Everything else
@@ -803,7 +806,7 @@ function install() {
       const result = await claim(() => passphrase);
       if (!result.ok) return setError(result.message);
       state.claimSentAt = Date.now();
-      setNotice(`Claim submitted — ${result.txId.slice(0, 16)}… — not yet confirmed.`);
+      setNotice(`Claim submitted — ${shortenIdentifier(result.txId, 'hash', 'narrow')} — not yet confirmed.`);
       await refreshMining();
     });
   };
@@ -816,7 +819,7 @@ function install() {
     return withBusy('send', async () => {
       const result = await send({ to, amountObs, memo }, () => passphrase);
       if (!result.ok) return setError(result.message);
-      setNotice(`Payment submitted — ${result.txId.slice(0, 16)}… — not yet confirmed.`);
+      setNotice(`Payment submitted — ${shortenIdentifier(result.txId, 'hash', 'narrow')} — not yet confirmed.`);
       await refreshWallet();
     });
   };
@@ -843,7 +846,7 @@ function install() {
       if (!feeObs) return setError('The node has not published a registration fee.');
       const result = await registerName({ name, feeObs }, () => passphrase);
       if (!result.ok) return setError(result.message);
-      setNotice(`Registration submitted — ${result.txId.slice(0, 16)}… — not yet confirmed.`);
+      setNotice(`Registration submitted — ${shortenIdentifier(result.txId, 'hash', 'narrow')} — not yet confirmed.`);
       await refreshWallet();
     });
   };

@@ -65,10 +65,14 @@ test('one OBS is 10^18 seals, not 10^8', () => {
 test('seal amounts are formatted with BigInt, so precision is never lost', () => {
   // A balance far past 2^53: a float conversion would round it.
   const seals = 21_000_000n * 10n ** 18n;
-  assert.equal(sealsToObs(seals), '21000000');
-  assert.equal(sealsToObs(1n), '0');
+  assert.equal(sealsToObs(seals), '21,000,000');
+  // one seal is the smallest real amount and is never shown as zero
+  assert.equal(sealsToObs(1n), '0.000000000000000001');
   assert.equal(sealsToObs(1n, 18), '0.000000000000000001');
-  assert.equal(sealsToObs(0n, 18), '0.000000000000000000');
+  // a tight cap says a hidden amount exists instead of printing 0
+  assert.equal(sealsToObs(1n, 6), '<0.000001');
+  // zero is zero, with no padded fraction
+  assert.equal(sealsToObs(0n, 18), '0');
   assert.equal(sealsToObs(5n * 10n ** 17n), '0.5');
 });
 
@@ -76,14 +80,16 @@ test('an amount that is not a number renders as unavailable, never as zero', () 
   assert.equal(sealsToObs(null), '—');
   assert.equal(sealsToObs(undefined), '—');
   assert.equal(sealsToObs('not a number'), '—');
-  assert.equal(sealsToObs(-1n), '—');
+  // a negative count is shown with its sign rather than hidden or turned into zero
+  assert.equal(sealsToObs(-1n), '-0.000000000000000001');
+  assert.equal(sealsToObs('1.5'), '—');
 });
 
 test('parseObs is the exact inverse of sealsToObs for round amounts', () => {
   assert.equal(parseObs('0.05'), 5n * 10n ** 16n);
   assert.equal(parseObs('2'), 2n * 10n ** 18n);
   assert.equal(parseObs('0.000000000000000001'), 1n);
-  assert.equal(sealsToObs(parseObs('0.05'), 18), '0.050000000000000000');
+  assert.equal(sealsToObs(parseObs('0.05'), 18), '0.05');
 });
 
 test('parseObs refuses what the protocol cannot represent', () => {

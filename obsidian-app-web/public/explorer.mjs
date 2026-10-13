@@ -20,7 +20,8 @@
  * loading and handlers live in real.mjs.
  */
 
-import { formatTime, arg } from './data.mjs';
+import { formatTime, arg, displayObsWithUnit, displayInteger, shortenIdentifier } from './data.mjs';
+import { identifierHtml, copyButtonHtml } from './identifier.mjs';
 
 export const EXPLORER_TABS = [
   ['overview', 'OVERVIEW'],
@@ -41,12 +42,13 @@ function isoDate(seconds) {
   return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : '—';
 }
 
-/** Mask an address the way the node does: `dobs13s4pg…rs0ff0`. */
+/**
+ * An address as the explorer draws it: the platform-wide short form (`obs1ijdn...slvgsi`). A value the node has
+ * already masked (`dobs13s4pg…rs0ff0`) is left exactly as it came. Display only.
+ */
 export function mask(value) {
   const text = String(value ?? '');
-  if (!text) return '—';
-  if (text.includes('…')) return text;
-  return text.length <= 17 ? text : `${text.slice(0, 10)}…${text.slice(-6)}`;
+  return text ? shortenIdentifier(text, 'address', 'narrow') : '—';
 }
 
 export function explorerScreen(s, ui) {
@@ -102,7 +104,7 @@ function overview(s, ex, ui) {
   const supply = d?.supply;
   const pot = d?.pot;
   const net = s.network?.network;
-  const obs = (v) => orDash(v, (x) => `${esc(x)} OBS`);
+  const obs = (v) => esc(orDash(v, displayObsWithUnit));
 
   return (
     `<div class="lb">CHAIN</div>` +
@@ -110,8 +112,8 @@ function overview(s, ex, ui) {
       ['NETWORK', esc(orDash(net?.displayName ?? net?.name)), ''],
       ['CHAIN ID', esc(orDash(status.chainId)), 'm'],
       ['ADDRESS PREFIX', esc(orDash(net?.addressHrp, (v) => `${v}1…`)), 'm'],
-      ['HEIGHT', orDash(status.height, (h) => `#${Number(h).toLocaleString()}`), 'm'],
-      ['FINALIZED', orDash(status.finalizedHeight, (h) => `#${Number(h).toLocaleString()}`), 'm'],
+      ['HEIGHT', orDash(status.height, (h) => `#${displayInteger(h)}`), 'm'],
+      ['FINALIZED', orDash(status.finalizedHeight, (h) => `#${displayInteger(h)}`), 'm'],
       ['LAST BLOCK', esc(orDash(status.lastBlockTimestamp, formatTime)), ''],
       ['PROTOCOL', esc(orDash(status.protocolVersion)), 'm'],
       ['PEERS', esc(orDash(status.peers)), 'm'],
@@ -125,8 +127,10 @@ function overview(s, ex, ui) {
     ]
       .map(
         ([label, value]) =>
-          `<div class="row" style="display:block"><span>${esc(label)}</span><div class="m" style="word-break:break-all;font-size:12px;margin-top:6px">${esc(
-            orDash(value),
+          `<div class="row" style="display:block"><span>${esc(label)}</span><div class="m" style="font-size:12px;margin-top:6px">${identifierHtml(
+            value,
+            'hash',
+            { label },
           )}</div></div>`,
       )
       .join('')}</div>` +
@@ -188,11 +192,7 @@ function blocks(s, ex, ui) {
     `<div class="card">${list
       .map(
         (b) =>
-          `<div class="row" onclick="ObsidianExOpen('block','${arg(b.height)}')" style="cursor:pointer"><div><b class="m">#${Number(
-            b.height,
-          ).toLocaleString()}</b><div class="m mu" style="font-size:12px;margin-top:3px">${esc(
-            `${String(b.hash).slice(0, 12)}…${String(b.hash).slice(-6)}`,
-          )}</div><div class="mu" style="font-size:11px;margin-top:3px">${esc(formatTime(b.timestamp))} · ${esc(
+          `<div class="row" onclick="ObsidianExOpen('block','${arg(b.height)}')" style="cursor:pointer"><div><b class="m">#${displayInteger(b.height)}</b><div class="m mu" style="font-size:12px;margin-top:3px">${identifierHtml(b.hash, 'hash', { interactive: false, label: 'Block id' })}</div><div class="mu" style="font-size:11px;margin-top:3px">${esc(formatTime(b.timestamp))} · ${esc(
             b.size,
           )} B</div></div><span class="pill">${esc(b.txCount ?? 0)} TX</span></div>`,
       )
@@ -214,13 +214,13 @@ function claims(s, ex, ui) {
             (c) =>
               `<div class="row" onclick="ObsidianExOpen('tx','${arg(c.txId)}')" style="cursor:pointer"><div><b class="m">${esc(
                 mask(c.miner),
-              )}</b><div class="mu" style="font-size:12px;margin-top:3px">block ${esc(c.height)} · ${esc(
+              )}</b><div class="mu" style="font-size:12px;margin-top:3px">block ${esc(displayInteger(c.height))} · ${esc(
                 formatTime(c.timestamp),
               )}</div>${
                 c.genesisAwarded
                   ? `<div class="pill" style="display:inline-block;margin-top:6px;background:#FBF6E8;color:var(--gd)">GENESIS ALLOCATION</div>`
                   : ''
-              }</div><b class="m ok">+${esc(c.rewardObs)}</b></div>`,
+              }</div><b class="m ok">+${esc(displayObsWithUnit(c.rewardObs))}</b></div>`,
           )
           .join('')}</div>`
       : ui.unavailable('No mining claim has been made on this chain yet.'))
@@ -292,8 +292,8 @@ function network(s, ex, ui) {
     (rewards
       ? rows([
           ['SPLIT', esc(`${Number(rewards.split?.nodePoolBps) / 100}% nodes · ${Number(rewards.split?.treasuryBps) / 100}% treasury`), ''],
-          ['REWARD POOL', orDash(rewards.pool?.balanceObs, (v) => `${esc(v)} OBS`), 'm'],
-          ['DISTRIBUTED', orDash(rewards.pool?.lifetimeDistributedObs, (v) => `${esc(v)} OBS`), 'm'],
+          ['REWARD POOL', esc(orDash(rewards.pool?.balanceObs, displayObsWithUnit)), 'm'],
+          ['DISTRIBUTED', esc(orDash(rewards.pool?.lifetimeDistributedObs, displayObsWithUnit)), 'm'],
           ['NEXT SETTLEMENT', esc(orDash(rewards.pool?.nextSettlementAt, formatTime)), ''],
         ])
       : loading(ex, ui, 'the reward pool')) +
@@ -334,7 +334,8 @@ function longValue(label, value, ui, link) {
   const { esc, orDash } = ui;
   const text = orDash(value);
   const inner = link && value ? `<a style="cursor:pointer;text-decoration:underline" onclick="${link}">${esc(text)}</a>` : esc(text);
-  return `<div class="row" style="display:block"><span>${esc(label)}</span><div class="m" style="word-break:break-all;font-size:12px;margin-top:6px">${inner}</div></div>`;
+  const copy = value ? `<div style="margin-top:6px">${copyButtonHtml(String(value), label)}</div>` : '';
+  return `<div class="row" style="display:block"><span>${esc(label)}</span><div class="m" style="word-break:break-all;font-size:12px;margin-top:6px">${inner}</div>${copy}</div>`;
 }
 
 function blockDetail(b, s, ui) {
@@ -345,11 +346,11 @@ function blockDetail(b, s, ui) {
   const head = Number(s.status?.height ?? NaN);
   const txs = b.transactions ?? [];
   return (
-    `<div class="lb">BLOCK #${esc(Number.isFinite(height) ? height.toLocaleString() : '—')}</div>` +
+    `<div class="lb">BLOCK #${esc(Number.isFinite(height) ? displayInteger(height) : '—')}</div>` +
     rows(
       [
         ['TIME', esc(orDash(summary.timestamp ?? header.timestamp, formatTime)), ''],
-        ['TRANSACTIONS', esc(orDash(txs.length ?? summary.txCount)), 'm'],
+        ['TRANSACTIONS', esc(orDash(txs.length ?? summary.txCount, displayInteger)), 'm'],
         // A reported size of 0 is the node not knowing, not an empty block.
         Number(summary.size) > 0 ? ['SIZE', esc(`${summary.size} B`), 'm'] : null,
         ['PRODUCER', esc(mask(header.producer ?? summary.producer)), 'm'],
@@ -379,11 +380,9 @@ function blockDetail(b, s, ui) {
       ? `<div class="card">${txs
           .map((t) => {
             const id = t.id ?? t.txId;
-            return `<div class="row" onclick="ObsidianExOpen('tx','${arg(id)}')" style="cursor:pointer"><div><b class="m" style="font-size:12px">${esc(
-              `${String(id).slice(0, 12)}…${String(id).slice(-6)}`,
-            )}</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(
+            return `<div class="row" onclick="ObsidianExOpen('tx','${arg(id)}')" style="cursor:pointer"><div><b class="m" style="font-size:12px">${identifierHtml(id, 'hash', { interactive: false, label: 'Transaction id' })}</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(
               t.kind ?? t.typeName ?? `type ${t.type}`,
-            )} · ${esc(mask(t.sender))}</div></div><span class="pill">${esc(orDash(t.gas, (v) => `${v} gas`))}</span></div>`;
+            )} · ${esc(mask(t.sender))}</div></div><span class="pill">${esc(orDash(t.gas, displayObsWithUnit))}</span></div>`;
           })
           .join('')}</div>`
       : ui.unavailable('This block contains no transactions.')) +
@@ -406,9 +405,9 @@ function txDetail(t, ui) {
         // Only the fields this transaction actually has: a claim has no recipient
         // or amount, and a row of dashes for them is noise that reads as missing data.
         t.recipient ? ['RECIPIENT', esc(mask(t.recipient)), 'm'] : null,
-        t.amount ? ['AMOUNT', `${esc(t.amount)} OBS`, 'm'] : null,
-        ['GAS', esc(orDash(t.gas)), 'm'],
-        ['BLOCK', orDash(t.height, (h) => `#${Number(h).toLocaleString()}`), 'm'],
+        t.amount ? ['AMOUNT', esc(displayObsWithUnit(t.amount)), 'm'] : null,
+        ['GAS', esc(orDash(t.gas, displayObsWithUnit)), 'm'],
+        ['BLOCK', orDash(t.height, (h) => `#${displayInteger(h)}`), 'm'],
       ].filter(Boolean),
     ) +
     `<div class="card" style="margin-top:10px">` +
@@ -428,7 +427,7 @@ function nameDetail(r, ui) {
     rows([
       ['RESOLVES TO', esc(mask(r.address)), 'm'],
       ['OWNER', esc(mask(r.owner)), 'm'],
-      ['REGISTERED AT BLOCK', orDash(r.registeredAtHeight, (h) => `#${Number(h).toLocaleString()}`), 'm'],
+      ['REGISTERED AT BLOCK', orDash(r.registeredAtHeight, (h) => `#${displayInteger(h)}`), 'm'],
       ['EXPIRES', esc(orDash(r.expiresAt, formatTime)), ''],
       ['TRANSFERS', esc(orDash(r.transferCount)), 'm'],
     ]) +

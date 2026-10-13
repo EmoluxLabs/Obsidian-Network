@@ -10,7 +10,8 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
-import { el, spinner, toast, kv, badge, table, short } from '../lib/ui.js';
+import { el, spinner, toast, kv, badge, table, obsUnit, shortId } from '../lib/ui.js';
+import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
 const lookup = el('input', { id: 'ons-lookup', placeholder: 'name.obs', autocomplete: 'off' });
@@ -59,7 +60,7 @@ async function doLookup(name: string): Promise<void> {
     lookupPanel.replaceChildren(
       el('h2', {}, `${name}`),
       kv([
-        ['Resolves to', el('span', { class: 'mono' }, String(record.address ?? '—'))],
+        ['Resolves to', identifier(record.address === undefined || record.address === null ? undefined : String(record.address), { kind: 'address', label: 'Resolves to wallet address' })],
         ['Registered at height', String(record.registeredAtHeight ?? '—')],
         ['Expires at height', String(record.expiresAt ?? '—')],
         ['Transfers', record.transferCount === 0 ? 'never transferred' : String(record.transferCount)],
@@ -106,7 +107,7 @@ async function drawRegister(): Promise<void> {
       const wallet = await Wallet.unlock(passphrase);
       if (priceObs === undefined) return toast('This page could not read the registration fee from a node, so it will not guess one.', 'error');
       const result = await operations.registerName(client, wallet, { name: `${value}.obs`, feeObs: priceObs });
-      toast(`Registration signed and submitted: ${result.txId.slice(0, 16)}…`, 'success');
+      toast(`Registration signed and submitted: ${shortId(result.txId)}`, 'success');
       await doLookup(`${value}.obs`);
     } catch (error) {
       toast((error as Error).message, 'error');
@@ -117,8 +118,8 @@ async function drawRegister(): Promise<void> {
     el('h2', {}, 'Register a name'),
     priceObs !== undefined
       ? kv([
-          ['Registration fee', `${priceObs} OBS`],
-          ['Renewal fee', `${renewalObs} OBS per term`],
+          ['Registration fee', obsUnit(priceObs)],
+          ['Renewal fee', `${obsUnit(renewalObs)} per term`],
           ['Term', `${termYears === 1 ? 'one year' : `${termYears} years`} from the block that includes the registration, renewable by the owner`],
           ['Price source', 'the protocol itself — this fee is a consensus parameter, not a conversion from any currency'],
         ])
@@ -140,7 +141,7 @@ async function loadRecent(): Promise<void> {
             ['Name', 'Owner', 'Registered at height', 'Expires at height'],
             names.slice(0, 25).map((record) => [
               el('span', { class: 'mono' }, record.name),
-              el('span', { class: 'mono' }, short(String(record.address ?? ''), 12)),
+              identifier(record.address === undefined || record.address === null ? undefined : String(record.address), { kind: 'address', label: 'Wallet address' }),
               String(record.registeredAtHeight ?? '—'),
               String(record.expiresAt ?? '—'),
             ]),

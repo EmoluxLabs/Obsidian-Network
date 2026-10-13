@@ -549,3 +549,30 @@ form.stack { display: flex; flex-direction: column; gap: 14px; }
 .gate-steps .step-done { color: var(--text); }
 .gate-steps .step-todo { color: var(--text-dim); }
 .claim-card .as-link, .claim-card button.primary { margin-top: 6px; }
+
+/* ── Long identifiers and long numbers ─────────────────────────────────────
+   A flex or grid child will not shrink below its content unless it is told it may (min-width: 0), which is how one
+   long address or amount used to push a card wider than the phone. Wrapping is allowed everywhere a value can be
+   long; `overflow-x: hidden` on the body stays as the last resort, not the plan. */
+.page > *, .card > *, .subcard > *, .kv > *, .row > *, .stat, .stat > *, .balance-box > *, .claim-head > * { min-width: 0; }
+.kv dd, .stat strong, .balance, .balance-box, td, .address { overflow-wrap: anywhere; }
+.balance { font-size: clamp(1.1rem, 5.4vw, 1.55rem); }
+.stat strong { font-size: clamp(0.98rem, 4.2vw, 1.15rem); }
+
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+.idv { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; max-width: 100%; min-width: 0; vertical-align: middle; }
+.idv-text { min-width: 0; max-width: 100%; overflow-wrap: anywhere; cursor: default; }
+.idv-text[role="button"] { cursor: pointer; border-radius: 4px; }
+.idv-text[role="button"]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+/* Phone: the short form. 720 px and up: the longer form. Detail, or tapped open: the whole value, wrapping. */
+.idv-m, .idv-f { display: none; }
+@media (min-width: 720px) {
+  .idv-s { display: none; }
+  .idv-m { display: inline; }
+}
+.idv-detail .idv-s, .idv-detail .idv-m, .idv-open .idv-s, .idv-open .idv-m { display: none; }
+.idv-detail .idv-f, .idv-open .idv-f { display: inline; overflow-wrap: anywhere; word-break: break-all; }
+.idv-copy { padding: 4px 10px; font-size: 0.74rem; line-height: 1.4; min-height: 30px; border-radius: 6px; border: 1px solid var(--line-soft); background: var(--surface-2); color: var(--text-dim); cursor: pointer; font-family: var(--sans); }
+.idv-copy:hover { color: var(--text); }
+.idv-copy:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }

@@ -11,7 +11,8 @@
  */
 
 import type { RevenueResponse } from './client.js';
-import { badge, copyButton, duration, el, obs, pct, when, type Child } from './ui.js';
+import { badge, duration, el, obsUnit, pct, when, type Child } from './ui.js';
+import { identifier } from './identifier.js';
 
 export function revenueTimingRows(revenue: RevenueResponse): Array<[string, Child]> {
   const rows: Array<[string, Child]> = [];
@@ -20,12 +21,12 @@ export function revenueTimingRows(revenue: RevenueResponse): Array<[string, Chil
   rows.push([
     'Treasury wallet',
     wallet
-      ? el('span', {}, el('span', { class: 'mono', id: 'treasury-wallet' }, wallet), ' ', copyButton(wallet, 'Copy address'))
+      ? identifier(wallet, { kind: 'address', label: 'Treasury wallet address' })
       : 'not designated yet — the first valid mining claim designates it',
   ]);
   if (revenue.treasury) {
-    rows.push(['Treasury share credited so far', `${obs(revenue.split.treasuryCreditedObs)} OBS — credited in the same block as each ONS fee once a treasury is designated`]);
-    rows.push(['Treasury share still owed', `${obs(revenue.split.treasuryUnclaimedObs)} OBS — held as an explicit protocol obligation until a treasury wallet exists`]);
+    rows.push(['Treasury share credited so far', `${obsUnit(revenue.split.treasuryCreditedObs)} — credited in the same block as each ONS fee once a treasury is designated`]);
+    rows.push(['Treasury share still owed', `${obsUnit(revenue.split.treasuryUnclaimedObs)} — held as an explicit protocol obligation until a treasury wallet exists`]);
   }
 
   const timing = revenue.timing;
@@ -43,7 +44,7 @@ export function revenueTimingRows(revenue: RevenueResponse): Array<[string, Chil
     `Held in the Node Runner Reward Pool and paid ${nodes.paid} — every ${duration(nodes.periodSeconds)} — to registered nodes in proportion to the score their recorded evidence earned.`,
   ]);
   rows.push(['Next node-runner payout', `${when(nodes.nextSettlementAt)} — in ${duration(nodes.secondsUntilNextSettlement)}`]);
-  rows.push(['Waiting in the pool', `${obs(nodes.poolBalanceObs)} OBS`]);
+  rows.push(['Waiting in the pool', obsUnit(nodes.poolBalanceObs)]);
   rows.push([
     'Registered node runners',
     nodes.carriedWhenNoNodes ? el('span', {}, '0 ', badge('pool is carried forward', 'warn'), ' ', nodes.note) : `${nodes.registeredNodes} — ${nodes.note}`,

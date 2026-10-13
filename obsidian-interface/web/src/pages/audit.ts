@@ -11,7 +11,8 @@
 import { layout } from '../lib/shell.js';
 import { ObsidianClient, type RevenueResponse } from '../lib/client.js';
 import { revenueTimingRows } from '../lib/revenue.js';
-import { el, obs, spinner, kv, badge, table, when, toast } from '../lib/ui.js';
+import { el, obsUnit, count, spinner, kv, badge, table, when, toast } from '../lib/ui.js';
+import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
 const panel = el('section', { class: 'card' }, spinner('asking every reachable node…'));
@@ -62,11 +63,11 @@ void (async () => {
       kv([
         // The node names these `totalSupplyObs` / `maxSupplyObs`: reading a
         // field that does not exist prints "undefined OBS" beside a healthy chain.
-        ['Total supply', `${obs(supply.totalSupplyObs || status.supplyObs)} OBS`],
-        ['Hard cap', `${obs(supply.maxSupplyObs || status.maxSupplyObs)} OBS`],
+        ['Total supply', obsUnit(supply.totalSupplyObs || status.supplyObs)],
+        ['Hard cap', obsUnit(supply.maxSupplyObs || status.maxSupplyObs)],
         ['Invariant', supply.invariantOk ? 'supply invariant holds (recomputed by this node)' : 'FAILED — investigate'],
         ['Issuance sources', supply.issuanceSources.length > 0 ? supply.issuanceSources.join(', ') : 'none yet'],
-        ['Genesis allocation', status.genesis ? `${status.genesis.allocationObs} OBS to ${status.genesis.allocationClaimed ? 'the first valid mining claim (claimed)' : 'the first valid mining claim (unclaimed)'}` : '—'],
+        ['Genesis allocation', status.genesis ? `${obsUnit(status.genesis.allocationObs)} to ${status.genesis.allocationClaimed ? 'the first valid mining claim (claimed)' : 'the first valid mining claim (unclaimed)'}` : '—'],
         ['Designation', 'the wallet that received the genesis allocation is the on-chain treasury: the 10% ONS treasury share is routed there, user funds never are'],
       ]),
       // The treasury is read from /revenue, which returns it in full: /status masks it, and a masked
@@ -74,8 +75,8 @@ void (async () => {
       el('h3', {}, 'ONS revenue (the protocol\u2019s only revenue source)'),
       revenue
         ? kv(revenueTimingRows(revenue))
-        : kv([['Treasury wallet', el('span', { class: 'mono' }, status.genesis?.treasuryWallet ?? '—')]]),
-      el('p', { class: 'fineprint' }, `Read at ${when(status.lastBlockTimestamp)} from ${status.networkId} at height ${status.height.toLocaleString()}.`),
+        : kv([['Treasury wallet', identifier(status.genesis?.treasuryWallet, { kind: 'address', label: 'Treasury wallet address' })]]),
+      el('p', { class: 'fineprint' }, `Read at ${when(status.lastBlockTimestamp)} from ${status.networkId} at height ${count(status.height)}.`),
     );
 
     if (decentralisation) {

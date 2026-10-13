@@ -91,3 +91,19 @@ button.row.tx>div{min-width:0}
 .st{font-weight:700}
 #scanner button:focus-visible{outline:3px solid var(--go);outline-offset:2px}
 @media (prefers-reduced-motion:no-preference){.btn,input,textarea{transition:border-color .15s,box-shadow .15s,opacity .15s}}
+/* Long values and long identifiers: wrap inside the card instead of widening it, and show identifiers short with the
+   whole value one tap away (see identifierView in lib/views.mjs). */
+.row>b,.row>div{min-width:0;overflow-wrap:anywhere}
+.row>span{flex:0 0 auto}
+.row.stack>b{max-width:100%}
+.balv{overflow-wrap:anywhere;word-break:normal;line-height:1.15}
+.balv.bl{font-size:26px}
+.balv.bl2{font-size:21px}
+.idv{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px 8px;max-width:100%;min-width:0;vertical-align:middle}
+.idv-t{min-width:0;max-width:100%;overflow-wrap:anywhere;cursor:pointer;border-radius:4px;font-weight:600}
+.idv-t:focus-visible,.idv-c:focus-visible{outline:2px solid var(--go);outline-offset:2px}
+.idv-f{display:none;word-break:break-all}
+.idv.open .idv-s{display:none}.idv.open .idv-f{display:inline}
+.idv-plain{overflow-wrap:anywhere}
+.idv-c{font:inherit;font-size:10px;font-weight:800;letter-spacing:.1em;padding:6px 10px;min-height:30px;border-radius:99px;border:1px solid var(--bd);background:#fff;color:var(--gd);cursor:pointer}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

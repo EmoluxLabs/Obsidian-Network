@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { V, activityRows } from '../public/lib/views.mjs';
+import { V, activityRows, identifierView } from '../public/lib/views.mjs';
 import { newWallet } from './helpers.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -139,4 +139,39 @@ test('every link between screens leads to a screen that exists', () => {
   for (const m of source.matchAll(/\bback\(([^)]*)\)/g)) for (const q of m[1].matchAll(/'([a-z0-9]+)'/g)) targets.add(q[1]);
   assert.ok(targets.size >= 8, `found ${[...targets]}`);
   for (const target of targets) assert.ok(Object.hasOwn(V, target), `a link goes to "${target}", which is not a screen`);
+});
+
+// ── long identifiers ─────────────────────────────────────────────────────────
+
+test('an identifier is shown short, announced in full and copied in full, and nothing in it can open markup', () => {
+  const full = 'obs1ijdnq8k3m5x7v9c2z4b6n8t0w2e4r6y8slvgsi';
+  const html = identifierView(full, 'address');
+  assert.match(html, />obs1ijdn\.\.\.slvgsi</);
+  assert.ok(html.includes(`data-full="${full}"`), 'the copy action carries the whole address');
+  assert.ok(html.includes(`aria-label="Wallet address ${full}.`));
+  assert.ok(html.includes('data-a="copyId"'));
+  assert.ok(!/onclick|style=/.test(html), 'no inline handler or inline style (the wallet serves a strict CSP)');
+  const hostile = identifierView(`obs1${PAYLOAD}aaaaaaaaaaaaaaaaaaaaaaaaaaaa`, 'address');
+  assert.ok(!hostile.includes('<img') && !hostile.includes('<script'));
+});
+
+test('a node-masked value is shown as it came and has no copy button; a short one is untouched; nothing is the dash', () => {
+  assert.ok(!identifierView('obs1abcdef…wxyz12', 'address').includes('copyId'));
+  assert.ok(identifierView('obs1abcdef…wxyz12', 'address').includes('obs1abcdef…wxyz12'));
+  assert.ok(identifierView('obs1tiny', 'address').includes('obs1tiny'));
+  assert.equal(identifierView('', 'address'), '—');
+});
+
+test('the home screen keeps the wallet address reachable by id, short on screen with the whole value in data-full', () => {
+  const html = V.home(state({ err: '', net: { state: 'ok', name: 'devnet', chainId: 7780, hrp: 'dobs', error: '' }, balance: { state: 'ok', seals: 5n * 10n ** 18n, error: '' }, hist: { state: 'ok', ids: new Set(), error: '', rows: [] }, tx: undefined }));
+  assert.ok(html.includes(`id="addr"`));
+  assert.ok(html.includes(`data-full="${own}"`));
+  assert.ok(html.includes('class="m balv"'), 'a short balance keeps the normal size');
+  assert.ok(html.includes('>5 <span class="unit">OBS</span>'));
+});
+
+test('a balance made of dust is shown in full, only at a smaller size', () => {
+  const html = V.home(state({ err: '', net: { state: 'ok', name: 'devnet', chainId: 7780, hrp: 'dobs', error: '' }, balance: { state: 'ok', seals: 166666666666666n, error: '' }, hist: { state: 'ok', ids: new Set(), error: '', rows: [] }, tx: undefined }));
+  assert.ok(html.includes('0.000166666666666666 <span class="unit">OBS</span>'));
+  assert.match(html, /class="m balv bl"/);
 });

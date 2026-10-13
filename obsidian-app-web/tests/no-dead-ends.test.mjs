@@ -17,7 +17,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
 const read = (f) => readFileSync(resolve(root, f), 'utf8');
-const screensSrc = read('screens.mjs') + '\n' + read('explorer.mjs');
+// identifier.mjs builds the markup for long addresses and ids; its COPY button calls ObsidianCopy like any screen.
+const screensSrc = read('screens.mjs') + '\n' + read('explorer.mjs') + '\n' + read('identifier.mjs');
 const realSrc = read('real.mjs');
 
 const handlersDefined = new Set([...realSrc.matchAll(/\bg\.(Obsidian\w+)\s*=/g)].map((m) => m[1]));

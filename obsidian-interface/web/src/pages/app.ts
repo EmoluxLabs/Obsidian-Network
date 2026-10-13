@@ -17,7 +17,8 @@ import { ObsidianClient } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { session, type AccountView, type AuthConfig } from '../lib/session.js';
 import { linkStoredWallet } from '../lib/link-wallet.js';
-import { el, spinner, toast, kv, badge, table, short, when, copyButton } from '../lib/ui.js';
+import { el, spinner, toast, kv, badge, table, when, copyButton, count } from '../lib/ui.js';
+import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
 const authPanel = el('section', { class: 'card', id: 'auth' }, spinner('reading configuration…'));
@@ -293,12 +294,12 @@ function drawSignedIn(account: AccountView, config?: AuthConfig): void {
   const rows: Array<[string, string | Node]> = [
     ['Email', account.email],
     ['Display name', account.displayName ?? '—'],
-    ['Account id', el('span', { class: 'mono' }, account.accountId)],
+    ['Account id', identifier(account.accountId, { kind: 'id', label: 'Account id' })],
     ['MFA', account.mfaEnabled ? badge('enabled', 'ok') : badge('not set up', 'warn')],
     ['Mining', account.miningEnabled && account.walletAddress ? badge('open', 'ok') : badge(account.walletAddress ? 'closed until MFA' : account.miningEnabled ? 'closed until a wallet is linked' : 'closed until a wallet is linked and MFA is confirmed', 'warn')],
     ['Recovery codes left', `${account.recoveryCodesRemaining}`],
     ['Invites issued', `${account.invitesIssued} of ${config?.maxInvitesPerAccount ?? 5}`],
-    ['Linked wallet', account.walletAddress ? el('span', { class: 'mono' }, account.walletAddress) : 'none — required before you can mine'],
+    ['Linked wallet', account.walletAddress ? identifier(account.walletAddress, { kind: 'address', label: 'Linked wallet address' }) : 'none — required before you can mine'],
   ];
   const actions = [out];
   if (!account.mfaEnabled) {
@@ -358,14 +359,14 @@ function drawWalletLink(account: AccountView): void {
     el('p', {}, 'Mining needs a wallet: this interface accepts a claim only from the wallet linked to your account. One wallet per account, and the link is permanent. A wallet linked to one account can never serve another. The wallet is a key made on your device, never derived from your account, and the server never holds it.'),
     ...(linked
       ? [
-          kv([['Your wallet (permanent)', el('span', { class: 'mono' }, linked)]]),
+          kv([['Your wallet (permanent)', identifier(linked, { kind: 'address', label: 'Your linked wallet address' })]]),
           ...(address && address !== linked
             ? [el('p', { class: 'fineprint' }, 'This browser holds a different wallet. To claim from this browser, restore the linked wallet with its recovery phrase on the wallet page.')]
             : []),
         ]
       : address
         ? [
-            el('div', { class: 'row' }, el('span', { class: 'mono' }, address), linkButton(address)),
+            el('div', { class: 'row' }, identifier(address, { kind: 'address', label: 'Wallet address in this browser' }), linkButton(address)),
             el('p', { class: 'fineprint' }, 'You will sign a challenge with your wallet passphrase to prove the key is yours. This cannot be undone.'),
           ]
         : [el('p', { class: 'muted' }, 'No wallet in this browser. Create one to link it.')]),
@@ -391,16 +392,16 @@ async function drawNodes(): Promise<void> {
     const data = await client.nodes();
     nodesPanel.replaceChildren(
       el('h2', {}, 'Nodes this interface can read'),
-      el('p', { class: 'muted' }, `Consensus height ${data.consensusHeight?.toLocaleString() ?? '—'}${data.genesisMismatch ? ' — GENESIS MISMATCH DETECTED' : ''}`),
+      el('p', { class: 'muted' }, `Consensus height ${count(data.consensusHeight)}${data.genesisMismatch ? ' — GENESIS MISMATCH DETECTED' : ''}`),
       table(
         ['Node', 'Health', 'Height', 'Latency', 'Chain', 'Genesis'],
         data.nodes.map((node) => [
           el('span', { class: 'mono' }, node.url),
           node.healthy ? badge('healthy', 'ok') : badge('unreachable', 'bad'),
-          node.height.toLocaleString(),
+          count(node.height),
           `${node.latencyMs} ms`,
           `${node.networkId} (${node.chainId})`,
-          el('span', { class: 'mono' }, short(node.genesisId, 10)),
+          identifier(node.genesisId, { kind: 'id', label: 'Genesis id' }),
         ]),
       ),
       el('div', { class: 'row' }, refreshButton()),

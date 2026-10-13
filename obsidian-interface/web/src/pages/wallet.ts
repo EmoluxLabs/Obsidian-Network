@@ -15,8 +15,10 @@
 import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { MIN_VAULT_PASSPHRASE_LENGTH, Wallet, exportBundle, hrpOfAddress, previewAddress, InsecureContextError, webCryptoAvailable } from '../lib/wallet.js';
-import { operations, formatObs } from '../lib/operations.js';
-import { el, obs, kv, spinner, toast, copyButton, download, badge, short, when } from '../lib/ui.js';
+import { operations } from '../lib/operations.js';
+import { displaySeals } from '../../core/protocol/display.js';
+import { el, obsUnit, shortId, kv, spinner, toast, copyButton, download, badge, when } from '../lib/ui.js';
+import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
 const panel = el('section', { class: 'card', id: 'wallet-panel' }, spinner('opening vault…'));
@@ -153,7 +155,7 @@ function reveal(wallet: Wallet, passphrase: string): void {
     keyBox,
     el('div', { class: 'row' }, copyButton(() => wallet.revealPrivateKey(0), 'Copy private key'), downloadButton()),
     kv([
-      ['Address', el('span', { class: 'mono' }, wallet.address)],
+      ['Address', identifier(wallet.address, { kind: 'address', detail: true, label: 'Wallet address' })],
       ['Network', `${networkName(wallet.addressHrp)} — addresses start "${wallet.addressHrp}1"`],
       ['Derivation path', el('span', { class: 'mono' }, "m/44'/7777'/0'/0/0")],
       ['Created', when(Math.floor(Date.now() / 1000))],
@@ -238,7 +240,7 @@ function drawUnlock(address: string): void {
     el('h2', {}, 'Unlock'),
     ...(mismatch ? [networkMismatchNotice(vaultHrp)] : []),
     kv([
-      ['Address in this browser', el('span', { class: 'mono' }, address)],
+      ['Address in this browser', identifier(address, { kind: 'address', label: 'Wallet address in this browser' })],
       ['Wallet network', networkName(vaultHrp)],
       ['This interface', `${networkName(network!.addressHrp)} (chain ${network!.chainId})`],
     ]),
@@ -281,8 +283,8 @@ async function drawNetworkFix(wallet: Wallet, passphrase: string): Promise<void>
     el('h2', {}, 'This wallet belongs to another network'),
     networkMismatchNotice(wallet.addressHrp),
     kv([
-      ['Address now', el('span', { class: 'mono' }, current)],
-      ['Address after', el('span', { class: 'mono' }, addressPreview(wallet))],
+      ['Address now', identifier(current, { kind: 'address', label: 'Current wallet address' })],
+      ['Address after', identifier(addressPreview(wallet), { kind: 'address', label: 'New wallet address' })],
       ['Recovery phrase', 'unchanged — same 24 words, same keys'],
       ['Balance', 'unaffected; this address has never existed on this network, so there is nothing to move'],
     ]),
@@ -321,7 +323,7 @@ async function drawDashboard(wallet: Wallet, passphrase: string): Promise<void> 
       const balance = await client.balance(wallet.address);
       balanceBox.replaceChildren(
         el('span', { class: 'balance-label' }, 'Balance (from the chain)'),
-        el('strong', { class: 'balance' }, `${obs(balance.balanceObs)} OBS`),
+        el('strong', { class: 'balance' }, obsUnit(balance.balanceObs)),
         el('span', { class: 'muted' }, `seals ${balance.balanceSeals} · next nonce ${balance.nonce}`),
       );
       const sendButton = document.getElementById('send-button') as HTMLButtonElement | null;
@@ -346,7 +348,7 @@ async function drawDashboard(wallet: Wallet, passphrase: string): Promise<void> 
                 el(
                   'li',
                   {},
-                  el('span', { class: 'mono' }, short(String(entry.txId ?? ''), 8)),
+                  identifier(entry.txId === undefined || entry.txId === null ? undefined : String(entry.txId), { kind: 'hash', label: 'Transaction id' }),
                   el('span', {}, String(entry.kind ?? entry.type ?? 'transaction')),
                   el('span', { class: 'muted' }, when(Number(entry.timestamp ?? 0))),
                 ),
@@ -381,7 +383,7 @@ function drawSend(wallet: Wallet): HTMLElement {
       const recipient = to.value.trim();
       if (!recipient) throw new Error('enter a recipient address');
       const result = await operations.send(client, wallet, { to: recipient, amountObs: amount.value.trim(), memo: memo.value.trim() || undefined });
-      toast(`Signed locally and submitted: ${result.txId.slice(0, 16)}…`, 'success');
+      toast(`Signed locally and submitted: ${shortId(result.txId)}`, 'success');
       to.value = '';
       amount.value = '';
       memo.value = '';
@@ -394,7 +396,7 @@ function drawSend(wallet: Wallet): HTMLElement {
     try {
       const value = amount.value.trim();
       if (!value || !/^\d*(\.\d*)?$/.test(value)) throw new Error('');
-      quote.textContent = `Gas: ${formatObs(operationsGas(value))} OBS (0.02%, capped at 0.01 OBS)`;
+      quote.textContent = `Gas: ${displaySeals(operationsGas(value))} OBS (0.02%, capped at 0.01 OBS)`;
     } catch {
       quote.textContent = 'Gas: 0.02% of the amount, capped at 0.01 OBS.';
     }
@@ -427,7 +429,8 @@ function exportRow(wallet: Wallet, passphrase: string): HTMLElement[] {
   const revealKey = el('button', { class: 'ghost', type: 'button' }, 'Reveal private key');
   revealKey.addEventListener('click', () => {
     if (!window.confirm('Display the private key in this window? Anyone who can see your screen can take the wallet.')) return;
-    toast(`Private key: ${wallet.revealPrivateKey(0).slice(0, 18)}… (copied in full to the clipboard)`, 'info');
+    // No fragment of the key is put on screen: a toast is read over shoulders and captured in screenshots.
+    toast('Private key copied in full to the clipboard', 'info');
     void navigator.clipboard.writeText(wallet.revealPrivateKey(0)).catch(() => undefined);
   });
   const rescramble = el('input', { type: 'password', placeholder: 'New passphrase', id: 'rescramble' });

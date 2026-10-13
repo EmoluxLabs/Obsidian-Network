@@ -11,7 +11,8 @@
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient, type BlockDetail, type BlockSummary } from '../lib/client.js';
-import { el, obs, spinner, toast, kv, badge, table, short, relativeTime, when } from '../lib/ui.js';
+import { el, obsUnit, count, spinner, toast, kv, badge, table, relativeTime, when } from '../lib/ui.js';
+import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
 
@@ -61,10 +62,10 @@ async function loadChainStats(): Promise<void> {
       el('h2', {}, 'Chain'),
       kv([
         ['Network', `${status.networkId} · chain ${status.chainId} · ${network.network?.addressHrp ?? 'obs'}1…`],
-        ['Height', status.height.toLocaleString()],
-        ['Head block id', el('span', { class: 'mono' }, short(status.headHash, 16))],
-        ['Genesis id', el('span', { class: 'mono' }, status.genesisId)],
-        ['Params hash', el('span', { class: 'mono' }, short(status.paramsHash, 16))],
+        ['Height', count(status.height)],
+        ['Head block id', identifier(status.headHash, { kind: 'hash', label: 'Head block id' })],
+        ['Genesis id', identifier(status.genesisId, { kind: 'id', label: 'Genesis id' })],
+        ['Params hash', identifier(status.paramsHash, { kind: 'hash', label: 'Params hash' })],
         ['Protocol version', status.protocolVersion],
         ['Consensus', pot ? `${pot.consensus.replace(/_/g, ' ').toLowerCase()} (${pot.shortName})` : 'Proof of Time (PoT)'],
         [
@@ -82,15 +83,15 @@ async function loadChainStats(): Promise<void> {
             : 'not measurable yet — fewer than two blocks in the window',
         ],
         ['Accumulated PoT weight', pot ? el('span', { class: 'mono' }, pot.cumulativePotWeight) : '—'],
-        ['Supply', `${obs(status.supplyObs)} OBS of ${obs(status.maxSupplyObs)} OBS`],
-        ['Mining pool', `${obs(supply.poolBalanceObs)} OBS`],
+        ['Supply', `${obsUnit(status.supplyObs)} of ${obsUnit(status.maxSupplyObs)}`],
+        ['Mining pool', obsUnit(supply.poolBalanceObs)],
         ['Peers', String(status.peers)],
         ['Last block', `${relativeTime(status.lastBlockTimestamp)} (${when(status.lastBlockTimestamp)})`],
         [
           'Time authority',
           pot ? `${pot.timeAuthority.authoritative.replace(/_/g, ' ').toLowerCase()} — never your browser clock` : '—',
         ],
-        ['Genesis allocation', status.genesis ? `${status.genesis.allocationClaimed ? 'claimed' : 'unclaimed'} · ${obs(status.genesis.allocationObs)} OBS` : '—'],
+        ['Genesis allocation', status.genesis ? `${status.genesis.allocationClaimed ? 'claimed' : 'unclaimed'} · ${obsUnit(status.genesis.allocationObs)}` : '—'],
       ]),
       ...(audit ? [decentralisationSummary(audit)] : []),
       el('p', { class: 'fineprint' }, 'Every field above is recomputed by each node from the chain. Balances are deliberately absent: the explorer surface never exposes them.'),
@@ -108,8 +109,8 @@ async function loadBlocks(): Promise<void> {
       table(
         ['Height', 'Block id', 'Transactions', 'Size', 'Age'],
         blocks.map((block: BlockSummary) => [
-          el('a', { class: 'mono link', href: `#/block/${block.height}` }, String(block.height)),
-          el('a', { class: 'mono link', href: `#/block/${block.hash}` }, short(block.hash, 12)),
+          el('a', { class: 'mono link', href: `#/block/${block.height}` }, count(block.height)),
+          identifier(block.hash, { kind: 'hash', href: `#/block/${block.hash}`, copy: false, label: 'Block id' }),
           String(block.txCount),
           `${block.size} B`,
           relativeTime(block.timestamp),
@@ -131,7 +132,7 @@ async function search(term: string): Promise<void> {
       resultPanel.replaceChildren(
         el('h2', {}, `ONS · ${term.toLowerCase()}`),
         kv([
-          ['Resolves to (wallet address)', el('span', { class: 'mono' }, short(record.address, 18))],
+          ['Resolves to (wallet address)', identifier(record.address, { kind: 'address' })],
           ['Registered at height', String(record.registeredAtHeight ?? '—')],
           ['Expires at height', String(record.expiresAt ?? '—')],
           ['Transfers', record.transferCount === 0 ? badge('never transferred', 'neutral') : badge(`${record.transferCount} transfers`, 'ok')],
@@ -142,15 +143,15 @@ async function search(term: string): Promise<void> {
     }
     const tx = await client.transaction(term);
     resultPanel.replaceChildren(
-      el('h2', {}, `Transaction ${short(term, 14)}`),
+      el('h2', {}, 'Transaction ', identifier(term, { kind: 'hash', label: 'Transaction id' })),
       kv([
-        ['Included in block', String(tx.height ?? 'mempool')],
+        ['Included in block', tx.height === undefined || tx.height === null ? 'mempool' : count(tx.height as number)],
         ['Type', String(tx.kind ?? tx.type ?? '—')],
-        ['Amount', tx.amount !== undefined && tx.amount !== null ? `${obs(tx.amount)} OBS` : '—'],
-        ['Gas paid', tx.gas !== undefined ? `${obs(tx.gas)} OBS` : '—'],
+        ['Amount', tx.amount !== undefined && tx.amount !== null ? obsUnit(tx.amount) : '—'],
+        ['Gas paid', tx.gas !== undefined ? obsUnit(tx.gas) : '—'],
         ['Timestamp', tx.timestamp ? `${when(Number(tx.timestamp))}` : 'pending'],
-        ['Sender (masked by the node)', el('span', { class: 'mono' }, short(String(tx.sender ?? '—'), 18))],
-        ['Recipient (masked by the node)', el('span', { class: 'mono' }, short(String(tx.recipient ?? '—'), 18))],
+        ['Sender (masked by the node)', identifier(tx.sender === undefined ? undefined : String(tx.sender), { kind: 'address', label: 'Sender' })],
+        ['Recipient (masked by the node)', identifier(tx.recipient === undefined ? undefined : String(tx.recipient), { kind: 'address', label: 'Recipient' })],
         ['Confirmations', String(tx.confirmations ?? '—')],
       ]),
       el('p', { class: 'fineprint' }, 'Addresses shown here are masked by the node before they leave it: an explorer page cannot be used to look up a wallet\'s holdings.'),
@@ -164,25 +165,25 @@ async function search(term: string): Promise<void> {
 async function renderBlock(block: BlockDetail): Promise<void> {
   const txs = block.transactions;
   resultPanel.replaceChildren(
-    el('h2', {}, `Block ${block.header.height}`),
+    el('h2', {}, `Block ${count(block.header.height)}`),
     kv([
-      ['Block id', el('span', { class: 'mono' }, short(block.hash, 24))],
-      ['Parent', el('span', { class: 'mono' }, short(block.header.prevHash, 24))],
-      ['Producer', el('span', { class: 'mono' }, short(block.header.producer, 18))],
+      ['Block id', identifier(block.hash, { kind: 'hash', detail: true, label: 'Block id' })],
+      ['Parent', identifier(block.header.prevHash, { kind: 'hash', label: 'Parent block id' })],
+      ['Producer', identifier(block.header.producer, { kind: 'address', label: 'Producer' })],
       ['Timestamp', `${when(block.header.timestamp)} (${relativeTime(block.header.timestamp)})`],
       ['Transactions', String(txs.length)],
       ['Size', `${block.summary.size} B`],
-      ['State root', el('span', { class: 'mono' }, short(block.header.stateRoot, 24))],
+      ['State root', identifier(block.header.stateRoot, { kind: 'hash', label: 'State root' })],
       ['Confirmations', String(block.confirmations)],
     ]),
     txs.length > 0
       ? table(
           ['Transaction id', 'Type', 'Gas', 'Sender (masked)'],
           txs.map((tx) => [
-            el('span', { class: 'mono' }, short(tx.id, 18)),
+            identifier(tx.id, { kind: 'hash', label: 'Transaction id' }),
             String(tx.type),
-            `${obs(tx.gas)} OBS`,
-            el('span', { class: 'mono' }, short(tx.sender, 14)),
+            obsUnit(tx.gas),
+            identifier(tx.sender, { kind: 'address', label: 'Sender' }),
           ]),
         )
       : el('p', { class: 'muted' }, 'This block contains no transactions.'),

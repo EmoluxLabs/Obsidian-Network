@@ -66,7 +66,7 @@ function clean(html, label) {
 test('there is a section for each thing worth looking at, and each renders real data', () => {
   assert.deepEqual(EXPLORER_TABS.map(([k]) => k), ['overview', 'blocks', 'claims', 'names', 'network']);
   const expected = {
-    overview: [/OBS Devnet/, /#216/, /100000\.000166666666666666 OBS/, /SUPPLY INVARIANT/, /HOLDS/, /PROOF OF TIME/, /CLAIMED AT HEIGHT/],
+    overview: [/OBS Devnet/, /#216/, /100,000\.000166666666666666 OBS/, /SUPPLY INVARIANT/, /HOLDS/, /PROOF OF TIME/, /CLAIMED AT HEIGHT/],
     blocks: [/#82/, /1 TX/],
     claims: [/ACTIVE MINERS/, /dobs13s4pg…rs0ff0/, /GENESIS ALLOCATION/, /\+0\.000166666666666666/],
     names: [/e2e-test\.obs/, /REGISTER A NAME/, /UNTIL 2027-/],
@@ -101,7 +101,8 @@ test('rule 1: no balance appears anywhere in the explorer', () => {
 });
 
 test('addresses are masked even when the node sends them whole', () => {
-  assert.equal(mask(FULL), 'dobs13s4pg…rs0ff0');
+  // the platform-wide short form: first 8, three dots, last 6
+  assert.equal(mask(FULL), 'dobs13s4...rs0ff0');
   assert.equal(mask('dobs13s4pg…rs0ff0'), 'dobs13s4pg…rs0ff0', 'already masked is left alone');
   assert.equal(mask(''), '—');
 

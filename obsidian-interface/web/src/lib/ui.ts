@@ -6,6 +6,8 @@
  * listeners are attached from JavaScript).
  */
 
+import { displayInteger, displayObs, displayObsWithUnit, shortenIdentifier, type IdentifierKind } from '../../core/protocol/display.js';
+
 export type Child = Node | string | number | null | undefined | false;
 
 export function el<K extends keyof HTMLElementTagNameMap>(
@@ -45,39 +47,34 @@ export function clear(node: Element): void {
 }
 
 /**
- * Format an Obsidian amount exactly, without ever going through a float.
+ * Format an Obsidian amount for a person: exact, grouped, trailing zeros removed, never `0` for a real amount.
  *
- * The node speaks two languages for the same quantity and both are exact:
- *
- *   - seal counts   — integer strings, 10^18 seals = 1 OBS (`/status.supplySeals`)
- *   - OBS decimals  — `"100000.000000000000000000"` (`/supply.totalSupplyObs`)
- *
- * Feeding a decimal to a seal formatter (or the reverse) does not throw, it
- * just displays the wrong number: 1000000000000000 seals read as a decimal is
- * 1, and a decimal read as a seal count is 0. So this accepts either, detects
- * which one it was given, and never rounds through a float.
+ * The node speaks two exact shapes for one quantity — seal counts (integer text, 10^18 seals = 1 OBS) and OBS
+ * decimals (`"100000.000000000000000000"`) — and this accepts either. All the rules live in
+ * core/protocol/display.ts, the one formatter every interface shares (see its header); this is its entry point for
+ * the pages. `decimals` is a display cap for a tight spot; leave it out and every significant digit is shown.
+ * Display only: nothing here feeds a transaction, a fee or a balance.
  */
-export function obs(value: string | bigint | number | undefined | null, decimals = 8): string {
-  if (value === undefined || value === null) return '—';
-  const text = typeof value === 'bigint' ? value.toString() : String(value).trim();
-  if (text === '' || !/^-?\d+(\.\d+)?$/.test(text)) return '—';
-  const negative = text.startsWith('-');
-  const digits = negative ? text.slice(1) : text;
-  const [wholePart, givenFraction] = digits.split('.');
-  let whole: string;
-  let fraction: string;
-  if (givenFraction === undefined) {
-    // Seal count: the last 18 digits are the fractional part of one OBS.
-    const padded = digits.padStart(19, '0');
-    whole = padded.slice(0, padded.length - 18);
-    fraction = padded.slice(-18);
-  } else {
-    whole = wholePart;
-    fraction = givenFraction.padEnd(18, '0').slice(0, 18);
-  }
-  const trimmed = fraction.slice(0, Math.max(0, decimals)).replace(/0+$/, '');
-  const grouped = whole.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return `${negative ? '-' : ''}${grouped}${trimmed ? `.${trimmed}` : ''}`;
+export function obs(value: string | bigint | undefined | null, decimals?: number): string {
+  return displayObs(value, decimals === undefined ? undefined : { maxDecimals: decimals });
+}
+
+/** "0.05 OBS". A missing value is the unavailable mark with no unit. */
+export function obsUnit(value: string | bigint | undefined | null, decimals?: number): string {
+  return displayObsWithUnit(value, decimals === undefined ? undefined : { maxDecimals: decimals });
+}
+
+/**
+ * Short display text for an identifier inside a sentence or a toast (`obs1ijdn...slvgsi`). Text only: for a value shown on
+ * the page use `identifier()` (lib/identifier.ts), which also carries the whole value and a copy button.
+ */
+export function shortId(value: string | undefined | null, kind: IdentifierKind = 'hash'): string {
+  return shortenIdentifier(value, kind, 'narrow');
+}
+
+/** A whole-number count (height, miners, iterations) with commas; exact, and the same in every locale. */
+export function count(value: string | bigint | number | undefined | null): string {
+  return displayInteger(value);
 }
 
 /** Exact seals → exact OBS decimal string. Used to build transaction bodies. */
@@ -115,11 +112,11 @@ export function sealsFromObs(value: string | bigint): bigint {
  * `dailyRewardSeals` both display the real number instead of `0 OBS`.
  */
 export function rewardLine(schedule: { dailyRewardSeals?: string; dailyRewardObs?: string; rewardPerDayObs?: string }): string {
-  return `${obs(schedule.dailyRewardObs ?? schedule.dailyRewardSeals ?? schedule.rewardPerDayObs)} OBS`;
+  return obsUnit(schedule.dailyRewardObs ?? schedule.dailyRewardSeals ?? schedule.rewardPerDayObs);
 }
 
 export function rewardPerClaim(schedule: { claimRewardSeals?: string; claimRewardObs?: string; rewardPerClaimObs?: string }): string {
-  return `${obs(schedule.claimRewardObs ?? schedule.claimRewardSeals ?? schedule.rewardPerClaimObs)} OBS`;
+  return obsUnit(schedule.claimRewardObs ?? schedule.claimRewardSeals ?? schedule.rewardPerClaimObs);
 }
 
 export function relativeTime(timestampSeconds: number): string {

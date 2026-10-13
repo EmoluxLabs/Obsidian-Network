@@ -22,7 +22,9 @@ import { Wallet, hrpOfAddress } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
 import { session, type AccountView } from '../lib/session.js';
 import { linkStoredWallet } from '../lib/link-wallet.js';
-import { el, obs, duration, spinner, toast, kv, badge, table, short, when, rewardLine, rewardPerClaim } from '../lib/ui.js';
+import { el, obsUnit, count, shortId, duration, spinner, toast, kv, badge, table, when, rewardLine, rewardPerClaim } from '../lib/ui.js';
+import { identifier } from '../lib/identifier.js';
+import { dailyRewardForActiveMiners } from '../../core/mining/schedule.js';
 
 const client = new ObsidianClient();
 
@@ -89,7 +91,7 @@ function drawWalletPanel(): void {
       : []),
     address
       ? kv([
-          ['Wallet in this browser', el('span', { class: 'mono' }, address)],
+          ['Wallet in this browser', identifier(address, { kind: 'address', label: 'Wallet address in this browser' })],
           ['Network', wrongNetwork ? `mismatch — wallet "${hrpOfAddress(address)}1", network "${networkHrp}1"` : `matches this network ("${networkHrp ?? '…'}1")`],
           ['Keys', 'encrypted in this browser with your passphrase — never sent to the interface'],
         ])
@@ -180,7 +182,7 @@ async function refresh(): Promise<void> {
       stepList(done),
       ...(address && !wrongNetwork
         ? [
-            kv([['Wallet in this browser', el('span', { class: 'mono' }, address)]]),
+            kv([['Wallet in this browser', identifier(address, { kind: 'address', label: 'Wallet address in this browser' })]]),
             linkButton(address, 'Link this wallet to my account'),
             el('p', { class: 'fineprint' }, 'One wallet per account, and the link cannot be changed. You sign a short challenge with your passphrase to prove the key is yours; only the address, public key and signature are sent. The wallet is its own key, never made from your account details.'),
           ]
@@ -199,7 +201,7 @@ async function refresh(): Promise<void> {
     showGate(
       el('p', {}, 'Mining stays closed on this account until two-factor authentication is confirmed.'),
       stepList(done),
-      kv([['Linked wallet', el('span', { class: 'mono' }, linked)]]),
+      kv([['Linked wallet', identifier(linked, { kind: 'address', label: 'Linked wallet address' })]]),
       asLink('/app/', 'Finish two-factor setup'),
     );
     return;
@@ -212,8 +214,8 @@ async function refresh(): Promise<void> {
       el('p', {}, 'Your account mines with its linked wallet only.'),
       stepList(done),
       kv([
-        ['Linked wallet', el('span', { class: 'mono' }, linked)],
-        ['Wallet in this browser', address ? el('span', { class: 'mono' }, address) : 'none'],
+        ['Linked wallet', identifier(linked, { kind: 'address', label: 'Linked wallet address' })],
+        ['Wallet in this browser', address ? identifier(address, { kind: 'address', label: 'Wallet address in this browser' }) : 'none'],
       ]),
       el(
         'p',
@@ -265,7 +267,7 @@ function drawClaim(): void {
   const button = el(
     'button',
     { class: 'primary big', type: 'button', id: 'claim-button', disabled: eligible ? undefined : 'disabled' },
-    eligible ? `Claim ${obs(state.rewardPerClaimObs)} OBS` : 'Not eligible yet',
+    eligible ? `Claim ${obsUnit(state.rewardPerClaimObs)}` : 'Not eligible yet',
   );
   button.addEventListener('click', async () => {
     button.disabled = true;
@@ -275,7 +277,7 @@ function drawClaim(): void {
       if (!walletInstance) return;
       button.textContent = 'Submitting…';
       const result = await operations.claim(client, walletInstance);
-      toast(`Claim accepted into the mempool: ${result.txId.slice(0, 16)}…`, 'success');
+      toast(`Claim accepted into the mempool: ${shortId(result.txId)}`, 'success');
       await waitForInclusion(state.nextClaimId);
       await refresh();
     } catch (error) {
@@ -289,9 +291,9 @@ function drawClaim(): void {
   claimPanel.replaceChildren(
     el('div', { class: 'claim-head' }, el('h2', {}, 'Claim'), badge(eligible ? 'ELIGIBLE' : 'WAITING', eligible ? 'ok' : 'warn')),
     kv([
-      ['Wallet', el('span', { class: 'mono' }, short(state.address, 14))],
-      ['Reward per claim', `${obs(state.rewardPerClaimObs)} OBS`],
-      ['Next claim id', el('span', { class: 'mono' }, `${state.nextClaimId.slice(0, 20)}…`)],
+      ['Wallet', identifier(state.address, { kind: 'address', label: 'Mining wallet address' })],
+      ['Reward per claim', obsUnit(state.rewardPerClaimObs)],
+      ['Next claim id', identifier(state.nextClaimId, { kind: 'hash', label: 'Next claim id' })],
       ['Claims this cycle', `${state.claimsThisCycle} / 6 (${state.claimsRemainingInCycle} left)`],
       ['Eligible in', timer],
       ['Protocol time', `${when(state.protocolTime)} (from the chain head, not your device)`],
@@ -340,19 +342,19 @@ async function loadSchedule(): Promise<void> {
       // Optional: older nodes have no /pot, and the schedule must still render.
       client.proofOfTime().catch(() => undefined),
     ]);
-    const tiers = [0, 100_000, 200_000, 400_000, 800_000, 1_600_000, 3_200_000].map((miners) => {
-      const perDay = 0.001 * Math.pow(0.995, Math.floor(miners / 100_000));
-      const floored = Math.max(perDay, 0.0002);
-      return [`${miners.toLocaleString()} miners`, `${floored.toFixed(12).replace(/0+$/, '').replace(/\.$/, '')} OBS`];
-    });
+    // The protocol's own integer schedule (core/mining/schedule.ts), not a float approximation of it.
+    const tiers = [0, 100_000, 200_000, 400_000, 800_000, 1_600_000, 3_200_000].map((miners) => [
+      `${count(miners)} miners`,
+      obsUnit(dailyRewardForActiveMiners(miners)),
+    ]);
     schedulePanel.replaceChildren(
       el('h2', {}, 'Mining schedule'),
       kv([
-        ['Active miners (30-day window)', String(schedule.activeMiners)],
+        ['Active miners (30-day window)', count(schedule.activeMiners)],
         ['Reward per day now', rewardLine(schedule)],
         ['Reward per claim now', rewardPerClaim(schedule)],
-        ['Reduction step', `−${schedule.reductionPercentPerStep}% per ${schedule.reductionStepMiners.toLocaleString()} active miners`],
-        ['Hard floor', `${obs(schedule.floorDailyObs || schedule.floorDailySeals)} OBS/day`],
+        ['Reduction step', `−${schedule.reductionPercentPerStep}% per ${count(schedule.reductionStepMiners)} active miners`],
+        ['Hard floor', `${obsUnit(schedule.floorDailyObs || schedule.floorDailySeals)}/day`],
       ]),
       el('h3', {}, 'Schedule'),
       table(['Active miners', 'Reward per day'], tiers),
@@ -399,8 +401,8 @@ async function loadHistory(): Promise<void> {
         : table(
             ['Claim id', 'Reward', 'Block', 'When', 'Genesis'],
             claims.claims.map((claim) => [
-              el('span', { class: 'mono' }, short(String(claim.claimId ?? claim.txId ?? ''), 14)),
-              `${obs(claim.rewardObs ?? claim.reward ?? '0')} OBS`,
+              identifier(String(claim.claimId ?? claim.txId ?? '') || undefined, { kind: 'hash', label: 'Claim id' }),
+              obsUnit(claim.rewardObs ?? claim.reward ?? '0'),
               String(claim.height ?? '—'),
               when(Number(claim.timestamp ?? 0)),
               claim.genesisAwarded ? badge('genesis allocation', 'ok') : el('span', { class: 'muted' }, '—'),

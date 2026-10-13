@@ -739,7 +739,7 @@ describe('pages read the field names the node really sends', () => {
     expect(document.body.textContent).not.toContain('undefined');
 
     const stats = document.querySelector('#chain-stats')!.textContent ?? '';
-    expect(stats).toContain('100,166.66666666 OBS of 21,000,000 OBS');
+    expect(stats).toContain('100,166.666666666666 OBS of 21,000,000 OBS');
     expect(stats).toContain('claimed · 100,000 OBS');
     expect(stats).toContain('0 OBS');   // the mining pool balance, from /supply.poolBalanceObs
   });
@@ -750,7 +750,8 @@ describe('pages read the field names the node really sends', () => {
     await settle();
 
     const panel = document.querySelector('#register')!.textContent ?? '';
-    expect(panel).toContain('0.050000000000000000 OBS');
+    expect(panel).toContain('0.05 OBS');
+    expect(panel).not.toContain('0.050000000000000000');
     expect(panel).toContain('consensus parameter');
     expect(panel).not.toMatch(/\$\d/);
     expect(panel).not.toContain('oracle');
@@ -774,7 +775,8 @@ describe('pages read the field names the node really sends', () => {
     await settle();
 
     const panel = document.querySelector('#register')!.textContent ?? '';
-    expect(panel).toContain('0.050000000000000000 OBS');
+    expect(panel).toContain('0.05 OBS');
+    expect(panel).not.toContain('0.050000000000000000');
     expect(panel).not.toContain('closed');
     expect(document.querySelector<HTMLButtonElement>('#ons-register')!.disabled).toBe(false);
   });

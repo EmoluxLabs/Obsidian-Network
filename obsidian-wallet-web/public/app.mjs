@@ -339,6 +339,35 @@ const A = {
     go('welcome');
   },
 
+  /** Show or hide the whole value of a shortened identifier. Display only: nothing is read back from the screen. */
+  idv(node) {
+    const root = node.closest('.idv');
+    if (!root) return;
+    const open = root.classList.toggle('open');
+    node.setAttribute('aria-expanded', String(open));
+    if (node.id === 'addr') S.addrOpen = open;
+  },
+
+  /** Copy exactly the whole value held in `data-full` (the attribute is the original text, escaped and unescaped by the
+   *  browser unchanged). The shortened text on screen is never what is copied. */
+  async copyId(node) {
+    const full = node.dataset.full || '';
+    const label = node.dataset.label || 'Identifier';
+    const live = node.closest('.idv')?.querySelector('[role="status"]');
+    try {
+      if (!full) throw new Error('nothing to copy');
+      await navigator.clipboard.writeText(full);
+      node.textContent = 'COPIED';
+      if (live) live.textContent = `${label} copied`;
+      setTimeout(() => {
+        node.textContent = 'COPY';
+        if (live) live.textContent = '';
+      }, 1500);
+    } catch {
+      setErr('This browser did not allow copying. Tap the value to show it in full, then select and copy it by hand.');
+    }
+  },
+
   async copyAddr() {
     try {
       await navigator.clipboard.writeText(S.address);
@@ -351,7 +380,12 @@ const A = {
     } catch {
       setErr('This browser did not allow copying. Select the address and copy it by hand.');
       const box = app.querySelector('#addr');
-      if (box) getSelection().selectAllChildren(box);
+      if (box) {
+        // Show the whole address first, so what gets selected is the address and not its shortened form.
+        S.addrOpen = true;
+        box.closest('.idv')?.classList.add('open');
+        getSelection().selectAllChildren(box);
+      }
     }
   },
 
@@ -917,7 +951,14 @@ document.addEventListener('change', (event) => {
   }
 });
 
-document.addEventListener('keydown', touch);
+document.addEventListener('keydown', (event) => {
+  touch();
+  // A shortened identifier is a button made of a span: Enter and Space work like a tap.
+  if ((event.key === 'Enter' || event.key === ' ') && event.target?.matches?.('.idv-t[data-a="idv"]')) {
+    event.preventDefault();
+    A.idv(event.target);
+  }
+});
 document.addEventListener('pointerdown', touch);
 
 document.addEventListener('visibilitychange', () => {

@@ -355,31 +355,12 @@ export function normaliseName(raw) {
 const OBS_UNIT = 10n ** 18n;
 
 /**
- * Format a seal amount as OBS.
- *
- * Done on BigInt strings, never on a float: `Number` holds 2^53 exactly, and a
- * balance in seals is far past that, so a float conversion silently rounds the
- * amount this page claims the user holds.
- *
- * Trailing zeros are trimmed for readability, and `decimals` caps the display —
- * the protocol's own full-precision strings are used wherever a node supplies one.
+ * Format a seal amount as OBS — exact, grouped, trailing zeros removed, never `0` for a real amount.
+ * Kept under its old name for the callers; the rules live in the display mirror below. `decimals` is an optional
+ * display cap; leave it out and every significant digit is shown.
  */
-export function sealsToObs(seals, decimals = 8) {
-  if (seals === null || seals === undefined) return '—';
-  const raw = String(seals).trim();
-  if (!/^\d+$/.test(raw)) return '—';
-  const value = typeof seals === 'bigint' ? seals : BigInt(raw);
-  const whole = value / OBS_UNIT;
-  const frac = value % OBS_UNIT;
-  const digits = Math.max(0, Math.min(18, Math.floor(decimals)));
-  if (digits === 0) return whole.toString();
-  const padded = frac.toString().padStart(18, '0');
-  // Full precision keeps the protocol's own representation, trailing zeros and
-  // all — the same default the node's formatter uses. Anything shorter is a
-  // display decision, so it is trimmed to `digits`.
-  if (digits >= 18) return `${whole}.${padded}`;
-  const trimmed = padded.slice(0, digits).replace(/0+$/, '');
-  return trimmed ? `${whole}.${trimmed}` : whole.toString();
+export function sealsToObs(seals, decimals) {
+  return displaySeals(seals, decimals === undefined ? undefined : { maxDecimals: decimals });
 }
 
 /**
@@ -394,6 +375,132 @@ export function parseObs(text) {
   const [whole, frac = ''] = raw.split('.');
   if (frac.length > 18) throw new Error('amounts have at most 18 decimal places');
   return BigInt(whole) * OBS_UNIT + BigInt((frac + '0'.repeat(18)).slice(0, 18) || '0');
+}
+
+// ── Display formatting (a mirror of obsidian-core/src/protocol/display.ts) ───────────────────────────────────────
+//
+// This page ships as plain ES modules with no bundler, so it cannot import the core's compiled formatter. These
+// functions are the same code with the types removed, and tests/display-parity.test.mjs runs them against the
+// shared vectors (tests/vectors/display.json) AND against the compiled core module, so the two cannot drift.
+// Display only: nothing here feeds a transaction, a fee, a balance or an API payload, and nothing turns text back
+// into a value. Every OBS amount, count and long identifier on every screen goes through these.
+
+/** What is shown for a value that is missing or is not an amount. Never `0`: a missing balance is not a zero one. */
+export const UNAVAILABLE = '—';
+
+const DISPLAY_DECIMALS = 18;
+const DISPLAY_UNIT = 10n ** BigInt(DISPLAY_DECIMALS);
+
+function clampDecimals(value) {
+  if (value === undefined) return DISPLAY_DECIMALS;
+  if (!Number.isFinite(value)) return DISPLAY_DECIMALS;
+  return Math.max(0, Math.min(DISPLAY_DECIMALS, Math.floor(value)));
+}
+
+/** Insert commas into a string of digits. */
+export function groupDigits(digits) {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** Shared tail: a non-negative whole and an 18-digit fraction, to text. */
+function render(negative, whole, fraction18, opts) {
+  const maxDecimals = clampDecimals(opts?.maxDecimals);
+  const group = opts?.group !== false;
+  const kept = fraction18.slice(0, maxDecimals).replace(/0+$/, '');
+  const wholeText = group ? groupDigits(whole.toString()) : whole.toString();
+  const nonZero = whole > 0n || /[1-9]/.test(fraction18);
+  if (whole === 0n && kept === '' && nonZero) {
+    // A real amount that the requested precision would hide. Say so, rather than show 0.
+    const floor = maxDecimals === 0 ? '1' : `0.${'0'.repeat(maxDecimals - 1)}1`;
+    return `${negative ? '-' : ''}<${floor}`;
+  }
+  const sign = negative && nonZero ? '-' : '';
+  return `${sign}${wholeText}${kept ? `.${kept}` : ''}`;
+}
+
+/** Exact base units (seals; 1 OBS = 10^18) to display text. */
+export function displaySeals(seals, opts) {
+  if (seals === null || seals === undefined) return UNAVAILABLE;
+  let value;
+  if (typeof seals === 'bigint') value = seals;
+  else if (typeof seals === 'string' && /^-?\d+$/.test(seals.trim())) value = BigInt(seals.trim());
+  else return UNAVAILABLE;
+  const negative = value < 0n;
+  const abs = negative ? -value : value;
+  return render(negative, abs / DISPLAY_UNIT, (abs % DISPLAY_UNIT).toString().padStart(DISPLAY_DECIMALS, '0'), opts);
+}
+
+/** An OBS decimal string ("0.05000000000000000000", "21000000") to display text. Over-precise input is cut down, never rounded. */
+export function displayDecimal(text, opts) {
+  if (typeof text !== 'string') return UNAVAILABLE;
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text.trim());
+  if (!match) return UNAVAILABLE;
+  const fraction = (match[3] ?? '').slice(0, DISPLAY_DECIMALS).padEnd(DISPLAY_DECIMALS, '0');
+  return render(match[1] === '-', BigInt(match[2]), fraction, opts);
+}
+
+/**
+ * The node speaks two exact shapes for one quantity: seal counts (integer text) and OBS decimals (text with a point).
+ * This accepts either and picks by the point. A bigint is a seal count. A JavaScript number is refused: it cannot hold
+ * a token quantity exactly, so there is no honest way to print one.
+ */
+export function displayObs(value, opts) {
+  if (typeof value === 'bigint') return displaySeals(value, opts);
+  if (typeof value !== 'string') return UNAVAILABLE;
+  return value.includes('.') ? displayDecimal(value, opts) : displaySeals(value, opts);
+}
+
+/** "12.5 OBS". Zero is "0 OBS"; a missing value is the unavailable mark with no unit. */
+export function displayObsWithUnit(value, opts) {
+  const text = displayObs(value, opts);
+  return text === UNAVAILABLE ? text : `${text} OBS`;
+}
+
+/** A whole-number count (block height, miners, iterations) with commas, exact for any size, same in every locale. */
+export function displayInteger(value) {
+  let text;
+  if (typeof value === 'bigint') text = value.toString();
+  else if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) return UNAVAILABLE;
+    text = String(value);
+  } else if (typeof value === 'string') text = value.trim();
+  else return UNAVAILABLE;
+  const match = /^(-?)(\d+)$/.exec(text);
+  if (!match) return UNAVAILABLE;
+  return `${match[1]}${groupDigits(match[2].replace(/^0+(?=\d)/, ''))}`;
+}
+
+// ── identifiers ──────────────────────────────────────────────────────────────
+
+/**
+ * How many characters each end keeps. The narrow policy is the one in use on phones: `obs1ijdn...slvgsi` is the
+ * address policy (8 + 6). `wide` is for screens with room; a detail view shows the whole value instead.
+ */
+export const IDENTIFIER_POLICY = {
+  address: { narrow: [8, 6], wide: [14, 8] },
+  hash: { narrow: [10, 8], wide: [16, 10] },
+  id: { narrow: [10, 8], wide: [16, 10] },
+};
+
+export const ELLIPSIS = '...';
+
+/**
+ * A value a node has already masked for the explorer ("obs1abcd…wxyz") carries its own ellipsis. It is not an
+ * identifier to copy or to shorten a second time; it is shown as it came.
+ */
+export function isMaskedIdentifier(value) {
+  return typeof value === 'string' && (value.includes('…') || value.includes(ELLIPSIS));
+}
+
+/**
+ * Display-only shortening: first N, "...", last M. Returns the value unchanged when shortening would not make it
+ * shorter. The result is NOT an identifier and must never be copied, compared, validated, signed or sent.
+ */
+export function shortenIdentifier(value, kind = 'address', width = 'narrow') {
+  if (typeof value !== 'string' || value === '') return UNAVAILABLE;
+  const [head, tail] = IDENTIFIER_POLICY[kind][width];
+  if (isMaskedIdentifier(value) || value.length <= head + tail + ELLIPSIS.length) return value;
+  return `${value.slice(0, head)}${ELLIPSIS}${value.slice(-tail)}`;
 }
 
 /** A duration as the protocol counts it. */

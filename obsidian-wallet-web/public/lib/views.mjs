@@ -12,6 +12,7 @@
  */
 
 import { esc, exactObs, shortAddress, isTestNetwork, classifyHistory } from './pure.mjs';
+import { shortenIdentifier, isMaskedIdentifier, displayInteger } from '../js/shared/data.mjs';
 
 const LOGO = '/logo.png';
 const logo = (size) => `<img class="logo" src="${LOGO}" width="${size}" height="${size}" alt="Obsidian">`;
@@ -57,6 +58,31 @@ const address = (a) => {
   if (t.length < 24) return esc(t);
   return `<b>${esc(t.slice(0, 8))}</b>${esc(t.slice(8, -8))}<b>${esc(t.slice(-8))}</b>`;
 };
+
+/**
+ * One long identifier (address, transaction id, block id): the short form on screen, the whole value one tap away, and a
+ * COPY button that copies exactly the whole value (read back from `data-full`, never from the shortened text). A screen
+ * reader is told the whole value. The page ships no inline handler, so both controls are `data-a` actions.
+ *
+ * `rootId` puts an id on the tappable text (the home screen's `#addr`); `open` keeps it expanded across a redraw.
+ */
+const IDV_LABELS = { address: 'Wallet address', hash: 'Transaction id', id: 'Identifier' };
+export function identifierView(full, kind = 'address', { label, rootId, open = false, copy = true } = {}) {
+  const text = String(full ?? '');
+  if (!text) return '—';
+  const name = label || IDV_LABELS[kind] || IDV_LABELS.id;
+  const short = shortenIdentifier(text, kind, 'narrow');
+  if (isMaskedIdentifier(text) || short === text) return `<span class="idv-plain m"${rootId ? ` id="${esc(rootId)}"` : ''} data-full="${esc(text)}">${esc(text)}</span>`;
+  return (
+    `<span class="idv${open ? ' open' : ''}">` +
+    `<span class="idv-t m"${rootId ? ` id="${esc(rootId)}"` : ''} data-a="idv" data-full="${esc(text)}" role="button" tabindex="0" aria-expanded="${open}" ` +
+    `aria-label="${esc(name)} ${esc(text)}. Activate to show or hide the full value" title="${esc(text)}">` +
+    `<span class="idv-s" aria-hidden="true">${esc(short)}</span><span class="idv-f" aria-hidden="true">${esc(text)}</span></span>` +
+    (copy ? `<button type="button" class="idv-c" data-a="copyId" data-full="${esc(text)}" data-label="${esc(name)}" aria-label="Copy ${esc(name.toLowerCase())}">COPY</button>` : '') +
+    `<span class="sr-only" role="status" aria-live="polite"></span>` +
+    `</span>`
+  );
+}
 
 const STATE_WORDS = {
   prepared: 'Prepared',
@@ -176,14 +202,19 @@ export const V = {
 
   home: (S) => {
     let balance;
-    if (S.balance.state === 'ok') balance = `<div class="m balv" id="bal">${esc(exactObs(S.balance.seals))} <span class="unit">OBS</span></div>`;
+    if (S.balance.state === 'ok') {
+      const shown = exactObs(S.balance.seals);
+      // The size steps down only for long text (a few digits of dust); every digit is still shown, wrapped.
+      const size = shown.length > 20 ? ' bl2' : shown.length > 13 ? ' bl' : '';
+      balance = `<div class="m balv${size}" id="bal">${esc(shown)} <span class="unit">OBS</span></div>`;
+    }
     else if (S.balance.state === 'loading') balance = '<div class="m balv mu" id="bal">Loading…</div>';
     else balance = `<div class="m balv mu" id="bal">Unavailable</div><div class="err flush">${esc(S.balance.error || 'The balance could not be read.')} <button type="button" class="btn s inline" data-a="refresh">RETRY</button></div>`;
     return (
       hdr('WALLET', `<div class="hd-r">${netPill(S)}<button type="button" class="btn s auto" data-a="lock">LOCK</button></div>`) +
       testBanner(S) +
       `<div class="card bal-card"><div class="lb flush mu-c">OBS COIN BALANCE</div>${balance}` +
-      `<div class="m addr" id="addr">${esc(S.address)}</div>` +
+      `<div class="m addr">${identifierView(S.address, 'address', { label: 'Wallet address', rootId: 'addr', open: !!S.addrOpen, copy: false })}</div>` +
       `<button type="button" class="btn s mt-12" data-a="copyAddr">${S.copied ? 'COPIED' : 'COPY ADDRESS'}</button>` +
       `<div class="mu sm mt-10">Fiat value: unavailable (there is no verified price source)</div></div>` +
       `<div class="two mt-2"><button type="button" class="btn p" data-a="go" data-v="send">SEND</button><button type="button" class="btn" data-a="go" data-v="receive">RECEIVE</button></div>` +
@@ -300,9 +331,9 @@ function txCard(S, t) {
   if (t.amount !== null && t.amount !== undefined) rows.push(`<div class="row"><span>AMOUNT</span><b class="m">${esc(exactObs(t.amount))} OBS</b></div>`);
   if (t.gas !== null && t.gas !== undefined && t.gas > 0n) rows.push(`<div class="row"><span>FEE</span><b class="m">${esc(exactObs(t.gas))} OBS</b></div>`);
   if (t.amount !== null && t.amount !== undefined && t.gas !== null && t.gas !== undefined && t.dir !== 'received') rows.push(`<div class="row"><span>TOTAL</span><b class="m">${esc(exactObs(t.amount + t.gas))} OBS</b></div>`);
-  if (t.height) rows.push(`<div class="row"><span>BLOCK</span><b class="m">${esc(t.height)}</b></div>`);
+  if (t.height) rows.push(`<div class="row"><span>BLOCK</span><b class="m">${esc(displayInteger(t.height))}</b></div>`);
   if (t.timestamp) rows.push(`<div class="row"><span>BLOCK TIME</span><b class="sm">${esc(fmtTime(t.timestamp))}</b></div>`);
   if (t.validUntil && t.state !== 'confirmed') rows.push(`<div class="row"><span>VALID UNTIL</span><b class="sm">${esc(fmtTime(t.validUntil))}</b></div>`);
-  rows.push(`<div class="row stack"><span>TRANSACTION ID</span><b class="m addr-l" id="txid">${esc(t.txId)}</b></div>`);
+  rows.push(`<div class="row stack"><span>TRANSACTION ID</span><b class="m addr-l" id="txid">${esc(t.txId)}</b><button type="button" class="idv-c" data-a="copyId" data-full="${esc(t.txId)}" data-label="Transaction id" aria-label="Copy transaction id">COPY</button></div>`);
   return `<div class="card mt-16">${rows.join('')}</div>`;
 }
