@@ -24,6 +24,7 @@ import type * as KeystoreMod from '../../vendor/obsidian-core/dist/crypto/keysto
 import type * as ParamsMod from '../../vendor/obsidian-core/dist/protocol/params.js';
 import type * as IndexerMod from '../../vendor/obsidian-core/dist/indexer/indexer.js';
 import type * as StateRootMod from '../../vendor/obsidian-core/dist/blockchain/state-root.js';
+import type * as RecipientMod from '../../vendor/obsidian-core/dist/protocol/recipient.js';
 import type * as Version from '../../vendor/obsidian-core/dist/version.js';
 
 export interface CoreModules {
@@ -42,6 +43,7 @@ export interface CoreModules {
   params: typeof ParamsMod;
   indexer: typeof IndexerMod;
   stateRoot: typeof StateRootMod;
+  recipient: typeof RecipientMod;
 }
 
 export interface CoreManifest {
@@ -89,7 +91,7 @@ export function loadCore(dir: string = resolveCoreDir()): Promise<CoreModules> {
       );
     }
     const load = <T>(rel: string): Promise<T> => import(pathToFileURL(join(dir, 'dist', rel)).href) as Promise<T>;
-    const [keys, mnemonic, amount, types, networks, encode, helpers, payment, validator, keystore, version, params, indexer, stateRoot] =
+    const [keys, mnemonic, amount, types, networks, encode, helpers, payment, validator, keystore, version, params, indexer, stateRoot, recipient] =
       await Promise.all([
         load<typeof Keys>('crypto/keys.js'),
         load<typeof Mnemonic>('crypto/mnemonic.js'),
@@ -105,8 +107,9 @@ export function loadCore(dir: string = resolveCoreDir()): Promise<CoreModules> {
         load<typeof ParamsMod>('protocol/params.js'),
         load<typeof IndexerMod>('indexer/indexer.js'),
         load<typeof StateRootMod>('blockchain/state-root.js'),
+        load<typeof RecipientMod>('protocol/recipient.js'),
       ]);
-    return { dir, keys, mnemonic, amount, types, networks, encode, helpers, payment, validator, keystore, version, params, indexer, stateRoot };
+    return { dir, keys, mnemonic, amount, types, networks, encode, helpers, payment, validator, keystore, version, params, indexer, stateRoot, recipient };
   })();
   cached.catch(() => {
     cached = undefined;

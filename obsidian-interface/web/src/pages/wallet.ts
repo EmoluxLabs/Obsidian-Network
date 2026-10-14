@@ -15,7 +15,9 @@
 import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { MIN_VAULT_PASSPHRASE_LENGTH, Wallet, exportBundle, hrpOfAddress, previewAddress, InsecureContextError, webCryptoAvailable } from '../lib/wallet.js';
-import { operations } from '../lib/operations.js';
+import { operations, resolverDeps } from '../lib/operations.js';
+import { networkLabel, reconfirmOnsName, recipientKind, resolveOnsName, type Resolved } from '../../core/protocol/recipient.js';
+import { parseObs } from '../../core/protocol/amount.js';
 import { displaySeals, EXACT_OBS } from '../../core/protocol/display.js';
 import { el, amountEl, shortId, kv, spinner, toast, copyButton, download, badge, when } from '../lib/ui.js';
 import { identifier } from '../lib/identifier.js';
@@ -378,18 +380,35 @@ function drawSend(wallet: Wallet): HTMLElement {
   const memo = el('input', { id: 'send-memo', placeholder: 'Memo (optional)' });
   const quote = el('p', { class: 'fineprint' }, 'Gas: 0.02% of the amount, capped at 0.01 OBS.');
   const send = el('button', { class: 'primary', type: 'button', id: 'send-button' }, 'Sign and send');
+  // The form and, when a `.obs` name has been resolved, the confirmation that replaces it. Nothing is signed from the form
+  // when the recipient is a name: the person sees the address first and confirms THAT.
+  const box = el('div', {});
+  const finish = async (result: { txId: string }) => {
+    toast(`Signed locally and submitted: ${shortId(result.txId)}`, 'success');
+    to.value = '';
+    amount.value = '';
+    memo.value = '';
+    await drawDashboard(wallet, '');
+  };
   send.addEventListener('click', async () => {
     try {
       const recipient = to.value.trim();
-      if (!recipient) throw new Error('enter a recipient address');
+      if (!recipient) throw new Error('enter a recipient address or a .obs name');
+      if (recipientKind(recipient) === 'name') {
+        const amountObs = amount.value.trim();
+        if (parseObs(amountObs) <= 0n) throw new Error('amount must be greater than zero');
+        send.disabled = true;
+        const resolved = await resolveOnsName(recipient, resolverDeps(client, wallet.addressHrp));
+        if (!resolved.ok) throw new Error(resolved.message);
+        box.replaceChildren(drawRecipientReview(wallet, resolved, { amountObs, memo: memo.value.trim() || undefined }, () => box.replaceChildren(form), finish));
+        return;
+      }
       const result = await operations.send(client, wallet, { to: recipient, amountObs: amount.value.trim(), memo: memo.value.trim() || undefined });
-      toast(`Signed locally and submitted: ${shortId(result.txId)}`, 'success');
-      to.value = '';
-      amount.value = '';
-      memo.value = '';
-      await drawDashboard(wallet, '');
+      await finish(result);
     } catch (error) {
       toast((error as Error).message, 'error');
+    } finally {
+      send.disabled = false;
     }
   });
   amount.addEventListener('input', () => {
@@ -402,7 +421,7 @@ function drawSend(wallet: Wallet): HTMLElement {
     }
   });
 
-  return el(
+  const form = el(
     'div',
     { class: 'subcard' },
     el('h3', {}, 'Send'),
@@ -412,6 +431,54 @@ function drawSend(wallet: Wallet): HTMLElement {
     quote,
     el('div', { class: 'row' }, send),
     el('p', { class: 'fineprint' }, 'The transaction is signed here, validated by a node, and confirmed by miners. The interface cannot alter it on the way.'),
+  );
+  box.replaceChildren(form);
+  return box;
+}
+
+/**
+ * A resolved `.obs` recipient, waiting to be confirmed.
+ *
+ * Shows the name, the whole address it resolves to (never shortened: it is what the person is checking), the network and the
+ * status. Confirming resolves the name ONCE MORE and pays only if the answer is unchanged; what is signed is the address, never
+ * the name.
+ */
+function drawRecipientReview(
+  wallet: Wallet,
+  resolved: Resolved,
+  input: { amountObs: string; memo?: string },
+  cancel: () => void,
+  done: (result: { txId: string }) => Promise<void>,
+): HTMLElement {
+  const amountShown = displaySeals(parseObs(input.amountObs), EXACT_OBS);
+  const confirm = el('button', { class: 'primary', type: 'button', id: 'send-confirm' }, 'Confirm and send');
+  const back = el('button', { class: 'ghost', type: 'button', id: 'send-cancel' }, 'Cancel');
+  back.addEventListener('click', cancel);
+  confirm.addEventListener('click', async () => {
+    confirm.disabled = true;
+    back.disabled = true;
+    try {
+      const again = await reconfirmOnsName(resolved, resolverDeps(client, wallet.addressHrp));
+      if (!again.ok) throw new Error(again.message);
+      await done(await operations.send(client, wallet, { to: resolved.address, amountObs: input.amountObs, memo: input.memo }));
+    } catch (error) {
+      toast((error as Error).message, 'error');
+      cancel();
+    }
+  });
+  return el(
+    'div',
+    { class: 'subcard', id: 'send-review' },
+    el('h3', {}, 'Confirm recipient'),
+    kv([
+      ['ONS name', el('span', { class: 'mono', id: 'send-review-name' }, resolved.name)],
+      ['Resolves to', el('div', { class: 'mono address', id: 'send-review-address' }, resolved.address)],
+      ['Network', networkLabel(resolved.network.addressHrp)],
+      ['Status', 'Registered on-chain'],
+      ['Amount', `${amountShown} OBS`],
+    ]),
+    el('p', { class: 'fineprint' }, 'The name is looked up again just before signing. If it no longer points to this address, nothing is sent.'),
+    el('div', { class: 'row' }, confirm, back),
   );
 }
 

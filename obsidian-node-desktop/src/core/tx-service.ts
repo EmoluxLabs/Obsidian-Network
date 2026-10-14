@@ -43,6 +43,11 @@ export interface InternalPlan {
   rows: PlanRow[];
   warnings: string[];
   summary: string;
+  /**
+   * Run immediately before signing; throws to stop. A plan built from something that can change after it was shown (an ONS
+   * name) uses it to look again and refuse if the answer is no longer the one the user confirmed.
+   */
+  recheck?: () => Promise<void>;
 }
 
 interface StoredPlan extends InternalPlan {
@@ -164,6 +169,14 @@ export class TxService {
   }
 
   private async run(plan: StoredPlan, passphrase: string | undefined): Promise<ExecuteResult> {
+    // A plan whose recipient came from a name is asked about again now. If it cannot be confirmed unchanged it is dropped:
+    // the person starts again from a fresh resolution rather than signing something the chain no longer says.
+    try {
+      await plan.recheck?.();
+    } catch (error) {
+      this.plans.delete(plan.id);
+      throw error;
+    }
     const { signed, nonce, client } = await this.buildSigned(plan, passphrase);
 
     // Consumed the moment a signature exists and before anything is sent: from here on this plan can

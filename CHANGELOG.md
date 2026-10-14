@@ -26,6 +26,18 @@ Deployment and display only; **no protocol, consensus, genesis or data change**,
   another chain.
 
 ### Fixed
+- **Paying a `.obs` name.** Typing a registered name such as `obsidian.obs` as the recipient was refused as an invalid
+  OBS address (Wallet Web rejected `.obs` outright; the platform, the Web App and the extension passed the text into the
+  payment, where the node's address check refuses it; the desktop app's address check refused it). Every interface that
+  sends now resolves the name from the node's own ONS record (`GET /names/<name>`) with one shared resolver
+  (`obsidian-core/src/protocol/recipient.ts`), shows the name, the whole resolved address, the network and the status,
+  asks for confirmation, resolves again immediately before signing, and signs a payment to the resolved address. The
+  name must meet the ONS naming rules, the node must be on this app's chain, the record must be for that name and not
+  expired, and the address must pass the native-address validator for this network. Not found, lookup failure,
+  malformed answer, wrong network, expired name and invalid address each have their own message; nothing is guessed and
+  nothing is sent on failure. The platform's `operations.send` also refuses a name outright. The Web App's unused,
+  weaker `resolveRecipient` was removed, and its QR note no longer claims "the node resolves it when you send". No
+  protocol, consensus, node RPC, transaction-format or signing change.
 - **Mining Pool.** The explorer's Mining Pool row is now decided by one function that shows the node's own
   `poolBalanceObs`, a genuine `0 OBS` with the reason, or an em dash and the reason when the figure is missing,
   malformed, from a node whose supply check fails, or from a node on another chain. It is never computed from supply or

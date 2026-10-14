@@ -147,6 +147,8 @@ export class RpcClient {
   }
 
   health = (): Promise<HealthInfo> => this.get('/health', parseHealth);
+  /** The raw ONS record for a name (`GET /names/:name`). Not parsed here: the core's resolver checks every field. */
+  nameRecord = (name: string): Promise<unknown> => this.get(`/names/${encodeURIComponent(name)}`, (json) => json);
   status = (): Promise<StatusInfo> => this.get('/status', parseStatus);
   finality = (): Promise<FinalityInfo> => this.get('/finality', parseFinality);
   params = (): Promise<ParamsInfo> => this.get('/params', parseParams);

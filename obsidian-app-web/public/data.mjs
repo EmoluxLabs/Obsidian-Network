@@ -289,31 +289,8 @@ export const accountAddress = async () => {
   return account?.walletAddress ?? null;
 };
 
-/**
- * Turn what the user typed into a recipient address.
- *
- * A `.obs` name is resolved on the chain rather than locally: the mapping is
- * blockchain state, and showing the user the address their name resolves to —
- * before they sign — is the only honest way to let them check it.
- */
-export async function resolveRecipient(raw) {
-  const text = String(raw ?? '').trim();
-  if (!text) return { ok: false, message: 'Enter a recipient address or a .obs name.' };
-  if (/\.obs$/i.test(text)) {
-    let record;
-    try {
-      record = await getName(text.toLowerCase());
-    } catch (error) {
-      return { ok: false, message: error.message };
-    }
-    if (!record?.address) return { ok: false, message: `${text.toLowerCase()} does not resolve to an address.` };
-    return { ok: true, address: record.address, name: text.toLowerCase(), resolved: true };
-  }
-  if (!/^(obs|tobs|sobs|dobs)1[0-9a-z]{20,}$/.test(text)) {
-    return { ok: false, message: 'That is not a valid Obsidian address or a .obs name.' };
-  }
-  return { ok: true, address: text, resolved: false };
-}
+// Recipient resolution lives in the core (protocol/recipient.ts) and reaches this app through the signing bundle:
+// see resolveRecipientName / reconfirmRecipientName in wallet.mjs. There is deliberately no second implementation here.
 
 /**
  * Whether a name is registered, from the chain's own name set.

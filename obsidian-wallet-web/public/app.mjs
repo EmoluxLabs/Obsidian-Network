@@ -18,6 +18,9 @@ import { scan } from '/js/shared/scanner.mjs';
 import { V, stateWord } from './lib/views.mjs';
 import {
   parseRecipient,
+  readRecipientField,
+  resolveForReview,
+  confirmBeforeSigning,
   parseAmount,
   exactObs,
   checkNewPassword,
@@ -635,8 +638,11 @@ const F = {
     const to = val(form, 'to');
     const amountText = val(form, 'am');
     S.draft = { to: to.trim(), amount: amountText.trim() };
-    const recipient = parseRecipient(to, { hrp: S.net.hrp, own: S.address, readScanned: bundle.readScanned });
-    if (!recipient.ok) return setErr(recipient.message);
+    // A `.obs` name is resolved from the chain below, once the node has been checked; an address is validated here,
+    // exactly as before. The scanner and the image reader still accept an address only (see `interpret`, `fromImage`).
+    const entry = readRecipientField(to, { hrp: S.net.hrp, own: S.address, readScanned: bundle.readScanned, core: bundle });
+    if (!entry.ok) return setErr(entry.message);
+    let recipient = entry.kind === 'address' ? entry : null;
     const amount = parseAmount(amountText);
     if (!amount.ok) return setErr(amount.message);
     if (S.records.some((r) => !isFinalState(r.state))) {
@@ -645,6 +651,20 @@ const F = {
     busy(form, true, 'CHECKING WITH THE NODE…');
     try {
       if (!(await checkNetwork())) throw new Error(S.net.error);
+      let ons = null;
+      if (entry.kind === 'name') {
+        // The chain's own ONS record, held against this app's network; its address goes through the address validator.
+        const resolved = await resolveForReview(to, {
+          hrp: S.net.hrp,
+          own: S.address,
+          readScanned: bundle.readScanned,
+          resolveName: W.resolveRecipientName,
+          onsFailureMessage: bundle.onsFailureMessage,
+        });
+        if (!resolved.ok) throw new Error(resolved.message);
+        recipient = resolved;
+        ons = resolved.ons;
+      }
       const { seals: balance } = await fetchBalance(S.address).catch(() => {
         throw new Error('Your balance could not be read from the node, so nothing can be sent right now. Try again.');
       });
@@ -656,7 +676,7 @@ const F = {
       if (balance < amount.seals + gas) {
         throw new Error(`Not enough balance: you have ${exactObs(balance)} OBS, and this payment needs ${exactObs(amount.seals + gas)} OBS including the fee.`);
       }
-      S.review = { to: recipient.value, amount: amount.seals, amountText: amount.text, gas, balance };
+      S.review = { to: recipient.value, ons, amount: amount.seals, amountText: amount.text, gas, balance };
       go('review');
     } catch (error) {
       setErr(error?.message || 'The node could not be reached.');
@@ -674,6 +694,16 @@ const F = {
     busy(form, true, 'SIGNING…');
     let result;
     try {
+      // A reviewed name is asked again, now: it may have been repointed or have lapsed since the screen was shown. Only an
+      // unchanged answer is signed, and what is signed is the address that was shown, never the name.
+      const verdict = await confirmBeforeSigning(review, { reconfirm: W.reconfirmRecipientName });
+      if (!verdict.ok) {
+        clear(form, 'pw');
+        S.review = null;
+        go('send');
+        setErr(verdict.message);
+        return;
+      }
       result = await W.send({ to: review.to, amountObs: review.amountText, memo: '' }, async () => password);
     } catch (error) {
       result = { ok: false, reason: 'ERROR', message: error?.message || 'Something went wrong before anything was sent.' };

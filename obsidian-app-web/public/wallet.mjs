@@ -287,6 +287,52 @@ export async function getNonce(address) {
   return balance.nonce;
 }
 
+// ── recipient resolution ─────────────────────────────────────────────────────
+
+/**
+ * The three reads the core's resolver needs, all from this app's own data layer.
+ *
+ *   lookup    GET /names/<name>             the on-chain ONS record, through the platform gateway
+ *   context   /status + /network            the node's chain id, address prefix and head-block time
+ *   expected  /app-config.json              what THIS app is, to hold the node's answer against
+ *
+ * Nothing here decides anything; a failed read is passed up as a failure and the core reports it.
+ */
+async function resolverDeps() {
+  return {
+    lookup: (name) => getName(name),
+    context: async () => {
+      const [status, network] = await Promise.all([getStatus(), getNetwork()]);
+      return {
+        chainId: Number(network?.network?.chainId ?? status?.chainId),
+        addressHrp: network?.network?.addressHrp,
+        protocolTime: Number(status?.lastBlockTimestamp ?? status?.timestamp),
+      };
+    },
+    expected: async () => {
+      const identity = await getAppConfig();
+      return { chainId: identity.chainId, addressHrp: identity.addressHrp };
+    },
+  };
+}
+
+/** `empty`, `name` or `address` — what the recipient field holds. */
+export async function recipientKind(raw) {
+  return (await api()).recipientKind(raw);
+}
+
+/** Resolve a typed `.obs` name; `{ ok: true, name, address, … }` or `{ ok: false, code, message }`. */
+export async function resolveRecipientName(raw) {
+  const { resolveOnsName } = await api();
+  return resolveOnsName(raw, await resolverDeps());
+}
+
+/** Resolve again, right before signing, and require the answer the user confirmed. */
+export async function reconfirmRecipientName(resolved) {
+  const { reconfirmOnsName } = await api();
+  return reconfirmOnsName(resolved, await resolverDeps());
+}
+
 // ── operations ───────────────────────────────────────────────────────────────
 
 export const linkProven = (requestPassphrase) => run('linkWalletProven', requestPassphrase);

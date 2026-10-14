@@ -76,6 +76,67 @@ export function parseRecipient(raw, { hrp, own, readScanned }) {
   return { ok: true, value: verdict.value };
 }
 
+/**
+ * What the send form's recipient field holds, before the node is asked anything.
+ *
+ * An address is validated exactly as `parseRecipient` always has (this is the same function). A `.obs` name is only
+ * checked against the ONS naming rules here; resolving it needs the chain and happens in `resolveForReview`. The scanner
+ * and the image reader do NOT come through this function: they still accept a bare address only.
+ *
+ * @param {string} raw
+ * @param {{hrp: string, own?: string, readScanned: Function, core: {recipientKind: Function, parseOnsName: Function, onsFailureMessage: Function}}} options
+ * @returns {{ok: true, kind: 'address', value: string} | {ok: true, kind: 'name'} | {ok: false, message: string}}
+ */
+export function readRecipientField(raw, { hrp, own, readScanned, core }) {
+  if (core.recipientKind(raw) === 'name') {
+    return core.parseOnsName(raw)
+      ? { ok: true, kind: 'name' }
+      : { ok: false, message: core.onsFailureMessage('NAME_INVALID', hrp) };
+  }
+  const recipient = parseRecipient(raw, { hrp, own, readScanned });
+  return recipient.ok ? { ok: true, kind: 'address', value: recipient.value } : recipient;
+}
+
+/**
+ * Resolve a `.obs` name into the recipient of a review.
+ *
+ * `resolveName` is the core's resolver (the chain's ONS record, held against this app's network, expiry-checked). Its
+ * answer is then put through the SAME address validator as a pasted address, with this network's prefix, so a resolved
+ * address is never trusted more than one a person typed. Any failure is returned as its own message; nothing is guessed.
+ *
+ * @returns {Promise<{ok: true, value: string, ons: object} | {ok: false, message: string}>}
+ */
+export async function resolveForReview(raw, { hrp, own, readScanned, resolveName, onsFailureMessage }) {
+  const resolved = await resolveName(raw);
+  if (!resolved?.ok) return { ok: false, message: resolved?.message || onsFailureMessage('LOOKUP_UNAVAILABLE', hrp) };
+  const checked = parseRecipient(resolved.address, { hrp, own, readScanned });
+  if (!checked.ok) {
+    return {
+      ok: false,
+      message:
+        own && resolved.address === own
+          ? 'This ONS name resolves to your own address. Nothing was prepared.'
+          : onsFailureMessage('INVALID_ADDRESS', hrp),
+    };
+  }
+  return { ok: true, value: checked.value, ons: resolved };
+}
+
+/**
+ * Immediately before signing: a reviewed name is asked again, and only an unchanged answer goes on.
+ *
+ * @returns {Promise<{ok: true} | {ok: false, message: string}>}
+ */
+export async function confirmBeforeSigning(review, { reconfirm }) {
+  if (!review?.ons) return { ok: true };
+  const again = await reconfirm(review.ons);
+  if (!again?.ok) return { ok: false, message: `${again?.message ?? 'The ONS name could not be checked again.'} Nothing was signed.` };
+  if (again.address !== review.to) {
+    return { ok: false, message: 'This ONS name no longer resolves to the address you reviewed. Nothing was signed.' };
+  }
+  return { ok: true };
+}
+
 // ── amounts ──────────────────────────────────────────────────────────────────
 
 /**

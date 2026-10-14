@@ -68,7 +68,7 @@ export const wallet: Screen = {
     ${balance.state === 'unavailable' || balance.state === 'error' ? html`<div style="margin-top:14px">${warn(balance.message + ' Balances and sending need the running node on this network.')}</div>` : ''}
     <div class="card" style="margin-top:14px"><div class="k">Send OBS</div>
       <form data-submit="wallet.review" style="margin-top:10px">
-        <div class="frm"><div><label class="fl" for="send-to">Recipient address</label><input class="in m" id="send-to" value="${sendTo}" placeholder="${w.addressHrp}1…" autocomplete="off" spellcheck="false"></div>
+        <div class="frm"><div><label class="fl" for="send-to">Recipient address or .obs name</label><input class="in m" id="send-to" value="${sendTo}" placeholder="${w.addressHrp}1… or name.obs" autocomplete="off" spellcheck="false"></div>
         <div style="max-width:200px"><label class="fl" for="send-amount">Amount (OBS)</label><input class="in m" id="send-amount" value="${sendAmount}" inputmode="decimal" placeholder="0.00" autocomplete="off"></div></div>
         <label class="fl" for="send-memo">Memo (optional)</label><input class="in" id="send-memo" value="${sendMemo}" maxlength="200" autocomplete="off">
         <div style="margin-top:14px"><button class="btn p" type="submit" ${preparing || !running ? 'disabled' : ''}>${preparing ? 'Checking…' : 'Review transfer'}</button><span class="sub" style="margin-left:12px">${running ? 'You will see everything before anything is signed.' : 'The node must be running to build a transfer.'}</span></div>

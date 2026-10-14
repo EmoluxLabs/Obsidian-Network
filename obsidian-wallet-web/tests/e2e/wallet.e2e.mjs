@@ -407,7 +407,7 @@ try {
   await third.close();
 
   // ── the QR scanner, on the send screen of the funded wallet ────────────────
-  await step('send: validation refuses everything but a bare address of this network', async () => {
+  await step('send: validation refuses everything but an address of this network or a registered name', async () => {
     await a(second, 'go', 'send');
     await waitText(second, 'SEND OBS');
     const attempt = async (to, amount, expect) => {
@@ -421,7 +421,10 @@ try {
     await attempt(funder.address, '1', 'own address');
     await attempt(`obsidian:${friend.address}`, '1', 'bare address');
     await attempt(`${friend.address}?amount=5`, '1', 'bare address');
-    await attempt('friend.obs', '1', 'bare address');
+    // A name is no longer refused as "not a bare address": it is looked up on the chain. This devnet has no `friend` name, so
+    // the lookup answers "not registered"; a malformed name never reaches the node.
+    await attempt('friend.obs', '1', 'ONS name not found');
+    await attempt('fr iend.obs', '1', 'not a valid ONS name');
     await attempt(other('obs'), '1', 'mainnet');
     await attempt(friend.address.slice(0, -1) + (friend.address.endsWith('q') ? 'p' : 'q'), '1', 'checksum');
     await attempt(friend.address, '', 'Enter an amount');

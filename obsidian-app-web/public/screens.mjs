@@ -32,6 +32,7 @@
 import {
   displayObs,
   displayObsWithUnit,
+  displayDecimal,
   EXACT_OBS,
   displayInteger,
   formatDuration,
@@ -670,6 +671,7 @@ function sendPanel(s) {
   if (!s.walletAddress) {
     return unavailable('Set up a wallet on this device to send. Sending is a signed payment; nothing here can sign for you.');
   }
+  if (s.sendReview) return sendReviewPanel(s);
   const gasNote = s.params?.gas ? `Gas is ${esc(s.params.gas.basisPoints / 100)}% of the amount, capped at ${esc(displayObsWithUnit(s.params.gas.maxGasObs))}.` : '';
   return (
     designField('to', 'RECIPIENT', 'text', `${s.appConfig?.addressHrp ?? s.network?.network?.addressHrp ?? ''}1… or name.obs`) +
@@ -682,6 +684,33 @@ function sendPanel(s) {
       s.balance ? displayObsWithUnit(s.balance.balanceSeals, EXACT_OBS) : '—',
     )}. ${gasNote}</p>` +
     `<button class="btn p" style="margin-top:4px" onclick="ObsidianSend()">${busy('SIGN & SEND', s, 'send')}</button>`
+  );
+}
+
+/**
+ * A `.obs` recipient, resolved and waiting for the user to confirm it.
+ *
+ * The address is shown in full (expanded, not shortened): it is the one thing on this screen the user is checking, and a
+ * shortened form cannot be checked against anything. The name is never what is paid; the resolved address is.
+ */
+function sendReviewPanel(s) {
+  const { resolved, amountObs, memo } = s.sendReview;
+  const network = s.appConfig?.network ? `Obsidian ${s.appConfig.network.charAt(0).toUpperCase()}${s.appConfig.network.slice(1)}` : '—';
+  return (
+    `<div class="card" style="margin-top:14px;padding:18px">` +
+    `<div class="lb" style="margin:0 0 10px">CONFIRM RECIPIENT</div>` +
+    `<div class="row"><span>ONS NAME</span><b class="m">${esc(resolved.name)}</b></div>` +
+    `<div class="lb" style="margin:12px 0 6px">RESOLVES TO</div>` +
+    `<div style="font-size:12.5px;word-break:break-all">${identifierHtml(resolved.address, 'address', { expanded: true, label: 'Resolved address' })}</div>` +
+    `<div class="row" style="margin-top:12px"><span>NETWORK</span><b class="m">${esc(network)}</b></div>` +
+    `<div class="row"><span>STATUS</span><b class="m">Registered on-chain</b></div>` +
+    `<div class="row"><span>AMOUNT</span><b class="m">${esc(displayDecimal(amountObs, EXACT_OBS) + ' OBS')}</b></div>` +
+    (memo ? `<div class="row"><span>MEMO</span><b class="m">${esc(memo)}</b></div>` : '') +
+    `</div>` +
+    `<p class="mu" style="font-size:12.5px;margin-top:10px">The name is looked up again just before signing. If it no longer points to this address, nothing is sent.</p>` +
+    designField('pp', 'VAULT PASSPHRASE', 'password', 'The passphrase you sealed this wallet with') +
+    `<button class="btn p" style="margin-top:4px" onclick="ObsidianSendConfirm()">${busy('CONFIRM & SIGN', s, 'send')}</button>` +
+    `<button class="btn" onclick="ObsidianSendCancel()">CANCEL</button>`
   );
 }
 

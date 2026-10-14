@@ -247,7 +247,7 @@ export const V = {
     return (
       `${back('home')}<h1>SEND OBS</h1>${testBanner(S)}` +
       `<form data-submit="review" novalidate>` +
-      field({ id: 'to', label: 'RECIPIENT ADDRESS', placeholder: `${S.net.hrp || 'obs'}1…`, extra: `value="${esc(d.to)}" inputmode="text"` }) +
+      field({ id: 'to', label: 'RECIPIENT ADDRESS OR .OBS NAME', placeholder: `${S.net.hrp || 'obs'}1… or name.obs`, extra: `value="${esc(d.to)}" inputmode="text"` }) +
       `<div class="two mt-10"><button type="button" class="btn s" data-a="scan">SCAN QR</button><button type="button" class="btn s" data-a="upload">UPLOAD QR IMAGE</button></div>` +
       `<input id="fi" type="file" accept="image/*" class="hidden">` +
       field({ id: 'am', label: 'AMOUNT (OBS)', placeholder: '0.00', extra: `value="${esc(d.amount)}" inputmode="decimal"` }) +
@@ -260,7 +260,11 @@ export const V = {
     const r = S.review;
     return (
       `${back('send', '‹ EDIT')}<h1>REVIEW TRANSACTION</h1>${testBanner(S)}<div class="card mt-16">` +
-      `<div class="row stack"><span>TO</span><b class="m addr-l">${address(r.to)}</b></div>` +
+      (r.ons
+        ? `<div class="row"><span>ONS NAME</span><b class="m">${esc(r.ons.name)}</b></div>` +
+          `<div class="row stack"><span>RESOLVES TO</span><b class="m addr-l">${address(r.to)}</b></div>` +
+          `<div class="row"><span>STATUS</span><b>Registered on-chain</b></div>`
+        : `<div class="row stack"><span>TO</span><b class="m addr-l">${address(r.to)}</b></div>`) +
       `<div class="row"><span>AMOUNT</span><b class="m">${esc(exactObs(r.amount))} OBS</b></div>` +
       `<div class="row"><span>FEE</span><b class="m">${esc(exactObs(r.gas))} OBS</b></div>` +
       `<div class="row"><span>TOTAL</span><b class="m">${esc(exactObs(r.amount + r.gas))} OBS</b></div>` +

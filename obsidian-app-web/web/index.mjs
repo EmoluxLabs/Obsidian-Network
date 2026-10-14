@@ -44,6 +44,16 @@ export {
 
 export { qrModules, qrSvg, decodeQr, readScanned } from './qr.mjs';
 
+// A `.obs` name becomes a validated address before any payment is built — one resolver for every surface.
+export {
+  recipientKind,
+  parseOnsName,
+  resolveOnsName,
+  reconfirmOnsName,
+  failureMessage as onsFailureMessage,
+  networkLabel,
+} from '../../obsidian-interface/web/core/protocol/recipient.js';
+
 export { parseObs, formatObs } from '../../obsidian-interface/web/core/protocol/amount.js';
 
 export {

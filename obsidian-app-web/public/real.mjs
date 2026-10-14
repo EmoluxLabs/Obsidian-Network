@@ -93,6 +93,9 @@ import {
   linkProven,
   send,
   registerName,
+  recipientKind,
+  resolveRecipientName,
+  reconfirmRecipientName,
 } from './wallet.mjs';
 import { SCREENS, remainingSeconds, networkBanner } from './screens.mjs';
 import { installDisplayStyles } from './identifier.mjs';
@@ -134,6 +137,8 @@ const state = {
   ons: { query: '', result: null },
   setup: { mode: 'create', draft: null },
   qr: null,
+  // A `.obs` recipient that has been resolved and is waiting for the user to confirm it. Nothing is signed until then.
+  sendReview: null,
   wt: 'send',
   error: '',
   notice: '',
@@ -207,6 +212,7 @@ function go(target) {
   state.busy = null;
   // A phrase that was generated but never sealed does not survive leaving the screen.
   state.setup.draft = null;
+  state.sendReview = null;
   if (state.screen === 'wallet' && !state.walletAddress) state.wt = 'setup';
   window.scrollTo(0, 0);
   render();
@@ -558,7 +564,7 @@ function install() {
       note.className = 'ok';
       note.textContent =
         verdict.kind === 'name'
-          ? 'Name filled in from the QR code. The node resolves it when you send; check it is the one you expect.'
+          ? 'Name filled in from the QR code. It is looked up on the chain when you send, and you confirm the address it resolves to before anything is signed.'
           : 'Address filled in from the QR code. Check it matches who you mean to pay, then enter the amount.';
     }
     document.getElementById('am')?.focus();
@@ -789,6 +795,7 @@ function install() {
         return;
       }
       removeWallet();
+      state.sendReview = null;
       state.walletAddress = null;
       announceAddress();
       state.mining = null;
@@ -811,17 +818,71 @@ function install() {
     });
   };
 
+  /**
+   * Pay an address — or resolve a `.obs` name and ask first.
+   *
+   * An address goes straight to signing, as it always has. A name does not: it is resolved
+   * from the chain's ONS record, the result is put on screen (the name, the full address it
+   * resolves to, the network), and nothing is signed until the user confirms THAT address.
+   * A name that cannot be resolved stops here with the reason; it is never sent as text.
+   */
   g.ObsidianSend = () => {
     const to = field('to').trim();
     const amountObs = field('am').trim();
     const memo = field('mm').trim();
     const passphrase = field('pp');
     return withBusy('send', async () => {
+      const kind = await recipientKind(to);
+      if (kind === 'empty') return setError('Enter a recipient address or a .obs name.');
+      if (kind === 'name') {
+        if (!/^\d+(\.\d{1,18})?$/.test(amountObs)) return setError('Enter the amount to send before the name is resolved.');
+        const resolved = await resolveRecipientName(to);
+        if (!resolved.ok) return setError(resolved.message);
+        state.sendReview = { resolved, to, amountObs, memo, from: state.walletAddress };
+        return;
+      }
       const result = await send({ to, amountObs, memo }, () => passphrase);
       if (!result.ok) return setError(result.message);
       setNotice(`Payment submitted — ${shortenIdentifier(result.txId, 'hash', 'narrow')} — not yet confirmed.`);
       await refreshWallet();
     });
+  };
+
+  /** The user has read the resolved address. Resolve once more, and sign only if it is unchanged. */
+  g.ObsidianSendConfirm = () => {
+    const review = state.sendReview;
+    const passphrase = field('pp');
+    if (!review) return undefined;
+    return withBusy('send', async () => {
+      if (review.from !== state.walletAddress) {
+        state.sendReview = null;
+        return setError('The wallet changed while this payment was waiting. Nothing was sent.');
+      }
+      const again = await reconfirmRecipientName(review.resolved);
+      if (!again.ok) {
+        state.sendReview = null;
+        return setError(again.message);
+      }
+      // The address that was shown is the address that is paid: `again.address === review.resolved.address`,
+      // and only that value — never the name — is handed to the payment builder.
+      const result = await send({ to: review.resolved.address, amountObs: review.amountObs, memo: review.memo }, () => passphrase);
+      if (!result.ok) return setError(result.message);
+      state.sendReview = null;
+      setNotice(`Payment to ${review.resolved.name} submitted — ${shortenIdentifier(result.txId, 'hash', 'narrow')} — not yet confirmed.`);
+      await refreshWallet();
+    });
+  };
+
+  g.ObsidianSendCancel = () => {
+    const typed = state.sendReview;
+    state.sendReview = null;
+    state.error = '';
+    render();
+    // Back to the form with what was typed (never the passphrase) so a cancelled review costs nothing.
+    for (const [id, value] of [['to', typed?.to], ['am', typed?.amountObs], ['mm', typed?.memo]]) {
+      const input = document.getElementById(id);
+      if (input && value) input.value = value;
+    }
   };
 
   g.ObsidianNameSearch = async () => {

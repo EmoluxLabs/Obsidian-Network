@@ -27,6 +27,7 @@ import { encodePaymentBody } from '../../core/transactions/executors/payment.js'
 import { encodeMiningBody } from '../../core/transactions/executors/mining.js';
 import { encodeOnsBody } from '../../core/transactions/executors/ons.js';
 import { PROTOCOL_VERSION } from '../../core/version.js';
+import { recipientKind, type ResolveDeps } from '../../core/protocol/recipient.js';
 import { encodeOracleBody } from '../../core/transactions/executors/oracle.js';
 import { encodeValidatorBody } from '../../core/transactions/executors/validator.js';
 import { encodeTreasuryBody } from '../../core/transactions/executors/treasury.js';
@@ -66,6 +67,35 @@ async function submit(client: ObsidianClient, signed: Uint8Array): Promise<Submi
 }
 
 export { expectedGas, formatObs, parseObs };
+
+/**
+ * The three reads the core's recipient resolver needs, from this interface's own client.
+ *
+ *   lookup    GET /names/<name> — the on-chain ONS record, through the interface gateway
+ *   context   /status + /network — the node's chain id, address prefix and head-block time
+ *   expected  this interface's configured chain id (/api/auth/config) and the wallet's address prefix
+ *
+ * The interface refuses to resolve when it cannot say which chain it is for: a node's answer is only
+ * believed against an identity that did not come from the node.
+ */
+export function resolverDeps(client: ObsidianClient, addressHrp: string): ResolveDeps {
+  return {
+    lookup: (name) => client.name(name),
+    context: async () => {
+      const [status, network] = await Promise.all([client.status(), client.network()]);
+      return {
+        chainId: Number(network.network?.chainId ?? status.chainId),
+        addressHrp: String(network.network?.addressHrp ?? ''),
+        protocolTime: Number(status.lastBlockTimestamp),
+      };
+    },
+    expected: async () => {
+      const config = await session.config();
+      if (!Number.isSafeInteger(config.chainId)) throw new Error('this interface is not tied to a chain, so it cannot check an ONS answer');
+      return { chainId: config.chainId as number, addressHrp };
+    },
+  };
+}
 
 /** Protocol gas for a transfer of `amount` seals. */
 export function gasFor(amount: bigint): bigint {
@@ -108,6 +138,11 @@ export const operations = {
     wallet: Wallet,
     input: { to: string; amountObs: string; memo?: string },
   ): Promise<SubmitResult> {
+    // A PAYMENT carries an address and nothing else. A `.obs` name has to be resolved (and confirmed by the person)
+    // BEFORE this is called; it is never written into the transaction.
+    if (recipientKind(input.to) === 'name') {
+      throw new Error('a .obs name must be resolved to an address before it can be paid');
+    }
     const amount = parseObs(input.amountObs);
     if (amount <= 0n) throw new Error('amount must be greater than zero');
     const ctx = await context(client, wallet);
