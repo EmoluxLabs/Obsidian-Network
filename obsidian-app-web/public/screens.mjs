@@ -32,6 +32,7 @@
 import {
   displayObs,
   displayObsWithUnit,
+  EXACT_OBS,
   displayInteger,
   formatDuration,
   formatTerm,
@@ -165,6 +166,12 @@ function rows(entries) {
         `<div class="row"><span>${esc(label)}</span><b class="${cls ? esc(cls) : ''}">${value}</b></div>`,
     )
     .join('')}</div>`;
+}
+
+/** Tooltip carrying the exact (18-digit) value behind a rounded amount; empty when there is no value. */
+function exactTitle(value) {
+  const text = displayObsWithUnit(value, EXACT_OBS);
+  return text === '—' ? '' : `Exact: ${text}`;
 }
 
 /** A value or an em dash. Used for every number that came from the node. */
@@ -310,7 +317,7 @@ export const SCREENS = {
     (s.account && !s.account.mfaEnabled
       ? `<div class="card" style="margin-top:14px;padding:16px"><b style="letter-spacing:.1em">ADD A SECOND FACTOR</b><div class="mu" style="margin-top:4px;font-size:13.5px">Mining requires MFA on this platform. Add one now.</div><button class="btn p" style="margin-top:10px" onclick="ObsidianMfaSetup()">SET UP MFA</button></div>`
       : '') +
-    `<div class="card" style="margin-top:16px;padding:20px"><div class="lb" style="margin:0;color:var(--mu)">OBS BALANCE</div>${bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—', { extra: 'margin-top:6px' })}</div>` +
+    `<div class="card" style="margin-top:16px;padding:20px"><div class="lb" style="margin:0;color:var(--mu)">OBS BALANCE</div>${bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—', { extra: 'margin-top:6px', title: exactTitle(s.balance?.balanceSeals) })}</div>` +
     `<div class="card" style="margin-top:10px">` +
     `<div class="row"><span>MINING</span><b class="${s.mining?.eligible ? 'ok' : 'mu'}">${
       s.mining ? (s.mining.eligible ? 'READY TO CLAIM' : 'NOT ELIGIBLE YET') : '—'
@@ -333,7 +340,7 @@ export const SCREENS = {
     const ready = m?.eligible === true;
     return (
       header(s, 'MINING') +
-      `<div style="text-align:center"><div class="lb" style="margin:4px 0;color:var(--mu)">OBS BALANCE</div>${bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—')}</div>` +
+      `<div style="text-align:center"><div class="lb" style="margin:4px 0;color:var(--mu)">OBS BALANCE</div>${bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—', { title: exactTitle(s.balance?.balanceSeals) })}</div>` +
       ring(s, seconds, ready) +
       (s.error ? errorLine(s) : '') +
       noticeLine(s) +
@@ -644,13 +651,13 @@ function claimPanel(s, m, seconds, ready) {
 function walletCard(s) {
   return (
     `<div class="card" style="padding:20px"><div class="lb" style="margin:0;color:var(--mu)">OBS BALANCE</div>` +
-    bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—', { extra: 'margin:6px 0 14px' }) +
+    bigAmountHtml(s.balance ? displayObs(s.balance.balanceSeals) : '—', { extra: 'margin:6px 0 14px', title: exactTitle(s.balance?.balanceSeals) }) +
     `<div style="font-size:12.5px">${
       s.walletAddress ? identifierHtml(s.walletAddress, 'address', { label: 'Wallet address' }) : 'No wallet on this device'
     }</div>` +
     (s.balance
       ? `<div class="card" style="margin-top:14px">` +
-        `<div class="row"><span>SPENDABLE</span><b class="m">${esc(displayObs(s.balance.spendableObs ?? s.balance.balanceSeals))}</b></div>` +
+        `<div class="row"><span>SPENDABLE</span><b class="m" title="${esc(exactTitle(s.balance.spendableObs ?? s.balance.balanceSeals))}">${esc(displayObs(s.balance.spendableObs ?? s.balance.balanceSeals))}</b></div>` +
         `<div class="row"><span>TRANSACTIONS</span><b class="m">${esc(orDash(s.balance.txCount))}</b></div>` +
         `<div class="row"><span>NEXT NONCE</span><b class="m">${esc(orDash(s.balance.nonce))}</b></div>` +
         `</div>`
@@ -672,7 +679,7 @@ function sendPanel(s) {
     designField('mm', 'MEMO (OPTIONAL)', 'text', '') +
     designField('pp', 'VAULT PASSPHRASE', 'password', 'The passphrase you sealed this wallet with') +
     `<p class="mu" style="font-size:12.5px;margin-top:10px">Available ${esc(
-      s.balance ? displayObsWithUnit(s.balance.balanceSeals) : '—',
+      s.balance ? displayObsWithUnit(s.balance.balanceSeals, EXACT_OBS) : '—',
     )}. ${gasNote}</p>` +
     `<button class="btn p" style="margin-top:4px" onclick="ObsidianSend()">${busy('SIGN & SEND', s, 'send')}</button>`
   );

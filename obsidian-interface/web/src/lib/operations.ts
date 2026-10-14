@@ -19,7 +19,7 @@ import { ObsidianClient } from './client.js';
 import { session } from './session.js';
 import { Wallet } from './wallet.js';
 import { parseObs, formatObs } from '../../core/protocol/amount.js';
-import { displaySeals } from '../../core/protocol/display.js';
+import { displaySeals, EXACT_OBS } from '../../core/protocol/display.js';
 import { expectedGas } from '../../core/transactions/helpers.js';
 import { TxType } from '../../core/protocol/types.js';
 import { OnsOp, ValidatorOp, TreasuryOp } from '../../core/protocol/types.js';
@@ -115,7 +115,7 @@ export const operations = {
     const total = BigInt((await client.balance(wallet.address)).balanceSeals);
     if (total < amount + gas) {
       throw new Error(
-        `insufficient balance: you have ${displaySeals(total)} OBS and this transfer needs ${displaySeals(amount + gas)} OBS (including gas)`,
+        `insufficient balance: you have ${displaySeals(total, EXACT_OBS)} OBS and this transfer needs ${displaySeals(amount + gas, EXACT_OBS)} OBS (including gas)`,
       );
     }
     const signed = wallet.sign({

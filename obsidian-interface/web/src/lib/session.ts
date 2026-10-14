@@ -23,6 +23,9 @@ export interface AccountView {
 }
 
 export interface AuthConfig {
+  /** The network this interface is for, and its chain id (mainnet 7777); null when the server is not tied to one. */
+  network?: string | null;
+  chainId?: number | null;
   inviteOnly: boolean;
   /** Always 'GMAIL_PASSWORD_MFA'. Google OAuth was removed. */
   authMethod: string;

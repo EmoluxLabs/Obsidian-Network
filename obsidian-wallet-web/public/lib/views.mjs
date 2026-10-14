@@ -11,7 +11,7 @@
  *   - A value that is not known is shown as "Unavailable", never as 0.
  */
 
-import { esc, exactObs, shortAddress, isTestNetwork, classifyHistory } from './pure.mjs';
+import { esc, exactObs, shownObs, shortAddress, isTestNetwork, classifyHistory } from './pure.mjs';
 import { shortenIdentifier, isMaskedIdentifier, displayInteger } from '../js/shared/data.mjs';
 
 const LOGO = '/logo.png';
@@ -101,7 +101,7 @@ export const stateWord = (state) => STATE_WORDS[state] ?? 'Unknown';
 const signed = (dir, amount) => {
   if (amount === null || amount === undefined) return '';
   const sign = dir === 'sent' || dir === 'self' ? '−' : dir === 'received' || dir === 'mining' ? '+' : '';
-  return `${sign}${exactObs(amount)}`;
+  return `${sign}${shownObs(amount)}`;
 };
 
 /**
@@ -113,7 +113,7 @@ export function activityRows(S, limit) {
   for (const r of S.records.filter((x) => !S.hist.ids.has(x.txId))) {
     const stateName = r.state;
     rows.push(
-      `<button type="button" class="row tx" data-a="tx" data-id="${esc(r.txId)}"><div><b>Sent</b><div class="mu sm">${esc(fmtTime(r.submittedAt / 1000))} · <span class="st st-${esc(stateName)}">${esc(stateWord(stateName))}</span></div></div><b class="m">−${esc(exactObs(r.amount))}</b></button>`,
+      `<button type="button" class="row tx" data-a="tx" data-id="${esc(r.txId)}"><div><b>Sent</b><div class="mu sm">${esc(fmtTime(r.submittedAt / 1000))} · <span class="st st-${esc(stateName)}">${esc(stateWord(stateName))}</span></div></div><b class="m">−${esc(shownObs(r.amount))}</b></button>`,
     );
   }
   if (S.hist.state === 'ok') {
@@ -203,10 +203,10 @@ export const V = {
   home: (S) => {
     let balance;
     if (S.balance.state === 'ok') {
-      const shown = exactObs(S.balance.seals);
-      // The size steps down only for long text (a few digits of dust); every digit is still shown, wrapped.
+      const shown = shownObs(S.balance.seals);
+      // At most 6 decimals; the tooltip carries the exact balance. The size steps down only for long text.
       const size = shown.length > 20 ? ' bl2' : shown.length > 13 ? ' bl' : '';
-      balance = `<div class="m balv${size}" id="bal">${esc(shown)} <span class="unit">OBS</span></div>`;
+      balance = `<div class="m balv${size}" title="Exact: ${esc(exactObs(S.balance.seals))} OBS" id="bal">${esc(shown)} <span class="unit">OBS</span></div>`;
     }
     else if (S.balance.state === 'loading') balance = '<div class="m balv mu" id="bal">Loading…</div>';
     else balance = `<div class="m balv mu" id="bal">Unavailable</div><div class="err flush">${esc(S.balance.error || 'The balance could not be read.')} <button type="button" class="btn s inline" data-a="refresh">RETRY</button></div>`;

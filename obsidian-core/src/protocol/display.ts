@@ -3,23 +3,26 @@
  * balance or an API payload: it turns exact values into text, and it never turns text back into a value.
  *
  * Every user-facing OBS amount, count and long identifier in every interface goes through here (or through its
- * byte-for-byte mirror in obsidian-app-web/public/data.mjs, which tests/display-parity.test.mjs holds to the same
- * vectors), so the main platform, the Web App, the Wallet web app and the explorer cannot disagree about how one
- * number looks.
+ * mirror in obsidian-app-web/public/data.mjs, which tests/display-parity.test.mjs holds to the same vectors), so the
+ * main platform, the Web App, the Wallet web app and the explorer cannot disagree about how one number looks.
  *
- * Rules (each one is pinned by tests/unit/display.test.ts):
+ * THE POLICY (each line is pinned by tests/unit/display.test.ts and the shared vectors):
  *
- *   - Exact. Amounts are BigInt arithmetic on decimal text. A `Number` never touches a token quantity, so a
- *     balance past 2^53 base units is not rounded.
- *   - Nothing is silently shortened. By default every significant fractional digit up to the protocol's 18 is shown,
- *     so 0.000000000000000001 OBS reads as exactly that. A caller that asks for fewer digits gets the value cut
- *     DOWN (never rounded up, so the screen never shows more than the holder has), and a non-zero amount that would
- *     show as zero is shown as `<0.00000001` instead of `0`.
- *   - Trailing zeros and a dangling decimal point are removed: 0.05000000000000000000 reads 0.05, and
- *     100000.000000000000000000 reads 100,000. Zero reads 0.
- *   - Whole digits are grouped with a comma, whatever the viewer's locale: the same amount must read the same on
- *     every device, and `toLocaleString` does not promise that (nor is it exact for large integers).
+ *   - Ordinary display is at most 6 fractional digits (DISPLAY_DECIMALS). The protocol holds 18; a screen of balances,
+ *     supply, rewards and claims is not the place for 18, and 99,999.820626666666666664 OBS is read as
+ *     99,999.820627 OBS.
+ *   - Rounding is to the NEAREST displayed unit, ties away from zero (0.0000005 -> 0.000001, 0.0000004999 -> shown as
+ *     "less than"). It is done in exact integer arithmetic on the full 18-digit value, so a carry into the whole part
+ *     (99.9999996 -> 100) is right and no float is involved.
+ *   - A non-zero amount that rounds to zero is NEVER shown as 0: it reads `<0.000001`, so it stays distinguishable from
+ *     a genuine zero. (A negative one reads `>-0.000001`.)
+ *   - Trailing zeros and a dangling decimal point are removed (12.340000 -> 12.34, 100000.000000 -> 100,000); zero is 0.
+ *   - Whole digits are grouped with a comma, whatever the viewer's locale.
  *   - Never scientific notation. Text such as `1e-18` is not an amount here and renders as the unavailable mark.
+ *   - Missing or invalid is the unavailable mark, never 0. A JavaScript `Number` is refused: it cannot hold a token
+ *     quantity exactly, so there is no honest way to print one.
+ *   - Rounding is for the eyes only. The exact value is always available: pass `EXACT_OBS` (maxDecimals 18) for a
+ *     detail view, a confirmation or a tooltip. Nothing here changes the value that is signed, sent, stored or summed.
  *   - Identifiers are shortened for DISPLAY only, with a fixed policy per kind; the full value is what is copied,
  *     validated, signed and sent.
  */
@@ -28,8 +31,11 @@ import { OBS_DECIMALS } from './amount.js';
 /** What is shown for a value that is missing or is not an amount. Never `0`: a missing balance is not a zero one. */
 export const UNAVAILABLE = '—';
 
+/** Fractional digits shown for an ordinary amount (balance, supply, mined, pool, reward, claim). */
+export const DISPLAY_DECIMALS = 6;
+
 export interface ObsDisplayOptions {
-  /** Most fractional digits to show, 0..18. Default 18: every digit the protocol can hold. */
+  /** Most fractional digits to show, 0..18. Default DISPLAY_DECIMALS (6); 18 is every digit the protocol holds. */
   maxDecimals?: number;
   /** Group the whole part in threes with commas. Default true. */
   group?: boolean;
@@ -38,8 +44,8 @@ export interface ObsDisplayOptions {
 const UNIT = 10n ** BigInt(OBS_DECIMALS);
 
 function clampDecimals(value: number | undefined): number {
-  if (value === undefined) return OBS_DECIMALS;
-  if (!Number.isFinite(value)) return OBS_DECIMALS;
+  if (value === undefined) return DISPLAY_DECIMALS;
+  if (!Number.isFinite(value)) return DISPLAY_DECIMALS;
   return Math.max(0, Math.min(OBS_DECIMALS, Math.floor(value)));
 }
 
@@ -48,20 +54,29 @@ export function groupDigits(digits: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-/** Shared tail: a non-negative whole and an 18-digit fraction, to text. */
+/** Every digit the protocol holds, for a detail view, a confirmation or a tooltip. */
+export const EXACT_OBS: Readonly<ObsDisplayOptions> = Object.freeze({ maxDecimals: OBS_DECIMALS });
+
+/** Shared tail: a non-negative whole and an 18-digit fraction, to text. Exact integer arithmetic throughout. */
 function render(negative: boolean, whole: bigint, fraction18: string, opts: ObsDisplayOptions | undefined): string {
   const maxDecimals = clampDecimals(opts?.maxDecimals);
   const group = opts?.group !== false;
-  const kept = fraction18.slice(0, maxDecimals).replace(/0+$/, '');
-  const wholeText = group ? groupDigits(whole.toString()) : whole.toString();
-  const nonZero = whole > 0n || /[1-9]/.test(fraction18);
-  if (whole === 0n && kept === '' && nonZero) {
-    // A real amount that the requested precision would hide. Say so, rather than show 0.
+  const total = whole * UNIT + BigInt(fraction18);
+  const nonZero = total > 0n;
+  // Round to the nearest displayed unit, ties away from zero (the magnitude is rounded, then the sign is put back).
+  const divisor = 10n ** BigInt(OBS_DECIMALS - maxDecimals);
+  let units = total / divisor;
+  if ((total % divisor) * 2n >= divisor && divisor > 1n) units += 1n;
+  if (units === 0n && nonZero) {
+    // A real amount that the displayed precision would hide. Say so, rather than show 0.
     const floor = maxDecimals === 0 ? '1' : `0.${'0'.repeat(maxDecimals - 1)}1`;
-    return `${negative ? '-' : ''}<${floor}`;
+    return negative ? `>-${floor}` : `<${floor}`;
   }
-  const sign = negative && nonZero ? '-' : '';
-  return `${sign}${wholeText}${kept ? `.${kept}` : ''}`;
+  const scale = 10n ** BigInt(maxDecimals);
+  const shownWhole = units / scale;
+  const shownFraction = maxDecimals === 0 ? '' : (units % scale).toString().padStart(maxDecimals, '0').replace(/0+$/, '');
+  const wholeText = group ? groupDigits(shownWhole.toString()) : shownWhole.toString();
+  return `${negative && units > 0n ? '-' : ''}${wholeText}${shownFraction ? `.${shownFraction}` : ''}`;
 }
 
 /** Exact base units (seals; 1 OBS = 10^18) to display text. */
@@ -76,7 +91,7 @@ export function displaySeals(seals: bigint | string | null | undefined, opts?: O
   return render(negative, abs / UNIT, (abs % UNIT).toString().padStart(OBS_DECIMALS, '0'), opts);
 }
 
-/** An OBS decimal string ("0.05000000000000000000", "21000000") to display text. Over-precise input is cut down, never rounded. */
+/** An OBS decimal string ("0.05000000000000000000", "21000000") to display text. Input beyond 18 places is cut at 18 (the protocol cannot hold more); rounding to the display precision happens on that. */
 export function displayDecimal(text: string | null | undefined, opts?: ObsDisplayOptions): string {
   if (typeof text !== 'string') return UNAVAILABLE;
   const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text.trim());
@@ -155,4 +170,77 @@ export function shortenIdentifier(
   const [head, tail] = IDENTIFIER_POLICY[kind][width];
   if (isMaskedIdentifier(value) || value.length <= head + tail + ELLIPSIS.length) return value;
   return `${value.slice(0, head)}${ELLIPSIS}${value.slice(-tail)}`;
+}
+
+// ── the Mining Pool ──────────────────────────────────────────────────────────
+
+/**
+ * What a screen may say about the Mining Pool, decided from what the node actually returned. Display only.
+ *
+ * The Mining Pool is protocol state (`state.pool.balance`), served by a node as `GET /supply` -> `poolBalanceObs`.
+ * It is NOT the total supply, NOT the amount mined, NOT the node-runner reward pool, NOT the treasury and NOT any
+ * wallet's balance, and nothing here derives it from any of those. It is a recycling pool: gas, slashed bonds and the
+ * parked treasury share flow in, and the next mining claim is paid from it first, so `0` is a normal, genuine
+ * reading whenever fees have already been paid out. That is why a zero is shown as zero ONLY when the node said
+ * zero, and a missing answer is "unavailable", never 0.
+ *
+ *   mismatch    the node answering reports another chain than this interface is for; its figures are not shown
+ *   unavailable the value is missing, malformed, or the node's own supply check does not hold
+ *   ok          `value` is the node's figure (rounded for display), `exact` carries every digit
+ */
+export interface MiningPoolView {
+  state: 'ok' | 'unavailable' | 'mismatch';
+  /** Display text with the unit, or the unavailable mark. */
+  value: string;
+  /** Every digit the node returned, with the unit; null unless state is `ok`. */
+  exact: string | null;
+  /** True only when the node returned a pool balance of exactly zero. */
+  zero: boolean;
+  /** Why the value is not shown; null when it is. */
+  reason: string | null;
+  /** Lifetime fees paid into the pool and paid out of it, from `/status` `pool`, when the node returned them. */
+  lifetimeInflow: string | null;
+  lifetimeDistributed: string | null;
+}
+
+export interface MiningPoolInput {
+  /** The chain this interface is for (mainnet is 7777). Omit to skip the network check. */
+  expectedChainId?: number | null;
+  /** The node's `/status` answer: `chainId` and `pool`. */
+  status?: { chainId?: unknown; pool?: { lifetimeInflow?: unknown; lifetimeDistributed?: unknown } } | null;
+  /** The node's `/supply` answer: `poolBalanceObs` and `invariantOk`. */
+  supply?: { poolBalanceObs?: unknown; invariantOk?: unknown } | null;
+}
+
+export function describeMiningPool(input: MiningPoolInput): MiningPoolView {
+  // The node returns OBS decimals with a point (formatObs). Anything else is not a pool balance.
+  const shown = (v: unknown, o?: ObsDisplayOptions): string => {
+    const t = typeof v === 'string' && v.includes('.') ? displayDecimal(v, o) : UNAVAILABLE;
+    return t === UNAVAILABLE ? t : `${t} OBS`;
+  };
+  const none = (state: MiningPoolView['state'], reason: string): MiningPoolView => ({
+    state, value: UNAVAILABLE, exact: null, zero: false, reason, lifetimeInflow: null, lifetimeDistributed: null,
+  });
+  const expected = input.expectedChainId;
+  if (expected !== undefined && expected !== null) {
+    const reported = input.status?.chainId;
+    const reportedChain = typeof reported === 'number' ? reported : typeof reported === 'string' && /^\d+$/.test(reported) ? Number(reported) : null;
+    if (reportedChain === null) return none('unavailable', 'The node has not said which network it is on, so its pool figure cannot be trusted for this one.');
+    if (reportedChain !== expected) return none('mismatch', `The node answering is on chain ${reportedChain}, but this is chain ${expected}. Its figures are not shown.`);
+  }
+  const pool = input.supply?.poolBalanceObs;
+  if (shown(pool) === UNAVAILABLE) return none('unavailable', 'The node has not returned the Mining Pool figure.');
+  if (input.supply?.invariantOk === false) return none('unavailable', 'The node reports that its supply check does not hold, so the pool figure is not shown.');
+  const inflow = input.status?.pool?.lifetimeInflow;
+  const distributed = input.status?.pool?.lifetimeDistributed;
+  const text = (v: unknown): string | null => (shown(v) === UNAVAILABLE ? null : shown(v));
+  return {
+    state: 'ok',
+    value: shown(pool),
+    exact: shown(pool, EXACT_OBS),
+    zero: shown(pool, EXACT_OBS) === '0 OBS',
+    reason: null,
+    lifetimeInflow: text(inflow),
+    lifetimeDistributed: text(distributed),
+  };
 }

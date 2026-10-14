@@ -329,7 +329,7 @@ describe('landing page', () => {
     // number must come from the node, not from a placeholder.
     expect(stats).toContain('100,166');            // supply, from /status
     expect(stats).toContain('0.001');             // reward per day, from /mining/schedule
-    expect(stats).toContain('0.00016666');        // reward per claim, exact seals
+    expect(stats).toContain('0.000167');          // reward per claim, rounded to 6 decimals
     // No price feed anywhere on the landing page: protocol fees are OBS and
     // the page shows the fee itself, from /params.
     expect(stats).toContain('0.05');              // name registration fee, from /params
@@ -739,9 +739,85 @@ describe('pages read the field names the node really sends', () => {
     expect(document.body.textContent).not.toContain('undefined');
 
     const stats = document.querySelector('#chain-stats')!.textContent ?? '';
-    expect(stats).toContain('100,166.666666666666 OBS of 21,000,000 OBS');
+    expect(stats).toContain('100,166.666667 OBS of 21,000,000 OBS');
     expect(stats).toContain('claimed · 100,000 OBS');
     expect(stats).toContain('0 OBS');   // the mining pool balance, from /supply.poolBalanceObs
+  });
+
+  /** The explorer with `/supply` (and optionally the interface's own network) answered as the test says. */
+  async function explorerWith(options: { supply?: Record<string, unknown> | null; configChainId?: number; status?: Record<string, unknown> }): Promise<{ pool: string; poolTitle: string | null; note: string; stats: string }> {
+    respond = (url) => {
+      const path = decodeURIComponent(url);
+      if (path.includes('/api/auth/config')) return options.configChainId === undefined ? { status: 404, body: {} } : { status: 200, body: { network: 'mainnet', chainId: options.configChainId } };
+      if (!path.includes('/api/rpc')) return { status: 404, body: {} };
+      if (path.includes('/supply')) return options.supply === null ? { status: 503, body: { error: 'no node' } } : { status: 200, body: options.supply ?? SUPPLY_FIXTURE };
+      if (options.status && path.includes('/status')) return { status: 200, body: { ...STATUS_FIXTURE, ...options.status } };
+      return chainFixture(url);
+    };
+    await import('../web/src/pages/explorer.js');
+    await settle();
+    const poolNode = document.querySelector('#mining-pool-value');
+    return {
+      pool: poolNode?.textContent ?? '',
+      poolTitle: poolNode?.getAttribute('title') ?? null,
+      note: document.querySelector('#mining-pool-note')?.textContent ?? '',
+      stats: document.querySelector('#chain-stats')?.textContent ?? '',
+    };
+  }
+
+  it('Mining Pool: a nonzero balance from /supply.poolBalanceObs is shown, rounded to 6 decimals, with the exact value on hover', async () => {
+    const r = await explorerWith({ supply: { ...SUPPLY_FIXTURE, poolBalanceObs: '99999.820626666666666664' } });
+    expect(r.pool).toBe('99,999.820627 OBS');
+    expect(r.poolTitle).toBe('Exact: 99,999.820626666666666664 OBS');
+    expect(r.note).toContain('separate from total supply');
+  });
+
+  it('Mining Pool: it reads the pool field and not total supply or mined supply', async () => {
+    const r = await explorerWith({
+      status: { supplyObs: '100000.000626666666666664' },
+      supply: { ...SUPPLY_FIXTURE, poolBalanceObs: '0.000040000000000000', totalSupplyObs: '100000.000626666666666664', minedSupplyObs: '0.000626666666666664' },
+    });
+    expect(r.pool).toBe('0.00004 OBS'); // the pool row is the pool field, not supply (100,000.000627) and not mined (0.000627)
+    expect(r.stats).toContain('100,000.000627 OBS of 21,000,000 OBS'); // the supply row is its own figure
+  });
+
+  it('Mining Pool: a genuine zero from the node is shown as 0 OBS, with the reason', async () => {
+    const r = await explorerWith({ supply: { ...SUPPLY_FIXTURE, poolBalanceObs: '0.000000000000000000' } });
+    expect(r.pool).toBe('0 OBS');
+    expect(r.note).toContain('reads 0 because everything received has been paid out');
+  });
+
+  it('Mining Pool: a pool below the shown precision is not drawn as zero', async () => {
+    const r = await explorerWith({ supply: { ...SUPPLY_FIXTURE, poolBalanceObs: '0.000000000000000001' } });
+    expect(r.pool).toBe('<0.000001 OBS');
+    expect(r.pool).not.toBe('0 OBS');
+  });
+
+  it('Mining Pool: a missing field is unavailable, never 0 OBS', async () => {
+    const { poolBalanceObs: _omitted, ...withoutPool } = SUPPLY_FIXTURE as Record<string, unknown>;
+    const r = await explorerWith({ supply: withoutPool });
+    expect(r.pool).toContain('—');
+    expect(r.pool).not.toContain('0 OBS');
+    expect(r.note).toContain('Mining pool unavailable');
+  });
+
+  it('Mining Pool: when /supply cannot be read the panel says so and shows no pool figure', async () => {
+    const r = await explorerWith({ supply: null });
+    expect(r.pool).toBe('');
+    expect(r.stats).not.toContain('Mining pool');
+  });
+
+  it('Mining Pool: a node on another chain than this interface is refused, not shown as a balance', async () => {
+    const r = await explorerWith({ configChainId: 7777, supply: { ...SUPPLY_FIXTURE, poolBalanceObs: '5.000000000000000000' } }); // fixture node is chain 7780
+    expect(r.pool).toContain('—');
+    expect(r.pool).toContain('chain 7780');
+    expect(r.pool).not.toContain('5 OBS');
+    expect(r.stats).not.toContain('100,166.666667 OBS of 21,000,000 OBS');
+  });
+
+  it('Mining Pool: the same node is accepted by an interface for its own chain', async () => {
+    const r = await explorerWith({ configChainId: 7780, supply: { ...SUPPLY_FIXTURE, poolBalanceObs: '5.000000000000000000' } });
+    expect(r.pool).toBe('5 OBS');
   });
 
   it('ONS shows the protocol fee in OBS, with no dollar price and no oracle', async () => {

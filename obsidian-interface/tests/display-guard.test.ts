@@ -31,6 +31,29 @@ describe('no amount or count is formatted by hand', () => {
   }
 });
 
+describe('a missing amount is never turned into zero, and the Mining Pool is never invented', () => {
+  for (const file of files) {
+    it(`${file} gives no amount a default of 0`, () => {
+      const bad = read(file)
+        .split('\n')
+        .filter((text) => !/^\s*(\/\/|\*)/.test(text))
+        .filter((text) => /\b(obs|obsUnit|amountEl|obsDecimal|obsExact)\([^)]*\?\?\s*['"]?0/.test(text));
+      expect(bad).toEqual([]);
+    });
+    it(`${file} does not derive a pool figure from supply or mined supply`, () => {
+      const bad = read(file)
+        .split('\n')
+        .filter((text) => !/^\s*(\/\/|\*)/.test(text))
+        .filter((text) => /pool/i.test(text) && /(totalSupply|minedSupply|supplyObs)/.test(text) && /[-+*\/]/.test(text.replace(/['"`].*?['"`]/g, '')) && /BigInt|parseObs|sealsFromObs/.test(text));
+      expect(bad).toEqual([]);
+    });
+  }
+  it('the Mining Pool row is decided by the shared describeMiningPool, and no page reads supply.poolBalanceObs itself', () => {
+    expect(read('pages/explorer.ts')).toMatch(/describeMiningPool\(/);
+    for (const file of files) expect(read(file), file).not.toMatch(/supply\??\.poolBalanceObs/);
+  });
+});
+
 describe('identifiers go through the shared component', () => {
   for (const file of files.filter((f) => f.startsWith('pages'))) {
     it(`${file} does not hand-shorten an address, hash or id`, () => {

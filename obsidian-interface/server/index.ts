@@ -731,6 +731,8 @@ export class InterfaceServer {
     if (path === '/api/auth/config') {
       this.json(response, 200, {
         network: this.config.network ?? null,
+        // The chain this interface is for (mainnet 7777), so the pages can refuse figures from a node on another chain.
+        chainId: this.config.network ? interfaceNetwork(this.config.network).chainId : null,
         inviteOnly: true,
         // Accounts are Gmail + password + invite + MFA. Google OAuth was
         // removed: no third party decides who may hold a mining account.

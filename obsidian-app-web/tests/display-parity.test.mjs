@@ -55,9 +55,17 @@ test('the required display examples', () => {
   assert.equal(mirror.displayObsWithUnit('0.050000000000000000'), '0.05 OBS');
   assert.equal(mirror.displayObsWithUnit('21000000000000000000000000'), '21,000,000 OBS');
   assert.equal(mirror.displayObsWithUnit('100000.000000000000000000'), '100,000 OBS');
-  assert.equal(mirror.displayObsWithUnit('1'), '0.000000000000000001 OBS');
+  assert.equal(mirror.displayObsWithUnit('1'), '<0.000001 OBS');
+  assert.equal(mirror.displayObsWithUnit('1', mirror.EXACT_OBS), '0.000000000000000001 OBS');
   assert.equal(mirror.displayObsWithUnit(undefined), '—');
-  assert.equal(mirror.sealsToObs('1'), '0.000000000000000001', 'one seal is not zero');
+  assert.equal(mirror.sealsToObs('1'), '<0.000001', 'one seal is not zero');
+  assert.equal(mirror.displayObsWithUnit('99999.820626666666666664'), '99,999.820627 OBS');
+  assert.equal(mirror.displayObsWithUnit('100000.000626666666666664'), '100,000.000627 OBS');
+  assert.equal(mirror.displayObsWithUnit('0.000626666666666664'), '0.000627 OBS');
+  assert.equal(mirror.displayObsWithUnit('0.000166666666666666'), '0.000167 OBS');
+  assert.equal(mirror.displayDecimal('100000'), '100,000');
+  assert.equal(mirror.displayDecimal('12.340000'), '12.34');
+  assert.equal(mirror.displayDecimal('0'), '0');
 });
 
 test('no token amount is formatted from a JavaScript number', () => {
@@ -154,5 +162,16 @@ for (const [name, source] of shipped) {
   test(`${name}: no hand-made ellipsis shortening of an identifier`, () => {
     assert.doesNotMatch(source, /\.slice\(0,\s*\d+\)\}?…\$\{/);
     assert.doesNotMatch(source, /\.slice\(0,\s*\d+\)\s*\}…/);
+  });
+}
+
+// ── the Mining Pool view: the mirror against the shared vectors and against the compiled core ─────────────────────
+
+const poolVectors = JSON.parse(readFileSync(resolve(here, '../../tests/vectors/mining-pool.json'), 'utf8'));
+for (const c of poolVectors.cases) {
+  test(`mining pool view: ${c.name}`, () => {
+    const view = mirror.describeMiningPool(c.input);
+    for (const [key, want] of Object.entries(c.expect)) assert.deepEqual(view[key], want, key);
+    if (core) assert.deepEqual(view, core.describeMiningPool(c.input), 'the mirror and the core agree on the whole view');
   });
 }

@@ -66,11 +66,13 @@ test('seal amounts are formatted with BigInt, so precision is never lost', () =>
   // A balance far past 2^53: a float conversion would round it.
   const seals = 21_000_000n * 10n ** 18n;
   assert.equal(sealsToObs(seals), '21,000,000');
-  // one seal is the smallest real amount and is never shown as zero
-  assert.equal(sealsToObs(1n), '0.000000000000000001');
-  assert.equal(sealsToObs(1n, 18), '0.000000000000000001');
-  // a tight cap says a hidden amount exists instead of printing 0
+  // one seal is the smallest real amount: below the 6-decimal display it says so instead of printing 0
+  assert.equal(sealsToObs(1n), '<0.000001');
   assert.equal(sealsToObs(1n, 6), '<0.000001');
+  // the exact view shows it whole
+  assert.equal(sealsToObs(1n, 18), '0.000000000000000001');
+  assert.equal(sealsToObs(166666666666666n), '0.000167');
+  assert.equal(sealsToObs(166666666666666n, 18), '0.000166666666666666');
   // zero is zero, with no padded fraction
   assert.equal(sealsToObs(0n, 18), '0');
   assert.equal(sealsToObs(5n * 10n ** 17n), '0.5');
@@ -81,7 +83,8 @@ test('an amount that is not a number renders as unavailable, never as zero', () 
   assert.equal(sealsToObs(undefined), '—');
   assert.equal(sealsToObs('not a number'), '—');
   // a negative count is shown with its sign rather than hidden or turned into zero
-  assert.equal(sealsToObs(-1n), '-0.000000000000000001');
+  assert.equal(sealsToObs(-1n), '>-0.000001');
+  assert.equal(sealsToObs(-1n, 18), '-0.000000000000000001');
   assert.equal(sealsToObs('1.5'), '—');
 });
 

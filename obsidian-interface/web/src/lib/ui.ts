@@ -6,7 +6,7 @@
  * listeners are attached from JavaScript).
  */
 
-import { displayInteger, displayObs, displayObsWithUnit, shortenIdentifier, type IdentifierKind } from '../../core/protocol/display.js';
+import { displayDecimal, displayInteger, displayObs, displayObsWithUnit, EXACT_OBS, shortenIdentifier, type IdentifierKind } from '../../core/protocol/display.js';
 
 export type Child = Node | string | number | null | undefined | false;
 
@@ -47,21 +47,48 @@ export function clear(node: Element): void {
 }
 
 /**
- * Format an Obsidian amount for a person: exact, grouped, trailing zeros removed, never `0` for a real amount.
+ * Format an Obsidian amount for a person: at most 6 decimals, rounded to nearest, grouped, trailing zeros removed,
+ * `<0.000001` (never `0`) for a real amount below that.
  *
  * The node speaks two exact shapes for one quantity — seal counts (integer text, 10^18 seals = 1 OBS) and OBS
  * decimals (`"100000.000000000000000000"`) — and this accepts either. All the rules live in
  * core/protocol/display.ts, the one formatter every interface shares (see its header); this is its entry point for
- * the pages. `decimals` is a display cap for a tight spot; leave it out and every significant digit is shown.
- * Display only: nothing here feeds a transaction, a fee or a balance.
+ * the pages. `decimals` is a display precision for a tight spot (18 = every digit). Display only: nothing here
+ * feeds a transaction, a fee or a balance.
  */
 export function obs(value: string | bigint | undefined | null, decimals?: number): string {
   return displayObs(value, decimals === undefined ? undefined : { maxDecimals: decimals });
 }
 
+/**
+ * An amount known to be an OBS DECIMAL (`"100000"` is a hundred thousand OBS), for values that never arrive as seal
+ * counts. `obs()` reads text without a point as a seal count, because that is what the node sends for `*Seals`
+ * fields; use this when the text is a decimal whatever its shape.
+ */
+export function obsDecimal(value: string | undefined | null, decimals?: number): string {
+  return displayDecimal(value, decimals === undefined ? undefined : { maxDecimals: decimals });
+}
+
 /** "0.05 OBS". A missing value is the unavailable mark with no unit. */
 export function obsUnit(value: string | bigint | undefined | null, decimals?: number): string {
   return displayObsWithUnit(value, decimals === undefined ? undefined : { maxDecimals: decimals });
+}
+
+/**
+ * An amount as an element: the rounded text, with the exact value (every digit the protocol holds) in the tooltip.
+ * For a balance, a supply figure or a reward on a page, where the full value should stay one hover or long-press away.
+ */
+export function amountEl(value: string | bigint | undefined | null, opts: { unit?: boolean; className?: string } = {}): HTMLElement {
+  const shown = opts.unit === false ? displayObs(value) : displayObsWithUnit(value);
+  const exact = opts.unit === false ? displayObs(value, EXACT_OBS) : displayObsWithUnit(value, EXACT_OBS);
+  const node = el('span', { class: opts.className ?? 'amount' }, shown);
+  if (exact !== shown && exact !== '—') node.title = `Exact: ${exact}`;
+  return node;
+}
+
+/** Every digit the protocol holds, with the unit: for a confirmation, an error that quotes a balance, or a detail view. */
+export function obsExact(value: string | bigint | undefined | null): string {
+  return displayObsWithUnit(value, EXACT_OBS);
 }
 
 /**

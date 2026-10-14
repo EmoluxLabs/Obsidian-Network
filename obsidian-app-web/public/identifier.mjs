@@ -75,10 +75,11 @@ export function toggleIdentifier(node) {
  * A big balance: the full exact text, wrapped rather than cut, at a size that fits the 430 px frame. The size steps
  * down only as the text gets longer; no digit is ever dropped to make it fit.
  */
-export function bigAmountHtml(text, { base = 34, weight = 600, extra = '' } = {}) {
+export function bigAmountHtml(text, { base = 34, weight = 600, extra = '', title = '' } = {}) {
   const length = String(text ?? '').length;
   const size = length <= 12 ? base : length <= 16 ? Math.round(base * 0.82) : Math.round(base * 0.65);
-  return `<div class="m obsv" style="font-size:${size}px;font-weight:${weight};${extra}">${esc(text)}</div>`;
+  const tip = title ? ` title="${esc(title)}"` : '';
+  return `<div class="m obsv"${tip} style="font-size:${size}px;font-weight:${weight};${extra}">${esc(text)}</div>`;
 }
 
 export const DISPLAY_CSS = `

@@ -355,9 +355,9 @@ export function normaliseName(raw) {
 const OBS_UNIT = 10n ** 18n;
 
 /**
- * Format a seal amount as OBS — exact, grouped, trailing zeros removed, never `0` for a real amount.
- * Kept under its old name for the callers; the rules live in the display mirror below. `decimals` is an optional
- * display cap; leave it out and every significant digit is shown.
+ * Format a seal amount as OBS — at most 6 decimals, rounded to nearest, grouped, trailing zeros removed, never `0`
+ * for a real amount. Kept under its old name for the callers; the rules live in the display mirror below.
+ * `decimals` is an optional display precision (18 = every digit).
  */
 export function sealsToObs(seals, decimals) {
   return displaySeals(seals, decimals === undefined ? undefined : { maxDecimals: decimals });
@@ -388,13 +388,18 @@ export function parseObs(text) {
 /** What is shown for a value that is missing or is not an amount. Never `0`: a missing balance is not a zero one. */
 export const UNAVAILABLE = '—';
 
-const DISPLAY_DECIMALS = 18;
-const DISPLAY_UNIT = 10n ** BigInt(DISPLAY_DECIMALS);
+/** Fractional digits shown for an ordinary amount (balance, supply, mined, pool, reward, claim). */
+export const DISPLAY_DECIMALS = 6;
+const PROTOCOL_DECIMALS = 18;
+const DISPLAY_UNIT = 10n ** BigInt(PROTOCOL_DECIMALS);
+
+/** Every digit the protocol holds, for a detail view, a confirmation or a tooltip. */
+export const EXACT_OBS = Object.freeze({ maxDecimals: PROTOCOL_DECIMALS });
 
 function clampDecimals(value) {
   if (value === undefined) return DISPLAY_DECIMALS;
   if (!Number.isFinite(value)) return DISPLAY_DECIMALS;
-  return Math.max(0, Math.min(DISPLAY_DECIMALS, Math.floor(value)));
+  return Math.max(0, Math.min(PROTOCOL_DECIMALS, Math.floor(value)));
 }
 
 /** Insert commas into a string of digits. */
@@ -402,20 +407,26 @@ export function groupDigits(digits) {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-/** Shared tail: a non-negative whole and an 18-digit fraction, to text. */
+/** Shared tail: a non-negative whole and an 18-digit fraction, to text. Exact integer arithmetic throughout. */
 function render(negative, whole, fraction18, opts) {
   const maxDecimals = clampDecimals(opts?.maxDecimals);
   const group = opts?.group !== false;
-  const kept = fraction18.slice(0, maxDecimals).replace(/0+$/, '');
-  const wholeText = group ? groupDigits(whole.toString()) : whole.toString();
-  const nonZero = whole > 0n || /[1-9]/.test(fraction18);
-  if (whole === 0n && kept === '' && nonZero) {
-    // A real amount that the requested precision would hide. Say so, rather than show 0.
+  const total = whole * DISPLAY_UNIT + BigInt(fraction18);
+  const nonZero = total > 0n;
+  // Round to the nearest displayed unit, ties away from zero (the magnitude is rounded, then the sign is put back).
+  const divisor = 10n ** BigInt(PROTOCOL_DECIMALS - maxDecimals);
+  let units = total / divisor;
+  if ((total % divisor) * 2n >= divisor && divisor > 1n) units += 1n;
+  if (units === 0n && nonZero) {
+    // A real amount that the displayed precision would hide. Say so, rather than show 0.
     const floor = maxDecimals === 0 ? '1' : `0.${'0'.repeat(maxDecimals - 1)}1`;
-    return `${negative ? '-' : ''}<${floor}`;
+    return negative ? `>-${floor}` : `<${floor}`;
   }
-  const sign = negative && nonZero ? '-' : '';
-  return `${sign}${wholeText}${kept ? `.${kept}` : ''}`;
+  const scale = 10n ** BigInt(maxDecimals);
+  const shownWhole = units / scale;
+  const shownFraction = maxDecimals === 0 ? '' : (units % scale).toString().padStart(maxDecimals, '0').replace(/0+$/, '');
+  const wholeText = group ? groupDigits(shownWhole.toString()) : shownWhole.toString();
+  return `${negative && units > 0n ? '-' : ''}${wholeText}${shownFraction ? `.${shownFraction}` : ''}`;
 }
 
 /** Exact base units (seals; 1 OBS = 10^18) to display text. */
@@ -427,15 +438,15 @@ export function displaySeals(seals, opts) {
   else return UNAVAILABLE;
   const negative = value < 0n;
   const abs = negative ? -value : value;
-  return render(negative, abs / DISPLAY_UNIT, (abs % DISPLAY_UNIT).toString().padStart(DISPLAY_DECIMALS, '0'), opts);
+  return render(negative, abs / DISPLAY_UNIT, (abs % DISPLAY_UNIT).toString().padStart(PROTOCOL_DECIMALS, '0'), opts);
 }
 
-/** An OBS decimal string ("0.05000000000000000000", "21000000") to display text. Over-precise input is cut down, never rounded. */
+/** An OBS decimal string ("0.05000000000000000000", "21000000") to display text. Input beyond 18 places is cut at 18 (the protocol holds no more); rounding to the display precision is done on that. */
 export function displayDecimal(text, opts) {
   if (typeof text !== 'string') return UNAVAILABLE;
   const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text.trim());
   if (!match) return UNAVAILABLE;
-  const fraction = (match[3] ?? '').slice(0, DISPLAY_DECIMALS).padEnd(DISPLAY_DECIMALS, '0');
+  const fraction = (match[3] ?? '').slice(0, PROTOCOL_DECIMALS).padEnd(PROTOCOL_DECIMALS, '0');
   return render(match[1] === '-', BigInt(match[2]), fraction, opts);
 }
 
@@ -454,6 +465,54 @@ export function displayObs(value, opts) {
 export function displayObsWithUnit(value, opts) {
   const text = displayObs(value, opts);
   return text === UNAVAILABLE ? text : `${text} OBS`;
+}
+
+/**
+ * What a screen may say about the Mining Pool, decided from what the node actually returned. Display only.
+ *
+ * The Mining Pool is protocol state (`state.pool.balance`), served by a node as `GET /supply` -> `poolBalanceObs`.
+ * It is NOT the total supply, NOT the amount mined, NOT the node-runner reward pool, NOT the treasury and NOT any
+ * wallet's balance, and nothing here derives it from any of those. It is a recycling pool: gas, slashed bonds and the
+ * parked treasury share flow in, and the next mining claim is paid from it first, so `0` is a normal, genuine
+ * reading whenever fees have already been paid out. That is why a zero is shown as zero ONLY when the node said
+ * zero, and a missing answer is "unavailable", never 0.
+ *
+ *   mismatch    the node answering reports another chain than this interface is for; its figures are not shown
+ *   unavailable the value is missing, malformed, or the node's own supply check does not hold
+ *   ok          `value` is the node's figure (rounded for display), `exact` carries every digit
+ */
+
+export function describeMiningPool(input) {
+  // The node returns OBS decimals with a point (formatObs). Anything else is not a pool balance.
+  const shown = (v, o) => {
+    const t = typeof v === 'string' && v.includes('.') ? displayDecimal(v, o) : UNAVAILABLE;
+    return t === UNAVAILABLE ? t : `${t} OBS`;
+  };
+  const none = (state, reason) => ({
+    state, value: UNAVAILABLE, exact: null, zero: false, reason, lifetimeInflow: null, lifetimeDistributed: null,
+  });
+  const expected = input.expectedChainId;
+  if (expected !== undefined && expected !== null) {
+    const reported = input.status?.chainId;
+    const reportedChain = typeof reported === 'number' ? reported : typeof reported === 'string' && /^\d+$/.test(reported) ? Number(reported) : null;
+    if (reportedChain === null) return none('unavailable', 'The node has not said which network it is on, so its pool figure cannot be trusted for this one.');
+    if (reportedChain !== expected) return none('mismatch', `The node answering is on chain ${reportedChain}, but this is chain ${expected}. Its figures are not shown.`);
+  }
+  const pool = input.supply?.poolBalanceObs;
+  if (shown(pool) === UNAVAILABLE) return none('unavailable', 'The node has not returned the Mining Pool figure.');
+  if (input.supply?.invariantOk === false) return none('unavailable', 'The node reports that its supply check does not hold, so the pool figure is not shown.');
+  const inflow = input.status?.pool?.lifetimeInflow;
+  const distributed = input.status?.pool?.lifetimeDistributed;
+  const text = (v) => (shown(v) === UNAVAILABLE ? null : shown(v));
+  return {
+    state: 'ok',
+    value: shown(pool),
+    exact: shown(pool, EXACT_OBS),
+    zero: shown(pool, EXACT_OBS) === '0 OBS',
+    reason: null,
+    lifetimeInflow: text(inflow),
+    lifetimeDistributed: text(distributed),
+  };
 }
 
 /** A whole-number count (block height, miners, iterations) with commas, exact for any size, same in every locale. */

@@ -21,7 +21,7 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient, ChainError } from '../lib/client.js';
 import type { NodeRewardsResponse, NodeStatusResponse } from '../lib/client.js';
 import { revenueTimingRows } from '../lib/revenue.js';
-import { el, obs, obsUnit, spinner, kv, badge, table, toast } from '../lib/ui.js';
+import { el, obs, obsUnit, amountEl, spinner, kv, badge, table, toast } from '../lib/ui.js';
 import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
@@ -236,7 +236,7 @@ void (async () => {
         ['Treasury share still owed', obs(revenue.split.treasuryUnclaimedObs)],
         ['Pool balance now', obs(revenue.accounts.nodeRunnerPoolObs)],
         ['Bonds held for operators', obs(revenue.accounts.nodeBondsObs)],
-        ['Mining Pool (gas and mining inflows)', obs(revenue.accounts.miningPoolObs)],
+        ['Mining Pool (gas and mining inflows)', amountEl(revenue.accounts.miningPoolObs, { unit: false })],
       ]),
       el('h3', {}, 'When each share is paid'),
       kv(revenueTimingRows(revenue)),

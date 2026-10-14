@@ -20,7 +20,7 @@
  * loading and handlers live in real.mjs.
  */
 
-import { formatTime, arg, displayObsWithUnit, displayInteger, shortenIdentifier } from './data.mjs';
+import { formatTime, arg, displayObsWithUnit, displayInteger, shortenIdentifier, describeMiningPool, EXACT_OBS } from './data.mjs';
 import { identifierHtml, copyButtonHtml } from './identifier.mjs';
 
 export const EXPLORER_TABS = [
@@ -49,6 +49,23 @@ function isoDate(seconds) {
 export function mask(value) {
   const text = String(value ?? '');
   return text ? shortenIdentifier(text, 'address', 'narrow') : '—';
+}
+
+/**
+ * What the Mining Pool figure means, said once under the supply rows. The pool is a recycling pool: fees paid by
+ * payments, names and node registrations flow in, and the next mining claim is paid from it first. So 0 is normal
+ * once the fees have been paid out, and it is only drawn as 0 when the node said 0.
+ */
+function poolNote(pool, esc) {
+  if (pool.state === 'unavailable') {
+    return `<p class="mu" style="font-size:12.5px;margin:8px 0 0">MINING POOL is unavailable: ${esc(pool.reason)}</p>`;
+  }
+  if (pool.state !== 'ok') return '';
+  const lifetime =
+    pool.lifetimeInflow && pool.lifetimeDistributed
+      ? ` Fees received so far: ${esc(pool.lifetimeInflow)}. Paid out to miners so far: ${esc(pool.lifetimeDistributed)}.`
+      : '';
+  return `<p class="mu" style="font-size:12.5px;margin:8px 0 0">MINING POOL holds fees waiting to be paid to the next mining claim${pool.zero ? '; it is 0 because everything received has been paid out' : ''}. It is separate from total supply, mined supply, the node-runner pool, the treasury and any wallet.${lifetime}</p>`;
 }
 
 export function explorerScreen(s, ui) {
@@ -105,6 +122,11 @@ function overview(s, ex, ui) {
   const pot = d?.pot;
   const net = s.network?.network;
   const obs = (v) => esc(orDash(v, displayObsWithUnit));
+  // The Mining Pool comes from the node's own state (`/supply` poolBalanceObs), checked against the chain this app
+  // is for. A missing answer or the wrong chain is shown as such, never as 0 OBS.
+  const pool = describeMiningPool({ expectedChainId: s.appConfig?.chainId, status, supply });
+  const exact = (v) => esc(displayObsWithUnit(v, EXACT_OBS));
+  const withTip = (v, text) => (typeof v === 'string' ? `<span title="Exact: ${exact(v)}">${text}</span>` : text);
 
   return (
     `<div class="lb">CHAIN</div>` +
@@ -135,13 +157,15 @@ function overview(s, ex, ui) {
       )
       .join('')}</div>` +
     `<div class="lb">SUPPLY</div>` +
-    (supply
+    (pool.state === 'mismatch'
+      ? ui.unavailable(pool.reason)
+      : supply
       ? rows([
-          ['TOTAL SUPPLY', obs(supply.totalSupplyObs), 'm'],
+          ['TOTAL SUPPLY', withTip(supply.totalSupplyObs, obs(supply.totalSupplyObs)), 'm'],
           ['MAXIMUM', obs(supply.maxSupplyObs), 'm'],
           ['GENESIS ISSUED', obs(supply.genesisIssuedObs), 'm'],
-          ['MINED', obs(supply.minedSupplyObs), 'm'],
-          ['MINING POOL', obs(supply.poolBalanceObs), 'm'],
+          ['MINED', withTip(supply.minedSupplyObs, obs(supply.minedSupplyObs)), 'm'],
+          ['MINING POOL', pool.state === 'ok' ? `<span title="Exact: ${esc(pool.exact)}">${esc(pool.value)}</span>` : esc(pool.value), 'm'],
           [
             'SUPPLY INVARIANT',
             supply.invariantOk === true && supply.maximumRespected === true ? 'HOLDS' : 'NOT CONFIRMED',
@@ -149,6 +173,7 @@ function overview(s, ex, ui) {
           ],
         ])
       : loading(ex, ui, 'the supply')) +
+    poolNote(pool, esc) +
     `<div class="lb">GENESIS ALLOCATION</div>` +
     (status.genesis
       ? rows([

@@ -17,10 +17,11 @@ import {
   sealsFromObs,
 } from '../web/src/lib/ui.js';
 
-describe('seal counts → OBS', () => {
-  it('formats the launch reward exactly (1e15 seals is 0.001 OBS, not 0)', () => {
+describe('seal counts → OBS (6 decimals, rounded to nearest)', () => {
+  it('formats the launch reward (1e15 seals is 0.001 OBS, not 0)', () => {
     expect(obs('1000000000000000')).toBe('0.001');
-    expect(obs('166666666666666')).toBe('0.000166666666666666');
+    expect(obs('166666666666666')).toBe('0.000167');
+    expect(obs('166666666666666', 18)).toBe('0.000166666666666666');
     expect(obs(1_000_000_000_000_000n)).toBe('0.001');
   });
 
@@ -31,8 +32,8 @@ describe('seal counts → OBS', () => {
     expect(obs(0n)).toBe('0');
   });
 
-  it('formats one seal as the smallest visible amount, never as 0', () => {
-    expect(obs('1')).toBe('0.000000000000000001');
+  it('formats one seal as a visible non-zero amount, never as 0', () => {
+    expect(obs('1')).toBe('<0.000001');
     expect(obs('1', 18)).toBe('0.000000000000000001');
     // a deliberately tight display cap still never turns a real amount into 0
     expect(obs('1', 8)).toBe('<0.00000001');
@@ -42,8 +43,12 @@ describe('seal counts → OBS', () => {
 describe('OBS decimal strings (the node\'s other shape)', () => {
   it('passes exact decimals through without float rounding', () => {
     expect(obs('100000.000000000000000000')).toBe('100,000');
-    expect(obs('100166.666666666666000000')).toBe('100,166.666666666666');
-    expect(obs('0.000166666666666666')).toBe('0.000166666666666666');
+    expect(obs('100166.666666666666000000')).toBe('100,166.666667');
+    expect(obs('100166.666666666666000000', 18)).toBe('100,166.666666666666');
+    expect(obs('99999.820626666666666664')).toBe('99,999.820627');
+    expect(obs('100000.000626666666666664')).toBe('100,000.000627');
+    expect(obs('0.000626666666666664')).toBe('0.000627');
+    expect(obs('0.000166666666666666')).toBe('0.000167');
     expect(obs('0.0002')).toBe('0.0002');
   });
 
@@ -98,11 +103,11 @@ describe('mining schedule fields', () => {
       claimRewardObs: '0.000166666666666666',
     };
     expect(rewardLine(schedule)).toBe('0.001 OBS');
-    expect(rewardPerClaim(schedule)).toBe('0.000166666666666666 OBS');
+    expect(rewardPerClaim(schedule)).toBe('0.000167 OBS');
   });
 
   it('still displays something honest when a node sends only seal counts', () => {
     expect(rewardLine({ dailyRewardSeals: '1000000000000000' })).toBe('0.001 OBS');
-    expect(rewardPerClaim({ claimRewardSeals: '166666666666666' })).toBe('0.000166666666666666 OBS');
+    expect(rewardPerClaim({ claimRewardSeals: '166666666666666' })).toBe('0.000167 OBS');
   });
 });

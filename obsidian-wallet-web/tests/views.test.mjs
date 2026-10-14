@@ -170,8 +170,16 @@ test('the home screen keeps the wallet address reachable by id, short on screen 
   assert.ok(html.includes('>5 <span class="unit">OBS</span>'));
 });
 
-test('a balance made of dust is shown in full, only at a smaller size', () => {
-  const html = V.home(state({ err: '', net: { state: 'ok', name: 'devnet', chainId: 7780, hrp: 'dobs', error: '' }, balance: { state: 'ok', seals: 166666666666666n, error: '' }, hist: { state: 'ok', ids: new Set(), error: '', rows: [] }, tx: undefined }));
-  assert.ok(html.includes('0.000166666666666666 <span class="unit">OBS</span>'));
-  assert.match(html, /class="m balv bl"/);
+test('a balance is shown to 6 decimals with the exact value one hover away; a real amount is never 0', () => {
+  const home = (seals) => V.home(state({ err: '', net: { state: 'ok', name: 'devnet', chainId: 7780, hrp: 'dobs', error: '' }, balance: { state: 'ok', seals, error: '' }, hist: { state: 'ok', ids: new Set(), error: '', rows: [] }, tx: undefined }));
+  const dust = home(166666666666666n);
+  assert.ok(dust.includes('0.000167 <span class="unit">OBS</span>'));
+  assert.ok(dust.includes('title="Exact: 0.000166666666666666 OBS"'), 'the exact balance stays available');
+  assert.match(dust, /class="m balv"/);
+  const big = home(99_999n * 10n ** 18n + 820626666666666664n);
+  assert.ok(big.includes('99,999.820627 <span class="unit">OBS</span>'));
+  assert.ok(big.includes('title="Exact: 99,999.820626666666666664 OBS"'));
+  assert.ok(home(1n).includes('&lt;0.000001 <span class="unit">OBS</span>'), 'one seal is not shown as zero');
+  const long = home(21_000_000n * 10n ** 18n + 123456789012345678n);
+  assert.match(long, /class="m balv bl"/, 'a long figure steps down in size');
 });

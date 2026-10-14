@@ -13,15 +13,30 @@ a node running it. For 1.8.0, 1.8.1 and 1.8.2 that is `1d6cba55f0975f8b0d6345658
 
 ## [Unreleased]
 
-Deployment and display only; **no protocol, consensus, genesis or data change**, and no node restart is needed to ship it.
+Deployment and display only; **no protocol, consensus, genesis or data change**, and no node restart is needed to ship it (the web processes are rebuilt and restarted).
+
+### Changed
+- **Token amounts show at most 6 decimals, rounded to nearest** (`99999.820626666666666664` reads `99,999.820627`,
+  `0.000166666666666666` reads `0.000167`, `12.340000` reads `12.34`). This replaces the earlier
+  show-every-digit rule. Ties round away from zero in exact integer arithmetic; a real amount below the shown precision
+  reads `<0.000001`, never `0`. The exact 18-digit value is kept in a tooltip, and is the display wherever a person
+  authorises an exact movement (send form, fee, review, transaction detail). Raw amounts in calculations, payloads, API
+  responses and storage are unchanged.
+- The interface's `/api/auth/config` also returns `chainId` (additive), so the pages can refuse figures from a node on
+  another chain.
 
 ### Fixed
+- **Mining Pool.** The explorer's Mining Pool row is now decided by one function that shows the node's own
+  `poolBalanceObs`, a genuine `0 OBS` with the reason, or an em dash and the reason when the figure is missing,
+  malformed, from a node whose supply check fails, or from a node on another chain. It is never computed from supply or
+  mined supply, and a claim with no reward in the node's answer is no longer shown as `0`. The pool is a recycling pool
+  (fees in, paid to the next claim first), so `0` is a normal reading; a new end-to-end core test pins that accounting.
 - **Amounts on screen.** The platform's page formatter floored every amount to 8 decimal places, so a real amount below
   0.00000001 OBS (down to a single seal) was shown as `0`, and the 0.000166666666666666 OBS claim reward as `0.00016666`;
   the Web App printed some node values raw (`0.050000000000000000 OBS`, `21000000.000000000000000000 OBS`) and others
-  through a six-place formatter; the wallet printed ungrouped digits. All of them now go through one exact formatter
-  (`obsidian-core/src/protocol/display.ts`, mirrored in `obsidian-app-web/public/data.mjs`): trailing zeros removed,
-  thousands grouped, zero is `0 OBS`, one seal is `0.000000000000000001 OBS`, nothing is scientific notation, and a
+  through a six-place formatter; the wallet printed ungrouped digits. All of them now go through one formatter
+  (`obsidian-core/src/protocol/display.ts`, mirrored in `obsidian-app-web/public/data.mjs`): at most 6 decimals, trailing
+  zeros removed, thousands grouped, zero is `0 OBS`, one seal is `<0.000001 OBS`, nothing is scientific notation, and a
   missing value is an em dash rather than zero. ONS fee `0.05 OBS`, supply cap `21,000,000 OBS`, genesis allocation
   `100,000 OBS`. The platform's mining-schedule table used floating-point arithmetic and now uses the protocol's own
   integer schedule.

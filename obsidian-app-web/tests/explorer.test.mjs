@@ -66,9 +66,9 @@ function clean(html, label) {
 test('there is a section for each thing worth looking at, and each renders real data', () => {
   assert.deepEqual(EXPLORER_TABS.map(([k]) => k), ['overview', 'blocks', 'claims', 'names', 'network']);
   const expected = {
-    overview: [/OBS Devnet/, /#216/, /100,000\.000166666666666666 OBS/, /SUPPLY INVARIANT/, /HOLDS/, /PROOF OF TIME/, /CLAIMED AT HEIGHT/],
+    overview: [/OBS Devnet/, /#216/, /100,000\.000167 OBS/, /SUPPLY INVARIANT/, /HOLDS/, /PROOF OF TIME/, /CLAIMED AT HEIGHT/],
     blocks: [/#82/, /1 TX/],
-    claims: [/ACTIVE MINERS/, /dobs13s4pg…rs0ff0/, /GENESIS ALLOCATION/, /\+0\.000166666666666666/],
+    claims: [/ACTIVE MINERS/, /dobs13s4pg…rs0ff0/, /GENESIS ALLOCATION/, /\+0\.000167/],
     names: [/e2e-test\.obs/, /REGISTER A NAME/, /UNTIL 2027-/],
     network: [/NODES THIS APP READS/, /HEALTHY/, /VALIDATORS/, /NODE RUNNER REWARDS/, /90% nodes/, /Can one server shut down/],
   };
@@ -221,4 +221,69 @@ test('the id a handler receives is exactly the id that was shown, for every legi
   const odd = "it's a name";
   const { calls } = runHandlers(render({ tab: 'names', data: { names: { count: 1, names: [{ ...DATA.names.names[0], name: odd }] } } }));
   assert.ok(calls.some((args) => args.includes(odd)));
+});
+
+// ── the Mining Pool row ──────────────────────────────────────────────────────────────────────────────────────────
+
+const overviewWith = (supply, extra = {}, status = STATUS) =>
+  render({ tab: 'overview', data: { ...DATA, overview: { ...DATA.overview, status, supply } } }, extra);
+const poolRow = (html) => /MINING POOL<\/span><b class="m">([\s\S]*?)<\/b>/.exec(html)?.[1] ?? '';
+const SUPPLY = DATA.overview.supply;
+
+test('mining pool: the figure is the node\'s poolBalanceObs, rounded for display, exact on hover', () => {
+  const html = overviewWith({ ...SUPPLY, poolBalanceObs: '99999.820626666666666664' });
+  const row = poolRow(html);
+  assert.match(row, /99,999\.820627 OBS/);
+  assert.match(row, /title="Exact: 99,999\.820626666666666664 OBS"/);
+});
+
+test('mining pool: it is not read from total supply or mined supply', () => {
+  const html = overviewWith({ ...SUPPLY, poolBalanceObs: '0.000040000000000000', totalSupplyObs: '100000.000626666666666664', minedSupplyObs: '0.000626666666666664' });
+  assert.match(poolRow(html), /0\.00004 OBS/);
+  assert.doesNotMatch(poolRow(html), /100,000|0\.000627/);
+  assert.match(html, /TOTAL SUPPLY<\/span><b class="m"><span[^>]*>100,000\.000627 OBS/);
+  assert.match(html, /MINED<\/span><b class="m"><span[^>]*>0\.000627 OBS/);
+});
+
+test('mining pool: a genuine zero is 0 OBS and the screen says why', () => {
+  const html = overviewWith({ ...SUPPLY, poolBalanceObs: '0.000000000000000000' });
+  assert.match(poolRow(html), /^<span[^>]*>0 OBS<\/span>$/);
+  assert.match(html, /it is 0 because everything received has been paid out/);
+});
+
+test('mining pool: lifetime fees in and out are shown when the node returns them', () => {
+  const status = { ...STATUS, pool: { balance: '0.000000000000000000', lifetimeInflow: '0.000040000000000000', lifetimeDistributed: '0.000040000000000000', settledClaims: 4 } };
+  const html = overviewWith({ ...SUPPLY, poolBalanceObs: '0.000000000000000000' }, {}, status);
+  assert.match(html, /Fees received so far: 0\.00004 OBS\. Paid out to miners so far: 0\.00004 OBS\./);
+});
+
+test('mining pool: a pool below the shown precision is not drawn as zero', () => {
+  assert.match(poolRow(overviewWith({ ...SUPPLY, poolBalanceObs: '0.000000000000000001' })), /&lt;0\.000001 OBS/);
+});
+
+test('mining pool: a missing or malformed figure is unavailable, never 0 OBS', () => {
+  for (const bad of [undefined, null, '', 'abc', '1e-18', 0, '0']) {
+    const html = overviewWith({ ...SUPPLY, poolBalanceObs: bad });
+    const row = poolRow(html);
+    assert.equal(row, '—', `row for ${JSON.stringify(bad)}`);
+    assert.match(html, /MINING POOL is unavailable/);
+    clean(html, `pool ${bad}`);
+  }
+});
+
+test('mining pool: the node\'s own supply check failing withholds the figure', () => {
+  assert.equal(poolRow(overviewWith({ ...SUPPLY, poolBalanceObs: '2.000000000000000000', invariantOk: false })), '—');
+});
+
+test('mining pool: a node on another chain than this app is refused and shows no supply or pool', () => {
+  const html = overviewWith({ ...SUPPLY, poolBalanceObs: '5.000000000000000000' }, { appConfig: { network: 'mainnet', chainId: 7777, addressHrp: 'obs', production: true } });
+  assert.doesNotMatch(html, /MINING POOL<\/span>/);
+  assert.doesNotMatch(html, /TOTAL SUPPLY/);
+  assert.match(html, /chain 7780, but this is chain 7777/);
+});
+
+test('mining pool: the explorer never invents a pool figure', () => {
+  const source = readFileSync(resolve(here, '../public/explorer.mjs'), 'utf8');
+  assert.doesNotMatch(source, /poolBalanceObs\s*\?\?\s*['"0]/, 'no default for a missing pool figure');
+  assert.doesNotMatch(source, /minedSupplyObs[^\n]*poolBalance|totalSupplyObs[^\n]*poolBalance/, 'the pool is never computed from supply or mined');
 });

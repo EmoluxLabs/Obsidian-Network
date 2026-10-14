@@ -16,8 +16,8 @@ import { layout } from '../lib/shell.js';
 import { ObsidianClient } from '../lib/client.js';
 import { MIN_VAULT_PASSPHRASE_LENGTH, Wallet, exportBundle, hrpOfAddress, previewAddress, InsecureContextError, webCryptoAvailable } from '../lib/wallet.js';
 import { operations } from '../lib/operations.js';
-import { displaySeals } from '../../core/protocol/display.js';
-import { el, obsUnit, shortId, kv, spinner, toast, copyButton, download, badge, when } from '../lib/ui.js';
+import { displaySeals, EXACT_OBS } from '../../core/protocol/display.js';
+import { el, amountEl, shortId, kv, spinner, toast, copyButton, download, badge, when } from '../lib/ui.js';
 import { identifier } from '../lib/identifier.js';
 
 const client = new ObsidianClient();
@@ -323,7 +323,7 @@ async function drawDashboard(wallet: Wallet, passphrase: string): Promise<void> 
       const balance = await client.balance(wallet.address);
       balanceBox.replaceChildren(
         el('span', { class: 'balance-label' }, 'Balance (from the chain)'),
-        el('strong', { class: 'balance' }, obsUnit(balance.balanceObs)),
+        el('strong', { class: 'balance' }, amountEl(balance.balanceObs)),
         el('span', { class: 'muted' }, `seals ${balance.balanceSeals} · next nonce ${balance.nonce}`),
       );
       const sendButton = document.getElementById('send-button') as HTMLButtonElement | null;
@@ -396,7 +396,7 @@ function drawSend(wallet: Wallet): HTMLElement {
     try {
       const value = amount.value.trim();
       if (!value || !/^\d*(\.\d*)?$/.test(value)) throw new Error('');
-      quote.textContent = `Gas: ${displaySeals(operationsGas(value))} OBS (0.02%, capped at 0.01 OBS)`;
+      quote.textContent = `Gas: ${displaySeals(operationsGas(value), EXACT_OBS)} OBS (0.02%, capped at 0.01 OBS)`;
     } catch {
       quote.textContent = 'Gas: 0.02% of the amount, capped at 0.01 OBS.';
     }

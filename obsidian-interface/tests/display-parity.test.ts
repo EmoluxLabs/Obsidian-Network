@@ -7,17 +7,23 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { count, obs, obsUnit } from '../web/src/lib/ui.js';
+import { amountEl, count, obs, obsDecimal, obsExact, obsUnit } from '../web/src/lib/ui.js';
 import { copyIdentifier, identifier } from '../web/src/lib/identifier.js';
-import { shortenIdentifier } from '../web/core/protocol/display.js';
+import { describeMiningPool, shortenIdentifier } from '../web/core/protocol/display.js';
 
 const vectors = JSON.parse(readFileSync(resolve(__dirname, '../../tests/vectors/display.json'), 'utf8'));
 
 describe('shared numeric vectors through the interface entry points', () => {
   for (const v of vectors.obs as Array<{ in: string; opts?: { maxDecimals?: number; group?: boolean }; kind?: string; out: string }>) {
-    if (v.kind === 'decimal' || (v.opts && 'group' in v.opts)) continue; // ungrouped output is a core option; the interface always groups
+    if (v.kind === 'decimal' || (v.opts && 'group' in v.opts)) continue; // ungrouped output is a core option; the interface always groups; `decimal` vectors go through obsDecimal below
     it(`obs(${JSON.stringify(v.in)}, ${JSON.stringify(v.opts ?? {})}) → ${v.out}`, () => {
       expect(obs(v.in, v.opts?.maxDecimals)).toBe(v.out);
+    });
+  }
+  for (const v of vectors.obs as Array<{ in: string; opts?: { maxDecimals?: number; group?: boolean }; kind?: string; out: string }>) {
+    if (v.kind !== 'decimal' || (v.opts && 'group' in v.opts)) continue;
+    it(`obsDecimal(${JSON.stringify(v.in)}, ${JSON.stringify(v.opts ?? {})}) → ${v.out}`, () => {
+      expect(obsDecimal(v.in, v.opts?.maxDecimals)).toBe(v.out);
     });
   }
   it('adds the unit, and never prints a unit next to an unavailable value', () => {
@@ -26,7 +32,9 @@ describe('shared numeric vectors through the interface entry points', () => {
     expect(obsUnit('0.050000000000000000')).toBe('0.05 OBS');
     expect(obsUnit('21000000000000000000000000')).toBe('21,000,000 OBS');
     expect(obsUnit('100000.000000000000000000')).toBe('100,000 OBS');
-    expect(obsUnit('1')).toBe('0.000000000000000001 OBS');
+    expect(obsUnit('1')).toBe('<0.000001 OBS');
+    expect(obsUnit('1', 18)).toBe('0.000000000000000001 OBS');
+    expect(obsUnit('99999.820626666666666664')).toBe('99,999.820627 OBS');
     expect(obsUnit(undefined)).toBe('—');
   });
   it('counts with commas and never uses a locale', () => {
@@ -106,4 +114,28 @@ describe('identifier component', () => {
     expect(identifier(undefined).textContent).toBe('—');
     expect(identifier('').textContent).toBe('—');
   });
+});
+
+describe('amount element and exact view', () => {
+  it('shows the 6-decimal text and carries the exact value in the tooltip', () => {
+    const node = amountEl('99999.820626666666666664');
+    expect(node.textContent).toBe('99,999.820627 OBS');
+    expect(node.title).toBe('Exact: 99,999.820626666666666664 OBS');
+    expect(obsExact('166666666666666')).toBe('0.000166666666666666 OBS');
+  });
+  it('has no tooltip when there is nothing more to say, and none for a missing value', () => {
+    expect(amountEl('12.340000000000000000').title).toBe('');
+    expect(amountEl(undefined).textContent).toBe('—');
+    expect(amountEl(undefined).title).toBe('');
+  });
+});
+
+describe('Mining Pool view through the synced core module (shared vectors)', () => {
+  const poolVectors = JSON.parse(readFileSync(resolve(__dirname, '../../tests/vectors/mining-pool.json'), 'utf8'));
+  for (const c of poolVectors.cases as Array<{ name: string; input: Parameters<typeof describeMiningPool>[0]; expect: Record<string, unknown> }>) {
+    it(c.name, () => {
+      const view = describeMiningPool(c.input) as unknown as Record<string, unknown>;
+      for (const [key, want] of Object.entries(c.expect)) expect(view[key], key).toEqual(want);
+    });
+  }
 });

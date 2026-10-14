@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bundle, newWallet } from './helpers.mjs';
 import {
-  esc, parseRecipient, parseAmount, exactObs, maskAddress, shortAddress, classifyHistory, confirmationsAt, nextTxState, isFinalState,
+  esc, parseRecipient, parseAmount, exactObs, shownObs, maskAddress, shortAddress, classifyHistory, confirmationsAt, nextTxState, isFinalState,
   describeSubmitFailure, readBackup, BACKUP_LIMITS, checkNewPassword, normalisePhrase, createIdleLock, unlockDelaySeconds,
   readRecords, writeRecords, sanitiseRecord, SUBMITTED_KEY,
 } from '../public/lib/pure.mjs';
@@ -264,15 +264,30 @@ import { fileURLToPath } from 'node:url';
 
 const vectors = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../tests/vectors/display.json'), 'utf8'));
 
-test('exactObs follows the shared display vectors for every seal-count vector', () => {
+test('shownObs follows the shared display vectors for every seal-count vector', () => {
   let checked = 0;
   for (const v of vectors.obs) {
-    if (v.kind === 'decimal' || v.opts || !/^\d+$/.test(v.in)) continue;
-    assert.equal(exactObs(BigInt(v.in)), v.out, `seals ${v.in}`);
-    assert.equal(exactObs(v.in), v.out, `seals text ${v.in}`);
+    if (v.kind === 'decimal' || v.opts || typeof v.in !== 'string' || !/^\d+$/.test(v.in)) continue;
+    assert.equal(shownObs(BigInt(v.in)), v.out, `seals ${v.in}`);
+    assert.equal(shownObs(v.in), v.out, `seals text ${v.in}`);
     checked += 1;
   }
-  assert.ok(checked >= 5, 'the vectors exercised something');
+  assert.ok(checked >= 8, 'the vectors exercised something');
+});
+
+test('shownObs is the 6-decimal policy; exactObs is the detail view; neither turns a real amount into zero', () => {
+  const seals = 99_999n * OBS + 820626666666666664n;
+  assert.equal(shownObs(seals), '99,999.820627');
+  assert.equal(exactObs(seals), '99,999.820626666666666664');
+  assert.equal(shownObs(166666666666666n), '0.000167');
+  assert.equal(shownObs(626666666666664n), '0.000627');
+  assert.equal(shownObs(100_000n * OBS + 626666666666664n), '100,000.000627');
+  assert.equal(shownObs(100_000n * OBS), '100,000');
+  assert.equal(shownObs(1n), '<0.000001');
+  assert.equal(shownObs(0n), '0');
+  assert.equal(shownObs(null), '—');
+  assert.equal(shownObs(undefined), '—');
+  assert.equal(shownObs('x'), '—');
 });
 
 test('shortAddress is the platform-wide short form; maskAddress stays the node masking that history matching needs', () => {

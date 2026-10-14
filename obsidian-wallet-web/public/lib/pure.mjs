@@ -9,7 +9,7 @@
  * come from the web app's own data module, which is the one the rest of the product already uses.
  */
 
-import { parseObs, displaySeals, shortenIdentifier } from '../js/shared/data.mjs';
+import { parseObs, displaySeals, shortenIdentifier, EXACT_OBS } from '../js/shared/data.mjs';
 
 // ── text ─────────────────────────────────────────────────────────────────────
 
@@ -79,13 +79,22 @@ export function parseRecipient(raw, { hrp, own, readScanned }) {
 // ── amounts ──────────────────────────────────────────────────────────────────
 
 /**
- * OBS text for seals: every digit the protocol holds (18), trailing zeros and a dangling point removed, thousands
- * grouped with commas, never rounded and never `0` for a real amount. The same function the main platform and the
- * Web App use. Display only: it is never read back as a value (amounts are typed, parsed by parseAmount, and sent as
- * seals).
+ * OBS text for seals, for balances and lists: at most 6 decimals, rounded to nearest, trailing zeros and a dangling
+ * point removed, thousands grouped with commas, and `<0.000001` (never `0`) for a real amount below that. The same
+ * function the main platform and the Web App use. Display only: it is never read back as a value (amounts are typed,
+ * parsed by parseAmount, and sent as seals).
+ */
+export function shownObs(seals) {
+  return displaySeals(seals);
+}
+
+/**
+ * OBS text for seals with every digit the protocol holds (18), trailing zeros removed. Used where the person is
+ * authorising or checking an exact movement of value (the send form's available balance and fee, the review, the
+ * transaction detail) and as the tooltip on a rounded amount. Nothing is rounded here.
  */
 export function exactObs(seals) {
-  return displaySeals(seals);
+  return displaySeals(seals, EXACT_OBS);
 }
 
 /**

@@ -11,8 +11,10 @@
 
 import { layout } from '../lib/shell.js';
 import { ObsidianClient, type BlockDetail, type BlockSummary } from '../lib/client.js';
-import { el, obsUnit, count, spinner, toast, kv, badge, table, relativeTime, when } from '../lib/ui.js';
+import { el, obsUnit, amountEl, count, spinner, toast, kv, badge, table, relativeTime, when } from '../lib/ui.js';
 import { identifier } from '../lib/identifier.js';
+import { session } from '../lib/session.js';
+import { describeMiningPool, UNAVAILABLE } from '../../core/protocol/display.js';
 
 const client = new ObsidianClient();
 
@@ -48,7 +50,7 @@ async function boot(): Promise<void> {
 
 async function loadChainStats(): Promise<void> {
   try {
-    const [status, supply, network, audit, pot] = await Promise.all([
+    const [status, supply, network, audit, pot, config] = await Promise.all([
       client.status(),
       client.supply(),
       client.network(),
@@ -57,7 +59,13 @@ async function loadChainStats(): Promise<void> {
       // against it rather than failing the whole panel. A partial answer counts
       // as "unsupported" — see client.proofOfTime().
       client.proofOfTime().catch(() => undefined),
+      // The chain this interface is for. Without it the check below is skipped (the server already refuses nodes on
+      // another chain; this is the second, visible line of defence).
+      session.config().catch(() => undefined),
     ]);
+    // The Mining Pool is the node's own state (`/supply` poolBalanceObs): never inferred from supply or mined, and
+    // never drawn as 0 unless the node said 0. A node on another chain shows no figures.
+    const pool = describeMiningPool({ expectedChainId: config?.chainId ?? undefined, status, supply });
     statsPanel.replaceChildren(
       el('h2', {}, 'Chain'),
       kv([
@@ -83,8 +91,8 @@ async function loadChainStats(): Promise<void> {
             : 'not measurable yet — fewer than two blocks in the window',
         ],
         ['Accumulated PoT weight', pot ? el('span', { class: 'mono' }, pot.cumulativePotWeight) : '—'],
-        ['Supply', `${obsUnit(status.supplyObs)} of ${obsUnit(status.maxSupplyObs)}`],
-        ['Mining pool', obsUnit(supply.poolBalanceObs)],
+        ['Supply', pool.state === 'mismatch' ? UNAVAILABLE : el('span', {}, amountEl(status.supplyObs), ' of ', amountEl(status.maxSupplyObs))],
+        ['Mining pool', pool.state === 'ok' ? el('span', { title: `Exact: ${pool.exact}`, id: 'mining-pool-value' }, pool.value) : el('span', { id: 'mining-pool-value', class: 'muted' }, `${pool.value} — ${pool.reason}`)],
         ['Peers', String(status.peers)],
         ['Last block', `${relativeTime(status.lastBlockTimestamp)} (${when(status.lastBlockTimestamp)})`],
         [
@@ -94,11 +102,27 @@ async function loadChainStats(): Promise<void> {
         ['Genesis allocation', status.genesis ? `${status.genesis.allocationClaimed ? 'claimed' : 'unclaimed'} · ${obsUnit(status.genesis.allocationObs)}` : '—'],
       ]),
       ...(audit ? [decentralisationSummary(audit)] : []),
+      miningPoolNote(pool),
       el('p', { class: 'fineprint' }, 'Every field above is recomputed by each node from the chain. Balances are deliberately absent: the explorer surface never exposes them.'),
     );
   } catch (error) {
     statsPanel.replaceChildren(el('h2', {}, 'Chain'), el('p', { class: 'error' }, (error as Error).message));
   }
+}
+
+/**
+ * What the Mining Pool figure means. The pool is a recycling pool: fees from payments, names and node registrations
+ * flow in, and the next mining claim is paid from it first, so 0 is the normal reading once those fees have been
+ * paid out. It is separate from total supply, mined supply, the node-runner pool, the treasury and any wallet.
+ */
+function miningPoolNote(pool: ReturnType<typeof describeMiningPool>): HTMLElement {
+  if (pool.state !== 'ok') return el('p', { class: 'fineprint', id: 'mining-pool-note' }, `Mining pool unavailable: ${pool.reason}`);
+  const lifetime = pool.lifetimeInflow && pool.lifetimeDistributed ? ` Fees received so far: ${pool.lifetimeInflow}. Paid out to miners so far: ${pool.lifetimeDistributed}.` : '';
+  return el(
+    'p',
+    { class: 'fineprint', id: 'mining-pool-note' },
+    `The Mining Pool holds fees waiting to be paid to the next mining claim${pool.zero ? '; it reads 0 because everything received has been paid out' : ''}. It is separate from total supply, mined supply, the node-runner pool, the treasury and any wallet.${lifetime}`,
+  );
 }
 
 async function loadBlocks(): Promise<void> {

@@ -42,6 +42,8 @@ export interface ChainStatus {
     allocationObs: string;
     claimedAtHeight: number | null;
   };
+  /** The Mining Pool's own accounting, from consensus state (`state.pool`): current balance and lifetime flows. */
+  pool?: { balance: string; lifetimeInflow: string; lifetimeDistributed: string; settledClaims: number };
 }
 
 export interface MiningStatus {

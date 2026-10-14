@@ -402,7 +402,7 @@ async function loadHistory(): Promise<void> {
             ['Claim id', 'Reward', 'Block', 'When', 'Genesis'],
             claims.claims.map((claim) => [
               identifier(String(claim.claimId ?? claim.txId ?? '') || undefined, { kind: 'hash', label: 'Claim id' }),
-              obsUnit(claim.rewardObs ?? claim.reward ?? '0'),
+              obsUnit(claim.rewardObs ?? claim.reward), // a claim the node gave no reward for is unavailable, not 0
               String(claim.height ?? '—'),
               when(Number(claim.timestamp ?? 0)),
               claim.genesisAwarded ? badge('genesis allocation', 'ok') : el('span', { class: 'muted' }, '—'),

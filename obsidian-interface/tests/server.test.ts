@@ -447,6 +447,15 @@ describe('browser origin handling', () => {
     expect(config.genesisInvite.redeemed).toBe(false);
   });
 
+  it('tells the pages which chain this interface is for, so a node on another chain can be refused on screen', async () => {
+    const h = await harness();
+    const config = (await (await fetch(`${h.origin}/api/auth/config`)).json()) as { network: string | null; chainId: number | null };
+    const chains: Record<string, number> = { mainnet: 7777, testnet: 7778, staging: 7779, devnet: 7780 };
+    expect(config.chainId, 'the key is always present').not.toBeUndefined();
+    if (config.network) expect(config.chainId).toBe(chains[config.network]);
+    else expect(config.chainId).toBeNull();
+  });
+
   it('does not send CORS headers to a same-origin caller', async () => {
     const h = await harness();
     const response = await fetch(`${h.origin}/api/auth/config`, { headers: { origin: h.origin } });

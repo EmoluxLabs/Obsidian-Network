@@ -179,7 +179,7 @@ describe('browser pages against a live node', () => {
     expect(stats).toContain(`${status.height}`);
     expect(stats).toContain('21,000,000');                     // hard cap, from /status
     expect(stats).toContain('0.001');                          // daily reward, from /mining/schedule
-    expect(stats).toContain('0.00016666');                     // per-claim reward, exact seals
+    expect(stats).toContain('0.000167');                       // per-claim reward, rounded to 6 decimals
     // The landing page no longer shows any price feed: protocol fees are
     // denominated in OBS, so it shows the actual fee instead of a quote.
     expect(stats).toContain('0.05');
@@ -253,7 +253,7 @@ describe('browser pages against a live node', () => {
 
     const schedule = document.querySelector('#schedule')?.textContent ?? document.body.textContent ?? '';
     expect(schedule).toContain('0.001');                        // reward per day now
-    expect(schedule).toContain('0.00016666');                   // reward per claim now
+    expect(schedule).toContain('0.000167');                     // reward per claim now (6 decimals)
     expect(schedule).toContain('0.5% per 100,000 active miners');
     expect(schedule).toContain('0.0002 OBS/day');               // hard floor
     expect(schedule).not.toContain('undefined');
