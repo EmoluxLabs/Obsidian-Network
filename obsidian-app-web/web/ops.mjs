@@ -405,21 +405,75 @@ export async function submitNameUpdate(deps, { name, address: target }) {
   });
 }
 
-/** Give a name this wallet owns to another address. */
+/**
+ * Offer a name this wallet owns to another address (protocol 1.9.0). Nothing changes hands: the recipient must accept
+ * (`submitNameTransferAccept`) within seven days, and the owner can withdraw the offer until then.
+ */
 export async function submitNameTransfer(deps, { name, to }) {
+  return ownershipOperation(deps, name, OnsOp.TRANSFER, { to }, (record, address) =>
+    record.owner === address ? null : ['NAME_NOT_OWNED', `only the owner may offer ${name}`],
+  );
+}
+
+/** Take a name that was offered to this wallet. */
+export async function submitNameTransferAccept(deps, { name }) {
+  return ownershipOperation(deps, name, OnsOp.ACCEPT_TRANSFER, {}, (record, address) =>
+    record.pendingTransfer?.to === address ? null : ['NO_OFFER', `${name} has not been offered to this wallet`],
+  );
+}
+
+/** Withdraw an open offer (owner only). */
+export async function submitNameTransferCancel(deps, { name }) {
+  return ownershipOperation(deps, name, OnsOp.CANCEL_TRANSFER, {}, (record, address) =>
+    record.owner !== address ? ['NAME_NOT_OWNED', `only the owner may withdraw an offer on ${name}`] : record.pendingTransfer ? null : ['NO_OFFER', `${name} has no open offer`],
+  );
+}
+
+/** Set (or clear, with an empty address) the recovery address of a name this wallet owns. */
+export async function submitNameRecoverySet(deps, { name, address: recovery }) {
+  return ownershipOperation(deps, name, OnsOp.SET_RECOVERY, { address: recovery ?? '' }, (record, address) =>
+    record.owner === address ? null : ['NAME_NOT_OWNED', `only the owner may set the recovery address of ${name}`],
+  );
+}
+
+/** Signed by the recovery address: propose a new owner. It takes effect only after the recovery delay. */
+export async function submitNameRecoveryStart(deps, { name, newOwner }) {
+  return ownershipOperation(deps, name, OnsOp.START_RECOVERY, { address: newOwner }, (record, address) =>
+    record.recoveryAddress === address ? null : ['NOT_RECOVERY_ADDRESS', `this wallet is not the recovery address of ${name}`],
+  );
+}
+
+/** The current owner cancels a recovery in flight. */
+export async function submitNameRecoveryCancel(deps, { name }) {
+  return ownershipOperation(deps, name, OnsOp.CANCEL_RECOVERY, {}, (record, address) =>
+    record.owner !== address ? ['NAME_NOT_OWNED', `only the owner may cancel a recovery of ${name}`] : record.pendingRecovery ? null : ['NO_RECOVERY', `${name} has no recovery in flight`],
+  );
+}
+
+/** Complete a recovery once its delay has passed (the recovery address or the new owner). */
+export async function submitNameRecoveryFinalize(deps, { name }) {
+  return ownershipOperation(deps, name, OnsOp.FINALIZE_RECOVERY, {}, (record, address) => {
+    const recovery = record.pendingRecovery;
+    if (!recovery) return ['NO_RECOVERY', `${name} has no recovery in flight`];
+    return recovery.by === address || recovery.newAddress === address ? null : ['UNAUTHORIZED', 'only the recovery address or the new owner may complete it'];
+  });
+}
+
+/**
+ * One zero-gas ONS ownership operation. The pre-check reads the on-chain record so the user gets a plain refusal
+ * instead of a rejected transaction; consensus makes the same checks again and is the only authority.
+ */
+async function ownershipOperation(deps, name, op, fields, check) {
   return runOperation(deps, {
-    async prepare(address, ctx) {
+    async prepare(address) {
       const record = await deps.getName?.(name).catch(() => null);
       if (!record) return refusal('NAME_NOT_FOUND', `${name} is not registered`);
-      if (record.owner !== address) return refusal('NAME_NOT_OWNED', `only the owner may transfer ${name}`);
+      const problem = check(record, address);
+      if (problem) return refusal(problem[0], problem[1]);
       return { ok: true };
     },
     build() {
-      return {
-        type: TxType.ONS,
-        gas: 0n,
-        body: buildOnsBody({ op: OnsOp.TRANSFER, name: stripSuffix(name), to, fee: 0n }),
-      };
+      return { type: TxType.ONS, gas: 0n, body: buildOnsBody({ op, name: stripSuffix(name), fee: 0n, ...fields }) };
     },
   });
 }

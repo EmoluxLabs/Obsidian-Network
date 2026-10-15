@@ -279,7 +279,8 @@ function network(s, ex, ui) {
   const d = ex.data.network;
   if (!d) return loading(ex, ui, 'the network state');
   const nodes = d.nodes?.nodes ?? [];
-  const validators = d.validators;
+  const producers = d.producers;
+  const finality = d.finality;
   const rewards = d.rewards;
   const audit = d.audit?.questions ?? [];
   return (
@@ -299,13 +300,24 @@ function network(s, ex, ui) {
           ? `<div class="err">The nodes disagree about the genesis block. Do not sign anything until that is resolved.</div>`
           : '')
       : ui.unavailable('No node is configured for this app.')) +
-    `<div class="lb">VALIDATORS</div>` +
-    (validators
+    `<div class="lb">BLOCK PRODUCERS</div>` +
+    (producers
       ? rows([
-          ['REGISTERED', esc(orDash(validators.count)), 'm'],
-          ['ROTATION', esc(orDash(validators.rotation)), 'm'],
+          ['SCHEDULE', esc(orDash(producers.tier)), 'm'],
+          ['ELIGIBLE NOW', esc(orDash(producers.eligible)), 'm'],
+          ['REGISTERED NODES', esc(orDash(producers.registered)), 'm'],
+          ['BANNED', esc(orDash(producers.banned)), 'm'],
+          ['RULE', esc(orDash(producers.rule)), 'm'],
         ])
-      : loading(ex, ui, 'validators')) +
+      : loading(ex, ui, 'the producer schedule')) +
+    `<div class="lb">FINALITY</div>` +
+    (finality
+      ? rows([
+          ['FINALIZED HEIGHT', esc(orDash(finality.finalizedHeight)), 'm'],
+          ['BLOCKS BEHIND HEAD', esc(orDash(finality.lag)), 'm'],
+          ['STATUS', esc(orDash(finality.reason)), ''],
+        ])
+      : loading(ex, ui, 'finality')) +
     `<div class="lb">MEMPOOL</div>` +
     (d.mempool
       ? rows([

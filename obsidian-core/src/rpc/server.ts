@@ -1412,6 +1412,11 @@ export class RpcServer {
       registeredAtHeight: record.registeredAtHeight,
       expiresAt: record.expiresAt,
       transferCount: record.transferCount,
+      // Ownership state (protocol 1.9.0). Public chain data: a recipient needs to see an offer made to it, and the
+      // owner needs to see a recovery somebody started, before the delay runs out.
+      pendingTransfer: record.pendingTransfer ?? null,
+      recoveryAddress: record.recoveryAddress ?? null,
+      pendingRecovery: record.pendingRecovery ?? null,
       resolved: true,
     });
   }

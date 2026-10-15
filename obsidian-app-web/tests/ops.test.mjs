@@ -35,6 +35,13 @@ const {
   submitNameRegistration,
   submitNameRenewal,
   submitNameUpdate,
+  submitNameTransfer,
+  submitNameTransferAccept,
+  submitNameTransferCancel,
+  submitNameRecoverySet,
+  submitNameRecoveryStart,
+  submitNameRecoveryCancel,
+  submitNameRecoveryFinalize,
 } = await import('../web/ops.mjs');
 const { decodeMiningBody } = await import(
   '../../obsidian-interface/web/core/transactions/executors/mining.js'
@@ -75,7 +82,7 @@ function fakeNode(overrides = {}) {
     requestPassphrase: async () => PASSPHRASE,
     getContext: async () => ({
       chainId: 7777,
-      protocolVersion: '1.8.0',
+      protocolVersion: '1.9.0',
       protocolTime: 1_700_000_000,
     }),
     getNonce: async () => 7,
@@ -365,6 +372,60 @@ test('only the owner may renew or repoint a name', async () => {
   assert.equal(decodeSent(mine.sent[0].hex).gas, 0n);
 });
 
+// ── name ownership (protocol 1.9.0) ──────────────────────────────────────────
+
+const OTHER = 'obs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqmqlz4m';
+
+test('an offer needs the owner; acceptance needs the wallet the offer names; both are free of gas', async () => {
+  const foreign = fakeNode({ getName: async () => ({ name: 'mine', owner: OTHER, expiresAt: 9_999_999_999 }) });
+  assert.equal((await submitNameTransfer(foreign, { name: 'mine.obs', to: ADDRESS })).reason, 'NAME_NOT_OWNED');
+  assert.equal((await submitNameTransferAccept(foreign, { name: 'mine.obs' })).reason, 'NO_OFFER');
+  assert.equal(foreign.sent.length, 0);
+
+  const mine = fakeNode({ getName: async () => ({ name: 'mine', owner: ADDRESS, expiresAt: 9_999_999_999 }) });
+  const offered = await submitNameTransfer(mine, { name: 'mine.obs', to: OTHER });
+  assert.equal(offered.ok, true, offered.message);
+  const offer = decodeSent(mine.sent[0].hex);
+  assert.equal(offer.gas, 0n);
+  assert.equal(decodeOnsBody(offer.body).op, OnsOp.TRANSFER);
+  assert.equal(decodeOnsBody(offer.body).to, OTHER);
+
+  const recipient = fakeNode({
+    getName: async () => ({ name: 'mine', owner: OTHER, pendingTransfer: { to: ADDRESS }, expiresAt: 9_999_999_999 }),
+  });
+  const accepted = await submitNameTransferAccept(recipient, { name: 'mine.obs' });
+  assert.equal(accepted.ok, true, accepted.message);
+  assert.equal(decodeOnsBody(decodeSent(recipient.sent[0].hex).body).op, OnsOp.ACCEPT_TRANSFER);
+});
+
+test('an offer can be withdrawn only by the owner, and only while one is open', async () => {
+  const noOffer = fakeNode({ getName: async () => ({ name: 'mine', owner: ADDRESS, expiresAt: 9_999_999_999 }) });
+  assert.equal((await submitNameTransferCancel(noOffer, { name: 'mine.obs' })).reason, 'NO_OFFER');
+  const open = fakeNode({ getName: async () => ({ name: 'mine', owner: ADDRESS, pendingTransfer: { to: OTHER }, expiresAt: 9_999_999_999 }) });
+  assert.equal((await submitNameTransferCancel(open, { name: 'mine.obs' })).ok, true);
+  assert.equal(decodeOnsBody(decodeSent(open.sent[0].hex).body).op, OnsOp.CANCEL_TRANSFER);
+});
+
+test('recovery: the owner sets the address, only that address starts it, the owner can cancel it', async () => {
+  const owner = fakeNode({ getName: async () => ({ name: 'mine', owner: ADDRESS, recoveryAddress: OTHER, expiresAt: 9_999_999_999 }) });
+  assert.equal((await submitNameRecoverySet(owner, { name: 'mine.obs', address: OTHER })).ok, true);
+  assert.equal(decodeOnsBody(decodeSent(owner.sent[0].hex).body).op, OnsOp.SET_RECOVERY);
+  assert.equal((await submitNameRecoveryStart(owner, { name: 'mine.obs', newOwner: ADDRESS })).reason, 'NOT_RECOVERY_ADDRESS');
+
+  const recovery = fakeNode({ getName: async () => ({ name: 'mine', owner: OTHER, recoveryAddress: ADDRESS, expiresAt: 9_999_999_999 }) });
+  assert.equal((await submitNameRecoveryStart(recovery, { name: 'mine.obs', newOwner: ADDRESS })).ok, true);
+  const started = decodeOnsBody(decodeSent(recovery.sent[0].hex).body);
+  assert.equal(started.op, OnsOp.START_RECOVERY);
+  assert.equal(started.address, ADDRESS);
+
+  const inFlight = fakeNode({
+    getName: async () => ({ name: 'mine', owner: ADDRESS, pendingRecovery: { by: OTHER, newAddress: OTHER, effectiveAt: 1 }, expiresAt: 9_999_999_999 }),
+  });
+  assert.equal((await submitNameRecoveryCancel(inFlight, { name: 'mine.obs' })).ok, true);
+  // A wallet that is neither the recovery address nor the new owner cannot finish it.
+  assert.equal((await submitNameRecoveryFinalize(inFlight, { name: 'mine.obs' })).reason, 'UNAUTHORIZED');
+});
+
 test('no operation leaks the phrase into its return value', async () => {
   const node = fakeNode();
   const result = await submitClaim(node);
@@ -380,7 +441,7 @@ test('the sender address is derived under the node’s prefix, not the mainnet d
     getContext: async () => ({
       chainId: 7780,
       addressHrp: 'dobs',
-      protocolVersion: '1.8.0',
+      protocolVersion: '1.9.0',
       protocolTime: 1_700_000_000,
     }),
   });

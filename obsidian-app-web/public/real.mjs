@@ -57,7 +57,8 @@ import {
   getBlocks,
   getPot,
   getSupply,
-  getValidators,
+  getProducers,
+  getFinality,
   getMempool,
   getAudit,
   getNodeRewards,
@@ -399,14 +400,15 @@ async function loadExplorer({ quiet = false } = {}) {
   } else if (tab === 'names') {
     data = await ask(getNames('', 25));
   } else if (tab === 'network') {
-    const [nodes, validators, mempool, rewards, audit] = await Promise.all([
+    const [nodes, producers, finality, mempool, rewards, audit] = await Promise.all([
       ask(getNodes()),
-      ask(getValidators()),
+      ask(getProducers()),
+      ask(getFinality()),
       ask(getMempool()),
       ask(getNodeRewards()),
       ask(getAudit('decentralization')),
     ]);
-    data = nodes || validators || mempool || rewards || audit ? { nodes, validators, mempool, rewards, audit } : null;
+    data = nodes || producers || finality || mempool || rewards || audit ? { nodes, producers, finality, mempool, rewards, audit } : null;
   }
   if (state.ex !== ex || ex.tab !== tab) return;
   ex.loading = false;

@@ -29,7 +29,7 @@ const BLOCK = '37df46cdc9122699d208a14c08281a7592bd89f701aa4b901a5929148b656f44'
 
 const STATUS = {
   height: 216, headHash: 'ba'.repeat(32), genesisId: '1e7ca102f6720a7682e9a396958f2a17330dc001', chainId: 7780,
-  protocolVersion: '1.8.0', paramsHash: '1d6cba55f0975f8b0d6345658f1c1cb1', peers: 0, lastBlockTimestamp: 1791542032,
+  protocolVersion: '1.9.0', paramsHash: '1d6cba55f0975f8b0d6345658f1c1cb1', peers: 0, lastBlockTimestamp: 1791542032,
   finalizedHeight: 0, mempool: { transactions: 0, bytes: 0 },
   genesis: { allocationClaimed: true, allocationObs: '100000.000000000000000000', claimedAtHeight: 82 },
 };
@@ -48,7 +48,8 @@ const DATA = {
   names: { count: 1, names: [{ name: 'e2e-test.obs', owner: 'dobs13s4pg…rs0ff0', address: FULL, expiresAt: 1823076674, registeredAtHeight: 96 }] },
   network: {
     nodes: { nodes: [{ url: 'http://127.0.0.1:38630', healthy: true, height: 216, latencyMs: 2, wrongNetwork: false }], genesisMismatch: false },
-    validators: { count: 0, rotation: 'proposer(height, round) = activeValidators[(height + round) mod count]' },
+    producers: { tier: 'TIER2', eligible: 3, registered: 3, banned: 0, rule: 'producer(height, round) = eligibleProducers[(height + round) mod count], sorted by address' },
+    finality: { available: true, finalizedHeight: 184, lag: 32, reason: 'finality advances when two thirds of the established producers have built on a block' },
     mempool: { size: 0, bytes: 0 },
     rewards: { split: { nodePoolBps: 9000, treasuryBps: 1000 }, pool: { balanceObs: '0.045', lifetimeDistributedObs: '0', nextSettlementAt: 1791590400 } },
     audit: { questions: [{ question: 'Can one server shut down the blockchain?', answer: 'NO', evidence: 'Any number of independent nodes store the chain.' }] },
@@ -70,7 +71,7 @@ test('there is a section for each thing worth looking at, and each renders real 
     blocks: [/#82/, /1 TX/],
     claims: [/ACTIVE MINERS/, /dobs13s4pg…rs0ff0/, /GENESIS ALLOCATION/, /\+0\.000167/],
     names: [/e2e-test\.obs/, /REGISTER A NAME/, /UNTIL 2027-/],
-    network: [/NODES THIS APP READS/, /HEALTHY/, /VALIDATORS/, /NODE RUNNER REWARDS/, /90% nodes/, /Can one server shut down/],
+    network: [/NODES THIS APP READS/, /HEALTHY/, /BLOCK PRODUCERS/, /FINALITY/, /FINALIZED HEIGHT/, /NODE RUNNER REWARDS/, /90% nodes/, /Can one server shut down/],
   };
   for (const [tab, patterns] of Object.entries(expected)) {
     const html = render({ tab });

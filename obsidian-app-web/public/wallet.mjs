@@ -341,6 +341,13 @@ export const send = (input, requestPassphrase) => run('submitPayment', requestPa
 export const registerName = (input, requestPassphrase) => run('submitNameRegistration', requestPassphrase, input);
 export const renewName = (input, requestPassphrase) => run('submitNameRenewal', requestPassphrase, input);
 export const updateNameAddress = (input, requestPassphrase) => run('submitNameUpdate', requestPassphrase, input);
+/** Offer a name to another wallet. The recipient must accept; nothing moves until then (protocol 1.9.0). */
 export const transferName = (input, requestPassphrase) => run('submitNameTransfer', requestPassphrase, input);
+export const acceptNameTransfer = (input, requestPassphrase) => run('submitNameTransferAccept', requestPassphrase, input);
+export const cancelNameTransfer = (input, requestPassphrase) => run('submitNameTransferCancel', requestPassphrase, input);
+export const setNameRecovery = (input, requestPassphrase) => run('submitNameRecoverySet', requestPassphrase, input);
+export const startNameRecovery = (input, requestPassphrase) => run('submitNameRecoveryStart', requestPassphrase, input);
+export const cancelNameRecovery = (input, requestPassphrase) => run('submitNameRecoveryCancel', requestPassphrase, input);
+export const finalizeNameRecovery = (input, requestPassphrase) => run('submitNameRecoveryFinalize', requestPassphrase, input);
 
 export { BUNDLE_URL, ADDRESS_KEY };

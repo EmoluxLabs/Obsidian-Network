@@ -39,6 +39,12 @@ export {
   submitNameRenewal,
   submitNameUpdate,
   submitNameTransfer,
+  submitNameTransferAccept,
+  submitNameTransferCancel,
+  submitNameRecoverySet,
+  submitNameRecoveryStart,
+  submitNameRecoveryCancel,
+  submitNameRecoveryFinalize,
   VALIDITY_SECONDS,
 } from './ops.mjs';
 

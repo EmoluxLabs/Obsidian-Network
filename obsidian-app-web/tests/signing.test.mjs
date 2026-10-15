@@ -44,7 +44,7 @@ function wallet() {
 
 function unsignedFor(address, chainId, extra = {}) {
   return {
-    protocolVersion: '1.8.0',
+    protocolVersion: '1.9.0',
     chainId,
     sender: address,
     nonce: 0,

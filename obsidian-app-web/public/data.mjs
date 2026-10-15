@@ -253,7 +253,10 @@ export const getMiningClaims = (miner, limit = 20) =>
 
 /** Proof of Time state: difficulty, time-rate, the authoritative clock. */
 export const getPot = () => read('/pot');
-export const getValidators = () => read('/validators');
+/** The deterministic producer schedule: which tier is active and how many registered nodes are eligible. */
+export const getProducers = () => read('/producers');
+/** The consensus-derived finalized checkpoint. Read from chain state; never a local timer. */
+export const getFinality = () => read('/finality');
 export const getMempool = () => read('/mempool');
 /** The node's answers to "can anyone shut this down / mint / censor", with evidence. */
 export const getAudit = (kind) => read(`/audit/${encodeURIComponent(kind)}`);
@@ -449,7 +452,7 @@ export function displayObsWithUnit(value, opts) {
  *
  * The Mining Pool is protocol state (`state.pool.balance`), served by a node as `GET /supply` -> `poolBalanceObs`.
  * It is NOT the total supply, NOT the amount mined, NOT the node-runner reward pool, NOT the treasury and NOT any
- * wallet's balance, and nothing here derives it from any of those. It is a recycling pool: gas, slashed bonds and the
+ * wallet's balance, and nothing here derives it from any of those. It is a recycling pool: gas and the
  * parked treasury share flow in, and the next mining claim is paid from it first, so `0` is a normal, genuine
  * reading whenever fees have already been paid out. That is why a zero is shown as zero ONLY when the node said
  * zero, and a missing answer is "unavailable", never 0.

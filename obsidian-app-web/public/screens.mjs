@@ -197,7 +197,8 @@ export const API_READS = [
   ['/mining/schedule', 'MINING'],
   ['/mining/claims?limit=3', 'CLAIMS'],
   ['/names?limit=3', 'NAMES'],
-  ['/validators', 'VALIDATORS'],
+  ['/producers', 'PRODUCERS'],
+  ['/finality', 'FINALITY'],
   ['/mempool', 'MEMPOOL'],
   ['/nodes/rewards', 'REWARDS'],
 ];
