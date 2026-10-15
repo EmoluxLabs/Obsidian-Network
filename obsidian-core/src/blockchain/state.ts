@@ -4,7 +4,7 @@
  * INVARIANTS ENFORCED HERE (and re-checked after every block):
  *   1. metrics.totalSupply <= 21,000,000 OBS at all times.
  *   2. totalSupply equals the sum of every account balance plus the Mining Pool
- *      balance plus validator and node-runner bonds held by the protocol.
+ *      balance plus the protocol-held pools.
  *   3. Only two issuance sources exist: GENESIS_ALLOCATION and MINING_REWARD.
  *      No other code path may increase totalSupply.
  *   4. genesis.allocationClaimed may transition false -> true exactly once.
@@ -17,6 +17,7 @@ import { ErrCode, reject } from '../protocol/errors.js';
 import type {
   Account,
   GenesisState,
+  FinalityState,
   Metrics,
   MiningPoolState,
   NodeEvidenceRecord,
@@ -27,9 +28,7 @@ import type {
   OnsRecord,
   OracleState,
   ProtocolEvent,
-  SlashRecord,
   StateSnapshot,
-  ValidatorState,
 } from '../protocol/types.js';
 import { MAX_SUPPLY_SEALS } from '../protocol/amount.js';
 import { assertSplitInvariant, splitOnsRevenue, type RevenueSource } from '../economy/accounting.js';
@@ -52,7 +51,6 @@ export function emptyGenesisState(): GenesisState {
     recipient: '',
     treasuryWallet: '',
     amount: CONSENSUS_PARAMS.genesisAllocation,
-    bootstrapValidatorKeys: [],
     miningGateKeys: [],
     gateKeysActive: [],
     gateKeysRevoked: [],
@@ -111,8 +109,6 @@ export function emptyMetrics(): Metrics {
     totalOnsRunnerShare: 0n,
     totalOnsTreasuryShare: 0n,
     totalNodeRewardsPaid: 0n,
-    totalSlashedToPool: 0n,
-    totalSlashes: 0,
     registeredNodes: 0,
     totalNamesRegistered: 0,
   };
@@ -130,16 +126,6 @@ export interface MutableState {
   pool: MiningPoolState;
   metrics: Metrics;
   recentClaimIds: Map<string, number>;
-  validators: Set<string>;
-  /**
-   * Has this chain ever accepted a valid validator registration?
-   *
-   * Consensus state, committed in the state root. False only before the first
-   * successful VALIDATOR_REGISTER (bootstrap mode, where any node may propose so
-   * that a first validator can arrive); true for ever after it, so an empty
-   * active set means the chain halts rather than opening production to any key.
-   */
-  validatorModeEstablished: boolean;
   /** Registered node runners, keyed by nodeId (lexicographic iteration). */
   nodes: Map<string, NodeRecord>;
   /** Per-period evidence, keyed `${period}:${nodeId}`. */
@@ -148,8 +134,10 @@ export interface MutableState {
   nodeWallets: Map<string, string>;
   /** Node Runner Reward Pool plus platform-revenue accounting. */
   nodeRewards: NodeRewardPoolState;
-  /** Applied slashes, keyed by evidence id. Consensus state, committed in the root. */
-  slashes: Map<string, SlashRecord>;
+  /** Derived finality (committed in the state root). */
+  finality: FinalityState;
+  /** Derived index, not committed: producer address → nodeId. */
+  nodeProducers: Map<string, string>;
 }
 
 export interface ApplyContext {
@@ -166,15 +154,6 @@ export interface StateDelta {
   value?: string | number | boolean | null;
   reason: string;
 }
-
-/**
- * The jail predicates live in `protocol/params.ts`, beside the parameter they
- * interpret, so that the browser-safe validator executor can use the same rule
- * the chain does without reaching into node-only state code. Re-exported here
- * because this is where world state answers "is this validator active".
- */
-export { jailEndsAt, jailIsOver } from '../protocol/params.js';
-import { jailIsOver } from '../protocol/params.js';
 
 export class WorldState {
   readonly s: MutableState;
@@ -203,13 +182,12 @@ export class WorldState {
       pool: emptyPoolState(),
       metrics: emptyMetrics(),
       recentClaimIds: new Map(),
-      validators: new Set(),
-      validatorModeEstablished: false,
       nodes: new Map(),
       nodeEvidence: new Map(),
       nodeWallets: new Map(),
       nodeRewards: emptyNodeRewardPool(),
-      slashes: new Map(),
+      finality: { finalizedHeight: 0, finalizedHash: '', recent: [] },
+      nodeProducers: new Map(),
     };
   }
 
@@ -230,7 +208,6 @@ export class WorldState {
       accounts: Object.fromEntries([...this.s.accounts.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
       genesis: {
         ...this.s.genesis,
-        bootstrapValidatorKeys: [...this.s.genesis.bootstrapValidatorKeys],
         miningGateKeys: [...this.s.genesis.miningGateKeys],
         gateKeysActive: [...this.s.genesis.gateKeysActive],
         gateKeysRevoked: [...this.s.genesis.gateKeysRevoked],
@@ -241,10 +218,13 @@ export class WorldState {
       pool: { ...this.s.pool, recentDistributions: this.s.pool.recentDistributions.map((c) => ({ ...c })) },
       metrics: { ...this.s.metrics },
       recentClaimIds: { ...Object.fromEntries(this.s.recentClaimIds) },
-      validators: [...this.s.validators].sort(),
-      validatorModeEstablished: this.s.validatorModeEstablished,
       nodes: Object.fromEntries([...this.s.nodes.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
       nodeEvidence: Object.fromEntries([...this.s.nodeEvidence.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
+      finality: {
+        finalizedHeight: this.s.finality.finalizedHeight,
+        finalizedHash: this.s.finality.finalizedHash,
+        recent: this.s.finality.recent.map((entry) => ({ ...entry })),
+      },
       nodeRewards: {
         ...this.s.nodeRewards,
         recentSettlements: this.s.nodeRewards.recentSettlements.map((settlement: NodeRewardSettlement) => ({
@@ -253,7 +233,6 @@ export class WorldState {
         })),
         revenueBySource: this.s.nodeRewards.revenueBySource.map((entry: { source: string; total: bigint }) => ({ ...entry })),
       },
-      slashes: Object.fromEntries([...this.s.slashes.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([id, record]) => [id, { ...record }])),
     };
   }
 
@@ -265,7 +244,7 @@ export class WorldState {
       snapshot.protocolVersion,
     );
     for (const [k, v] of Object.entries(snapshot.accounts)) s.accounts.set(k, cloneAccount(v));
-    // Fail closed, like the validator-mode indicator below: a snapshot without the gate keys is from a build
+    // Fail closed: a snapshot without the gate keys is from a build
     // that predates the gate, and silently reading it as "no keys" would hide that it is the wrong format.
     if (!Array.isArray(snapshot.genesis.miningGateKeys)) {
       throw new Error(
@@ -285,35 +264,43 @@ export class WorldState {
     }
     s.genesis = {
       ...snapshot.genesis,
-      bootstrapValidatorKeys: [...(snapshot.genesis.bootstrapValidatorKeys ?? [])],
       miningGateKeys: [...snapshot.genesis.miningGateKeys],
       gateKeysActive: [...snapshot.genesis.gateKeysActive],
       gateKeysRevoked: [...snapshot.genesis.gateKeysRevoked],
       gateEpoch: snapshot.genesis.gateEpoch,
     };
-    for (const [k, v] of Object.entries(snapshot.names)) s.names.set(k, { ...v });
+    for (const [k, v] of Object.entries(snapshot.names)) {
+      s.names.set(k, {
+        ...v,
+        pendingTransfer: v.pendingTransfer ? { ...v.pendingTransfer } : undefined,
+        pendingRecovery: v.pendingRecovery ? { ...v.pendingRecovery } : undefined,
+      });
+    }
     s.oracle = { ...snapshot.oracle, observations: { ...snapshot.oracle.observations } };
     s.pool = { ...snapshot.pool, recentDistributions: snapshot.pool.recentDistributions.map((c) => ({ ...c })) };
     s.metrics = { ...snapshot.metrics };
     s.recentClaimIds = new Map(Object.entries(snapshot.recentClaimIds));
-    s.validators = new Set(snapshot.validators);
-    // Fail closed. A snapshot that does not say which mode the chain is in is
-    // from a build that predates the indicator, and reading it as "bootstrap"
-    // would hand an established chain back to permissionless production. The
-    // snapshot version check in storage already refuses it; this makes the
-    // state itself refuse it too, so no code path can bypass that check.
-    if (typeof snapshot.validatorModeEstablished !== 'boolean') {
+    for (const [k, v] of Object.entries(snapshot.nodes ?? {})) {
+      s.nodes.set(k, { ...v, lifetimeReward: BigInt(v.lifetimeReward), settledPeriods: [...(v.settledPeriods ?? [])] });
+      // Only a live node holds wallets: a deregistered or banned node released them, and a restart must not take
+      // them back (the live state and the reloaded state have to agree on who may bind an address).
+      if (v.deregisteredAtHeight === undefined && v.bannedAtHeight === undefined) {
+        if (v.rewardWallet) s.nodeWallets.set(v.rewardWallet, k);
+        if (v.pendingWallet) s.nodeWallets.set(v.pendingWallet, k);
+      }
+      s.nodeProducers.set(v.producerAddress, k);
+    }
+    if (!snapshot.finality || !Number.isSafeInteger(snapshot.finality.finalizedHeight) || !Array.isArray(snapshot.finality.recent)) {
       throw new Error(
-        `state snapshot is missing validatorModeEstablished (format ${snapshot.snapshotVersion ?? 'unknown'}); ` +
+        `state snapshot is missing the finality state (format ${snapshot.snapshotVersion ?? 'unknown'}); ` +
           `this build requires snapshot format ${STATE_SNAPSHOT_VERSION}`,
       );
     }
-    s.validatorModeEstablished = snapshot.validatorModeEstablished;
-    for (const [k, v] of Object.entries(snapshot.nodes ?? {})) {
-      s.nodes.set(k, { ...v, lifetimeReward: BigInt(v.lifetimeReward), settledPeriods: [...(v.settledPeriods ?? [])] });
-      s.nodeWallets.set(v.rewardWallet, k);
-      if (v.pendingWallet) s.nodeWallets.set(v.pendingWallet, k);
-    }
+    s.finality = {
+      finalizedHeight: snapshot.finality.finalizedHeight,
+      finalizedHash: snapshot.finality.finalizedHash,
+      recent: snapshot.finality.recent.map((entry) => ({ ...entry })),
+    };
     for (const [k, v] of Object.entries(snapshot.nodeEvidence ?? {})) {
       s.nodeEvidence.set(k, {
         ...v,
@@ -338,14 +325,6 @@ export class WorldState {
           total: BigInt(entry.total),
         })),
       };
-    }
-    for (const [id, record] of Object.entries(snapshot.slashes ?? {})) {
-      s.slashes.set(id, {
-        ...record,
-        amount: BigInt(record.amount),
-        bondBefore: BigInt(record.bondBefore),
-        bondAfter: BigInt(record.bondAfter),
-      });
     }
     return new WorldState(s);
   }
@@ -517,57 +496,6 @@ export class WorldState {
     return account.mining;
   }
 
-  setValidator(address: string, validator: ValidatorState, ctx: ApplyContext): void {
-    const account = this.touchAccount(address, ctx);
-    account.validator = validator;
-    this.s.validators.add(address);
-  }
-
-  /**
-   * Close validator-open block production for ever.
-   *
-   * Called by the state transition of the FIRST successful validator
-   * registration, so the change is part of the block that caused it: it is
-   * committed in that block's state root, it is restored by a snapshot, and
-   * every node that applies the block reaches it. Idempotent by construction —
-   * a later registration does not touch it, and nothing clears it.
-   */
-  establishValidatorMode(): void {
-    this.s.validatorModeEstablished = true;
-  }
-
-  removeValidator(address: string): void {
-    const account = this.s.accounts.get(address);
-    if (account) delete account.validator;
-    this.s.validators.delete(address);
-  }
-
-  /**
-   * Validators that may propose, in deterministic address order.
-   *
-   * `atTimestamp` is the protocol time the question is being asked about — the
-   * candidate block's timestamp when the schedule for that block is derived,
-   * which is what every validating node uses. Defaulting to this state's own
-   * timestamp keeps the old call sites correct. A jail is a duration of protocol
-   * time, so the answer for one instant can differ from the answer for another;
-   * both are derived from committed state and neither consults a clock that
-   * another node cannot see.
-   */
-  activeValidators(atTimestamp: number = this.s.timestamp): string[] {
-    const out: string[] = [];
-    for (const address of [...this.s.validators].sort()) {
-      const v = this.s.accounts.get(address)?.validator;
-      if (!v) continue;
-      if (v.status === 'JAILED' && !jailIsOver(v, atTimestamp)) continue;
-      if (v.status === 'UNBONDING') continue;
-      // A slashed registration leaves the rotation the moment the block that
-      // carried the evidence is applied — not when the node restarts.
-      if (v.status === 'SLASHED') continue;
-      out.push(address);
-    }
-    return out;
-  }
-
   // ── Invariant checks ──────────────────────────────────────────────────────
 
   /**
@@ -579,16 +507,9 @@ export class WorldState {
     let sum = 0n;
     for (const account of this.s.accounts.values()) sum += account.balance;
     sum += this.s.pool.balance;
-    // Validator bonds are locked value: they are excluded from the liquid
-    // balance but still exist and must be counted by the supply invariant.
-    for (const account of this.s.accounts.values()) {
-      if (account.validator) sum += account.validator.bond;
-    }
     // The Node Runner Reward Pool is protocol-held value: not in anyone's liquid
     // balance, so the invariant counts it explicitly or every node payout would
-    // look like a supply mismatch. Slashed value never appears as a new term —
-    // it moves from a validator's bond (counted above) into the Mining Pool
-    // (counted above), so a slash can neither create nor destroy a seal.
+    // look like a supply mismatch. There are no bonds in 1.9.0: nothing is ever locked.
     sum += this.s.nodeRewards.balance;
     if (sum !== this.s.metrics.totalSupply) {
       return {
@@ -651,15 +572,30 @@ export class WorldState {
       .sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1));
   }
 
+  /** Reverse lookup: the node whose identity key hashes to this producer address. */
+  nodeByProducer(address: string): NodeRecord | undefined {
+    const id = this.s.nodeProducers.get(address);
+    return id === undefined ? undefined : this.s.nodes.get(id);
+  }
+
   putNode(node: NodeRecord): void {
-    this.s.nodeWallets.set(node.rewardWallet, node.nodeId);
-    if (node.pendingWallet) this.s.nodeWallets.set(node.pendingWallet, node.nodeId);
+    // Only a live node holds wallets; deregistration and a ban release them (see releaseWallets).
+    if (node.deregisteredAtHeight === undefined && node.bannedAtHeight === undefined) {
+      if (node.rewardWallet) this.s.nodeWallets.set(node.rewardWallet, node.nodeId);
+      if (node.pendingWallet) this.s.nodeWallets.set(node.pendingWallet, node.nodeId);
+    }
+    this.s.nodeProducers.set(node.producerAddress, node.nodeId);
     this.s.nodes.set(node.nodeId, node);
     this.s.metrics.registeredNodes = this.registeredNodes().length;
   }
 
   removeNodeWallet(wallet: string, nodeId: string): void {
     if (this.s.nodeWallets.get(wallet) === nodeId) this.s.nodeWallets.delete(wallet);
+  }
+
+  /** Read-only view of one (period, node) evidence bucket; undefined when nothing was recorded. */
+  nodeEvidence(period: number, nodeId: string): NodeEvidenceRecord | undefined {
+    return this.s.nodeEvidence.get(`${period}:${nodeId}`);
   }
 
   /** Evidence bucket for one (period, node). Created empty on first write. */
@@ -671,6 +607,7 @@ export class WorldState {
         nodeId,
         period,
         heartbeats: 0,
+        liveWindows: 0,
         attesters: [],
         blocksProduced: 0,
         attested: [],
@@ -772,61 +709,6 @@ export class WorldState {
     this.delta('DEBIT', 'nodeRewards.balance', amount.toString(), reason);
   }
 
-  /**
-   * Apply a verified, canonical equivocation slash.
-   *
-   * The value moves from the validator's bond into the Mining Pool in one
-   * integer step: `bond -= amount` and `poolInflow(amount)`. Both sides are
-   * counted by the supply invariant, so the total supply is unchanged by
-   * construction — no issuance, no burn, nothing routed through ONS revenue and
-   * nothing credited to the treasury.
-   *
-   * The validator's registration becomes SLASHED: it leaves the proposer
-   * rotation and the finality committee immediately, and whatever is left of
-   * the bond is claimable after the ordinary unbonding delay. Re-registering
-   * means a fresh registration and a full bond; the remainder is never a
-   * discounted seat.
-   */
-  /**
-   * The window of heights an offence can be charged to the bond that is held
-   * right now, for one validator.
-   *
-   * `null` means the current registration is not liable for anything: there is
-   * no validator record, or the record has already been slashed (one
-   * registration is slashed once).
-   *
-   * Otherwise the window is `[registeredAtHeight, unbondingStartHeight]`:
-   *
-   *   - an offence cannot predate the registration that committed it.
-   *     Re-registering is a new bond, a new key binding and a new liability, so
-   *     evidence about an earlier tenure can never charge the new one — which is
-   *     also what makes a claim-and-re-register cycle safe for everyone else;
-   *   - an offence cannot postdate the moment the registration left the active
-   *     set to unbond. While the bond is still escrowed (ACTIVE, JAILED, or
-   *     UNBONDING) it stays liable for what it did in that window, so
-   *     unregistering is not an exit from a penalty — it only starts the clock
-   *     on how long the evidence has to arrive.
-   *
-   * The window is read from consensus state only: no history, no block lookup,
-   * no local observation. A node replaying the chain from genesis derives the
-   * same window as the node that watched the offence happen.
-   */
-  slashTenure(address: string): { from: number; to?: number } | null {
-    const validator = this.s.accounts.get(address)?.validator;
-    if (!validator) return null;
-    if (validator.status === 'SLASHED') return null;
-    return { from: validator.registeredAtHeight, to: validator.unbondingStartHeight };
-  }
-
-  /** True when `offenceHeight` falls inside the current registration's tenure. */
-  offenceChargesToCurrentRegistration(address: string, offenceHeight: number): boolean {
-    const tenure = this.slashTenure(address);
-    if (!tenure) return false;
-    if (!Number.isSafeInteger(offenceHeight) || offenceHeight < tenure.from) return false;
-    if (tenure.to !== undefined && offenceHeight > tenure.to) return false;
-    return true;
-  }
-
   /** Install the result of a verified gate authority update. The caller has already checked every rule. */
   applyGateUpdate(next: { active: string[]; revoked: string[]; epoch: number; added: string[]; removed: string[] }): void {
     this.s.genesis.gateKeysActive = [...next.active];
@@ -835,78 +717,6 @@ export class WorldState {
     for (const key of next.removed) this.delta('SET', `genesis.gateKeys.revoked.${key}`, true, 'GATE_AUTHORITY');
     for (const key of next.added) this.delta('SET', `genesis.gateKeys.active.${key}`, true, 'GATE_AUTHORITY');
     this.delta('SET', 'genesis.gateEpoch', next.epoch, 'GATE_AUTHORITY');
-  }
-
-  applyEquivocationSlash(
-    slash: {
-      evidenceId: string;
-      type: SlashRecord['type'];
-      validator: string;
-      height: number;
-      round: number;
-      amount: bigint;
-      bondBefore: bigint;
-      remaining: bigint;
-    },
-    ctx: ApplyContext,
-  ): SlashRecord {
-    const account = this.s.accounts.get(slash.validator);
-    const validator = account?.validator;
-    if (!validator) reject(ErrCode.NOT_FOUND, 'the slashed validator no longer exists');
-    if (this.s.slashes.has(slash.evidenceId)) reject(ErrCode.REPLAY, 'this evidence has already been applied');
-    // The verifier has already decided this; the state transition re-derives it
-    // from its own record so the ledger can never hold a charge that the current
-    // registration is not liable for.
-    if (!this.offenceChargesToCurrentRegistration(slash.validator, slash.height)) {
-      reject(
-        ErrCode.UNAUTHORIZED,
-        'the offence falls outside the tenure of the registration that is bonded now',
-      );
-    }
-    if (validator.bond !== slash.bondBefore || slash.amount + slash.remaining !== slash.bondBefore) {
-      reject(ErrCode.MALFORMED, 'slash accounting does not add up against the validator bond');
-    }
-
-    validator.bond = slash.remaining;
-    validator.status = 'SLASHED';
-    validator.slashedAtHeight = ctx.height;
-    validator.slashEvidenceId = slash.evidenceId;
-    // The remainder follows the ordinary unbonding path: claimable after the
-    // protocol delay, returned in full, never confiscated.
-    validator.unbondingStartHeight = ctx.height;
-
-    this.poolInflow(slash.amount, `equivocation penalty: ${slash.amount} from validator ${slash.validator}`);
-    this.s.metrics.totalSlashedToPool += slash.amount;
-    this.s.metrics.totalSlashes += 1;
-
-    const record: SlashRecord = {
-      evidenceId: slash.evidenceId,
-      type: slash.type,
-      validator: slash.validator,
-      height: slash.height,
-      round: slash.round,
-      amount: slash.amount,
-      bondBefore: slash.bondBefore,
-      bondAfter: slash.remaining,
-      slashedAtHeight: ctx.height,
-    };
-    this.s.slashes.set(slash.evidenceId, record);
-    this.emit('VALIDATOR_SLASHED', {
-      validator: slash.validator,
-      evidenceId: slash.evidenceId,
-      evidenceType: slash.type,
-      equivocationHeight: slash.height,
-      round: slash.round,
-      bondBefore: slash.bondBefore.toString(),
-      slashed: slash.amount.toString(),
-      remaining: slash.remaining.toString(),
-      destination: 'MINING_POOL',
-    }, ctx);
-    return record;
-  }
-
-  slashRecord(evidenceId: string): SlashRecord | undefined {
-    return this.s.slashes.get(evidenceId);
   }
 
   /** Split revenue before the treasury exists, once a treasury is designated. */
@@ -944,6 +754,5 @@ function cloneAccount(account: Account): Account {
   return {
     ...account,
     mining: account.mining ? { ...account.mining } : undefined,
-    validator: account.validator ? { ...account.validator } : undefined,
   };
 }

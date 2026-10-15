@@ -17,16 +17,19 @@ import { ChainManager } from '../../src/blockchain/chain.js';
 import { blockHash } from '../../src/blockchain/block.js';
 import { ErrCode } from '../../src/protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
-import { TxType, ValidatorOp } from '../../src/protocol/types.js';
+import { NodeRegistryOp, TxType, type NodeRecord } from '../../src/protocol/types.js';
 import { WorldState } from '../../src/blockchain/state.js';
-import { missedProposersFor, proposerRound, scheduledProposer } from '../../src/consensus/proposer.js';
-import { expectedGas } from '../../src/transactions/helpers.js';
+import { missedProducersFor, producerSetFor, proposerRound, scheduledProducer } from '../../src/consensus/schedule.js';
 import {
   createHarness,
   forkParent,
   makeWallet,
   signedClaim,
-  validatorBody,
+  type TestNode,
+  makeNode,
+  nodeSigner,
+  nodeStatement,
+  registerNode,
   type Block,
   type ForkParent,
   type Harness,
@@ -311,79 +314,84 @@ describe('mempool admission and assembly', () => {
   });
 });
 
-describe('validators', () => {
-  async function fundedValidatorHarness(): Promise<{ h: Harness; alice: TestWallet }> {
+describe('producers (registry-driven schedule)', () => {
+  async function nodeHarness(): Promise<{ h: Harness; node: TestNode }> {
     const h = await harness();
-    const alice = makeWallet();
-    h.produce([signedClaim(h, alice, GENESIS_TS + 1)], { timestamp: GENESIS_TS + 1 });
-    const bond = CONSENSUS_PARAMS.consensus.validatorBond;
-    h.produce(
-      [
-        h.sign(alice, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, bond, alice.publicKey), {
-          gas: expectedGas(bond),
-          protocolTime: GENESIS_TS + 2,
-        }),
-      ],
-      { timestamp: GENESIS_TS + 2 },
-    );
-    expect(h.chain.world.activeValidators()).toEqual([alice.address]);
-    return { h, alice };
+    const node = makeNode(makeWallet());
+    registerNode(h, node);
+    expect(h.chain.world.registeredNodes().map((n) => n.producerAddress)).toEqual([node.address]);
+    return { h, node };
   }
 
-  it('cannot register over an unbonding record, which used to destroy the bond (C-2)', async () => {
-    const { h, alice } = await fundedValidatorHarness();
-    h.produce(
-      [h.sign(alice, TxType.VALIDATOR, validatorBody(ValidatorOp.UNREGISTER, 0n, alice.publicKey), { gas: 0n, protocolTime: GENESIS_TS + 3 })],
-      { timestamp: GENESIS_TS + 3, producer: alice },
-    );
-    expect(h.chain.world.getAccount(alice.address)!.validator!.status).toBe('UNBONDING');
-    const bond = CONSENSUS_PARAMS.consensus.validatorBond;
-    const again = h.tryBlock(
-      [h.sign(alice, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, bond, alice.publicKey), { gas: expectedGas(bond), protocolTime: GENESIS_TS + 4 })],
-      { timestamp: GENESIS_TS + 4 },
-    );
+  it('cannot register the same node twice (no replay, no overwrite of the record)', async () => {
+    const { h, node } = await nodeHarness();
+    const before = h.chain.world.nodeByProducer(node.address)!;
+    const again = h.tryBlock([nodeStatement(h, node, { op: NodeRegistryOp.REGISTER, endpoint: '203.0.113.99:8631' })]);
     expect(again.accepted).toBe(false);
-    expect(again.code).toBe(ErrCode.REPLAY);
-    // The bond is still counted and the supply invariant still holds.
-    expect(h.chain.world.getAccount(alice.address)!.validator!.bond).toBe(bond);
-    expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
+    const after = h.chain.world.nodeByProducer(node.address)!;
+    expect(after.endpoint).toBe(before.endpoint);
+    expect(after.registeredAtHeight).toBe(before.registeredAtHeight);
   });
 
-  it('never lets an unregistered key use a timeout round to bypass the validator set', async () => {
-    const { h, alice } = await fundedValidatorHarness();
+  it('never lets an unregistered key use a timeout round to bypass the producer set', async () => {
+    const { h, node } = await nodeHarness();
     const outsider = makeWallet();
-    const timestamp = GENESIS_TS + 12; // round 1; the old fallback was open here with one validator
+    const timestamp = h.chain.tip!.timestamp + 12 * CONSENSUS_PARAMS.block.targetBlockSeconds; // a late round
     const rejected = h.tryBlock([], { timestamp, producer: outsider });
     expect(rejected.accepted).toBe(false);
     expect(rejected.code).toBe(ErrCode.NOT_PRODUCER_TURN);
 
-    h.produce([], { timestamp, producer: alice });
-    expect(h.chain.height).toBe(3);
-    expect(h.chain.world.getAccount(alice.address)!.validator!.missedSlots).toBe(0);
+    const height = h.chain.height;
+    h.produce([], { timestamp, producer: nodeSigner(node) });
+    expect(h.chain.height).toBe(height + 1);
+    expect(h.chain.tip?.producer).toBe(node.address);
   });
 
-  it('cycles every later round through the registered set', async () => {
-    const { h, alice } = await fundedValidatorHarness();
+  it('the registered node alone may produce, in every round', async () => {
+    const { h, node } = await nodeHarness();
     const outsider = makeWallet();
-    const veryLate = GENESIS_TS + 2 + 20 * CONSENSUS_PARAMS.block.targetBlockSeconds;
-    expect(h.tryBlock([], { timestamp: veryLate, producer: outsider }).code).toBe(ErrCode.NOT_PRODUCER_TURN);
-    h.produce([], { timestamp: veryLate, producer: alice });
-    expect(h.chain.tip?.producer).toBe(alice.address);
+    const veryLate = h.chain.tip!.timestamp + 12 * CONSENSUS_PARAMS.block.targetBlockSeconds;
+    for (const round of [1, 2, 5, 12]) {
+      const ts = h.chain.tip!.timestamp + round * CONSENSUS_PARAMS.block.targetBlockSeconds;
+      expect(h.tryBlock([], { timestamp: ts, producer: outsider }).code).toBe(ErrCode.NOT_PRODUCER_TURN);
+    }
+    h.produce([], { timestamp: veryLate, producer: nodeSigner(node) });
+    expect(h.chain.tip?.producer).toBe(node.address);
+  });
+
+  it('a wallet key is not a producer: the reward wallet cannot sign blocks for its node', async () => {
+    const { h, node } = await nodeHarness();
+    const verdict = h.tryBlock([], { producer: node.wallet });
+    expect(verdict.accepted).toBe(false);
+    expect(verdict.code).toBe(ErrCode.NOT_PRODUCER_TURN);
   });
 });
 
-describe('proposer rounds and the missed-slot list (pure functions)', () => {
-  function stateWith(addresses: string[]): WorldState {
+describe('producer rounds and the missed-slot list (pure functions)', () => {
+  function record(address: string, overrides: Partial<NodeRecord> = {}): NodeRecord {
+    return {
+      nodeId: `node-${address}`,
+      rewardWallet: `wallet-${address}`,
+      nodePublicKey: '',
+      endpoint: '',
+      registeredAtHeight: 1,
+      registeredAt: 1,
+      producerAddress: address,
+      lastActiveAt: 1_000,
+      missedSlots: 0,
+      suspensions: 0,
+      blocksProduced: 0,
+      lifetimeReward: 0n,
+      settledPeriods: [],
+      ...overrides,
+    };
+  }
+  function stateWith(addresses: string[], overrides: Partial<NodeRecord> = {}): WorldState {
     const state = new WorldState();
-    for (const address of addresses) {
-      state.setValidator(
-        address,
-        { validatorKey: '', bond: 1n, commissionBps: 0, registeredAtHeight: 0, missedSlots: 0, status: 'ACTIVE' },
-        { height: 1, timestamp: 1 },
-      );
-    }
+    for (const address of addresses) state.putNode(record(address, overrides));
     return state;
   }
+  const HEIGHT = 99; // far beyond maturity for nodes registered at height 1, and divisible by 3
   const slot = CONSENSUS_PARAMS.block.targetBlockSeconds;
 
   it('derives the round from elapsed slots: round 0 for the first two slot-lengths, then one per slot', () => {
@@ -396,29 +404,60 @@ describe('proposer rounds and the missed-slot list (pure functions)', () => {
     expect(proposerRound(100, Number.NaN)).toBe(0);
   });
 
-  it('hands the turn on one validator per round and cycles without opening the set', () => {
+  it('hands the turn on one producer per round and cycles without opening the set', () => {
     const state = stateWith(['dobs1a', 'dobs1b', 'dobs1c']);
-    expect(scheduledProposer(state, 3, 0)).toBe('dobs1a');
-    expect(scheduledProposer(state, 3, 1)).toBe('dobs1b');
-    expect(scheduledProposer(state, 3, 2)).toBe('dobs1c');
-    expect(scheduledProposer(state, 3, 3)).toBe('dobs1a');
-    expect(scheduledProposer(state, 3, 4)).toBe('dobs1b');
-    expect(scheduledProposer(state, 3, 30)).toBe('dobs1a');
-    expect(scheduledProposer(stateWith([]), 3, 0)).toBeNull();
+    // 99 is divisible by 3, so (99 + round) mod 3 walks a, b, c, a ...
+    expect(scheduledProducer(state, HEIGHT, 0)).toBe('dobs1a');
+    expect(scheduledProducer(state, HEIGHT, 1)).toBe('dobs1b');
+    expect(scheduledProducer(state, HEIGHT, 2)).toBe('dobs1c');
+    expect(scheduledProducer(state, HEIGHT, 3)).toBe('dobs1a');
+    expect(scheduledProducer(state, HEIGHT, 30)).toBe('dobs1a');
+    expect(scheduledProducer(state, HEIGHT + 1, 0)).toBe('dobs1b');
+    // No registered node at all: the founding OPEN state, reported as null, never as a name.
+    expect(scheduledProducer(stateWith([]), HEIGHT, 0)).toBeNull();
   });
 
-  it('names at most one validator as having missed a slot: the round-0 proposer', () => {
+  it('the order is the sorted address order, not the order of registration', () => {
+    const forward = stateWith(['dobs1a', 'dobs1b', 'dobs1c']);
+    const backward = stateWith(['dobs1c', 'dobs1b', 'dobs1a']);
+    for (let round = 0; round < 6; round += 1) {
+      expect(scheduledProducer(backward, HEIGHT, round)).toBe(scheduledProducer(forward, HEIGHT, round));
+    }
+    expect(producerSetFor(backward, HEIGHT, 1_000).producers).toEqual(['dobs1a', 'dobs1b', 'dobs1c']);
+  });
+
+  it('keeps immature, stale, suspended and banned nodes out of tier 1, and falls back without opening the set', () => {
+    const state = stateWith(['dobs1a']);
+    state.putNode(record('dobs1b', { registeredAtHeight: HEIGHT - 1 })); // immature
+    state.putNode(record('dobs1c', { lastActiveAt: 1 })); // stale
+    state.putNode(record('dobs1d', { suspendedUntil: 5_000_000 })); // suspended
+    state.putNode(record('dobs1e', { bannedAtHeight: 5 })); // banned
+    const at = 5_000_000 - 1;
+    state.putNode(record('dobs1a', { lastActiveAt: at }));
+    const set = producerSetFor(state, HEIGHT, at);
+    expect(set.tier).toBe('TIER1');
+    expect(set.producers).toEqual(['dobs1a']);
+
+    // With no tier-1 node the chain still moves: tier 2 is every non-banned node (and never a banned one).
+    const stalled = stateWith(['dobs1b'], { lastActiveAt: 1 });
+    stalled.putNode(record('dobs1e', { bannedAtHeight: 5 }));
+    const fallback = producerSetFor(stalled, HEIGHT, 9_000_000);
+    expect(fallback.tier).toBe('TIER2');
+    expect(fallback.producers).toEqual(['dobs1b']);
+  });
+
+  it('names at most one producer as having missed a slot: the round-0 producer', () => {
     const state = stateWith(['dobs1a', 'dobs1b', 'dobs1c']);
     // Round 0 block: nobody missed anything.
-    expect(missedProposersFor(state, 3, 100, 100 + slot, 'dobs1a')).toEqual([]);
-    // Round 1 block by someone else: the round-0 proposer missed.
-    expect(missedProposersFor(state, 3, 100, 100 + 2 * slot, 'dobs1b')).toEqual(['dobs1a']);
-    // Round 2 block: still ONE name, not every skipped validator.
-    expect(missedProposersFor(state, 3, 100, 100 + 3 * slot, 'dobs1c')).toEqual(['dobs1a']);
-    // The round-0 proposer itself produced late: not a miss.
-    expect(missedProposersFor(state, 3, 100, 100 + 3 * slot, 'dobs1a')).toEqual([]);
+    expect(missedProducersFor(state, HEIGHT, 100, 100 + slot, 'dobs1a')).toEqual([]);
+    // Round 1 block by someone else: the round-0 producer missed.
+    expect(missedProducersFor(state, HEIGHT, 100, 100 + 2 * slot, 'dobs1b')).toEqual(['dobs1a']);
+    // Round 2 block: still ONE name, not every skipped node.
+    expect(missedProducersFor(state, HEIGHT, 100, 100 + 3 * slot, 'dobs1c')).toEqual(['dobs1a']);
+    // The round-0 producer itself produced late: not a miss.
+    expect(missedProducersFor(state, HEIGHT, 100, 100 + 3 * slot, 'dobs1a')).toEqual([]);
     // Open mode: nobody to blame.
-    expect(missedProposersFor(stateWith([]), 3, 100, 100 + 3 * slot, 'dobs1x')).toEqual([]);
+    expect(missedProducersFor(stateWith([]), HEIGHT, 100, 100 + 3 * slot, 'dobs1x')).toEqual([]);
   });
 });
 

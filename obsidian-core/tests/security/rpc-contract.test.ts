@@ -17,7 +17,6 @@ import { RpcServer, usdToMicro } from '../../src/rpc/server.js';
 import { DEFAULT_CONFIG, type NodeConfig } from '../../src/config/config.js';
 import { getNetwork } from '../../src/protocol/networks.js';
 import { PROTOCOL_VERSION } from '../../src/version.js';
-import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { genesisId as computeGenesisId } from '../../src/genesis/initialize.js';
 import { GATE_ISSUER } from '../helpers/harness.js';
 import { issueMiningGateCertificate } from '../../src/mining/gate.js';
@@ -251,25 +250,28 @@ describe('a node says only what is true of the network it follows', () => {
   });
 });
 
-describe('the public surface tells the truth about bonds and slashing', () => {
-  it('/validators publishes the slash rule, its destination and the applied ledger', async () => {
-    const result = await call('/validators');
+describe('the public surface tells the truth about producers, finality and bonds', () => {
+  it('/producers publishes the schedule rule and its penalties, and there is no validator ledger', async () => {
+    const result = await call('/producers');
     expect(result.status).toBe(200);
-    const slashing = result.body.slashing;
-    expect(slashing.slashBps).toBe(CONSENSUS_PARAMS.consensus.equivocationSlashBps);
-    expect(slashing.bondObs).toBe('20000.000000000000000000');
-    expect(slashing.slashObs).toBe('10000.000000000000000000');
-    expect(slashing.destination).toBe('MINING_POOL');
-    expect(slashing.treasuryShareObs).toBe('0');
-    // A slash is a state transition, and the endpoint says who may start one.
-    // The API is not the enforcement point: it reports what consensus did.
-    expect(slashing.submitter).toMatch(/any account may submit/i);
-    expect(slashing.rule).toMatch(/offline|missed-slot jail/i);
-    expect(slashing.count).toBe(0);
-    expect(slashing.shown).toBe(0);
-    // The ledger in consensus state is unbounded, the response is not: a reader
-    // gets a page and the exact total.
-    expect(result.body.appliedSlashes).toEqual([]);
+    expect(result.body.tier).toBe('OPEN');
+    expect(result.body.eligible).toBe(0);
+    expect(result.body.rule).toMatch(/\(height \+ round\) mod count/);
+    expect(result.body.penalties).toMatch(/nothing is\s+bonded/i);
+    expect(JSON.stringify(result.body)).not.toMatch(/slash|bondObs|validatorBond/i);
+    expect(result.body.finality.available).toBe(false);
+    const gone = await call('/validators');
+    expect(gone.status).toBe(404);
+  });
+
+  it('/finality states its assumptions and carries no certificate or evidence ledger', async () => {
+    const result = await call('/finality');
+    expect(result.status).toBe(200);
+    expect(result.body.model).toBe('PRODUCER_DIVERSITY_CHECKPOINT');
+    expect(result.body.assumptions).toMatch(/not BFT/);
+    expect(result.body).not.toHaveProperty('certificate');
+    expect(result.body).not.toHaveProperty('evidence');
+    expect(result.body.finalizedHeight).toBe(0);
   });
 
   it('no endpoint publishes a node-runner registration bond, because none exists', async () => {

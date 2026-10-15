@@ -12,25 +12,25 @@
  *      nonce, signature, replay);
  *   2. the type-specific executor, in block order;
  *   3. ONS name expiry routine;
- *   4. validator bookkeeping (jailing / unjailing — the missed-slot list is derived
- *      from the block's own round, see consensus/proposer.ts);
+ *   4. node settlement, producer bookkeeping (a miss list derived from the block's own round, see
+ *      consensus/schedule.ts) and derived finality (consensus/finality.ts);
  *   5. metrics recount;
  *   6. supply-invariant verification;
  *   7. state root + events root computation and comparison with the header.
  */
 
 import { Reader } from '../protocol/encoding.js';
-import type { Block, ConsensusEvidenceContext, ProtocolEvent, TxEnvelope } from '../protocol/types.js';
+import type { Block, ProtocolEvent, TxEnvelope } from '../protocol/types.js';
 import { TxType } from '../protocol/types.js';
 import { ErrCode, ProtocolError, reject } from '../protocol/errors.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
 import { validateTxStructure, decodeSignedTx } from '../transactions/encode.js';
 import { executeTransaction } from '../transactions/index.js';
-import { slashEvidenceBytes } from '../transactions/executors/slash.js';
 import { processNameExpiry } from '../transactions/executors/ons.js';
 import { processNodeRewardRoutine } from '../economy/settlement.js';
-import { processValidatorBookkeeping } from '../transactions/executors/validator.js';
-import { missedProposersFor } from '../consensus/proposer.js';
+import { processProducerBookkeeping } from '../consensus/producers.js';
+import { processFinality } from '../consensus/finality.js';
+import { missedProducersFor } from '../consensus/schedule.js';
 import { merkleRootHex } from './merkle.js';
 import { computeStateRoot } from './state-root.js';
 import { WorldState, type ApplyContext } from './state.js';
@@ -42,13 +42,13 @@ export interface BlockContext {
   timestamp: number;
   chainId: number;
   producer: string;
-  /** Historical lookups for evidence-carrying transactions; see ExecutorContext. */
-  evidence?: ConsensusEvidenceContext;
+  /** Hash of the parent block, recorded in the finality window. Absent only for simulations. */
+  parentHash?: string;
 }
 
 export interface BlockRoutinesOptions {
-  /** Validators that failed to propose in their slot, for jailing bookkeeping. */
-  missedProposers?: string[];
+  /** Producers that failed to produce in their slot, for suspension bookkeeping. */
+  missedProducers?: string[];
 }
 
 export interface ApplyTransactionsResult {
@@ -83,40 +83,7 @@ export function applyTransactions(
   const claimsPerWallet = new Map<string, number>();
   const events: ProtocolEvent[] = [];
   let gasBaseTotal = 0n;
-  // Equivocation evidence is the one thing in a block whose verification cost a
-  // submitter controls: each report costs public-key work, and a peer can pool
-  // as many as it likes. So the count and the canonical bytes a block may carry
-  // are CONSENSUS limits — the same numbers on every node, committed through the
-  // parameter hash — and a block over budget is refused outright rather than
-  // silently truncated. A report that does not fit is not rejected: it stays in
-  // the pool for a later block, and SLASH stays submittable by anyone.
-  //
-  // Counted in a PRE-PASS, before a single report is executed. Verification is
-  // the expensive part, so an over-budget block must cost the node nothing but
-  // the counting: a peer that could make a node verify eight accusations before
-  // refusing the ninth would already have bought the work it was denied.
-  {
-    let evidenceCount = 0;
-    let evidenceBytes = 0;
-    for (const tx of transactions) {
-      if (tx.type !== TxType.SLASH) continue;
-      const bytes = slashEvidenceBytes(tx.body);
-      if (bytes === null) continue;
-      evidenceCount += 1;
-      evidenceBytes += bytes;
-      if (
-        evidenceCount > CONSENSUS_PARAMS.consensus.slashing.maxEvidencePerBlock ||
-        evidenceBytes > CONSENSUS_PARAMS.consensus.slashing.maxEvidenceBytesPerBlock
-      ) {
-        reject(
-          ErrCode.EVIDENCE_LIMIT,
-          `a block may carry at most ${CONSENSUS_PARAMS.consensus.slashing.maxEvidencePerBlock} ` +
-            `equivocation reports (${CONSENSUS_PARAMS.consensus.slashing.maxEvidenceBytesPerBlock} bytes of evidence)`,
-          { height: ctx.height, evidenceCount, evidenceBytes },
-        );
-      }
-    }
-  }
+  const counters = { registrations: 0, equivocationReports: 0 };
 
   for (const tx of transactions) {
     const txId = tx.id;
@@ -152,10 +119,7 @@ export function applyTransactions(
       claimsPerWallet.set(tx.sender, count + 1);
     }
 
-    // `evidence` is forwarded so an executor that must judge something signed in
-    // the PAST (SLASH) can do it against history. Executors that do not need it
-    // ignore it; one that does and was not given it must refuse, and does.
-    const result = executeTransaction({ state, apply, net, chainId: ctx.chainId, evidence: ctx.evidence }, tx);
+    const result = executeTransaction({ state, apply, net, chainId: ctx.chainId, counters }, tx);
     gasBaseTotal += result.gasBase;
 
     state.setNonce(tx.sender, tx.nonce + 1, apply);
@@ -190,12 +154,24 @@ export function runBlockRoutines(
     net,
     chainId: ctx.chainId,
     apply: { height: ctx.height, timestamp: ctx.timestamp, producer: ctx.producer },
+    counters: { registrations: 0, equivocationReports: 0 },
   };
   processNameExpiry(routineContext);
+  // Producer bookkeeping first: liveness and suspension feed the reward weights and the finality base.
+  processProducerBookkeeping(state, routineContext.apply, options.missedProducers ?? []);
   // Proof of Time node rewards settle by period, inside consensus, with no
   // operator or service online — see src/economy/settlement.ts.
   processNodeRewardRoutine(routineContext);
-  processValidatorBookkeeping(routineContext, options.missedProposers ?? []);
+  // Derived finality is the last routine: it reads the registry as this block leaves it. Simulations carry no
+  // parent hash and never touch it.
+  if (ctx.parentHash !== undefined) {
+    processFinality(state, {
+      height: ctx.height,
+      timestamp: ctx.timestamp,
+      producer: ctx.producer,
+      parentHash: ctx.parentHash,
+    });
+  }
   state.recountActiveMiners();
   return state.takeEvents();
 }
@@ -240,13 +216,10 @@ export interface ApplyBlockOptions {
   /** Skip header root equality checks (block production / trusted replay). */
   skipRootCheck?: boolean;
   /**
-   * Validators recorded as having missed their slot. Left unset, it is derived
-   * from the block and its parent (see missedProposersFor), which is what every
-   * validating node does — the list is never taken from a peer.
+   * Producers recorded as having missed their slot. Left unset, it is derived from the block and its parent (see
+   * missedProducersFor), which is what every validating node does — the list is never taken from a peer.
    */
-  missedProposers?: string[];
-  /** Chain context for evidence verification; see ExecutorContext. */
-  evidence?: ConsensusEvidenceContext;
+  missedProducers?: string[];
 }
 
 /**
@@ -261,9 +234,9 @@ export function applyBlock(
   const { net, skipRootCheck = false } = options;
   // Derived BEFORE the clone advances height and timestamp: the schedule is
   // evaluated against the parent state, exactly as the proposer check is.
-  const missedProposers =
-    options.missedProposers ??
-    missedProposersFor(
+  const missedProducers =
+    options.missedProducers ??
+    missedProducersFor(
       parentState,
       block.header.height,
       parentState.s.timestamp,
@@ -279,11 +252,11 @@ export function applyBlock(
     timestamp: block.header.timestamp,
     chainId: block.header.chainId,
     producer: block.header.producer,
-    evidence: options.evidence,
+    parentHash: block.header.prevHash,
   };
 
   const applied = applyTransactions(state, block.transactions, ctx, net);
-  const routineEvents = runBlockRoutines(state, ctx, net, { missedProposers });
+  const routineEvents = runBlockRoutines(state, ctx, net, { missedProducers });
   const events = [...applied.events, ...routineEvents];
   const finalized = finalizeBlock(state, events);
 

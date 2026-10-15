@@ -26,7 +26,7 @@ import { decodePaymentBody } from '../transactions/executors/payment.js';
 import { decodeMiningBody } from '../transactions/executors/mining.js';
 import { decodeOnsBody } from '../transactions/executors/ons.js';
 import { decodeOracleBody } from '../transactions/executors/oracle.js';
-import { decodeValidatorBody } from '../transactions/executors/validator.js';
+import { decodeNodeRegistryBody } from '../transactions/executors/node-registry.js';
 import { decodeTreasuryBody } from '../transactions/executors/treasury.js';
 
 export interface TxIndexRecord {
@@ -383,13 +383,13 @@ function describeTx(tx: TxEnvelope): Partial<TxIndexRecord> {
         const sources = body.observations.map((observation) => observation.source).join(', ');
         return { recipient: undefined, amount: undefined, kind: 'ORACLE', reference: body.submissionId, note: sources };
       }
-      case TxType.VALIDATOR: {
-        const body = decodeValidatorBody(tx.body);
+      case TxType.NODE_REGISTRY: {
+        const body = decodeNodeRegistryBody(tx.body);
         return {
-          recipient: undefined,
-          amount: body.bond > 0n ? body.bond.toString() : undefined,
-          kind: `VALIDATOR_${body.op}`,
-          reference: body.validatorKey.slice(0, 16),
+          recipient: body.rewardWallet || undefined,
+          amount: undefined,
+          kind: `NODE_${NODE_OP_NAMES[body.op - 1] ?? `OP_${body.op}`}`,
+          reference: body.nodeId ? body.nodeId.slice(0, 16) : undefined,
         };
       }
       case TxType.TREASURY: {
@@ -409,8 +409,31 @@ function describeTx(tx: TxEnvelope): Partial<TxIndexRecord> {
   }
 }
 
+const NODE_OP_NAMES = [
+  'REGISTER',
+  'CHANGE_WALLET',
+  'DEREGISTER',
+  'HEARTBEAT',
+  'ATTEST',
+  'REPORT_FAULT',
+  'CANCEL_WALLET_CHANGE',
+  'RECLAIM_WALLET',
+  'REPORT_EQUIVOCATION',
+];
+
 function onsOpName(op: number): string {
-  return ['REGISTER', 'UPDATE_ADDRESS', 'TRANSFER', 'RENEW'][op - 1] ?? `OP_${op}`;
+  return [
+    'REGISTER',
+    'UPDATE_ADDRESS',
+    'TRANSFER',
+    'RENEW',
+    'ACCEPT_TRANSFER',
+    'CANCEL_TRANSFER',
+    'SET_RECOVERY',
+    'START_RECOVERY',
+    'CANCEL_RECOVERY',
+    'FINALIZE_RECOVERY',
+  ][op - 1] ?? `OP_${op}`;
 }
 
 /**

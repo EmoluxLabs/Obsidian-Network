@@ -14,7 +14,7 @@ export type Hex = string;
 /**
  * Protocol time is measured in integer seconds and is ALWAYS taken from the
  * block timestamp of the block that includes an object — never from a browser,
- * a device, an HTTP request or a wall clock inside a validator.
+ * a device, an HTTP request or a wall clock inside a node.
  */
 export type ProtocolTimeSeconds = number;
 
@@ -54,7 +54,7 @@ export enum TxType {
   ONS = 2,
   ORACLE = 6,
   MINING_CLAIM = 7,
-  VALIDATOR = 8,
+  // 8 (VALIDATOR) and 12 (SLASH) were removed in 1.9.0 and are never reused: the validator model does not exist.
   TREASURY = 9,
   GOVERNANCE = 10,
   /**
@@ -65,15 +65,6 @@ export enum TxType {
    * every payout from the evidence it collects here (see src/economy/node-rewards.ts).
    */
   NODE_REGISTRY = 11,
-  /**
-   * Slashing. Carries self-contained cryptographic proof that a bonded
-   * validator signed two conflicting messages for one consensus slot. The
-   * submitter chooses nothing: the executor derives the penalty from the
-   * consensus slash ratio and the validator's own record, and a validator can
-   * only be slashed by evidence that every honest node verifies identically
-   * (src/consensus/slash-evidence.ts).
-   */
-  SLASH = 12,
   /**
    * Mining gate authority update (protocol 1.8.0): rotate or revoke the issuer keys that open the mining gate.
    * Authorised by a majority of the CURRENT issuer keys, who sign the exact change; the submitter's own key and
@@ -105,36 +96,6 @@ export interface GateAuthorityBody {
   approvals: GateApproval[];
 }
 
-/** Operations inside a SLASH transaction. */
-export enum SlashOp {
-  /** Two conflicting block proposals, or two conflicting finality votes. */
-  EQUIVOCATION = 1,
-}
-
-/**
- * The evidence carried by a SLASH transaction.
- *
- * `evidence` is one of the two canonical `EquivocationEvidence` shapes the rest
- * of the protocol already uses — the same objects the node detects locally and
- * publishes at `/finality`. The evidence id is recomputed from the evidence
- * itself during execution, so a submitter cannot rename or reshape it.
- *
- * Proposer evidence proves two signed headers at one height in one round, but a
- * header does not carry its parent's timestamp, and the round is a function of
- * it. The transaction therefore also carries both parent headers. They are
- * bound to the children by `child.prevHash === blockHash(parent)`, so a parent
- * cannot be fabricated to fake a round: finding a header that hashes to the
- * committed prevHash is the same problem as breaking SHA-256.
- */
-export interface SlashBody {
-  op: SlashOp;
-  evidence: EquivocationEvidence;
-  /** Parent header of `evidence.firstHeader`, hex of its signed encoding. */
-  firstParentHeader?: Hex;
-  /** Parent header of `evidence.secondHeader`, hex of its signed encoding. */
-  secondParentHeader?: Hex;
-}
-
 /** Operations inside a NODE_REGISTRY transaction. */
 export enum NodeRegistryOp {
   REGISTER = 1,
@@ -146,6 +107,15 @@ export enum NodeRegistryOp {
   ATTEST = 5,
   /** A signed report that another node behaved incorrectly. */
   REPORT_FAULT = 6,
+  /** The current wallet cancels a pending reward-wallet change (sender = current reward wallet). */
+  CANCEL_WALLET_CHANGE = 7,
+  /**
+   * The owner of a bound wallet releases it from a node that did not prove control of it (sender = the wallet).
+   * Unsigned binding means anyone can bind anyone's address; this is the owner's way out, after a transparent delay.
+   */
+  RECLAIM_WALLET = 8,
+  /** Cryptographic proof that a node signed two different blocks on one parent: the node is banned (no bond to slash). */
+  REPORT_EQUIVOCATION = 9,
 }
 
 export interface NodeRegistryBody {
@@ -172,6 +142,9 @@ export interface NodeRegistryBody {
   issuedAt?: number;
   /** Protocol time the statement stops being valid (registration proofs). */
   expiresAt?: number;
+  /** REPORT_EQUIVOCATION: hex of the two signed headers (canonical signed encoding). */
+  firstHeader?: string;
+  secondHeader?: string;
 }
 
 // ── Payments ─────────────────────────────────────────────────────────────────
@@ -187,8 +160,21 @@ export interface PaymentBody {
 export enum OnsOp {
   REGISTER = 1,
   UPDATE_ADDRESS = 2,
+  /** Owner OFFERS the name to `to`. Nothing changes hands until `to` sends ACCEPT_TRANSFER. */
   TRANSFER = 3,
   RENEW = 4,
+  /** The offered recipient takes the name (sender must equal the offer's `to`). Atomic. */
+  ACCEPT_TRANSFER = 5,
+  /** The owner withdraws an open offer. */
+  CANCEL_TRANSFER = 6,
+  /** The owner sets (or clears, with an empty address) the recovery address. */
+  SET_RECOVERY = 7,
+  /** The recovery address starts a recovery to `address`; effective after `ons.recoveryDelaySeconds`. */
+  START_RECOVERY = 8,
+  /** The owner cancels a recovery in flight. */
+  CANCEL_RECOVERY = 9,
+  /** The recovery address completes a recovery once its delay has passed. */
+  FINALIZE_RECOVERY = 10,
 }
 
 export interface OnsBody {
@@ -243,22 +229,6 @@ export interface MiningGateCertificate {
   signature: string;
 }
 
-// ── Validators ───────────────────────────────────────────────────────────────
-
-export enum ValidatorOp {
-  REGISTER = 1,
-  UNREGISTER = 2,
-  CLAIM_UNBONDED = 3,
-}
-
-export interface ValidatorBody {
-  op: ValidatorOp;
-  bond: bigint;
-  /** Public key used for proposer-turn derivation (compressed secp256k1). */
-  validatorKey: Hex;
-  commissionBps?: number;
-}
-
 // ── Treasury ─────────────────────────────────────────────────────────────────
 
 export enum TreasuryOp {
@@ -289,7 +259,7 @@ export interface BlockHeader {
   /** SHA-256 of the protocol parameter set — a fork detector across nodes. */
   paramsHash: Hex;
   timestamp: ProtocolTimeSeconds;
-  /** Producer (validator) address; must be registered for this height's slot. */
+  /** Producer address: the address of a registered node's identity key (or any key while no node is registered). */
   producer: string;
   /** Accumulated work used by the deterministic fork-choice rule. */
   cumulativePotWeight: bigint;
@@ -320,70 +290,6 @@ export interface BlockSummary {
   prevHash: Hex;
 }
 
-// ── Native Proof-of-Time finality and equivocation evidence ──────────────────
-
-export interface FinalityVote {
-  protocolVersion: string;
-  networkId: string;
-  chainId: number;
-  genesisId: Hex;
-  paramsHash: Hex;
-  type: 'POT_FINALITY';
-  finalizedHeight: number;
-  finalizedHash: Hex;
-  height: number;
-  round: number;
-  blockHash: Hex;
-  parentHash: Hex;
-  validatorSetHash: Hex;
-  validator: string;
-  publicKey: Hex;
-  signature: Hex;
-}
-
-export interface FinalityCertificate {
-  version: 1;
-  finalizedHeight: number;
-  finalizedHash: Hex;
-  height: number;
-  blockHash: Hex;
-  parentHash: Hex;
-  validatorSetHash: Hex;
-  quorum: number;
-  validatorCount: number;
-  votes: FinalityVote[];
-}
-
-export interface ProposerEquivocationEvidence {
-  version: 1;
-  id: Hex;
-  type: 'PROPOSER_EQUIVOCATION';
-  validator: string;
-  height: number;
-  round: number;
-  messageType: 'BLOCK_PROPOSAL';
-  firstId: Hex;
-  secondId: Hex;
-  firstHeader: Hex;
-  secondHeader: Hex;
-}
-
-export interface VoteEquivocationEvidence {
-  version: 1;
-  id: Hex;
-  type: 'VOTE_EQUIVOCATION';
-  validator: string;
-  height: number;
-  round: number;
-  messageType: 'POT_FINALITY';
-  firstId: Hex;
-  secondId: Hex;
-  firstVote: FinalityVote;
-  secondVote: FinalityVote;
-}
-
-export type EquivocationEvidence = ProposerEquivocationEvidence | VoteEquivocationEvidence;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,8 +309,6 @@ export interface Account {
   /** Protocol height at which the account first appeared. */
   createdAtHeight: number;
   createdAt: ProtocolTimeSeconds;
-  /** Validator state, if registered. */
-  validator?: ValidatorState;
   /** Mining state, if the account has ever claimed. */
   mining?: MiningState;
   /** Oracle submission throttle (deterministic anti-spam, height based). */
@@ -437,58 +341,6 @@ export interface MiningState {
   eligible: boolean;
 }
 
-export interface ValidatorState {
-  validatorKey: Hex;
-  bond: bigint;
-  commissionBps: number;
-  registeredAtHeight: number;
-  /**
-   * Protocol time at which the jail ends, set while jailed.
-   *
-   * A DURATION OF PROTOCOL TIME, not a height: on a chain that has stopped
-   * producing — which is what a jail can cause once it empties the active set —
-   * a height-denominated term would never be reached. Absent means "not
-   * jailed"; a JAILED validator with no term is treated as jailed for ever
-   * (fail closed) rather than as free.
-   */
-  jailedUntilTime?: ProtocolTimeSeconds;
-  missedSlots: number;
-  /**
-   * SLASHED is terminal for this registration: the validator is out of the
-   * proposer rotation and out of the finality committee the moment the block
-   * carrying the evidence is applied, and the remainder of the bond (never the
-   * slashed part) can be claimed after the ordinary unbonding delay. Returning
-   * as a validator means a fresh registration with a full bond.
-   */
-  status: 'ACTIVE' | 'UNBONDING' | 'JAILED' | 'SLASHED';
-  unbondingStartHeight?: number;
-  /** Height of the block whose state transition applied the slash. */
-  slashedAtHeight?: number;
-  /** Id of the evidence that caused the slash; committed in the state root. */
-  slashEvidenceId?: Hex;
-}
-
-/**
- * One applied slash. Keyed by evidence id, which is what makes slashing
- * idempotent across replays, restarts and competing submitters: the second
- * transaction carrying the same evidence finds the record and is rejected.
- */
-export interface SlashRecord {
-  evidenceId: Hex;
-  type: 'PROPOSER_EQUIVOCATION' | 'VOTE_EQUIVOCATION';
-  validator: string;
-  /** Height of the equivocation (not of the block that punished it). */
-  height: number;
-  round: number;
-  /** Slashed amount, exactly `consensus.equivocationSlashBps` of the bond. */
-  amount: bigint;
-  /** Bond held by the validator before the slash. */
-  bondBefore: bigint;
-  /** Bond still held by the validator after the slash. */
-  bondAfter: bigint;
-  slashedAtHeight: number;
-}
-
 export interface GenesisState {
   /** false -> true exactly once, ever. */
   allocationClaimed: boolean;
@@ -502,8 +354,6 @@ export interface GenesisState {
   claimedByTxId?: Hex;
   /** Amount actually issued (fixed at params.genesisAllocation). */
   amount: bigint;
-  /** Public keys committed by the fresh genesis as the initial finality set. */
-  bootstrapValidatorKeys: string[];
   /** Issuer keys committed by genesis whose certificates open the mining gate. Empty means no claim is possible. */
   miningGateKeys: string[];
   /**
@@ -525,6 +375,12 @@ export interface OnsRecord {
   registeredAt: ProtocolTimeSeconds;
   expiresAt: ProtocolTimeSeconds;
   transferCount: number;
+  /** An open transfer offer. The name changes hands only if `to` accepts before `offerExpiresAt`. */
+  pendingTransfer?: { to: string; offeredAt: ProtocolTimeSeconds; offerExpiresAt: ProtocolTimeSeconds };
+  /** Preconfigured recovery address. Set by the owner; may start a delayed recovery; has no other power. */
+  recoveryAddress?: string;
+  /** A recovery in flight. It takes effect only at `effectiveAt`, and the current owner may cancel until then. */
+  pendingRecovery?: { by: string; newAddress: string; startedAt: ProtocolTimeSeconds; effectiveAt: ProtocolTimeSeconds };
 }
 
 export interface OracleObservation {
@@ -617,6 +473,29 @@ export interface NodeRecord {
   pendingWallet?: string;
   pendingWalletEffectivePeriod?: number;
   pendingWalletRequestedAtHeight?: number;
+  /**
+   * Block-producer address: the bech32 address of `nodePublicKey` on this network. The header signature must verify
+   * under the key that hashes to the producer address, so one node cannot forge another's identity.
+   */
+  producerAddress: string;
+  /** Protocol time of the node's last sign of life: registration, heartbeat or a block it produced. */
+  lastActiveAt: ProtocolTimeSeconds;
+  /** Consecutive scheduled slots this node missed (reset when it produces a block). */
+  missedSlots: number;
+  /** Suspension back-off level: suspensions in a row without a produced block in between. */
+  suspensions: number;
+  /** While in the future (protocol time) the node is skipped by the schedule. */
+  suspendedUntil?: ProtocolTimeSeconds;
+  /** Set by a verified equivocation report. A banned node never produces, never earns, never counts. */
+  bannedAtHeight?: number;
+  /** Id of the evidence that banned it. */
+  banEvidenceId?: string;
+  /** A release of the bound wallet requested by that wallet's owner (see RECLAIM_WALLET). */
+  reclaimEffectivePeriod?: number;
+  /** The bound (or reserved) wallet that asked to be released. */
+  reclaimWallet?: string;
+  /** Blocks this node has produced, lifetime (metric, never an input to scoring). */
+  blocksProduced: number;
   /** Lifetime rewards credited to this node's wallets, for the operator UI. */
   lifetimeReward: bigint;
   /** Periods already settled for this node, capped to the evidence window. */
@@ -627,8 +506,13 @@ export interface NodeRecord {
 export interface NodeEvidenceRecord {
   nodeId: string;
   period: number;
-  /** Heartbeats accepted in the period (one per slot, replayed ones rejected). */
+  /** In-sync heartbeats accepted in the period (at most one per uptime window; replays are rejected). */
   heartbeats: number;
+  /**
+   * Bitmask of the uptime windows of this period in which the node was provably up: bit i is window i of the period.
+   * Set by an in-sync heartbeat or by a block the node produced in that window. Uptime = popcount / windows.
+   */
+  liveWindows: number;
   /** Distinct nodes that attested this node in the period. */
   attesters: string[];
   /** Blocks this node produced inside the period. */
@@ -710,10 +594,6 @@ export interface Metrics {
   totalOnsTreasuryShare: bigint;
   /** Lifetime node runner rewards paid out of the pool. */
   totalNodeRewardsPaid: bigint;
-  /** Lifetime value moved from slashed validator bonds into the Mining Pool. */
-  totalSlashedToPool: bigint;
-  /** Number of applied slashes. */
-  totalSlashes: number;
   /** Registered (non-deregistered) node runners at this height. */
   registeredNodes: number;
   totalNamesRegistered: number;
@@ -730,9 +610,8 @@ export interface ProtocolEvent {
 
 export interface StateSnapshot {
   /**
-   * Lossless snapshot format. 1.6.1 uses format 3 (it adds the committed
-   * validator-admission mode and the time-based jail term); snapshots from 1.6.0
-   * and older are not compatible and are refused rather than partially read.
+   * Lossless snapshot format. 1.9.0 uses format 6 (producer schedule fields on node records, ONS transfer and
+   * recovery fields, no validator state); older snapshots are refused rather than partially read.
    */
   snapshotVersion?: number;
   /** Network identity fields make cross-network restores fail closed. */
@@ -763,82 +642,28 @@ export interface StateSnapshot {
   nodeEvidence: Record<string, NodeEvidenceRecord>;
   /** Node Runner Reward Pool and revenue accounting. */
   nodeRewards: NodeRewardPoolState;
-  /** Registered validators in deterministic (address-sorted) order. */
-  validators: string[];
-  /**
-   * Whether this chain has ever accepted a valid validator registration.
-   *
-   * CONSENSUS STATE, committed in the state root and required in format 3:
-   *   - false — bootstrap mode. No validator has ever registered, so any node
-   *     may propose; this is how the first validator arrives at all.
-   *   - true  — the rotation is closed for ever. Block production belongs to
-   *     the active set, and an empty active set halts the chain instead of
-   *     letting any key produce.
-   *
-   * It is set only by the state transition of the first successful
-   * VALIDATOR_REGISTER, it is never cleared, and it is never inferred from the
-   * number of validators a node currently sees — "no validators" is not
-   * distinguishable on-chain from "every validator left".
-   */
-  validatorModeEstablished: boolean;
-  /**
-   * Applied slashes, keyed by evidence id. Consensus state: it is what stops a
-   * replay of the same evidence from slashing the same bond twice.
-   */
-  slashes?: Record<string, SlashRecord>;
+  /** Derived finality (consensus state, committed in the state root). */
+  finality: FinalityState;
+}
+
+/** One entry of the rolling window finality is computed from. */
+export interface FinalityRecentBlock {
+  height: number;
+  /** Producer address of the block at `height`. */
+  producer: string;
+  /** Hash of the block at `height`; known once its child has been applied, '' for the newest entry. */
+  hash: string;
 }
 
 /**
- * The historical lookups a consensus-critical validation may perform.
- *
- * A finality vote, a certificate and slash evidence must be judged against
- * HISTORY — the committee and the anchor as they were when the message was
- * produced — never against whatever the validating node happens to hold now.
- * Every caller supplies this same interface, which is what lets ONE predicate
- * serve P2P admission, block execution, certificate verification, vote
- * restoration and evidence verification without a second implementation to
- * drift out of step with the first.
- *
- * A lookup returns null when this node does not have the data. The predicate
- * then reports that explicitly and the CALLER decides: consensus paths fail
- * closed, an admission path may treat it as "unknown, do not relay". No
- * predicate may substitute current state for a missing historical answer.
+ * Finality as consensus state. Block `finalizedHeight` and everything before it is final on this chain: a branch that
+ * does not contain `finalizedHash` at `finalizedHeight` is never adopted. It only ever moves forward, and it is part
+ * of the state root, so two nodes with the same head agree on it or disagree on the root.
  */
-export interface ConsensusEvidenceContext {
-  /** This node's chain identity: a message for another chain is not one here. */
-  readonly networkId: string;
-  readonly chainId: number;
-  readonly genesisId: string;
-  readonly paramsHash: string;
-  /** Bech32 prefix this network's validator addresses use. */
-  readonly addressHrp: string;
-  /** Height and protocol time of a block this node holds, or null. */
-  anchorFor(hash: string): { height: number; timestamp: number } | null;
-  /** A block this node holds, or null. */
-  blockByHash(hash: string): Block | null;
-  /**
-   * Finality committee in force for the anchor's parent, in the deterministic
-   * address order the set hash is computed over — or null when the anchor state
-   * is not available on this node. Order is part of the hash, so a caller must
-   * not re-sort or filter what it returns.
-   */
-  committeeFor(
-    parentHash: string,
-    finalizedHeight: number,
-  ): readonly { address: string; publicKey: string }[] | null;
-  /** Whether `block` qualifies as a bootstrap finality target for `setHash`. */
-  isBootstrapTarget(block: Block, setHash: string, historical: boolean): boolean;
-  /**
-   * Address the proposer schedule names for `height` in `round` on top of
-   * `parentHash`, or null when no validator is scheduled (bootstrap mode). A
-   * vote may only point at a block the schedule actually authorised.
-   */
-  scheduledProposerFor(
-    parentHash: string,
-    height: number,
-    round: number,
-    timestamp: number,
-  ): string | null;
+export interface FinalityState {
+  finalizedHeight: number;
+  finalizedHash: Hex;
+  recent: FinalityRecentBlock[];
 }
 
 export interface ChainMeta {

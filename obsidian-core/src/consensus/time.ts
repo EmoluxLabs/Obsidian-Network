@@ -3,7 +3,7 @@
  *
  * WHAT PoT IS HERE
  *   Obsidian's consensus does not ask anyone to spend computation. Blocks are
- *   produced by the validator whose slot the protocol clock hands the turn to,
+ *   produced by the registered node whose slot the protocol clock hands the turn to,
  *   and the chain a node adopts is the one carrying the most verified state and
  *   the most verified time (PoT Weight, then height). The scarce resource the
  *   protocol defends is TIME: a block cannot exist before its time, a mining
@@ -44,7 +44,7 @@
  *   4. `protocolTime` (see ChainManager) is max(local wall clock, head
  *      timestamp + 1): a node never believes it is earlier than the chain it
  *      holds, so claims and expiry cannot be back-dated to bypass cooldowns.
- *      Cooldowns are enforced by the validators against block timestamps, not
+ *      Cooldowns are enforced by every node against block timestamps, not
  *      by the interface showing a countdown.
  *
  * WHAT THE USER'S DEVICE CAN AND CANNOT DO
@@ -99,7 +99,7 @@ export interface PotDifficultyState {
  *
  * This is a property of the *chain*, computed identically by every node from
  * timestamps every node already stores. It does not change who may produce a
- * block (the validator schedule does) and it does not make anyone compute more:
+ * block (the node schedule does) and it does not make anyone compute more:
  * it reports how observed spacing compares with the target.
  *
  *   observed  = MEDIAN of the per-block gaps in the window          seconds

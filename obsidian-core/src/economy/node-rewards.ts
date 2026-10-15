@@ -1,65 +1,46 @@
 /**
- * Node Runner rewards — who gets the ONS-funded 90% share, measured how, and why.
+ * Node rewards — who gets the ONS-funded 90% share, measured how, and why (protocol 1.9.0).
  *
- * THE ECONOMIC POINT
- *   Independent nodes are the network. The protocol therefore pays for the
- *   things that make independent nodes useful — being reachable, being in sync,
- *   relaying and validating, staying up across time — and pays for nothing else.
- *   Latency alone is not virtue, expensive hardware is not virtue and an
- *   operator's own opinion of its node is not evidence.
+ * THE FORMULA
+ *     reward(node) = nodePool × weight(node) / Σ weight(eligible nodes)          (nodePool = the 90% pool)
+ *   `weight` is the node's score in basis points, counted only for ELIGIBLE nodes. Eligibility is a gate, not a
+ *   bonus: a node below the uptime or score floor, an unregistered, banned or wallet-less node, and a node that
+ *   registered after the period opened all weigh zero and are paid nothing.
  *
  * THE RULE OF EVIDENCE
- *   Every number that decides a payout is computed by each node from chain
- *   state: blocks actually produced, attestations actually signed and
- *   countersigned by other nodes, faults reported by peers. A node cannot send
- *   the protocol "I was online 99%" — there is no field for it. The only thing a
- *   node may assert is a signed statement about *other* nodes' liveness, and
- *   that statement is worthless unless independent nodes make compatible ones.
+ *   Every number that decides a payout is computed by each node from chain state. A node cannot send the protocol
+ *   "I was online 99%": there is no field for it. What the chain contains is:
+ *     - in-sync HEARTBEATS, at most one per uptime window (one hour of protocol time), signed by the node key;
+ *     - BLOCKS the node produced (a produced block also proves the node was up in its window);
+ *     - ATTESTATIONS of other nodes, only for a subject that has recorded uptime in the same period;
+ *     - FAULT reports, which change a payout only when independent reporters corroborate them.
  *
- * SCORING (all integer, all deterministic, all in basis points)
+ * SCORING (integer arithmetic only — no floating point anywhere, so every platform computes the same bits)
+ *   uptimeBps         = liveWindows × 10 000 / windowsPerPeriod, scaled down when too few independent nodes
+ *                       attested it, and capped for a peerless network
+ *   participationBps  = (producedBps × wBlocks + coverageBps × wCoverage) / 10 000
+ *   reliabilityBps    = 10 000 − faultPenalty × (corroborated faults + invalid attestations), floored at zero
+ *   responsivenessBps = in-sync heartbeats / all heartbeats (a stale node earns no uptime and no responsiveness)
+ *   scoreBps          = weighted sum of the four
  *
- *   uptimeBps        = heartbeats seen in the period / heartbeats expected
- *                      (capped at 10_000)
- *   participationBps = mean of
- *                        producedBps = blocks produced / blocks expected for
- *                                      the node's scheduled slots
- *                        coverageBps = peers this node attested / peers that
- *                                      existed for most of the period
- *   reliabilityBps   = 10_000 − penalties, where each fault attributable to the
- *                      node by `minReporters` distinct reporters costs
- *                      `faultPenaltyBps`, and an invalid/conflicting attestation
- *                      costs the same
- *   responsivenessBps= share of this node's heartbeats that arrived while its
- *                      reported height was within `responsiveHeightLag` of the
- *                      network's, i.e. verification stayed current
+ * TREATMENT OF BAD BEHAVIOUR
+ *   downtime        → fewer live windows, lower uptime, lower weight; below the floor, no payout at all.
+ *   missed slots    → the node is suspended (consensus/producers.ts) and produces nothing, which lowers participation.
+ *   unsynced        → a stale heartbeat is counted as stale and earns no uptime window.
+ *   invalid claims  → an attestation the chain can see is false is recorded and costs reliability.
+ *   equivocation    → the node is banned: weight zero for ever, wallet released.
  *
- *   scoreBps = (uptime*wU + participation*wP + reliability*wR + responsive*wS) / 10_000
+ * ALLOCATION (exact, `allocateReward` below)
+ *   Largest-remainder method on integer seals. No single node may take more than max(maxNodeShareBps,
+ *   ceil(10 000 / contributors)) of the pool — a small network is paid in full instead of stranding the pool — and
+ *   the overflow of a capped node is redistributed to the others in the same pass. An allocation below
+ *   `minPayoutSeals` is not paid as dust: it stays in the pool and carries into the next period. Σ paid + carried
+ *   equals the pool exactly, always; a settlement can never mint a seal.
  *
- *   weight   = scoreBps − minScoreBps, when uptime ≥ minUptimeBps and the node
- *              is registered and its height was recent at period close; else 0.
- *
- * SYBIL RESISTANCE (no administrator, no allowlist)
- *   - One reward identity may be registered per reward wallet, and one identity
- *     per reward wallet: an operator that splits a machine into ten nodes must
- *     present ten distinct identities and ten distinct reward wallets, and the
- *     protocol binds each to the other.
- *   - Registration itself moves no funds. The protocol's capital requirement is
- *     the validator bond (20,000 OBS, src/protocol/params.ts) — one bond, one
- *     rule, enforced in one place — and node rewards are capped per node
- *     (`maxNodeShareBps`) so no fleet can take a period.
- *   - Rewards are capped per node (`maxNodeShareBps`), so one operator's fleet
- *     cannot take a period.
- *   - Uptime requires attestations from *other* nodes, so ten nodes on one
- *     laptop attest ten nodes on one laptop: the protocol counts what honest
- *     peers observed, and a fleet that is one point of failure scores like one.
- *
- * WALLET CHANGES
- *   A reward wallet change requires a signature from the NEW wallet over
- *   a domain-separated message (see `walletChangeMessage`) and takes effect
- *   `walletChangeDelayPeriods` periods later. Rewards already accrued stay with
- *   the wallet that accrued them; only future periods follow the new wallet. A
- *   stolen node key therefore cannot redirect a single seal that has not been
- *   earned yet, and an operator cannot be locked out of their own node forever.
+ * WHAT THIS DOES NOT SOLVE
+ *   Several nodes run by one operator earn several shares; the protocol cannot tell. The per-node cap and the
+ *   independent-attester requirement limit what one fleet can take from honest nodes, nothing more. A node that
+ *   lies about being in sync is only caught by other nodes' attestations. See docs/rewards-v1.9.0.md.
  */
 
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
@@ -76,6 +57,10 @@ export interface NodeRewardParamsSummary {
   minAttesters: number;
   walletChangeDelayPeriods: number;
   evidenceWindowPeriods: number;
+  uptimeWindowSeconds: number;
+  uptimeWindowsPerPeriod: number;
+  minPayoutSeals: string;
+  reclaimDelayPeriods: number;
   scoreWeights: { uptimeBps: number; participationBps: number; reliabilityBps: number; responsivenessBps: number };
 }
 
@@ -83,6 +68,28 @@ export interface NodeRewardParamsSummary {
 export function rewardPeriodAt(timestamp: number): number {
   if (!Number.isFinite(timestamp) || timestamp < 0) return 0;
   return Math.floor(timestamp / NR.periodSeconds);
+}
+
+/** Index (absolute, since protocol time 0) of the uptime window that contains a timestamp. */
+export function uptimeWindowIndex(timestamp: number): number {
+  if (!Number.isFinite(timestamp) || timestamp < 0) return 0;
+  return Math.floor(timestamp / NR.uptimeWindowSeconds);
+}
+
+/** Position (0..windowsPerPeriod-1) of a timestamp's uptime window inside its reward period. */
+export function uptimeWindowInPeriod(timestamp: number): number {
+  return uptimeWindowIndex(timestamp) % NR.uptimeWindowsPerPeriod;
+}
+
+/** Number of set bits (live windows) in an evidence mask. */
+export function popcount(mask: number): number {
+  let n = mask >>> 0;
+  let count = 0;
+  while (n !== 0) {
+    count += n & 1;
+    n >>>= 1;
+  }
+  return count;
 }
 
 /** Start timestamp of a period. */
@@ -97,8 +104,8 @@ export function rewardPeriodEnd(period: number): number {
 
 export interface NodeLivenessEvidence {
   registered: boolean;
-  /** Heartbeats from this node inside the period. */
-  heartbeats: number;
+  /** Uptime windows of the period in which the node was provably up. */
+  liveWindows: number;
   /** Distinct nodes that attested this node inside the period. */
   distinctAttesters: number;
   /** Nodes that existed for most of the period (the attestation universe). */
@@ -143,7 +150,7 @@ export interface NodeScore {
   responsivenessBps: number;
   /** Weighted total, basis points. */
   scoreBps: number;
-  /** Score above the floor that earns a share; 0 when ineligible. */
+  /** The node's score when eligible, 0 otherwise. This is its weight in the pool split. */
   weight: number;
   eligible: boolean;
   /** Machine-readable explanation, recomputed identically by every node. */
@@ -172,13 +179,12 @@ export function scoreNode(evidence: NodeEvidence): NodeScore {
   const reasons: string[] = [];
   const { liveness, participation, reliability, responsiveness } = evidence;
 
-  // ── Uptime: heartbeats actually seen, gated on independent attestation ────
+  // ── Uptime: live windows actually recorded, gated on independent attestation ──
   const requiredAttesters = Math.min(NR.minAttesters, Math.max(0, liveness.peerUniverse - 1));
-  let uptimeBps = clampBps((liveness.heartbeats / NR.heartbeatsPerPeriod) * 10_000);
+  let uptimeBps = clampBps(Math.floor((liveness.liveWindows * 10_000) / NR.uptimeWindowsPerPeriod));
   if (liveness.peerUniverse <= 1) {
-    // A one-node network cannot independently verify anyone, including itself.
-    // The protocol does not pretend otherwise: it caps the claim at the
-    // bootstrap allowance and says so.
+    // A one-node network cannot independently verify anyone, including itself. The protocol does not pretend
+    // otherwise: it caps the claim at the bootstrap allowance and says so.
     uptimeBps = Math.min(uptimeBps, NR.bootstrapUptimeBps);
     reasons.push(`peerless network: uptime capped at ${NR.bootstrapUptimeBps} bps until another registered node attests`);
   } else if (liveness.distinctAttesters < requiredAttesters) {
@@ -193,12 +199,12 @@ export function scoreNode(evidence: NodeEvidence): NodeScore {
   // ── Participation: scheduled blocks produced + peers actually attested ────
   const producedBps =
     participation.blocksExpected > 0
-      ? clampBps((participation.blocksProduced / participation.blocksExpected) * 10_000)
+      ? clampBps(Math.floor((participation.blocksProduced * 10_000) / participation.blocksExpected))
       : 0;
   const coverageDenominator = Math.max(1, liveness.peerUniverse - 1);
-  const coverageBps = clampBps((participation.attestationsMade / coverageDenominator) * 10_000);
+  const coverageBps = clampBps(Math.floor((participation.attestationsMade * 10_000) / coverageDenominator));
   const participationBps = clampBps(
-    (producedBps * NR.participationWeights.blocksBps + coverageBps * NR.participationWeights.coverageBps) / 10_000,
+    Math.floor((producedBps * NR.participationWeights.blocksBps + coverageBps * NR.participationWeights.coverageBps) / 10_000),
   );
 
   // ── Reliability: faults and lies, each costing the same flat penalty ──────
@@ -212,7 +218,7 @@ export function scoreNode(evidence: NodeEvidence): NodeScore {
 
   // ── Responsiveness: stayed in sync while up ───────────────────────────────
   const beats = responsiveness.responsiveHeartbeats + responsiveness.staleHeartbeats;
-  const responsivenessBps = beats > 0 ? clampBps((responsiveness.responsiveHeartbeats / beats) * 10_000) : 0;
+  const responsivenessBps = beats > 0 ? clampBps(Math.floor((responsiveness.responsiveHeartbeats * 10_000) / beats)) : 0;
   if (beats > 0 && responsivenessBps < 10_000) {
     reasons.push(
       `${responsiveness.staleHeartbeats} of ${beats} heartbeat(s) reported a height more than ${NR.responsiveHeightLag} blocks behind`,
@@ -221,17 +227,19 @@ export function scoreNode(evidence: NodeEvidence): NodeScore {
 
   const w = NR.scoreWeights;
   const scoreBps = clampBps(
-    (uptimeBps * w.uptimeBps +
-      participationBps * w.participationBps +
-      reliabilityBps * w.reliabilityBps +
-      responsivenessBps * w.responsivenessBps) /
-      10_000,
+    Math.floor(
+      (uptimeBps * w.uptimeBps +
+        participationBps * w.participationBps +
+        reliabilityBps * w.reliabilityBps +
+        responsivenessBps * w.responsivenessBps) /
+        10_000,
+    ),
   );
 
   let eligible = true;
   if (!liveness.registered) {
     eligible = false;
-    reasons.push('node has not registered a reward wallet with a signed proof of ownership');
+    reasons.push('node is not registered with a bound reward wallet');
   }
   if (uptimeBps < NR.minUptimeBps) {
     eligible = false;
@@ -248,7 +256,8 @@ export function scoreNode(evidence: NodeEvidence): NodeScore {
     reliabilityBps,
     responsivenessBps,
     scoreBps,
-    weight: eligible ? scoreBps - NR.minScoreBps : 0,
+    // The weight IS the score: floors above are gates, they are not subtracted.
+    weight: eligible ? scoreBps : 0,
     eligible,
     reasons,
   };
@@ -280,21 +289,60 @@ export interface RewardSettlement {
 }
 
 /**
- * Distribute a period's Node Runner Reward Pool.
+ * Exact largest-remainder split of `pool` seals by integer `weights`, with a per-node ceiling.
  *
- * Deterministic algorithm, exact integer arithmetic throughout:
+ *   - every weight is positive; nodes are given in a fixed order (by nodeId) and ties break in that order;
+ *   - a node whose proportional share exceeds `capAmount` is fixed at `capAmount` and the others are re-split over
+ *     what is left (repeated until no node exceeds it) — the overflow is redistributed, not stranded;
+ *   - after flooring, the leftover seals (fewer than the number of nodes) go one each to the largest remainders;
+ *   - Σ result ≤ pool, with equality unless every node is capped.
+ */
+export function allocateReward(pool: bigint, weights: bigint[], capAmount: bigint): bigint[] {
+  const out: bigint[] = weights.map(() => 0n);
+  let remaining = pool;
+  let active = weights.map((_, index) => index);
+  for (;;) {
+    const total = active.reduce((sum, index) => sum + weights[index], 0n);
+    if (total === 0n || remaining <= 0n || active.length === 0) return out;
+    const over = active.filter((index) => (remaining * weights[index]) / total > capAmount);
+    if (over.length === 0) {
+      let given = 0n;
+      const remainders: Array<{ index: number; rem: bigint }> = [];
+      for (const index of active) {
+        const numerator = remaining * weights[index];
+        out[index] = numerator / total;
+        remainders.push({ index, rem: numerator % total });
+        given += out[index];
+      }
+      let leftover = remaining - given;
+      remainders.sort((a, b) => (a.rem === b.rem ? a.index - b.index : a.rem > b.rem ? -1 : 1));
+      for (const entry of remainders) {
+        if (leftover <= 0n) break;
+        if (out[entry.index] + 1n <= capAmount) {
+          out[entry.index] += 1n;
+          leftover -= 1n;
+        }
+      }
+      return out;
+    }
+    for (const index of over) {
+      out[index] = capAmount;
+      remaining -= capAmount;
+    }
+    active = active.filter((index) => !over.includes(index));
+  }
+}
+
+/**
+ * Distribute a period's Node Reward Pool.
  *
- *   1. Score every registered node from verified evidence (scoreNode).
- *   2. weight_n = scoreBps_n − minScoreBps for eligible nodes, else 0. A node
- *      that produced nothing and attested nobody has weight 0, so standing
- *      still earns nothing no matter how long it has been registered.
- *   3. shareBps_n = floor(weight_n * 10_000 / Σweight), then no single node may
- *      exceed maxNodeShareBps; excess is left in the pool (cap, not a re-run).
- *   4. amount_n = floor(poolSeals * shareBps_n / 10_000). The rounding remainder
- *      is carried in the pool: `Σamount + carried == poolSeals` always holds.
+ *   1. Score every candidate node from verified evidence (scoreNode).
+ *   2. weight = scoreBps for eligible nodes, 0 otherwise.
+ *   3. cap   = max(maxNodeShareBps, ceil(10 000 / contributors)) of the pool.
+ *   4. amounts = allocateReward(pool, weights, cap).  An amount below `minPayoutSeals` is not paid: it stays in
+ *      the pool for the next period.
  *
- * `nodes` must be sorted by nodeId by the caller (chain state is iterated in
- * lexicographic order), so the result does not depend on iteration order.
+ * `nodes` must be sorted by nodeId by the caller, so the result does not depend on iteration order.
  */
 export function settleNodeRewards(input: {
   period: number;
@@ -320,47 +368,32 @@ export function settleNodeRewards(input: {
     };
   }
 
+  const capBps = BigInt(Math.max(NR.maxNodeShareBps, Math.ceil(10_000 / contributors.length)));
+  const capAmount = (input.poolSeals * capBps) / 10_000n;
+  const amounts = allocateReward(
+    input.poolSeals,
+    contributors.map((entry) => BigInt(entry.score.weight)),
+    capAmount,
+  );
+
   const allocations: RewardAllocation[] = [];
   let distributed = 0n;
-  for (const entry of contributors) {
-    const rawShareBps = Number((BigInt(entry.score.weight) * 10_000n) / totalWeight);
-    const shareBps = Math.min(rawShareBps, NR.maxNodeShareBps);
-    const amount = (input.poolSeals * BigInt(shareBps)) / 10_000n;
+  contributors.forEach((entry, index) => {
+    // Dust is carried, not paid: the seals stay in the pool and the next period's split includes them.
+    const amount = amounts[index] >= NR.minPayoutSeals ? amounts[index] : 0n;
+    distributed += amount;
     allocations.push({
       nodeId: entry.nodeId,
       rewardWallet: '',
       scoreBps: entry.score.scoreBps,
       weight: entry.score.weight,
-      shareBps,
+      shareBps: Number((amount * 10_000n) / input.poolSeals),
       amount,
     });
-    distributed += amount;
-  }
-
-  const totalShareBps = allocations.reduce((sum, entry) => sum + entry.shareBps, 0);
-  if (totalShareBps < 10_000) {
-    // Integer flooring leaves a remainder. It is carried, never invented: a
-    // settlement can never mint a seal, and the invariant below proves it.
-    const leftoverSeals = input.poolSeals - distributed;
-    const biggest = allocations.reduce(
-      (best, entry) => (entry.amount > best.amount ? entry : best),
-      allocations[0],
-    );
-    const room = NR.maxNodeShareBps - biggest.shareBps;
-    if (leftoverSeals > 0n && room > 0) {
-      const floorBonusBps = Math.min(room, Math.floor(10_000 - totalShareBps));
-      const bonusAmount = (input.poolSeals * BigInt(floorBonusBps)) / 10_000n;
-      biggest.shareBps += floorBonusBps;
-      biggest.amount += bonusAmount;
-      distributed += bonusAmount;
-    }
-  }
+  });
 
   const carriedSeals = input.poolSeals - distributed;
   if (carriedSeals < 0n) throw new Error('node reward settlement attempted to distribute more than the pool holds');
-  for (const allocation of allocations) {
-    if (allocation.amount < 0n) throw new Error('negative node reward allocation');
-  }
 
   return {
     period: input.period,
@@ -368,80 +401,13 @@ export function settleNodeRewards(input: {
     allocations,
     distributedSeals: distributed,
     carriedSeals,
-    eligibleNodes: allocations.length,
+    eligibleNodes: allocations.filter((entry) => entry.amount > 0n).length,
     scoredNodes,
     method:
-      'weight = scoreBps − minScoreBps over verified uptime, participation, reliability and responsiveness; ' +
-      'share = weight/totalWeight capped at maxNodeShareBps; amount = floor(pool × share); remainder carried forward',
+      'weight = scoreBps of eligible nodes (uptime, participation, reliability, responsiveness); ' +
+      'amount = largest-remainder share of the pool with a per-node ceiling of max(maxNodeShareBps, ceil(10000/contributors)) ' +
+      'and the overflow redistributed; amounts below minPayoutSeals and the rounding remainder are carried forward',
   };
-}
-
-/**
- * Domain-separated messages the node identity and the reward wallet sign.
- *
- * Signed with the protocol's own primitive — secp256k1 ECDSA, RFC 6979
- * deterministic nonces, 64-byte compact low-S, exactly as transactions and
- * blocks are signed (see src/crypto/keys.ts). Each message carries its own
- * `OBSIDIAN:NODE_*` domain tag and both the network id and chain id, so a
- * signature made for one network, one chain, or one purpose can never be
- * replayed as another: a heartbeat cannot be re-submitted as a registration,
- * and a testnet proof is worthless on mainnet.
- */
-export function nodeRegistrationMessage(input: {
-  networkId: string;
-  chainId: number;
-  nodeId: string;
-  rewardWallet: string;
-  endpoint: string;
-  issuedAt: number;
-  expiresAt: number;
-}): string {
-  return [
-    'OBSIDIAN:NODE_REGISTRATION:v1',
-    `networkId:${input.networkId}`,
-    `chainId:${input.chainId}`,
-    `nodeId:${input.nodeId}`,
-    `rewardWallet:${input.rewardWallet}`,
-    `endpoint:${input.endpoint}`,
-    `issuedAt:${input.issuedAt}`,
-    `expiresAt:${input.expiresAt}`,
-  ].join('\n');
-}
-
-export function walletChangeMessage(input: {
-  networkId: string;
-  chainId: number;
-  nodeId: string;
-  currentWallet: string;
-  newWallet: string;
-  requestedAt: number;
-}): string {
-  return [
-    'OBSIDIAN:NODE_WALLET_CHANGE:v1',
-    `networkId:${input.networkId}`,
-    `chainId:${input.chainId}`,
-    `nodeId:${input.nodeId}`,
-    `currentWallet:${input.currentWallet}`,
-    `newWallet:${input.newWallet}`,
-    `requestedAt:${input.requestedAt}`,
-  ].join('\n');
-}
-
-export function deregistrationMessage(input: {
-  networkId: string;
-  chainId: number;
-  nodeId: string;
-  rewardWallet: string;
-  requestedAt: number;
-}): string {
-  return [
-    'OBSIDIAN:NODE_DEREGISTRATION:v1',
-    `networkId:${input.networkId}`,
-    `chainId:${input.chainId}`,
-    `nodeId:${input.nodeId}`,
-    `rewardWallet:${input.rewardWallet}`,
-    `requestedAt:${input.requestedAt}`,
-  ].join('\n');
 }
 
 export interface NodeRewardStatusView {
@@ -456,7 +422,7 @@ export interface NodeRewardStatusView {
   claimablePeriods: number[];
   pendingWalletChange: { wallet: string; effectivePeriod: number } | null;
   facts: {
-    heartbeats: number;
+    liveWindows: number;
     attesters: number;
     peerUniverse: number;
     blocksProduced: number;
@@ -480,6 +446,10 @@ export function nodeRewardParams(): NodeRewardParamsSummary {
     minAttesters: NR.minAttesters,
     walletChangeDelayPeriods: NR.walletChangeDelayPeriods,
     evidenceWindowPeriods: NR.evidenceWindowPeriods,
+    uptimeWindowSeconds: NR.uptimeWindowSeconds,
+    uptimeWindowsPerPeriod: NR.uptimeWindowsPerPeriod,
+    minPayoutSeals: NR.minPayoutSeals.toString(),
+    reclaimDelayPeriods: NR.reclaimDelayPeriods,
     scoreWeights: { ...NR.scoreWeights },
   };
 }

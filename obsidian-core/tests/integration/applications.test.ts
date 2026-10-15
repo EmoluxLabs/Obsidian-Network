@@ -1,6 +1,6 @@
 /**
  * Integration tests for the active protocol applications: oracle, ONS,
- * validators, treasury and the 90/10 ONS revenue accounting path.
+ * node registration, treasury and the 90/10 ONS revenue accounting path.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ import { ErrCode } from '../../src/protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { RevenueSource, splitOnsRevenue } from '../../src/economy/accounting.js';
 import { formatObs, parseObs } from '../../src/protocol/amount.js';
-import { OnsOp, TreasuryOp, TxType, ValidatorOp } from '../../src/protocol/types.js';
+import { NodeRegistryOp, OnsOp, TreasuryOp, TxType } from '../../src/protocol/types.js';
 import { expectedGas } from '../../src/transactions/helpers.js';
 import { Indexer, serializeTransaction } from '../../src/indexer/indexer.js';
 import { blockHash } from '../../src/blockchain/block.js';
@@ -21,7 +21,10 @@ import {
   signedClaim,
   signedPayment,
   treasuryBody,
-  validatorBody,
+  makeNode,
+  nodeRegistryBody,
+  nodeSigner,
+  registerNode,
   type Harness,
   type TestWallet,
 } from '../helpers/harness.js';
@@ -185,7 +188,10 @@ describe('ONS (spec §57, §62)', () => {
     seedOracle(h, alice, bob);
     const fee = CONSENSUS_PARAMS.ons.registrationFee;
     h.produce([h.sign(alice, TxType.ONS, onsBody(OnsOp.REGISTER, 'alice', { fee }), { gas: expectedGas(fee) })]);
+    // v1.9.0: a transfer is an OFFER by the owner and changes nothing until the recipient accepts it.
     h.produce([h.sign(alice, TxType.ONS, onsBody(OnsOp.TRANSFER, 'alice', { to: bob.address }), { gas: 0n })]);
+    expect(h.chain.world.s.names.get('alice')!.owner).toBe(alice.address);
+    h.produce([h.sign(bob, TxType.ONS, onsBody(OnsOp.ACCEPT_TRANSFER, 'alice'), { gas: 0n })]);
     expect(h.chain.world.s.names.get('alice')!.owner).toBe(bob.address);
     // The mapping is blockchain state, so it is part of the state root.
     expect(h.chain.world.s.names.get('alice')!.address).toBe(bob.address);
@@ -207,50 +213,39 @@ describe('ONS (spec §57, §62)', () => {
   });
 });
 
-describe('validators (spec §24, §25)', () => {
-  it('bonds a validator, closes the open-proposer window and rotates the schedule', async () => {
+describe('node registration replaces validator bonding (protocol 1.9.0)', () => {
+  it('registers a node with no bond and no gas, and the schedule follows the registry', async () => {
     const { h, alice } = await fundedHarness();
-    const validatorKey = alice.publicKey;
-    const bond = CONSENSUS_PARAMS.consensus.validatorBond;
-    expect(h.chain.world.activeValidators()).toHaveLength(0);
-
-    h.produce([
-      h.sign(alice, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, bond, validatorKey), { gas: expectedGas(bond) }),
-    ]);
-    expect(h.chain.world.activeValidators()).toEqual([alice.address]);
-    const account = h.chain.world.getAccount(alice.address)!;
-    expect(account.validator!.bond).toBe(bond);
-    expect(account.validator!.status).toBe('ACTIVE');
+    const balanceBefore = h.chain.world.getAccount(alice.address)!.balance;
+    const node = makeNode(alice);
+    expect(h.chain.world.registeredNodes()).toHaveLength(0);
+    registerNode(h, node);
+    expect(h.chain.world.registeredNodes().map((n) => n.nodeId)).toEqual([node.nodeId]);
+    // Nothing was debited from the bound wallet and nothing was locked anywhere.
+    expect(h.chain.world.getAccount(alice.address)!.balance).toBe(balanceBefore);
     expect(h.chain.world.verifySupplyInvariant().ok).toBe(true);
+    expect(Object.keys(h.chain.world.toSnapshot('x')).join(',')).not.toMatch(/validator/i);
   });
 
-  it('refuses registration of a validator key that does not control the sender account', async () => {
+  it('refuses a registration whose sender is not the address of the node key', async () => {
     const { h, alice } = await fundedHarness();
-    const foreignKey = makeWallet().publicKey;
-    const bond = CONSENSUS_PARAMS.consensus.validatorBond;
+    const node = makeNode(alice);
+    // The wallet signs instead of the node key: the statement is not from the node, so it is not accepted.
     const outcome = h.tryBlock([
-      h.sign(alice, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, bond, foreignKey), {
-        gas: expectedGas(bond),
-      }),
+      h.sign(alice, TxType.NODE_REGISTRY, nodeRegistryBody({ op: NodeRegistryOp.REGISTER, node }), { gas: 0n }),
     ]);
     expect(outcome.accepted).toBe(false);
-    expect(outcome.code).toBe(ErrCode.UNAUTHORIZED);
-    expect(h.chain.world.activeValidators()).toEqual([]);
+    expect(h.chain.world.registeredNodes()).toEqual([]);
   });
 
-  it('requires exactly 20,000 OBS in integer base units', async () => {
+  it('charges no gas: a non-zero gas value on a node statement is rejected', async () => {
     const { h, alice } = await fundedHarness();
-    const required = CONSENSUS_PARAMS.consensus.validatorBond;
-    for (const offered of [required - 1n, required + 1n]) {
-      const outcome = h.tryBlock([
-        h.sign(alice, TxType.VALIDATOR, validatorBody(ValidatorOp.REGISTER, offered, alice.publicKey), {
-          gas: expectedGas(offered),
-        }),
-      ]);
-      expect(outcome.accepted).toBe(false);
-      expect(outcome.code).toBe(ErrCode.VALIDATOR_BOND_MISMATCH);
-      expect(h.chain.world.activeValidators()).toEqual([]);
-    }
+    const node = makeNode(alice);
+    const outcome = h.tryBlock([
+      h.sign(nodeSigner(node), TxType.NODE_REGISTRY, nodeRegistryBody({ op: NodeRegistryOp.REGISTER, node }), { gas: 1n }),
+    ]);
+    expect(outcome.accepted).toBe(false);
+    expect(h.chain.world.registeredNodes()).toEqual([]);
   });
 });
 
@@ -304,7 +299,6 @@ describe('treasury (spec §13, §14, §76)', () => {
       let sum = 0n;
       for (const account of h.chain.world.s.accounts.values()) sum += account.balance;
       sum += h.chain.world.s.pool.balance;
-      for (const account of h.chain.world.s.accounts.values()) sum += account.validator?.bond ?? 0n;
       expect(sum).toBe(invariant.totalSupply);
       expect(sum).toBeLessThanOrEqual(21_000_000n * 10n ** 18n);
       expect(formatObs(sum)).toBe(formatObs(invariant.totalSupply));

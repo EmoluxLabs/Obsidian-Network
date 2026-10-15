@@ -37,7 +37,7 @@ export function encodeHeaderForHash(header: BlockHeader): Uint8Array {
   return w.finish();
 }
 
-/** Canonical compact signed-header bytes used by proposer-equivocation proofs. */
+/** Canonical compact signed-header bytes used by producer-equivocation proofs. */
 export function encodeSignedHeader(header: BlockHeader): Uint8Array {
   const w = new Writer(); w.raw(encodeHeaderForHash(header));
   w.string(header.producerSignature.publicKey); w.string(header.producerSignature.signature);

@@ -4,7 +4,7 @@
  * IMPORTANT: this file configures *operation*, never consensus.
  *
  * Anything that changes what a node accepts or rejects — supply, mining
- * rewards, gas, service fees, oracle rules, validator rules — lives
+ * rewards, gas, service fees, oracle rules, producer rules — lives
  * in `src/protocol/params.ts` as a frozen protocol constant. An operator may
  * choose which port to listen on, whether to mine, and which peers to dial.
  * They cannot choose what a mining claim is worth, and no configuration file
@@ -24,7 +24,6 @@ export interface NodeConfig {
   network: NetworkName;
 
   /** Public secp256k1 keys committed into this network's fresh genesis. */
-  bootstrapValidatorPublicKeys: string[];
   /** Mining gate issuer public keys (staging/devnet/private chains; mainnet/testnet commit theirs in the source). */
   miningGatePublicKeys: string[];
 
@@ -101,7 +100,6 @@ export interface LoadedConfig {
 
 export const DEFAULT_CONFIG: NodeConfig = {
   network: 'mainnet',
-  bootstrapValidatorPublicKeys: [],
   miningGatePublicKeys: [],
   nodeName: 'obsidian-node',
   dataDir: './data',
@@ -299,7 +297,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Partial<Nod
     patch[key] = parse(raw);
   };
   set('network', env.OBSIDIAN_NETWORK, (v) => v as NetworkName);
-  set('bootstrapValidatorPublicKeys', env.OBSIDIAN_BOOTSTRAP_VALIDATOR_PUBLIC_KEYS, (v) => asList(v, []));
   set('miningGatePublicKeys', env.OBSIDIAN_MINING_GATE_PUBLIC_KEYS, (v) => asList(v, []));
   set('nodeName', env.OBSIDIAN_NODE_NAME, (v) => v);
   set('dataDir', env.OBSIDIAN_DATA_DIR, (v) => v);

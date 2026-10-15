@@ -47,6 +47,18 @@ export function assertAddress(address: string, net: NetworkDefinition, label = '
   }
 }
 
+/**
+ * A valid address in its one canonical (lowercase) spelling. Bech32 also accepts an all-uppercase spelling of the same
+ * address; that spelling would be a second, different key in every address-indexed table, so the 1.9.0 operations that
+ * bind an address (node reward wallet, ONS recipient and recovery address) accept the canonical form only.
+ */
+export function assertCanonicalAddress(address: string, net: NetworkDefinition, label = 'address'): void {
+  assertAddress(address, net, label);
+  if (address !== address.toLowerCase()) {
+    reject(ErrCode.BAD_ADDRESS, `${label} must be written in lowercase`);
+  }
+}
+
 export interface OraclePrice {
   /** Micro-USD per OBS (1e-6 USD units). */
   priceUsdMicro: bigint;

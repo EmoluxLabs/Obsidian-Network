@@ -92,7 +92,7 @@ export interface NodeSnapshot {
   headHash?: string;
   syncing?: boolean;
   behindBy?: number;
-  finality?: { finalizedHeight: number; confirmationsAfterFinality: number; validators: number; quorum: number };
+  finality?: { finalizedHeight: number; lag: number; available: boolean; eligibleProducers: number; quorum: number };
   p2p?: { listening: boolean; endpoint: string; lastError: Json | null };
   peers?: {
     connected: number;
@@ -143,8 +143,9 @@ export async function collectSnapshot(base: string, timeoutMs = 5000): Promise<N
     const body = asJson(finality.body);
     snapshot.finality = {
       finalizedHeight: Number(body.finalizedHeight ?? 0),
-      confirmationsAfterFinality: Number(body.confirmationsAfterFinality ?? 0),
-      validators: Number(body.validatorCount ?? 0),
+      lag: Number(body.lag ?? 0),
+      available: Boolean(body.available),
+      eligibleProducers: Number(body.eligibleProducers ?? 0),
       quorum: Number(body.quorum ?? 0),
     };
   }
@@ -187,7 +188,11 @@ export function renderStatus(snapshot: NodeSnapshot): string {
     `version:    core ${snapshot.coreVersion ?? '?'}, protocol ${snapshot.protocolVersion ?? '?'}`,
     `height:     ${snapshot.height ?? '?'}  ${snapshot.syncing ? `SYNCING (behind by ~${snapshot.behindBy ?? '?'})` : (snapshot.peers?.connected ?? 0) > 0 ? 'in sync with connected peers' : 'no connected peer to compare with'}`,
   ];
-  if (snapshot.finality) lines.push(`finality:   height ${snapshot.finality.finalizedHeight}, ${snapshot.finality.confirmationsAfterFinality} blocks after it`);
+  if (snapshot.finality) lines.push(
+      snapshot.finality.available
+        ? `finality:   height ${snapshot.finality.finalizedHeight}, ${snapshot.finality.lag} blocks behind the head (${snapshot.finality.eligibleProducers} established producers, ${snapshot.finality.quorum} needed)`
+        : `finality:   unavailable (${snapshot.finality.eligibleProducers} established producers; at least 3 are needed)`,
+    );
   if (snapshot.p2p) {
     lines.push(`p2p:        ${snapshot.p2p.listening ? `listening (${snapshot.p2p.endpoint})` : 'NOT LISTENING: this node cannot accept peers'}`);
     if (snapshot.p2p.lastError) lines.push(`            last peer problem: ${String(snapshot.p2p.lastError.message ?? '')}`);

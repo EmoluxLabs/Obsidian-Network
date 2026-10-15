@@ -75,7 +75,7 @@ describe('init', () => {
     const b = initNetwork(loadedFor(scratch(), { miningGatePublicKeys: [gate] }));
     expect(a.genesisId).toBe(b.genesisId);
     expect(a.genesisHash).toBe(b.genesisHash);
-    expect(a.genesisId).toBe(deriveGenesis(NET, [], [gate]).genesisId);
+    expect(a.genesisId).toBe(deriveGenesis(NET, [gate]).genesisId);
   });
 
   it('refuses a different gate list on a directory that already has an identity, and changes nothing', () => {
@@ -157,7 +157,7 @@ describe('adoption on start', () => {
   it('a manifest written for protocol X is refused if this build derives a different genesis id from it', () => {
     const root = scratch();
     const loaded = loadedFor(root, { miningGatePublicKeys: [pub()] });
-    const derived = deriveGenesis(NET, [], loaded.config.miningGatePublicKeys);
+    const derived = deriveGenesis(NET, loaded.config.miningGatePublicKeys);
     const manifest = buildManifest(NET, derived, { kind: 'start' });
     writeManifest(loaded.config.dataDir, { ...manifest, genesisId: 'b'.repeat(40) });
     expect(() => resolveIdentity(loaded)).toThrow(/different network/);
@@ -300,13 +300,13 @@ describe('several gate authority keys', () => {
 // ── join ───────────────────────────────────────────────────────────────────
 
 function peerReply(gate: string[], overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  const derived = deriveGenesis(NET, [], gate);
+  const derived = deriveGenesis(NET, gate);
   return { document: derived.document, genesisId: derived.genesisId, chainId: NET.chainId, networkId: NET.networkId, ...overrides };
 }
 
 describe('verifyPeerGenesis: the pin is the only root of trust', () => {
   const gate = pub();
-  const pinned = deriveGenesis(NET, [], [gate]).genesisId;
+  const pinned = deriveGenesis(NET, [gate]).genesisId;
 
   it('accepts a document that reproduces the pinned id', () => {
     expect(verifyPeerGenesis(NET, peerReply([gate]), pinned).genesisId).toBe(pinned);
@@ -363,7 +363,7 @@ describe('verifyPeerGenesis: the pin is the only root of trust', () => {
 
 describe('join', () => {
   const gate = pub();
-  const pinned = deriveGenesis(NET, [], [gate]).genesisId;
+  const pinned = deriveGenesis(NET, [gate]).genesisId;
 
   it('writes the manifest only after verification, learning only public keys', async () => {
     const loaded = loadedFor(scratch());
@@ -403,7 +403,7 @@ describe('join', () => {
     const again = await joinNetwork(loaded, { peer: 'http://p', pinnedGenesisId: pinned, fetchJson: async () => peerReply([gate]) });
     expect(again.state).toBe('existing');
     const otherGate = pub();
-    const otherPin = deriveGenesis(NET, [], [otherGate]).genesisId;
+    const otherPin = deriveGenesis(NET, [otherGate]).genesisId;
     await expect(
       joinNetwork(loaded, { peer: 'http://p', pinnedGenesisId: otherPin, fetchJson: async () => peerReply([otherGate]) }),
     ).rejects.toThrow(/already initialised/);

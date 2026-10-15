@@ -21,7 +21,7 @@ import { serializeTransaction, maskAddress } from '../indexer/indexer.js';
 import { AmountError, formatObs, MAX_SUPPLY_SEALS, parseObs } from '../protocol/amount.js';
 import { ProtocolError } from '../protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
-import { slashAmountFor } from '../consensus/slash-evidence.js';
+import { producerSetFor, isCandidate, isTier1 } from '../consensus/schedule.js';
 import { evaluateMining } from '../mining/rules.js';
 import { scheduleView, dailyRewardForActiveMiners, claimRewardForActiveMiners } from '../mining/schedule.js';
 import { decodeSignedTxFromBytes, encodeSignedTx } from '../transactions/encode.js';
@@ -36,12 +36,10 @@ import { encodeOnsBody, decodeOnsBody } from '../transactions/executors/ons.js';
 import { encodeMiningBody, decodeMiningBody, computeClaimId } from '../transactions/executors/mining.js';
 import { encodePaymentBody, decodePaymentBody, paymentBaseAmount } from '../transactions/executors/payment.js';
 import { expectedGas, usdMicroToSeals } from '../transactions/helpers.js';
-import { decodeValidatorBody, encodeValidatorBody } from '../transactions/executors/validator.js';
 import { decodeTreasuryBody, encodeTreasuryBody } from '../transactions/executors/treasury.js';
 import { decodeNodeRegistryBody, encodeNodeRegistryBody } from '../transactions/executors/node-registry.js';
-import { decodeSlashBody, encodeSlashBody } from '../transactions/executors/slash.js';
 import { medianTimePast, potDifficulty, timeRate } from '../consensus/time.js';
-import { nodeRewardParams, rewardPeriodAt, rewardPeriodEnd, scoreNode } from '../economy/node-rewards.js';
+import { nodeRewardParams, popcount, rewardPeriodAt, rewardPeriodEnd, scoreNode } from '../economy/node-rewards.js';
 import { NOT_ONS_REVENUE } from '../economy/accounting.js';
 import { decodeOracleBody, encodeOracleBody } from '../transactions/executors/oracle.js';
 import { TxType } from '../protocol/types.js';
@@ -81,14 +79,6 @@ const POST_ONLY_PATHS: ReadonlySet<string> = new Set([
   '/wallet/quote',
   '/rpc',
 ]);
-
-/**
- * How many applied slashes `/validators` returns. The ledger in consensus state
- * grows by one entry per applied slash and is never truncated — that is the
- * audit trail — but an HTTP response must not grow with it, so the endpoint
- * returns the most recent page and reports the exact total separately.
- */
-const SLASH_LIST_LIMIT = 64;
 
 /** Finality lag (blocks) beyond which /readyz lists `finality-lagging`. Informational: it never makes a node unready. */
 const READY_MAX_FINALITY_LAG = 64;
@@ -395,7 +385,7 @@ export class RpcServer {
     if (path === '/nodes') return this.nodes(response);
     if (path === '/peers') return this.peers(request, response);
     if (path === '/oracle') return this.oracle(response);
-    if (path === '/validators') return this.validators(response);
+    if (path === '/producers') return this.producers(response);
     if (path === '/blocks') return this.blocks(response, url);
     if (path.startsWith('/block/')) return this.block(response, after('/block/'));
     // Write paths are matched BEFORE the /tx/:id read route on purpose: a
@@ -563,7 +553,20 @@ export class RpcServer {
     });
   }
 
-  private finality(response:ServerResponse):void { this.json(response,200,{...this.options.chain.finalityStatus(),certificate:this.options.chain.latestFinalityCertificate(),evidence:this.options.chain.equivocationEvidence()}); }
+  /**
+   * GET /finality — the finalized checkpoint and how it is derived. Everything here is read from the head STATE (the
+   * checkpoint is a consensus value committed in the state root); no vote, certificate or local timer exists.
+   */
+  private finality(response: ServerResponse): void {
+    this.json(response, 200, {
+      ...this.options.chain.finalityStatus(),
+      derivedFrom: 'chain state only: a block is final once enough distinct established producers have built on it',
+      assumptions:
+        'checkpoint (economic) finality, not BFT: it holds while fewer than one third of the established producers ' +
+        'are faulty, and a new node must obtain a recent checkpoint from a source it trusts (weak subjectivity)',
+    });
+  }
+
 
   /**
    * GET /metrics — Prometheus text exposition.
@@ -596,7 +599,8 @@ export class RpcServer {
     metric('obsidian_chain_height', 'gauge', 'Height of the node\'s current head block.', status.height);
     metric('obsidian_finalized_height','gauge','Latest locally verified PoT finality checkpoint.',status.finalizedHeight);
     metric('obsidian_finality_lag_blocks','gauge','Canonical blocks after the finalized checkpoint.',status.finalityLag);
-    metric('obsidian_finality_validators','gauge','Eligible validators in the current finality committee.',status.finalityValidatorCount);
+    metric('obsidian_finality_producers', 'gauge', 'Established producers counted by the finality rule.', status.finalityEligibleProducers);
+    metric('obsidian_nodes', 'gauge', 'Registered, non-banned nodes.', status.nodes);
     metric('obsidian_peers', 'gauge', 'Connected p2p peers.', this.options.p2p?.peerCount ?? 0);
     metric('obsidian_mempool_transactions', 'gauge', 'Transactions waiting in the mempool.', this.options.chain.mempool.size);
     metric('obsidian_supply_obs', 'gauge', 'Total OBS in existence.', obs(BigInt(status.supply)));
@@ -607,7 +611,6 @@ export class RpcServer {
     metric('obsidian_transactions_total', 'counter', 'Transactions applied since genesis.', state.s.metrics.totalTransactions);
     metric('obsidian_mining_claims_total', 'counter', 'Mining claims applied since genesis.', state.s.metrics.totalMiningClaims);
     metric('obsidian_names_total', 'gauge', 'Registered .obs names.', state.s.metrics.totalNamesRegistered);
-    metric('obsidian_validators', 'gauge', 'Registered validators.', state.s.validators.size);
     metric('obsidian_genesis_allocation_claimed', 'gauge', 'One if the genesis allocation has been claimed.', state.s.genesis.allocationClaimed ? 1 : 0);
     metric('obsidian_supply_invariant_ok', 'gauge', 'One while total supply is within the protocol maximum.', BigInt(status.supply) <= MAX_SUPPLY_SEALS ? 1 : 0);
     metric('obsidian_syncing', 'gauge', 'One while the node believes it is behind its peers.', status.syncing ? 1 : 0);
@@ -658,8 +661,7 @@ export class RpcServer {
       nodeRewards: nodeRewardParams(),
       consensus: {
         forkChoice: CONSENSUS_PARAMS.consensus.forkChoice,
-        validatorBondObs: formatObs(CONSENSUS_PARAMS.consensus.validatorBond),
-        unbondingBlocks: CONSENSUS_PARAMS.consensus.unbondingBlocks,
+        producers: CONSENSUS_PARAMS.consensus.producers,
         maxReorgDepth: CONSENSUS_PARAMS.consensus.maxReorgDepth,
         finality: CONSENSUS_PARAMS.consensus.finality,
       },
@@ -688,7 +690,7 @@ export class RpcServer {
   }
 
   private genesis(response: ServerResponse): void {
-    const document = genesisDocumentFor(this.options.net, this.options.config.bootstrapValidatorPublicKeys, this.options.config.miningGatePublicKeys);
+    const document = genesisDocumentFor(this.options.net, this.options.config.miningGatePublicKeys);
     const genesisBlock = this.options.chain.getBlockByHeight(0);
     this.json(response, 200, {
       document,
@@ -713,9 +715,6 @@ export class RpcServer {
       invariantProblem: invariant.ok ? undefined : invariant.reason,
       genesisIssuedObs: formatObs(state.s.metrics.issuedGenesis),
       minedSupplyObs: formatObs(state.s.metrics.minedSupply),
-      validatorBonds: formatObs(
-        [...state.s.accounts.values()].reduce((sum, account) => sum + (account.validator?.bond ?? 0n), 0n),
-      ),
       poolBalanceObs: formatObs(state.s.pool.balance),
       issuanceSources: ['GENESIS_ALLOCATION', 'MINING_REWARD'],
     });
@@ -797,60 +796,40 @@ export class RpcServer {
     });
   }
 
-  private validators(response: ServerResponse): void {
-    const state = this.options.chain.world;
-    // The ledger itself is consensus state and grows one entry per applied
-    // slash; the *response* must not. A reader gets the most recent page plus
-    // the exact total, so the size of an HTTP answer is bounded by the server and
-    // not by how many validators the chain has punished over its lifetime.
-    const slashes = [...state.s.slashes.values()].sort((a, b) => (a.slashedAtHeight - b.slashedAtHeight || (a.evidenceId < b.evidenceId ? -1 : 1)));
-    const slashPage = slashes.slice(-SLASH_LIST_LIMIT);
+  /** GET /producers — the schedule, derived from state. Addresses are masked like every public list. */
+  private producers(response: ServerResponse): void {
+    const chain = this.options.chain;
+    const state = chain.world;
+    const height = chain.height + 1;
+    const now = chain.protocolTime;
+    const set = producerSetFor(state, height, now);
+    const nodes = state.registeredNodes();
     this.json(response, 200, {
-      count: state.activeValidators().length,
-      registered: [...state.s.validators].sort().map((address) => {
-        const validator = state.getAccount(address)?.validator;
-        return {
-          address: maskAddress(address),
-          status: validator?.status ?? 'UNKNOWN',
-          bond: formatObs(validator?.bond ?? 0n),
-          commissionBps: validator?.commissionBps ?? 0,
-          registeredAtHeight: validator?.registeredAtHeight ?? 0,
-          missedSlots: validator?.missedSlots ?? 0,
-          slashedAtHeight: validator?.slashedAtHeight ?? null,
-        };
-      }),
-      rotation: 'proposer(height, round) = activeValidators[(height + round) mod count]',
-      round: 'round = max(0, floor((block.timestamp - parent.timestamp) / targetBlockSeconds) - 1)',
-      liveness:
-        'a validator that misses its slot costs the network one slot while the turn passes to the next ' +
-        'active validator; rounds cycle inside the registered set and never open to an unbonded key',
-      slashing: {
-        rule:
-          'a validator is slashed only for objectively provable equivocation: two conflicting signed block ' +
-          'proposals for one height and round, or two conflicting finality votes for one anchor. Being ' +
-          'offline, missing a slot or failing to vote is never slashable — that is the missed-slot jail.',
-        slashBps: CONSENSUS_PARAMS.consensus.equivocationSlashBps,
-        slashObs: formatObs(slashAmountFor(CONSENSUS_PARAMS.consensus.validatorBond)),
-        bondObs: formatObs(CONSENSUS_PARAMS.consensus.validatorBond),
-        destination: 'MINING_POOL',
-        treasuryShareObs: '0',
-        evidenceRequired: 'signatures by the validator’s own registered key, verified by every node',
-        submitter: 'any account may submit a SLASH transaction; the evidence, the bond and the ratio decide the amount',
-        count: slashes.length,
-        shown: slashPage.length,
-      },
-      appliedSlashes: slashPage.map((record) => ({
-        evidenceId: record.evidenceId,
-        evidenceType: record.type,
-        validator: maskAddress(record.validator),
-        equivocationHeight: record.height,
-        round: record.round,
-        bondBeforeObs: formatObs(record.bondBefore),
-        slashedObs: formatObs(record.amount),
-        remainingBondObs: formatObs(record.bondAfter),
-        destination: 'MINING_POOL',
-        appliedAtHeight: record.slashedAtHeight,
+      tier: set.tier,
+      eligible: set.producers.length,
+      registered: nodes.filter(isCandidate).length,
+      banned: nodes.filter((node) => node.bannedAtHeight !== undefined).length,
+      nodes: nodes.slice(0, 500).map((node) => ({
+        nodeId: node.nodeId,
+        producer: maskAddress(node.producerAddress),
+        tier1: isTier1(node, height, now),
+        registeredAtHeight: node.registeredAtHeight,
+        lastActiveAt: node.lastActiveAt,
+        blocksProduced: node.blocksProduced,
+        missedSlots: node.missedSlots,
+        suspensions: node.suspensions,
+        suspendedUntil: node.suspendedUntil ?? null,
+        bannedAtHeight: node.bannedAtHeight ?? null,
       })),
+      rule: 'producer(height, round) = eligibleProducers[(height + round) mod count], sorted by address',
+      round: 'round = max(0, floor((block.timestamp - parent.timestamp) / targetBlockSeconds) - 1)',
+      tiers:
+        'TIER1: registered, mature, active within the window and not suspended. TIER2: every registered node, when no ' +
+        'Tier-1 node exists. OPEN: no node has registered yet. A chain never halts for want of producers.',
+      penalties:
+        'missing slots suspends a node for a doubling back-off; signing two blocks on one parent bans it. Nothing is ' +
+        'bonded, so nothing is confiscated.',
+      finality: chain.finalityStatus(),
     });
   }
 
@@ -1012,7 +991,7 @@ export class RpcServer {
       shortName: CONSENSUS_PARAMS.proofOfTime.shortName,
       weightRule: CONSENSUS_PARAMS.proofOfTime.weightRule,
       explanation:
-        'Obsidian is a Proof of Time chain: block production is scheduled by the validator rotation and gated by protocol time, ' +
+        'Obsidian is a Proof of Time chain: block production is scheduled by the registered-node producer schedule and gated by protocol time, ' +
         'not by a computational race. Hashing secures identity and integrity; it is not the consensus competition.',
       height: head?.height ?? 0,
       protocolTime: chain.protocolTime,
@@ -1132,10 +1111,11 @@ export class RpcServer {
     const evidence = state.s.nodeEvidence.get(`${period}:${nodeId}`);
     const peerUniverse = nodes.length;
     const heartbeats = evidence?.heartbeats ?? 0;
+    const liveWindows = popcount(evidence?.liveWindows ?? 0);
     const score = scoreNode({
       liveness: {
-        registered: node.deregisteredAtHeight === undefined,
-        heartbeats,
+        registered: node.deregisteredAtHeight === undefined && node.bannedAtHeight === undefined && node.rewardWallet !== '',
+        liveWindows,
         distinctAttesters: evidence?.attesters.length ?? 0,
         peerUniverse,
       },
@@ -1146,7 +1126,7 @@ export class RpcServer {
       },
       reliability: { faults: evidence?.faults ?? 0, invalidAttestations: evidence?.invalidAttestations ?? 0 },
       responsiveness: {
-        responsiveHeartbeats: heartbeats - (evidence?.staleHeartbeats ?? 0),
+        responsiveHeartbeats: liveWindows,
         staleHeartbeats: evidence?.staleHeartbeats ?? 0,
       },
     });
@@ -1166,11 +1146,13 @@ export class RpcServer {
     this.json(response, 200, {
       nodeId,
       rewardWallet: node.rewardWallet,
-      registered: node.deregisteredAtHeight === undefined,
+      registered: node.deregisteredAtHeight === undefined && node.bannedAtHeight === undefined,
+      bannedAtHeight: node.bannedAtHeight ?? null,
       deregisteredAtHeight: node.deregisteredAtHeight ?? null,
       registeredAtHeight: node.registeredAtHeight,
       endpoint: node.endpoint || null,
       lifetimeRewardObs: formatObs(node.lifetimeReward),
+      pendingReclaim: node.reclaimEffectivePeriod !== undefined ? { effectivePeriod: node.reclaimEffectivePeriod } : null,
       pendingWalletChange: node.pendingWallet
         ? { wallet: node.pendingWallet, effectivePeriod: node.pendingWalletEffectivePeriod ?? null }
         : null,
@@ -1178,7 +1160,8 @@ export class RpcServer {
       score,
       evidence: {
         heartbeats,
-        expectedHeartbeats: CONSENSUS_PARAMS.nodeRewards.heartbeatsPerPeriod,
+        liveWindows,
+        expectedWindows: CONSENSUS_PARAMS.nodeRewards.uptimeWindowsPerPeriod,
         attesters: evidence?.attesters ?? [],
         blocksProduced: evidence?.blocksProduced ?? 0,
         attestationsMade: evidence?.attested.length ?? 0,
@@ -1600,7 +1583,7 @@ export class RpcServer {
       type: TxType[tx.type] ?? String(tx.type),
       sender: tx.sender,
       stateRootPreview: simulation.root,
-      note: 'The transaction is admitted and broadcast for a scheduled proposer to consider. Admission does not guarantee inclusion, and inclusion is not irreversible; monitor reorgs and use confirmation depth only as an advisory risk signal.',
+      note: 'The transaction is admitted and broadcast for a scheduled producer to consider. Admission does not guarantee inclusion, and inclusion is not irreversible; monitor reorgs and use confirmation depth only as an advisory risk signal.',
     });
   }
 
@@ -1797,7 +1780,7 @@ export class RpcServer {
       case 'getstatus':
         return this.options.chain.status({ peers: this.options.p2p?.peerCount ?? 0 });
       case 'getfinality':
-        return {...this.options.chain.finalityStatus(),certificate:this.options.chain.latestFinalityCertificate(),evidence:this.options.chain.equivocationEvidence()};
+        return this.options.chain.finalityStatus();
       case 'getblock':
         return this.options.chain.getBlockByHeight(Number(params.height ?? 0))?.header ?? null;
       case 'getblocks':
@@ -1901,16 +1884,12 @@ export function encodeBodyFor(type: string, payload: Record<string, unknown>): U
       return encodeOnsBody(payload as never);
     case 'MINING_CLAIM':
       return encodeMiningBody(payload as never);
-    case 'VALIDATOR':
-      return encodeValidatorBody(payload as never);
     case 'TREASURY':
       return encodeTreasuryBody(payload as never);
     case 'ORACLE':
       return encodeOracleBody(payload as never);
     case 'NODE_REGISTRY':
       return encodeNodeRegistryBody(payload as never);
-    case 'SLASH':
-      return encodeSlashBody(payload as never);
     case 'GATE_AUTHORITY':
       return encodeGateAuthorityBody(payload as never);
     default:
@@ -1926,14 +1905,10 @@ export function decodeBodyFor(type: string, bytes: Uint8Array): unknown {
       return decodeOnsBody(bytes);
     case 'MINING_CLAIM':
       return decodeMiningBody(bytes);
-    case 'VALIDATOR':
-      return decodeValidatorBody(bytes);
     case 'TREASURY':
       return decodeTreasuryBody(bytes);
     case 'NODE_REGISTRY':
       return decodeNodeRegistryBody(bytes);
-    case 'SLASH':
-      return decodeSlashBody(bytes);
     case 'GATE_AUTHORITY':
       return decodeGateAuthorityBody(bytes);
     case 'ORACLE':

@@ -1,70 +1,64 @@
 /**
- * NODE_REGISTRY — the on-chain registry of node runners and the evidence they
- * submit for their Proof of Time rewards (spec: node runner reward pool).
+ * NODE_REGISTRY — the on-chain registry of nodes: the producer set, the uptime evidence behind node rewards and
+ * the binding between a node and the wallet that is paid for it (protocol 1.9.0).
  *
  * DESIGN RULES
  *
- *   1. THE PROTOCOL PAYS FOR VERIFIED FACTS, NEVER FOR CLAIMS.
- *      Nothing in this executor accepts an amount, an uptime percentage, a
- *      hashrate, a CPU benchmark or "I was online". What is recorded is: this
- *      node identity exists, it sent its heartbeat for this period, this other
- *      registered node attested it, this node produced these blocks. Every one
- *      of those facts is a signed statement from a key that had to exist and pay
- *      gas to make it, and every payout is computed later from the recorded
- *      facts (src/economy/node-rewards.ts).
+ *   1. THE NODE KEY IS THE ONLY SIGNER OF NODE STATEMENTS.
+ *      Registration, heartbeat, attestation, fault report, wallet change and deregistration are transactions
+ *      SENT BY THE NODE'S OWN IDENTITY KEY: `tx.sender` is the address of `nodePublicKey`, and the ordinary
+ *      transaction signature check already proves the key signed it. There is no second signature to carry, no
+ *      wallet signature and no gas (these transactions cost nothing). The same address is the node's block
+ *      PRODUCER address, so the key that signs blocks is the key that is registered.
  *
- *   2. TWO KEYS, TWO JOBS.
- *      - The NODE IDENTITY key (nodePublicKey → nodeId) is generated on the node
- *        runner and never leaves it. It signs heartbeats, attestations and fault
- *        reports, plus the consent on registration, wallet change and exit.
- *      - The REWARD WALLET key signs the transaction itself (so the protocol's
- *        ordinary transaction-signature verification already proves the operator
- *        controls the payout address) and holds the bond.
- *      An attacker with one key cannot do anything alone: the wallet holder
- *      cannot move someone else's node identity to their address, and the node
- *      key holder cannot spend a bond or redirect accrued rewards without the
- *      wallet's own signature.
+ *   2. THE REWARD WALLET IS A PASTED ADDRESS. THE BINDING IS NOT PROOF OF OWNERSHIP.
+ *      The operator pastes an OBS address; the node key binds it. Nothing proves the operator controls that
+ *      address, because proving it would need a signature from the wallet — which the operator must not need.
+ *      Consequences, stated plainly:
+ *        - a bound address is PAID, never debited, so binding somebody else's address only gives them money;
+ *        - but one address backs ONE node, so a stranger can SQUAT an address and keep its real owner from
+ *          binding it to their own node;
+ *        - the answer is RECLAIM_WALLET: the owner of a bound address sends one transaction FROM that address
+ *          (which does prove control) and, after a delay, the binding is released. Squatting costs the squatter a
+ *          registration and buys them nothing but delay; it is rate limited and documented in
+ *          docs/node-binding-v1.9.0.md.
+ *      A wallet CHANGE is also made by the node key alone, after a delay, and the current wallet owner can cancel
+ *      it. Rewards already paid stay with the wallet that earned them.
  *
- *   3. NO OPERATOR-SUPPLIED TIME.
- *      Every statement carries an issued-at/expires-at window that is checked
- *      against protocol time in the block that includes it, and heartbeats are
- *      keyed to the reward period derived from that same block. A node cannot
- *      send fourteen heartbeats "for last week" or backdate an attestation: the
- *      block decides when the statement happened.
+ *   3. NO BOND, NO DEPOSIT. Nothing is locked or confiscated. Equivocation is punished by a BAN (the identity is
+ *      removed for good), not by seizing funds that were never locked.
  *
- *   4. NO REGISTRATION DEPOSIT.
- *      Registering a node runner moves no funds: there was once a 100 OBS
- *      registration bond, and it was removed as a mechanism rather than set to
- *      zero. The protocol has exactly one bond — the validator bond — because
- *      two bonds with one name is exactly how an economic rule ends up applied
- *      in one place and not the other. What keeps the registry honest is the
- *      things a node cannot fake: one reward wallet behind one node identity,
- *      attestations that come from other nodes, and payouts computed only from
- *      recorded, verified evidence.
+ *   4. ADMISSION IS RATE LIMITED, NOT PRICED. At most `maxRegistrationsPerBlock` registrations per block and
+ *      `max(minNewNodesPerPeriod, ceil(n / divisor))` per reward period; a registered node is not schedulable
+ *      until `maturityBlocks` have passed. These are Sybil SPEED limits. They do not make Sybils expensive, and
+ *      the documentation says so.
+ *
+ *   5. NO OPERATOR-SUPPLIED TIME OR UPTIME. A heartbeat names the uptime window it belongs to and the protocol
+ *      rejects any mismatch with the including block's own timestamp. There is no field in which a node can say
+ *      "I was online 99%": uptime is counted from heartbeats and produced blocks the chain actually contains.
  */
 
 import { Reader, Writer } from '../../protocol/encoding.js';
 import { ErrCode, reject } from '../../protocol/errors.js';
 import {
   NodeRegistryOp,
+  type BlockHeader,
   type NodeRegistryBody,
   type NodeRecord,
   type TxEnvelope,
 } from '../../protocol/types.js';
-import { assertAddress, assertGas } from '../helpers.js';
-import { nodeIdFromPublicKey, verifyDigest } from '../../crypto/keys.js';
-import { fromHex, sha256, utf8 } from '../../crypto/hash.js';
-import { DOMAIN } from '../../protocol/domains.js';
+import { assertCanonicalAddress, assertGas } from '../helpers.js';
+import { addressFromPublicKey, nodeIdFromPublicKey } from '../../crypto/keys.js';
+import { fromHex, sha256Hex, utf8 } from '../../crypto/hash.js';
 import { CONSENSUS_PARAMS } from '../../protocol/params.js';
-import {
-  deregistrationMessage,
-  nodeRegistrationMessage,
-  rewardPeriodAt,
-  walletChangeMessage,
-} from '../../economy/node-rewards.js';
+import { PROTOCOL_VERSION } from '../../version.js';
+import { PARAMS_HASH } from '../../blockchain/state-root.js';
+import { blockHash, decodeSignedHeader, verifyBlockSignature } from '../../blockchain/block.js';
+import { rewardPeriodAt, uptimeWindowInPeriod, uptimeWindowIndex } from '../../economy/node-rewards.js';
 import type { ExecutorContext } from '../types.js';
 
 const NR = CONSENSUS_PARAMS.nodeRewards;
+const P = CONSENSUS_PARAMS.consensus.producers;
 
 export function decodeNodeRegistryBody(body: Uint8Array): NodeRegistryBody {
   const r = new Reader(body);
@@ -80,6 +74,8 @@ export function decodeNodeRegistryBody(body: Uint8Array): NodeRegistryBody {
   const reason = r.string();
   const issuedAt = Number(r.u64());
   const expiresAt = Number(r.u64());
+  const firstHeader = r.string();
+  const secondHeader = r.string();
   r.ensureConsumed();
   return {
     op,
@@ -94,6 +90,8 @@ export function decodeNodeRegistryBody(body: Uint8Array): NodeRegistryBody {
     reason: reason || undefined,
     issuedAt: issuedAt || undefined,
     expiresAt: expiresAt || undefined,
+    firstHeader: firstHeader || undefined,
+    secondHeader: secondHeader || undefined,
   };
 }
 
@@ -111,7 +109,14 @@ export function encodeNodeRegistryBody(body: NodeRegistryBody): Uint8Array {
   w.string(body.reason ?? '');
   w.u64(BigInt(Math.trunc(body.issuedAt ?? 0)));
   w.u64(BigInt(Math.trunc(body.expiresAt ?? 0)));
+  w.string(body.firstHeader ?? '');
+  w.string(body.secondHeader ?? '');
   return w.finish();
+}
+
+/** How many registrations the registry accepts in one reward period. */
+export function registrationsAllowedPerPeriod(registeredNodes: number): number {
+  return Math.max(P.minNewNodesPerPeriod, Math.ceil(registeredNodes / P.newNodesPerPeriodDivisor));
 }
 
 export function executeNodeRegistry(
@@ -120,34 +125,27 @@ export function executeNodeRegistry(
 ): { gasBase: bigint; detail: Record<string, unknown> } {
   const { state, apply, net } = ctx;
   const body = decodeNodeRegistryBody(tx.body);
-  const gas = assertGas(tx.gas, 0n);
-  if (gas > 0n) {
-    state.poolInflow(gas, 'node registry gas to mining pool');
-    state.s.metrics.totalGasBurnedToPool += gas;
+  // Gas is zero for every node statement: a node must not need funds to exist.
+  assertGas(tx.gas, 0n);
+  if (body.proof !== '') {
+    reject(ErrCode.MALFORMED, 'node statements carry no separate proof: the transaction signature of the node key is the proof');
   }
-
-  // A statement must belong to this chain and this network. The message the node
-  // signs includes both, so a testnet proof can never be mined into mainnet.
-  const networkId = net.networkId;
-  const chainId = ctx.chainId;
-
-  /** Verify a statement signature under its own domain tag, with the node's key. */
-  const signedProof = (domain: string, message: string, publicKeyHex: string): boolean =>
-    verifyDigest(domainMessage(domain, message), body.proof, publicKeyHex);
+  const period = rewardPeriodAt(apply.timestamp);
 
   switch (body.op) {
     // ── REGISTER ─────────────────────────────────────────────────────────────
     case NodeRegistryOp.REGISTER: {
       assertNodeKey(body);
-      assertAddress(body.rewardWallet, net, 'reward wallet');
-      if (tx.sender !== body.rewardWallet) {
-        reject(ErrCode.UNAUTHORIZED, 'register a node from the reward wallet itself: the transaction signature is the wallet\'s proof of control');
-      }
+      const producerAddress = assertSignedByNodeKey(tx, body, net.addressHrp);
       const nodeId = nodeIdFromPublicKey(body.nodePublicKey);
       if (nodeId !== body.nodeId) {
         reject(ErrCode.BAD_SIGNATURE, 'nodeId is not the hash of the supplied node public key');
       }
+      assertCanonicalAddress(body.rewardWallet, net, 'reward wallet');
       const existing = state.node(nodeId);
+      if (existing && existing.bannedAtHeight !== undefined) {
+        reject(ErrCode.NODE_BANNED, `node ${nodeId} was banned at height ${existing.bannedAtHeight} and cannot register again`);
+      }
       if (existing && existing.deregisteredAtHeight === undefined) {
         reject(ErrCode.NODE_ALREADY_REGISTERED, `node ${nodeId} is already registered`);
       }
@@ -155,22 +153,24 @@ export function executeNodeRegistry(
       if (walletOwner && walletOwner !== nodeId) {
         reject(
           ErrCode.NODE_WALLET_IN_USE,
-          `reward wallet ${body.rewardWallet} already backs node ${walletOwner}: one wallet may fund one node, which is what makes Sybil farming cost capital`,
+          `reward wallet ${body.rewardWallet} already backs node ${walletOwner}: one wallet backs one node`,
         );
       }
       const endpoint = validateEndpoint(body.endpoint);
-      assertProofWindow(body, ctx, 'registration');
-      const message = nodeRegistrationMessage({
-        networkId,
-        chainId,
-        nodeId,
-        rewardWallet: body.rewardWallet,
-        endpoint,
-        issuedAt: body.issuedAt ?? 0,
-        expiresAt: body.expiresAt ?? 0,
-      });
-      if (!signedProof(DOMAIN.NODE_REGISTRATION, message, body.nodePublicKey)) {
-        reject(ErrCode.BAD_SIGNATURE, 'the node identity did not consent to this registration (proof invalid)');
+
+      // Admission rate limits. Both are read from state, so every node counts the same.
+      if (ctx.counters.registrations >= P.maxRegistrationsPerBlock) {
+        reject(ErrCode.NODE_REGISTRATION_LIMIT, `a block accepts at most ${P.maxRegistrationsPerBlock} node registrations`);
+      }
+      const active = state.registeredNodes();
+      const thisPeriod = [...state.s.nodes.values()].filter(
+        (node) => rewardPeriodAt(node.registeredAt) === period && node.registeredAtHeight > 0,
+      ).length;
+      if (thisPeriod >= registrationsAllowedPerPeriod(active.length)) {
+        reject(
+          ErrCode.NODE_REGISTRATION_LIMIT,
+          `this reward period already accepted ${thisPeriod} registrations (limit ${registrationsAllowedPerPeriod(active.length)})`,
+        );
       }
 
       const record: NodeRecord = {
@@ -180,76 +180,88 @@ export function executeNodeRegistry(
         endpoint,
         registeredAtHeight: apply.height,
         registeredAt: apply.timestamp,
+        producerAddress,
+        lastActiveAt: apply.timestamp,
+        missedSlots: 0,
+        suspensions: 0,
+        blocksProduced: existing?.blocksProduced ?? 0,
         lifetimeReward: existing?.lifetimeReward ?? 0n,
         settledPeriods: [],
       };
+      ctx.counters.registrations += 1;
       state.putNode(record);
       state.emit('NODE_REGISTERED', {
         nodeId,
+        producer: producerAddress,
         rewardWallet: body.rewardWallet,
         endpoint,
-        period: rewardPeriodAt(apply.timestamp),
+        period,
       }, apply);
-      return { gasBase: 0n, detail: { op: 'REGISTER', nodeId, rewardWallet: body.rewardWallet } };
+      return { gasBase: 0n, detail: { op: 'REGISTER', nodeId, producer: producerAddress, rewardWallet: body.rewardWallet } };
     }
 
     // ── HEARTBEAT ────────────────────────────────────────────────────────────
     case NodeRegistryOp.HEARTBEAT: {
-      assertNodeKey(body);
-      const node = requireRegisteredNode(ctx, body);
-      assertNodeStatementSender(ctx, node, tx.sender);
-      const period = rewardPeriodAt(apply.timestamp);
-      const evidence = state.nodeEvidenceFor(period, node.nodeId);
-      assertPeriodProof(body, ctx, period, 'heartbeat');
-      if (evidence.heartbeats >= NR.heartbeatsPerPeriod) {
-        reject(ErrCode.NODE_HEARTBEAT_TOO_SOON, `node ${node.nodeId} already sent its heartbeat for period ${period}`);
+      const node = requireNodeFromSender(ctx, tx, body);
+      const window = uptimeWindowIndex(apply.timestamp);
+      if ((body.slot ?? 0) !== window) {
+        reject(
+          ErrCode.NODE_PROOF_EXPIRED,
+          `a heartbeat must name the uptime window it belongs to (expected ${window}, received ${body.slot ?? 0})`,
+        );
       }
       const reportedHeight = body.reportedHeight ?? 0;
       if (reportedHeight > apply.height) {
         reject(ErrCode.MALFORMED, 'a node cannot report a height the network has not reached');
       }
-      const message = heartbeatMessage({
-        networkId,
-        chainId,
-        nodeId: node.nodeId,
-        period,
-        reportedHeight,
-        endpoint: node.endpoint,
-      });
-      if (!signedProof(DOMAIN.NODE_HEARTBEAT, message, node.nodePublicKey)) {
-        reject(ErrCode.BAD_SIGNATURE, 'heartbeat proof does not match the registered node identity');
+      const evidence = state.nodeEvidenceFor(period, node.nodeId);
+      const bit = 1 << uptimeWindowInPeriod(apply.timestamp);
+      if ((evidence.liveWindows & bit) !== 0) {
+        reject(ErrCode.NODE_HEARTBEAT_TOO_SOON, `node ${node.nodeId} already counted uptime window ${window}`);
       }
-      evidence.heartbeats += 1;
-      evidence.lastReportedHeight = reportedHeight;
-      if (apply.height - reportedHeight <= NR.responsiveHeightLag) {
-        // In sync: the node's verification is current with the network's.
+      const inSync = apply.height - reportedHeight <= NR.responsiveHeightLag;
+      if (inSync) {
+        // Counted only when the node says it is in sync: an up-but-stale node earns no uptime.
+        evidence.liveWindows |= bit;
+        evidence.heartbeats += 1;
+        node.lastActiveAt = apply.timestamp;
+        state.putNode(node);
       } else {
+        if (evidence.staleHeartbeats >= NR.uptimeWindowsPerPeriod) {
+          reject(ErrCode.NODE_HEARTBEAT_TOO_SOON, 'too many stale heartbeats in this period');
+        }
         evidence.staleHeartbeats += 1;
       }
+      evidence.lastReportedHeight = reportedHeight;
       state.emit('NODE_HEARTBEAT', {
         nodeId: node.nodeId,
-        period,
+        window,
         reportedHeight,
         lag: apply.height - reportedHeight,
+        counted: inSync,
       }, apply);
-      return { gasBase: 0n, detail: { op: 'HEARTBEAT', nodeId: node.nodeId, period } };
+      return { gasBase: 0n, detail: { op: 'HEARTBEAT', nodeId: node.nodeId, window, counted: inSync } };
     }
 
     // ── ATTEST ───────────────────────────────────────────────────────────────
     case NodeRegistryOp.ATTEST: {
-      assertNodeKey(body);
-      const observer = requireRegisteredNode(ctx, body);
-      assertNodeStatementSender(ctx, observer, tx.sender);
+      const observer = requireNodeFromSender(ctx, tx, body);
       if (!body.subject) reject(ErrCode.MALFORMED, 'an attestation needs a subject node');
       const subject = state.node(body.subject);
-      if (!subject || subject.deregisteredAtHeight !== undefined) {
+      if (!subject || subject.deregisteredAtHeight !== undefined || subject.bannedAtHeight !== undefined) {
         reject(ErrCode.NODE_BAD_SUBJECT, `subject ${body.subject} is not a registered node`);
       }
       if (subject.nodeId === observer.nodeId) {
         reject(ErrCode.NODE_BAD_SUBJECT, 'a node cannot attest itself: liveness must be observed by an independent node');
       }
-      const period = rewardPeriodAt(apply.timestamp);
-      assertPeriodProof(body, ctx, period, 'attestation');
+      if ((body.slot ?? 0) !== period) {
+        reject(ErrCode.NODE_PROOF_EXPIRED, `an attestation must name the reward period it belongs to (expected ${period}, received ${body.slot ?? 0})`);
+      }
+      const subjectEvidence = state.nodeEvidenceFor(period, subject.nodeId);
+      // An attestation is about something the chain can check: the subject must have shown life in this period.
+      if (subjectEvidence.liveWindows === 0) {
+        reject(ErrCode.NODE_BAD_SUBJECT, `node ${subject.nodeId} has no recorded uptime in period ${period}: there is nothing to attest`);
+      }
       const observerEvidence = state.nodeEvidenceFor(period, observer.nodeId);
       if (observerEvidence.attested.length >= NR.maxAttestationsPerAttester && !observerEvidence.attested.includes(subject.nodeId)) {
         reject(
@@ -257,18 +269,6 @@ export function executeNodeRegistry(
           `node ${observer.nodeId} reached the per-period limit of ${NR.maxAttestationsPerAttester} attestations`,
         );
       }
-      const message = attestationMessage({
-        networkId,
-        chainId,
-        observer: observer.nodeId,
-        subject: subject.nodeId,
-        period,
-        reportedHeight: body.reportedHeight ?? 0,
-      });
-      if (!signedProof(DOMAIN.NODE_ATTESTATION, message, observer.nodePublicKey)) {
-        reject(ErrCode.BAD_SIGNATURE, 'attestation proof does not match the observer node identity');
-      }
-      const subjectEvidence = state.nodeEvidenceFor(period, subject.nodeId);
       if (!subjectEvidence.attesters.includes(observer.nodeId)) subjectEvidence.attesters.push(observer.nodeId);
       if (!observerEvidence.attested.includes(subject.nodeId)) observerEvidence.attested.push(subject.nodeId);
       state.emit('NODE_ATTESTATION', {
@@ -282,17 +282,13 @@ export function executeNodeRegistry(
 
     // ── REPORT_FAULT ─────────────────────────────────────────────────────────
     case NodeRegistryOp.REPORT_FAULT: {
-      assertNodeKey(body);
-      const reporter = requireRegisteredNode(ctx, body);
-      assertNodeStatementSender(ctx, reporter, tx.sender);
+      const reporter = requireNodeFromSender(ctx, tx, body);
       if (!body.subject) reject(ErrCode.MALFORMED, 'a fault report needs a subject node');
       const subject = state.node(body.subject);
       if (!subject || subject.deregisteredAtHeight !== undefined) {
         reject(ErrCode.NODE_BAD_SUBJECT, `subject ${body.subject} is not a registered node`);
       }
-      if (subject.nodeId === reporter.nodeId) {
-        reject(ErrCode.NODE_BAD_SUBJECT, 'a node cannot report itself');
-      }
+      if (subject.nodeId === reporter.nodeId) reject(ErrCode.NODE_BAD_SUBJECT, 'a node cannot report itself');
       if (apply.height - reporter.registeredAtHeight < NR.minRegistrationBlocks) {
         reject(ErrCode.NODE_NOT_REGISTERED, 'a node must be registered for at least one block before it can report faults');
       }
@@ -300,26 +296,16 @@ export function executeNodeRegistry(
       if (reason.length < 3 || reason.length > 80) {
         reject(ErrCode.MALFORMED, 'a fault reason of 3-80 characters is required and is stored on-chain for audit');
       }
-      const period = rewardPeriodAt(apply.timestamp);
-      assertPeriodProof(body, ctx, period, 'fault report');
+      if ((body.slot ?? 0) !== period) {
+        reject(ErrCode.NODE_PROOF_EXPIRED, `a fault report must name the reward period it belongs to (expected ${period}, received ${body.slot ?? 0})`);
+      }
       const subjectEvidence = state.nodeEvidenceFor(period, subject.nodeId);
       const alreadyReported = subjectEvidence.faultReporters.includes(reporter.nodeId);
       if (!alreadyReported && subjectEvidence.faultReporters.length >= NR.maxFaultReportsPerReporterPerPeriod) {
         reject(
           ErrCode.NODE_FAULT_LIMIT,
-          `node ${reporter.nodeId} reached the per-period limit of ${NR.maxFaultReportsPerReporterPerPeriod} fault reports`,
+          `node ${subject.nodeId} reached the per-period limit of ${NR.maxFaultReportsPerReporterPerPeriod} fault reports`,
         );
-      }
-      const message = faultReportMessage({
-        networkId,
-        chainId,
-        reporter: reporter.nodeId,
-        subject: subject.nodeId,
-        period,
-        reason,
-      });
-      if (!signedProof(DOMAIN.NODE_FAULT_REPORT, message, reporter.nodePublicKey)) {
-        reject(ErrCode.BAD_SIGNATURE, 'fault report proof does not match the reporter node identity');
       }
       if (!alreadyReported) {
         subjectEvidence.faultReporters.push(reporter.nodeId);
@@ -330,60 +316,40 @@ export function executeNodeRegistry(
         subject: subject.nodeId,
         period,
         reason,
-        // A single node's accusation is recorded but never penalised on its own:
-        // settlement only counts faults corroborated by independent reporters.
-        independentReporters: subjectEvidence.faultReporters.length,
+        reporters: subjectEvidence.faultReporters.length,
+        note: 'a fault changes a payout only when independent reporters corroborate it',
       }, apply);
-      return { gasBase: 0n, detail: { op: 'REPORT_FAULT', reporter: reporter.nodeId, subject: subject.nodeId } };
+      return { gasBase: 0n, detail: { op: 'REPORT_FAULT', reporter: reporter.nodeId, subject: subject.nodeId, period } };
     }
 
     // ── CHANGE_WALLET ────────────────────────────────────────────────────────
     case NodeRegistryOp.CHANGE_WALLET: {
-      assertNodeKey(body);
-      assertAddress(body.rewardWallet, net, 'new reward wallet');
-      const node = requireRegisteredNode(ctx, body);
-      // The incoming wallet signs the change: it is the only key that can prove
-      // it is willing to receive, and it cannot be an address the operator does
-      // not control. The outgoing wallet pays for and signs the transaction.
-      if (tx.sender !== node.rewardWallet) {
-        reject(ErrCode.UNAUTHORIZED, 'only the current reward wallet may authorise a reward wallet change');
-      }
+      const node = requireNodeFromSender(ctx, tx, body);
+      assertCanonicalAddress(body.rewardWallet, net, 'new reward wallet');
       if (node.pendingWallet) {
         reject(
           ErrCode.NODE_WALLET_CHANGE_PENDING,
           `a change to ${node.pendingWallet} is already pending for period ${node.pendingWalletEffectivePeriod}`,
         );
       }
-      const newOwner = state.nodeByRewardWallet(body.rewardWallet);
-      if (newOwner && newOwner !== node.nodeId) {
-        reject(ErrCode.NODE_WALLET_IN_USE, `reward wallet ${body.rewardWallet} already backs node ${newOwner}`);
-      }
       if (body.rewardWallet === node.rewardWallet) {
         reject(ErrCode.MALFORMED, 'the new reward wallet is the wallet already in use');
       }
-      const requestedAt = apply.timestamp;
-      const message = walletChangeMessage({
-        networkId,
-        chainId,
-        nodeId: node.nodeId,
-        currentWallet: node.rewardWallet,
-        newWallet: body.rewardWallet,
-        requestedAt,
-      });
-      if (!verifyDigest(domainMessage(DOMAIN.NODE_WALLET_CHANGE, message), body.proof, body.nodePublicKey)) {
-        reject(ErrCode.BAD_SIGNATURE, 'the node identity did not authorise this wallet change');
+      const owner = state.nodeByRewardWallet(body.rewardWallet);
+      if (owner && owner !== node.nodeId) {
+        reject(ErrCode.NODE_WALLET_IN_USE, `reward wallet ${body.rewardWallet} already backs node ${owner}`);
       }
-      const period = rewardPeriodAt(requestedAt);
       node.pendingWallet = body.rewardWallet;
       node.pendingWalletEffectivePeriod = period + NR.walletChangeDelayPeriods;
       node.pendingWalletRequestedAtHeight = apply.height;
+      // putNode reserves the incoming wallet atomically with the record: nobody else can bind it meanwhile.
       state.putNode(node);
       state.emit('NODE_WALLET_CHANGE_SCHEDULED', {
         nodeId: node.nodeId,
-        from: tx.sender,
+        from: node.rewardWallet,
         to: body.rewardWallet,
         effectivePeriod: node.pendingWalletEffectivePeriod,
-        note: 'rewards already accrued stay with the wallet that earned them',
+        note: 'rewards already accrued stay with the wallet that earned them; the current wallet may cancel before then',
       }, apply);
       return {
         gasBase: 0n,
@@ -391,33 +357,95 @@ export function executeNodeRegistry(
       };
     }
 
-    // ── DEREGISTER ───────────────────────────────────────────────────────────
-    case NodeRegistryOp.DEREGISTER: {
-      assertNodeKey(body);
-      const node = requireRegisteredNode(ctx, body);
-      if (tx.sender !== node.rewardWallet) {
-        reject(ErrCode.UNAUTHORIZED, 'only the current reward wallet may deregister this node');
+    // ── CANCEL_WALLET_CHANGE ─────────────────────────────────────────────────
+    case NodeRegistryOp.CANCEL_WALLET_CHANGE: {
+      const node = state.node(body.nodeId);
+      if (!node || node.deregisteredAtHeight !== undefined) {
+        reject(ErrCode.NODE_NOT_REGISTERED, `node ${body.nodeId} is not registered`);
       }
-      const message = deregistrationMessage({
-        networkId,
-        chainId,
-        nodeId: node.nodeId,
-        rewardWallet: node.rewardWallet,
-        requestedAt: apply.timestamp,
-      });
-      if (!verifyDigest(domainMessage(DOMAIN.NODE_DEREGISTRATION, message), body.proof, node.nodePublicKey)) {
-        reject(ErrCode.BAD_SIGNATURE, 'the node identity did not authorise this deregistration');
+      // The node key may take back its own request; so may the wallet that is being paid today.
+      if (tx.sender !== node.producerAddress && !(node.rewardWallet && tx.sender === node.rewardWallet)) {
+        reject(ErrCode.UNAUTHORIZED, 'only the node key or the current reward wallet may cancel a wallet change');
       }
-      node.deregisteredAtHeight = apply.height;
+      if (!node.pendingWallet) reject(ErrCode.NODE_WALLET_CHANGE_PENDING, 'no wallet change is pending for this node');
+      const cancelled = node.pendingWallet;
+      state.removeNodeWallet(cancelled, node.nodeId);
       node.pendingWallet = undefined;
       node.pendingWalletEffectivePeriod = undefined;
+      node.pendingWalletRequestedAtHeight = undefined;
+      state.putNode(node);
+      state.emit('NODE_WALLET_CHANGE_CANCELLED', { nodeId: node.nodeId, cancelled, by: tx.sender }, apply);
+      return { gasBase: 0n, detail: { op: 'CANCEL_WALLET_CHANGE', nodeId: node.nodeId } };
+    }
+
+    // ── RECLAIM_WALLET ───────────────────────────────────────────────────────
+    case NodeRegistryOp.RECLAIM_WALLET: {
+      const node = state.node(body.nodeId);
+      if (!node || node.deregisteredAtHeight !== undefined) {
+        reject(ErrCode.NODE_NOT_REGISTERED, `node ${body.nodeId} is not registered`);
+      }
+      // Sent FROM the bound address: the one signature in the whole flow that proves control of the wallet.
+      if (tx.sender !== node.rewardWallet && tx.sender !== node.pendingWallet) {
+        reject(ErrCode.UNAUTHORIZED, 'only the wallet bound to this node (or reserved for it) may reclaim itself');
+      }
+      if (node.reclaimEffectivePeriod !== undefined) {
+        reject(ErrCode.NODE_WALLET_CHANGE_PENDING, 'a reclaim is already pending for this node');
+      }
+      node.reclaimEffectivePeriod = period + NR.reclaimDelayPeriods;
+      node.reclaimWallet = tx.sender;
+      state.putNode(node);
+      state.emit('NODE_WALLET_RECLAIM_SCHEDULED', {
+        nodeId: node.nodeId,
+        wallet: tx.sender,
+        effectivePeriod: node.reclaimEffectivePeriod,
+        note: 'rewards keep flowing to this wallet until the reclaim takes effect, then the binding is released',
+      }, apply);
+      return { gasBase: 0n, detail: { op: 'RECLAIM_WALLET', nodeId: node.nodeId, effectivePeriod: node.reclaimEffectivePeriod } };
+    }
+
+    // ── DEREGISTER ───────────────────────────────────────────────────────────
+    case NodeRegistryOp.DEREGISTER: {
+      const node = requireNodeFromSender(ctx, tx, body);
+      node.deregisteredAtHeight = apply.height;
+      releaseWallets(ctx, node);
       state.putNode(node);
       state.emit('NODE_DEREGISTERED', {
         nodeId: node.nodeId,
-        rewardWallet: node.rewardWallet,
-        note: 'nothing is locked and nothing is confiscated: already settled rewards are untouched, and the period in progress is forfeited because a node that leaves cannot be attested for it',
+        note: 'nothing is locked and nothing is confiscated: settled rewards are untouched, the period in progress is forfeited, and the wallet is free to back another node',
       }, apply);
       return { gasBase: 0n, detail: { op: 'DEREGISTER', nodeId: node.nodeId } };
+    }
+
+    // ── REPORT_EQUIVOCATION ──────────────────────────────────────────────────
+    case NodeRegistryOp.REPORT_EQUIVOCATION: {
+      // The reporter must itself be a registered node: reports are signature work, so they are not free for anybody.
+      const reporter = state.nodeByProducer(tx.sender);
+      if (!reporter || reporter.deregisteredAtHeight !== undefined || reporter.bannedAtHeight !== undefined) {
+        reject(ErrCode.NODE_NOT_REGISTERED, 'equivocation reports are accepted from registered nodes only');
+      }
+      if (ctx.counters.equivocationReports >= P.maxEquivocationReportsPerBlock) {
+        reject(ErrCode.EVIDENCE_LIMIT, `a block carries at most ${P.maxEquivocationReportsPerBlock} equivocation reports`);
+      }
+      ctx.counters.equivocationReports += 1;
+      const subject = state.node(body.nodeId);
+      if (!subject) reject(ErrCode.NODE_NOT_REGISTERED, `node ${body.nodeId} is unknown`);
+      if (subject.bannedAtHeight !== undefined) {
+        reject(ErrCode.NODE_BANNED, `node ${subject.nodeId} is already banned`);
+      }
+      const evidenceId = verifyEquivocation(ctx, subject, body);
+      subject.bannedAtHeight = apply.height;
+      subject.banEvidenceId = evidenceId;
+      subject.suspendedUntil = undefined;
+      releaseWallets(ctx, subject);
+      state.putNode(subject);
+      state.emit('NODE_BANNED', {
+        nodeId: subject.nodeId,
+        producer: subject.producerAddress,
+        evidenceId,
+        reporter: reporter.nodeId,
+        note: 'two different blocks signed by this node on the same parent; no funds are involved, the identity is removed',
+      }, apply);
+      return { gasBase: 0n, detail: { op: 'REPORT_EQUIVOCATION', nodeId: subject.nodeId, evidenceId } };
     }
 
     default:
@@ -425,77 +453,107 @@ export function executeNodeRegistry(
   }
 }
 
+/** Release every wallet a node holds (current and reserved) so each is free to back another node. */
+export function releaseWallets(ctx: ExecutorContext, node: NodeRecord): void {
+  if (node.rewardWallet) ctx.state.removeNodeWallet(node.rewardWallet, node.nodeId);
+  if (node.pendingWallet) ctx.state.removeNodeWallet(node.pendingWallet, node.nodeId);
+  node.pendingWallet = undefined;
+  node.pendingWalletEffectivePeriod = undefined;
+  node.pendingWalletRequestedAtHeight = undefined;
+  node.reclaimEffectivePeriod = undefined;
+  node.reclaimWallet = undefined;
+}
+
+// ── equivocation evidence ────────────────────────────────────────────────────
+
+function decodeHeaderHex(hex: string | undefined): BlockHeader {
+  if (!hex || !/^[0-9a-f]+$/.test(hex) || hex.length % 2 !== 0 || hex.length > 16 * 1024) {
+    reject(ErrCode.EQUIVOCATION_INVALID, 'an evidence header is missing or is not lowercase hex within the size limit');
+  }
+  try {
+    return decodeSignedHeader(fromHex(hex));
+  } catch {
+    reject(ErrCode.EQUIVOCATION_INVALID, 'an evidence header cannot be decoded');
+  }
+}
+
+/**
+ * The whole decision, from the two headers and the registry alone: two DIFFERENT blocks, the same parent, the same
+ * height, both signed by the key this node registered. Honest software signs one block per parent; there is no
+ * legitimate way to produce this. Returns the canonical evidence id.
+ */
+function verifyEquivocation(ctx: ExecutorContext, subject: NodeRecord, body: NodeRegistryBody): string {
+  const first = decodeHeaderHex(body.firstHeader);
+  const second = decodeHeaderHex(body.secondHeader);
+  for (const header of [first, second]) {
+    if (header.protocolVersion !== PROTOCOL_VERSION || header.chainId !== ctx.chainId || header.paramsHash !== PARAMS_HASH) {
+      reject(ErrCode.EQUIVOCATION_INVALID, 'an evidence header belongs to another chain, protocol version or parameter set');
+    }
+    if (header.producer !== subject.producerAddress || header.producerSignature.publicKey !== subject.nodePublicKey) {
+      reject(ErrCode.EQUIVOCATION_INVALID, 'an evidence header was not signed by this node');
+    }
+    if (header.height < 1 || header.height > ctx.apply.height) {
+      reject(ErrCode.EQUIVOCATION_INVALID, 'an evidence header names a height this chain has not reached');
+    }
+    if (!verifyBlockSignature({ header, transactions: [] }, ctx.net.addressHrp)) {
+      reject(ErrCode.BAD_SIGNATURE, 'an evidence header signature is invalid');
+    }
+  }
+  if (first.height !== second.height || first.prevHash !== second.prevHash) {
+    reject(ErrCode.EQUIVOCATION_INVALID, 'the two headers do not share a height and a parent, so they do not conflict');
+  }
+  const a = blockHash(first);
+  const b = blockHash(second);
+  if (a === b) reject(ErrCode.EQUIVOCATION_INVALID, 'the two headers are the same block');
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  return sha256Hex(utf8(`OBSIDIAN:EQUIVOCATION:v1\n${subject.nodeId}\n${lo}\n${hi}`));
+}
+
 // ── shared validation helpers ────────────────────────────────────────────────
-
-/**
- * Digest a statement under its own domain tag so it can never be replayed as a
- * different statement, a transaction or a block. verifyDigest expects the
- * 32-byte digest, so the hash happens here and nowhere else.
- */
-function domainMessage(domain: string, message: string): Uint8Array {
-  return sha256(utf8(`${domain}\n${message}`));
-}
-
-/**
- * A heartbeat/attestation/fault report is about the period the block belongs to.
- * The statement carries the period it claims, and the protocol rejects any
- * mismatch: a node cannot file evidence "for" a period it did not observe, which
- * is what stops reward farming by replaying a week of statements at once.
- */
-function assertPeriodProof(body: NodeRegistryBody, ctx: ExecutorContext, period: number, label: string): void {
-  if (body.issuedAt !== undefined && body.expiresAt !== undefined) {
-    assertProofWindow(body, ctx, label);
-    return;
-  }
-  const slot = body.slot ?? 0;
-  if (slot !== period) {
-    reject(
-      ErrCode.NODE_PROOF_EXPIRED,
-      `a ${label} must name the reward period it belongs to (expected ${period}, received ${slot})`,
-    );
-  }
-}
 
 function assertNodeKey(body: NodeRegistryBody): void {
   if (!/^[0-9a-f]{66}$/.test(body.nodePublicKey)) {
     reject(ErrCode.MALFORMED, 'nodePublicKey must be a 33-byte compressed public key in lowercase hex');
   }
-  if (!/^[0-9a-f]{128}$/.test(body.proof)) {
-    reject(ErrCode.MALFORMED, 'proof must be a 64-byte compact ECDSA signature in lowercase hex');
-  }
   if (!/^[0-9a-f]{40}$/.test(body.nodeId)) {
     reject(ErrCode.MALFORMED, 'nodeId must be 20 bytes of lowercase hex');
   }
-  // The public key must be a point on the curve; verification would fail anyway,
-  // but failing here gives the operator an unambiguous error.
-  try {
-    fromHex(body.nodePublicKey);
-  } catch {
-    reject(ErrCode.MALFORMED, 'nodePublicKey is not valid hex');
-  }
 }
 
-function requireRegisteredNode(ctx: ExecutorContext, body: NodeRegistryBody): NodeRecord {
-  const node = ctx.state.node(body.nodeId);
-  if (!node) reject(ErrCode.NODE_NOT_REGISTERED, `node ${body.nodeId} is not registered`);
-  if (node.deregisteredAtHeight !== undefined) {
-    reject(ErrCode.NODE_NOT_REGISTERED, `node ${body.nodeId} deregistered at height ${node.deregisteredAtHeight}`);
+/** The transaction must be signed by the node key named in the body; returns the producer address it hashes to. */
+function assertSignedByNodeKey(tx: TxEnvelope, body: NodeRegistryBody, hrp: string): string {
+  if (tx.signature.publicKey !== body.nodePublicKey) {
+    reject(ErrCode.UNAUTHORIZED, 'a node statement must be signed by the node identity key itself');
+  }
+  let producer: string;
+  try {
+    producer = addressFromPublicKey(body.nodePublicKey, hrp);
+  } catch {
+    reject(ErrCode.MALFORMED, 'nodePublicKey is not a valid public key');
+  }
+  if (tx.sender !== producer) {
+    reject(ErrCode.UNAUTHORIZED, 'the sender of a node statement is the address of the node key');
+  }
+  return producer;
+}
+
+/** A registered, unbanned node whose key signed this transaction. */
+function requireNodeFromSender(ctx: ExecutorContext, tx: TxEnvelope, body: NodeRegistryBody): NodeRecord {
+  const node = ctx.state.nodeByProducer(tx.sender);
+  if (!node || node.deregisteredAtHeight !== undefined) {
+    reject(ErrCode.NODE_NOT_REGISTERED, `no registered node is signing as ${tx.sender}`);
+  }
+  if (node.bannedAtHeight !== undefined) {
+    reject(ErrCode.NODE_BANNED, `node ${node.nodeId} was banned at height ${node.bannedAtHeight}`);
+  }
+  // The body may name the node (clients do); if it does, it must be this one.
+  if (body.nodeId && body.nodeId !== node.nodeId) {
+    reject(ErrCode.UNAUTHORIZED, 'the statement names a different node than the one that signed it');
+  }
+  if (body.nodePublicKey && body.nodePublicKey !== node.nodePublicKey) {
+    reject(ErrCode.UNAUTHORIZED, 'the statement names a different node key than the one registered');
   }
   return node;
-}
-
-/**
- * Statements are paid for by the reward wallet. This makes spam cost gas,
- * gives every statement a nonce (so two identical heartbeats cannot both land)
- * and keeps the node's identity key from needing any funds to exist.
- */
-function assertNodeStatementSender(_ctx: ExecutorContext, node: NodeRecord, sender: string): void {
-  if (sender !== node.rewardWallet) {
-    reject(
-      ErrCode.UNAUTHORIZED,
-      `node statements must be paid for by the node's reward wallet ${node.rewardWallet}; received ${sender}`,
-    );
-  }
 }
 
 function validateEndpoint(endpoint: string | undefined): string {
@@ -512,96 +570,7 @@ function validateEndpoint(endpoint: string | undefined): string {
   return endpoint;
 }
 
-/**
- * Proof validity window, checked against protocol time — not against the clock
- * of whichever machine happens to be submitting.
- */
-function assertProofWindow(body: NodeRegistryBody, ctx: ExecutorContext, label: string): void {
-  const issuedAt = body.issuedAt ?? 0;
-  const expiresAt = body.expiresAt ?? 0;
-  if (!issuedAt || !expiresAt) {
-    reject(ErrCode.NODE_PROOF_EXPIRED, `a ${label} proof must carry issuedAt and expiresAt`);
-  }
-  if (expiresAt <= issuedAt) {
-    reject(ErrCode.NODE_PROOF_EXPIRED, `a ${label} proof must expire after it was issued`);
-  }
-  const windowSeconds = expiresAt - issuedAt;
-  const maxWindow = NR.proofMaxValiditySeconds;
-  if (windowSeconds > maxWindow) {
-    reject(ErrCode.NODE_PROOF_EXPIRED, `${label} proofs are valid for at most ${maxWindow}s of protocol time`);
-  }
-  if (ctx.apply.timestamp < issuedAt) {
-    reject(
-      ErrCode.NOT_YET_VALID,
-      `${label} proof is not valid until protocol timestamp ${issuedAt}; the chain is at ${ctx.apply.timestamp}`,
-    );
-  }
-  if (ctx.apply.timestamp > expiresAt) {
-    reject(
-      ErrCode.NODE_PROOF_EXPIRED,
-      `${label} proof expired at protocol timestamp ${expiresAt}; it cannot be replayed later`,
-    );
-  }
-}
-
-export function heartbeatMessage(input: {
-  networkId: string;
-  chainId: number;
-  nodeId: string;
-  period: number;
-  reportedHeight: number;
-  endpoint: string;
-}): string {
-  return [
-    'OBSIDIAN:NODE_HEARTBEAT:v1',
-    `networkId:${input.networkId}`,
-    `chainId:${input.chainId}`,
-    `nodeId:${input.nodeId}`,
-    `period:${input.period}`,
-    `reportedHeight:${input.reportedHeight}`,
-    `endpoint:${input.endpoint}`,
-  ].join('\n');
-}
-
-export function attestationMessage(input: {
-  networkId: string;
-  chainId: number;
-  observer: string;
-  subject: string;
-  period: number;
-  reportedHeight: number;
-}): string {
-  return [
-    'OBSIDIAN:NODE_ATTESTATION:v1',
-    `networkId:${input.networkId}`,
-    `chainId:${input.chainId}`,
-    `observer:${input.observer}`,
-    `subject:${input.subject}`,
-    `period:${input.period}`,
-    `observedHeight:${input.reportedHeight}`,
-  ].join('\n');
-}
-
-export function faultReportMessage(input: {
-  networkId: string;
-  chainId: number;
-  reporter: string;
-  subject: string;
-  period: number;
-  reason: string;
-}): string {
-  return [
-    'OBSIDIAN:NODE_FAULT_REPORT:v1',
-    `networkId:${input.networkId}`,
-    `chainId:${input.chainId}`,
-    `reporter:${input.reporter}`,
-    `subject:${input.subject}`,
-    `period:${input.period}`,
-    `reason:${input.reason}`,
-  ].join('\n');
-}
-
-/** Registered node runner count, for the interface. */
+/** Registered node count, for the interface. */
 export function registeredNodeCount(ctx: ExecutorContext): number {
   return ctx.state.registeredNodes().length;
 }

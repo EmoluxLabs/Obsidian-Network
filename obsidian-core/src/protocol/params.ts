@@ -64,6 +64,13 @@ export const CONSENSUS_PARAMS = {
    * parameter hash changes with them: two nodes cannot share a protocol
    * identity and disagree about the rules.
    *
+   * 1.9.0 is a FRESH-START protocol (new genesis, no migration). It removes the validator model entirely: no
+   * VALIDATOR or SLASH transaction, no 20,000 OBS bond, no finality votes or certificates, no committed bootstrap
+   * committee. Block production is a deterministic schedule over every registered, mature, live node;
+   * finality is a pure function of chain history (producer-diversity checkpoints); a node's reward wallet is bound
+   * with its own identity key (no wallet signature, no gas); ONS names gain two-step transfer, wallet update and
+   * delayed recovery. The mining gate (1.7.0/1.8.0) is unchanged. A 1.8.x node cannot peer with a 1.9.0 node.
+   *
    * 1.8.0 adds gate authority updates (rotate or revoke the mining gate issuer keys in consensus); the transaction type,
    * the live issuer set in the state root and the `miningGate.maxRevoked`/`maxChangesPerUpdate` parameters all move the
    * identity. A 1.7.0 node cannot peer with a 1.8.0 node.
@@ -72,7 +79,7 @@ export const CONSENSUS_PARAMS = {
    * (see `miningGate` below), and the gate keys are part of the genesis id and of every state root. No economic rule
    * moves. A 1.6.1 node cannot peer with a 1.7.0 node.
    */
-  protocolVersion: '1.8.0',
+  protocolVersion: '1.9.0',
 
   /**
    * MINING GATE (1.7.0). A MINING_CLAIM is valid only with a certificate from an issuer key committed in genesis
@@ -104,13 +111,13 @@ export const CONSENSUS_PARAMS = {
    * PROOF OF TIME — the consensus identity of Obsidian Network.
    *
    * Obsidian does not hold a hash-puzzle race. A block is produced by the
-   * validator whose slot it is, and acceptance depends on TIME, not on how much
+   * registered node whose slot it is, and acceptance depends on TIME, not on how much
    * computation anyone spent:
    *
    *   - the proposer for a height is scheduled deterministically from the
-   *     validator set (`proposer = activeValidators[(height + round) mod n]`,
+   *     producer set (`proposer = schedulable[(height + round) mod n]`,
    *     where the round counts slots elapsed since the parent), so nobody
-   *     competes by spending work, and an absent validator costs one slot
+   *     competes by spending work, and an absent producer costs one slot
    *     rather than halting the chain;
    *   - a block's timestamp must exceed the median time past of its ancestors
    *     and may not run ahead of the network's time (see `block` below), so a
@@ -173,8 +180,8 @@ export const CONSENSUS_PARAMS = {
    *        └── 10%  →  protocol treasury wallet (genesis-designated)
    *
    * Integer allocation floors the runner share and assigns the exact remainder
-   * to treasury, so no seal is lost or duplicated. Gas, issuance, validator
-   * bonds, mining rewards and the genesis allocation are not ONS revenue.
+   * to treasury, so no seal is lost or duplicated. Gas, issuance,
+   * mining rewards and the genesis allocation are not ONS revenue.
    */
   nodeRewards: {
     /** 90% of ONS revenue goes to node runners. */
@@ -201,8 +208,12 @@ export const CONSENSUS_PARAMS = {
     bootstrapUptimeBps: 5_000,
     /** Maximum subjects one node may attest in one period. */
     maxAttestationsPerAttester: 64,
-    /** Heartbeats accepted per node per period. */
-    heartbeatsPerPeriod: 1,
+    /**
+     * Uptime is measured in windows of protocol time: a node is "up" in a window if the chain contains one of its
+     * in-sync heartbeats (or a block it produced) inside that window. One accepted heartbeat per window per node.
+     */
+    uptimeWindowSeconds: 60 * 60,
+    uptimeWindowsPerPeriod: 24,
     /** Fault reports accepted per reporter per period. */
     maxFaultReportsPerReporterPerPeriod: 8,
     /** Score weight of one corroborated fault report, basis points. */
@@ -221,10 +232,17 @@ export const CONSENSUS_PARAMS = {
     },
     /** Within participation: produced blocks vs. attested peer coverage. */
     participationWeights: { blocksBps: 6_000, coverageBps: 4_000 },
-    /** Ceiling on what one node may take from a period's pool (5%). */
+    /**
+     * Ceiling on what one node may take from a period's pool (5%). The effective ceiling is never lower than an
+     * equal split (`ceil(10_000 / eligibleNodes)`), so a small network is paid in full instead of stranding the pool.
+     */
     maxNodeShareBps: 500,
-    /** Reward-wallet changes take effect after this many periods. */
-    walletChangeDelayPeriods: 1,
+    /** Allocations below this are carried to the next period instead of paid as dust (0.000001 OBS). */
+    minPayoutSeals: 1_000_000_000_000n,
+    /** Reward-wallet changes take effect after this many periods; the current wallet may cancel before then. */
+    walletChangeDelayPeriods: 2,
+    /** The bound wallet's owner may release a squatted binding; it takes effect after this many periods. */
+    reclaimDelayPeriods: 1,
     /** Evidence kept per node, in periods (older periods are archived). */
     evidenceWindowPeriods: 3,
     /** Minimum registration age, in blocks, before a node can earn. */
@@ -318,103 +336,72 @@ export const CONSENSUS_PARAMS = {
     issuanceDecadeSeconds: 10 * 365.25 * 24 * 60 * 60,
   },
 
-  // ── Validators / consensus ────────────────────────────────────────────────
+  // ── Producers / consensus (1.9.0) ─────────────────────────────────────────
+  /**
+   * PRODUCER SCHEDULE AND FINALITY — protocol 1.9.0 (specified in docs/consensus-v1.9.0.md).
+   *
+   * There are no validators, no bond, no votes and no quorum certificate. Every node that has registered
+   * (free, signed only by its own identity key) and is synchronised and live joins ONE deterministic producer
+   * schedule; each slot names exactly one producer, derived from committed chain state and the slot's timestamp
+   * alone. A producer that misses its slot is skipped by the next round and, after repeated misses, suspended
+   * for a deterministic back-off.
+   */
   consensus: {
-    /** Slots per producer rotation (proposer = validators[height % validatorCount]). */
-    validatorSlotsPerRotation: 1,
-    /** Exact admission bond required from every validator: 20,000 OBS. */
-    validatorBond: parseObs('20000'),
     /**
-     * Share of the bond taken from a validator that is proven, with signatures
-     * every node can check, to have equivocated — two conflicting block
-     * proposals or two conflicting finality votes for one slot. 5,000 bps =
-     * exactly half of the 20,000 OBS bond, so a proven offence costs 10,000 OBS
-     * and leaves 10,000 OBS held by the validator.
-     *
-     * The penalty is a parameter and the amount is derived from the validator's
-     * own recorded bond, so no submitter can name an amount, and a change to the
-     * ratio is a visible, hash-committed protocol change rather than a number
-     * buried in an executor.
+     * A branch must contain the finalized prefix. Among such branches compare fixed PoT weight, then height, then the
+     * lexicographically lowest block hash.
      */
-    equivocationSlashBps: 5_000,
-    /** Unbonding delay in blocks before bond funds return. */
-    unbondingBlocks: 20_160, // ~28 hours at 5s blocks
-    /**
-     * Net missed slots tolerated before jailing. The counter is leaky: a
-     * recorded miss adds one, a block the validator actually produced subtracts
-     * one, so an absent validator's count only rises.
-     */
-    maxMissedSlotsPerWindow: 40,
-    /**
-     * Jail term, expressed in SLOTS (see VALIDATOR_JAIL_SECONDS below):
-     * 10,080 × 5 s = 50,400 s = 14 hours of protocol time.
-     *
-     * A jail measured in BLOCKS cannot end on a chain that has stopped
-     * producing blocks, and stopping is precisely what a jail can cause once it
-     * empties the active set — the chain would then be halted for as long as
-     * nobody could produce the blocks that count the jail down. Measuring the
-     * term in protocol time keeps it honest on a halted chain: it lapses
-     * whether or not anyone produces, and the validator returns in the first
-     * block that reaches the instant.
-     */
-    jailSlots: 10_080,
-    /**
-     * THE VALIDATOR SET NEVER REOPENS (1.6.1 consensus rule).
-     *
-     * The first VALIDATOR_REGISTER that succeeds sets a committed indicator,
-     * and from then on block production is a privilege of the active set alone.
-     * An established chain with no active validator halts instead of accepting
-     * a block from any key that happens to sign one. The indicator is consensus
-     * state: it is committed in the state root, restored on restart, and set
-     * only by a state transition — never inferred from how many validators a
-     * node currently sees, and never cleared.
-     */
-    validatorSetNeverReopens: true,
-    /**
-     * SLASH LIABILITY FOLLOWS THE REGISTRATION (1.6.1 consensus rule).
-     *
-     * Equivocation evidence is about a tenure: the key, the bond and the
-     * validator set that were in force when the offence happened. The bond
-     * stays answerable for that tenure for as long as it is still escrowed, so
-     * unregistering after an offence does not move the penalty to the next
-     * registration, and a later registration is not answerable for an offence
-     * committed by an earlier one.
-     */
-    slashLiabilityFollowsRegistration: true,
-    /**
-     * A branch must contain finalized history. Compare fixed PoT weight, then
-     * height, then the lexicographically lowest canonical block hash.
-     */
-    forkChoice: 'FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH' as const,
+    forkChoice: 'FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH' as const,
     /** Maximum reorg depth accepted by the node's ordinary chain reorganiser. */
     maxReorgDepth: 256,
-    /** Native PoT checkpoint finality; bond is admission collateral, not vote weight. */
-    finality: {
-      voteType: 'POT_FINALITY' as const,
-      quorumNumerator: 2,
-      quorumDenominator: 3,
-      maxValidators: 256,
-      maxPendingVotes: 512,
-      maxCandidatesPerHeight: 8,
-      maxEvidenceRecords: 256,
-      maxEvidenceBytes: 16 * 1024,
-      /** Bootstrap committee must remain active for this many parent blocks. */
-      bootstrapSetStabilityBlocks: 64,
+    /** Blocks that may compete for one height before further candidates are refused. */
+    maxCandidatesPerHeight: 8,
+    producers: {
+      /**
+       * A node is schedulable only this many blocks after the block that registered it: a freshly minted identity
+       * cannot take a slot (or count towards finality) until it has existed, on chain, for this long.
+       */
+      maturityBlocks: 64,
+      /**
+       * A node is schedulable only if it has shown life (registered, heartbeat, or produced a block) within this
+       * many seconds of protocol time. Heartbeats are one per reward period, so this is two periods.
+       */
+      activityWindowSeconds: 2 * 24 * 60 * 60,
+      /** Consecutive missed scheduled slots after which a producer is suspended. */
+      maxConsecutiveMisses: 3,
+      /** First suspension term (protocol seconds). Each repeat without a produced block doubles it. */
+      baseSuspensionSeconds: 10 * 60,
+      /** Ceiling on the back-off (protocol seconds). */
+      maxSuspensionSeconds: 24 * 60 * 60,
+      /** Admission rate limit: node registrations accepted in one block. */
+      maxRegistrationsPerBlock: 2,
+      /** Admission rate limit: new nodes per reward period, or one tenth of the registry if that is more. */
+      minNewNodesPerPeriod: 16,
+      newNodesPerPeriodDivisor: 10,
+      /** Equivocation reports a single block may carry (each costs two signature verifications). */
+      maxEquivocationReportsPerBlock: 4,
     },
     /**
-     * Equivocation-evidence budget for ONE block — a consensus limit, so every
-     * node accepts exactly the same blocks and no block can be made to cost an
-     * unbounded amount of signature verification.
+     * PRODUCER-DIVERSITY CHECKPOINT FINALITY (no voting; see docs/consensus-v1.9.0.md §7).
      *
-     * A report that does not fit stays in the mempool for a later slot; it is
-     * never rejected. SLASH remains permissionlessly submittable: these limits
-     * bound what one block carries, not who may report.
+     * A block B at height h is FINAL on a chain iff the `window(n)` blocks that follow it were produced by at
+     * least `quorum(n)` DISTINCT nodes drawn from the n nodes that were registered and mature at height h and are
+     * still live, unsuspended and unbanned when the window closes, where n >= minProducers. A pure function of chain
+     * history, evaluated inside the block state machine and committed in the state root: every node computes the
+     * same answer, no message is sent and no local timer participates.
      */
-    slashing: {
-      /** Maximum equivocation reports in a single block. */
-      maxEvidencePerBlock: 8,
-      /** Maximum canonical evidence bytes in a single block. */
-      maxEvidenceBytesPerBlock: 65_536,
+    finality: {
+      model: 'PRODUCER_DIVERSITY_CHECKPOINT' as const,
+      /** Fewer mature producers than this and the protocol reports that finality is unavailable. */
+      minProducers: 3,
+      quorumNumerator: 2,
+      quorumDenominator: 3,
+      /** window(n) = clamp(windowPerProducer * n, windowMin, windowMax) blocks. */
+      windowMin: 32,
+      windowPerProducer: 3,
+      windowMax: 1024,
+      /** A node stops counting towards n after this many reward periods without any sign of life. */
+      inactivityPeriods: 30,
     },
   },
 
@@ -448,6 +435,10 @@ export const CONSENSUS_PARAMS = {
     renewalFee: parseObs('0.05'),
     /** Registration grants ownership for this many seconds (1 year). */
     termSeconds: 365 * 24 * 60 * 60,
+    /** A transfer offer lapses this many seconds after it is made (7 days) unless the recipient accepts. */
+    transferOfferSeconds: 7 * 24 * 60 * 60,
+    /** A recovery started by the preconfigured recovery address takes effect only after this delay (7 days). */
+    recoveryDelaySeconds: 7 * 24 * 60 * 60,
     /** Grace period after expiry before the name returns to the pool. */
     graceSeconds: 30 * 24 * 60 * 60,
     /** Protocol-reserved names that can never be registered by users. */
@@ -508,45 +499,3 @@ export const CONSENSUS_PARAMS = {
 
 /** Convenience: reward floor per claim derived from the daily floor. */
 export const MIN_CLAIM_REWARD = CONSENSUS_PARAMS.mining.dailyRewardFloor;
-
-/**
- * Jail term in seconds of protocol time, derived from `consensus.jailSlots`.
- *
- * Derived rather than declared: two nodes that disagreed about the length of a
- * jail would disagree about the first block a jailed validator may propose
- * again, which is a consensus split. Keeping one source of truth makes that
- * impossible, and `computeParamsHash` commits the slot count to the state root.
- */
-export const VALIDATOR_JAIL_SECONDS =
-  CONSENSUS_PARAMS.consensus.jailSlots * CONSENSUS_PARAMS.block.targetBlockSeconds;
-
-/**
- * Protocol time at which a validator's jail ends, or null when it is not jailed.
- *
- * A JAILED record with no term returns null and is treated as jailed for ever:
- * the term is what makes a jail end, and guessing a default would let a
- * malformed record free a validator that the chain had removed.
- */
-export function jailEndsAt(validator: { status: string; jailedUntilTime?: number }): number | null {
-  if (validator.status !== 'JAILED') return null;
-  const until = validator.jailedUntilTime;
-  if (typeof until !== 'number' || !Number.isFinite(until)) return null;
-  return until;
-}
-
-/**
- * Whether a jail has lapsed at `atTimestamp`.
- *
- * Deliberately a pure function of committed state and a protocol timestamp: the
- * same question asked about the same block gets the same answer on every node,
- * and it keeps working on a chain that has stopped producing blocks — which is
- * exactly the chain a jail can cause once it empties the active set.
- *
- * It lives beside the parameter it interprets, in a module the browser build
- * keeps, because the validator executor needs the same answer the chain
- * computes: a browser-safe module may not reach into node-only state code.
- */
-export function jailIsOver(validator: { status: string; jailedUntilTime?: number }, atTimestamp: number): boolean {
-  const until = jailEndsAt(validator);
-  return until !== null && atTimestamp >= until;
-}

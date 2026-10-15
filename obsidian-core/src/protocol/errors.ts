@@ -99,9 +99,12 @@ export enum ErrCode {
   NODE_FAULT_LIMIT = 'ERR_NODE_FAULT_LIMIT',
   NODE_WALLET_CHANGE_PENDING = 'ERR_NODE_WALLET_CHANGE_PENDING',
   NODE_PROOF_EXPIRED = 'ERR_NODE_PROOF_EXPIRED',
-
-  // Fees
-  VALIDATOR_BOND_MISMATCH = 'ERR_VALIDATOR_BOND_MISMATCH',
+  NODE_REGISTRATION_LIMIT = 'ERR_NODE_REGISTRATION_LIMIT',
+  NODE_BANNED = 'ERR_NODE_BANNED',
+  EQUIVOCATION_INVALID = 'ERR_EQUIVOCATION_INVALID',
+  /** ONS transfer / recovery state machine. */
+  NAME_TRANSFER_STATE = 'ERR_NAME_TRANSFER_STATE',
+  NAME_RECOVERY_STATE = 'ERR_NAME_RECOVERY_STATE',
 
   // Fees
   GAS_REQUIRED = 'ERR_GAS_REQUIRED',
@@ -153,7 +156,7 @@ export const ERR_MESSAGES: Record<ErrCode, string> = {
   [ErrCode.MINING_NOT_ELIGIBLE]: 'Wallet is not an eligible miner.',
   [ErrCode.MINING_TOO_SOON]: 'The protocol mining interval has not elapsed yet.',
   [ErrCode.MINING_CYCLE_LIMIT]: 'The maximum number of claims for this 24-hour cycle is reached.',
-  [ErrCode.EVIDENCE_LIMIT]: 'This block carries more equivocation evidence than one block may hold; the report stays pending for a later block.',
+  [ErrCode.EVIDENCE_LIMIT]: 'This block carries more equivocation reports than one block may hold; the report stays pending for a later block.',
   [ErrCode.MINING_BAD_PROOF]: 'Mining claim proof failed verification.',
   [ErrCode.MINING_CLAIM_REPLAY]: 'This mining claim has already been accepted.',
   [ErrCode.MINING_GATE_REQUIRED]: 'A mining claim must carry a certificate from the mining gate (a signed-in, verified account).',
@@ -182,8 +185,8 @@ export const ERR_MESSAGES: Record<ErrCode, string> = {
   [ErrCode.ORPHAN_BLOCK]: 'Parent block is unknown; queued as an orphan.',
   [ErrCode.STALE_BLOCK]: 'Block forks further back than the maximum reorganisation depth and can never join the chain.',
   [ErrCode.BAD_PRODUCER]: 'The block producer signature is invalid or does not match the producer address.',
-  [ErrCode.NOT_PRODUCER_TURN]: 'Producer is not the scheduled proposer for this height.',
-  [ErrCode.FINALITY_CONFLICT]: 'Candidate conflicts with locally finalized history.',
+  [ErrCode.NOT_PRODUCER_TURN]: 'Producer is not the scheduled producer for this height.',
+  [ErrCode.FINALITY_CONFLICT]: 'Candidate conflicts with finalized history.',
   [ErrCode.NODE_NOT_REGISTERED]: 'This node identity is not registered for node runner rewards.',
   [ErrCode.NODE_ALREADY_REGISTERED]: 'This node identity is already registered.',
   [ErrCode.NODE_WALLET_IN_USE]: 'This reward wallet already backs another registered node.',
@@ -194,7 +197,11 @@ export const ERR_MESSAGES: Record<ErrCode, string> = {
   [ErrCode.NODE_FAULT_LIMIT]: 'This node reached the per-period fault report limit.',
   [ErrCode.NODE_WALLET_CHANGE_PENDING]: 'A reward wallet change is already pending for this node.',
   [ErrCode.NODE_PROOF_EXPIRED]: 'The signed node statement is outside its validity window.',
-  [ErrCode.VALIDATOR_BOND_MISMATCH]: 'Validator registration requires exactly 20,000 OBS bonded.',
+  [ErrCode.NODE_REGISTRATION_LIMIT]: 'Node registrations are rate limited; try again in a later block or period.',
+  [ErrCode.NODE_BANNED]: 'This node identity was banned by verified equivocation evidence.',
+  [ErrCode.EQUIVOCATION_INVALID]: 'The equivocation evidence does not prove two conflicting blocks signed by this node.',
+  [ErrCode.NAME_TRANSFER_STATE]: 'The name has no matching open transfer offer for this action.',
+  [ErrCode.NAME_RECOVERY_STATE]: 'The name has no matching recovery for this action.',
   [ErrCode.GAS_REQUIRED]: 'Transaction does not carry the protocol-required gas.',
   [ErrCode.INTERNAL]: 'Internal node error.',
   [ErrCode.RATE_LIMITED]: 'Rate limit exceeded.',

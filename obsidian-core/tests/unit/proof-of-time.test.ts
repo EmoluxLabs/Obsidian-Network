@@ -17,7 +17,7 @@ import {
 } from '../../src/consensus/time.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { potWeight } from '../../src/blockchain/block.js';
-import { compareTips } from '../../src/consensus/proposer.js';
+import { compareTips } from '../../src/consensus/schedule.js';
 import { PARAMS_HASH, computeParamsHash } from '../../src/blockchain/state-root.js';
 
 /** Build a descending ancestor list (nearest parent first) with fixed spacing. */
@@ -33,7 +33,7 @@ describe('protocol identity', () => {
   it('declares Proof of Time, and the fork-choice rule never mentions work', () => {
     expect(CONSENSUS_PARAMS.proofOfTime.consensus).toBe('PROOF_OF_TIME');
     expect(CONSENSUS_PARAMS.proofOfTime.shortName).toBe('PoT');
-    expect(CONSENSUS_PARAMS.consensus.forkChoice).toBe('FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH');
+    expect(CONSENSUS_PARAMS.consensus.forkChoice).toBe('FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH');
     expect(CONSENSUS_PARAMS.consensus.forkChoice).not.toMatch(/WORK/);
   });
 

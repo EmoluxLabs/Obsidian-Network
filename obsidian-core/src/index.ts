@@ -58,7 +58,8 @@ import {
   runDoctor,
   snapshotExitCode,
 } from './cli/ops.js';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { bindingPath, readNodeBinding, writeNodeBinding } from './node-agent.js';
 import { InterfaceSupervisor } from './cli/interface-supervisor.js';
 import { describeProposal, fetchGate, proposeGateUpdate, readProposal, renderGate, signProposal, submitProposal, writeProposal } from './cli/gate.js';
 
@@ -81,7 +82,9 @@ function usage(): void {
       '  node <command>      `node status`, `node peers`, `node sync status`, `node doctor`, `node start`',
       '  keygen              Create/show the node identity keystore',
       '  health              Query the local RPC health endpoint',
-      '  finality            Query the local verified finality checkpoint',
+      '  finality            Query the finalized checkpoint derived from chain state',
+      '  register <address>  Bind a reward wallet to this node (paste an OBS address: no gas, no wallet signature, no key)',
+      '  binding             Show this node\'s reward-wallet binding and its on-chain status',
       '  genesis init        Print the genesis document, id and hash',
       '  validate            Verify the data directory chain integrity',
       '  audit               Print the decentralization and compliance audit',
@@ -284,7 +287,7 @@ function parseArgs(argv: string[]): CliOptions {
 }
 
 const NETWORK_WORDS = ['mainnet', 'testnet', 'staging', 'devnet'];
-const COMMAND_WORDS = ['init', 'join', 'start', 'status', 'peers', 'sync', 'doctor', 'gate', 'validate', 'keygen', 'health', 'finality'];
+const COMMAND_WORDS = ['init', 'join', 'start', 'status', 'peers', 'sync', 'doctor', 'gate', 'validate', 'keygen', 'health', 'finality', 'register', 'binding'];
 
 /** A mistake in how the command was typed: exit code 2, not 1, so scripts can tell it from a failed operation. */
 class UsageError extends Error {}
@@ -515,6 +518,50 @@ async function main(): Promise<void> {
       return;
     }
 
+    case 'register': {
+      // Bind a reward wallet to this node. The operator pastes an address: no gas, no wallet signature, no key. The
+      // running node registers itself with its OWN identity key and keeps registering until the chain accepts it.
+      const wallet = options.sub;
+      if (!wallet) throw new UsageError('usage: register <obs-address> [--network <name>] [--data-dir <dir>]');
+      const loaded = loadFromCli(options, { requireExplicitNetwork: true });
+      mkdirSync(loaded.config.dataDir, { recursive: true });
+      const binding = writeNodeBinding(loaded.config.dataDir, loaded.net, wallet);
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            network: loaded.net.name,
+            rewardWallet: binding.rewardWallet,
+            file: bindingPath(loaded.config.dataDir),
+            next: 'start (or keep running) the node with block production enabled: it registers on chain with its own key.',
+            note:
+              'Pasting an address does not prove you own it. Rewards are only ever PAID to it, never taken from it. ' +
+              'If someone bound your address to their node, send one transaction from that wallet to reclaim it (docs/node-binding-v1.9.0.md).',
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      return;
+    }
+
+    case 'binding': {
+      const loaded = loadFromCli(options, { requireExplicitNetwork: true });
+      const binding = readNodeBinding(loaded.config.dataDir, loaded.net);
+      let onChain: unknown = null;
+      try {
+        const pair = Keystore.exists(loaded.config.keystorePath) ? Keystore.read(loaded.config.keystorePath, keystorePassphraseFromEnv()) : undefined;
+        if (pair) {
+          const base = `http://${loaded.config.rpcHost === '0.0.0.0' ? '127.0.0.1' : loaded.config.rpcHost}:${loaded.config.rpcPort}`;
+          const reply = await httpGetJson(`${base}/nodes/status/${nodeIdFromPublicKey(pair.publicKey)}`, { timeoutMs: 5000 });
+          onChain = reply.body;
+        }
+      } catch {
+        onChain = null;
+      }
+      process.stdout.write(`${JSON.stringify({ binding, onChain }, null, 2)}\n`);
+      return;
+    }
+
     case 'finality': {
       const loaded = loadFromCli(options,{requireExplicitNetwork:true});
       const url=`http://${loaded.config.rpcHost==='0.0.0.0'?'127.0.0.1':loaded.config.rpcHost}:${loaded.config.rpcPort}/finality`;
@@ -530,7 +577,7 @@ async function main(): Promise<void> {
         return;
       }
       const loaded = loadFromCli(options, { requireExplicitNetwork: true });
-      const document = genesisDocumentFor(loaded.net, loaded.config.bootstrapValidatorPublicKeys, loaded.config.miningGatePublicKeys);
+      const document = genesisDocumentFor(loaded.net, loaded.config.miningGatePublicKeys);
       const block = buildGenesisBlock(document, loaded.net);
       process.stdout.write(
         `${JSON.stringify(

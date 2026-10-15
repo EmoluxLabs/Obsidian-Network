@@ -8,7 +8,6 @@
  * prefix `obs`. Nothing here changes a consensus rule.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { rmSync } from 'node:fs';
 import { Indexer } from '../../src/indexer/indexer.js';
 import { RpcServer } from '../../src/rpc/server.js';
 import { DEFAULT_CONFIG } from '../../src/config/config.js';
@@ -29,7 +28,7 @@ afterEach(() => {
 async function node(): Promise<{ h: Harness; get: (path: string) => Promise<any> }> {
   const h = await createHarness();
   const indexer = new Indexer(h.dir);
-  const config = { ...DEFAULT_CONFIG, network: 'devnet', rpcPort: 0, rpcHost: '127.0.0.1', rpcRateLimitPerMinute: 0, p2pEnabled: false, dataDir: h.dir };
+  const config = { ...DEFAULT_CONFIG, network: 'devnet' as const, rpcPort: 0, rpcHost: '127.0.0.1', rpcRateLimitPerMinute: 0, p2pEnabled: false, dataDir: h.dir };
   const server = new RpcServer({
     chain: h.chain, indexer, net: h.net, config, genesisId: computeGenesisId(h.chain.genesisDocument, h.net), log: () => undefined,
   });

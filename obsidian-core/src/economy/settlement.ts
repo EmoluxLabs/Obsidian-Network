@@ -33,8 +33,10 @@ import type { ProtocolEvent } from '../protocol/types.js';
 import { CONSENSUS_PARAMS } from '../protocol/params.js';
 import type { WorldState } from '../blockchain/state.js';
 import {
+  popcount,
   rewardPeriodAt,
   rewardPeriodStart,
+  uptimeWindowInPeriod,
   settleNodeRewards,
   type NodeEvidence,
 } from './node-rewards.js';
@@ -64,21 +66,18 @@ export function processNodeRewardRoutine(ctx: SettlementContext): void {
     pool.blockCount = 0;
   }
 
-  // 2. Record this block for participation scoring. A node is credited for
-  //    blocks produced by the wallet it registered, so a node cannot claim
-  //    another operator's block production.
+  // 2. Record this block for participation scoring. A block is credited to the node whose identity key signed it
+  //    (the header signature must verify under the key that hashes to `producer`), so a node cannot claim another
+  //    operator's block production. A produced block also proves the node was up in its uptime window.
   pool.blockCount += 1;
   if (apply.producer) {
-    for (const node of state.registeredNodes()) {
-      if (node.rewardWallet === apply.producer) {
-        state.nodeEvidenceFor(period, node.nodeId).blocksProduced += 1;
-        break;
-      }
+    const node = state.nodeByProducer(apply.producer);
+    if (node && node.deregisteredAtHeight === undefined && node.bannedAtHeight === undefined) {
+      const evidence = state.nodeEvidenceFor(period, node.nodeId);
+      evidence.blocksProduced += 1;
+      evidence.liveWindows |= 1 << uptimeWindowInPeriod(apply.timestamp);
     }
   }
-  // 3. Credit the node's own heartbeat when the producer wallet is the node's
-  //    reward wallet and the heartbeat transaction landed in this very block:
-  //    the executor already recorded it, so nothing to do here.
 
   // 4. Bounded state: evidence older than the retention window is dropped.
   state.pruneNodeEvidence(period);
@@ -93,9 +92,8 @@ function settlePeriod(
   const pool = state.s.nodeRewards;
   if (pool.lastSettledPeriod >= period) return;
 
-  // Wallet changes scheduled for this period take effect BEFORE settlement, so
-  // the wallet that receives is the one the protocol recorded as the destination
-  // — never a wallet introduced in the same block that pays out.
+  // Wallet changes and reclaims scheduled for this period take effect BEFORE settlement, so the wallet that
+  // receives is the one the protocol recorded as the destination — never a wallet introduced in the block that pays.
   for (const node of state.registeredNodes()) {
     if (node.pendingWallet && node.pendingWalletEffectivePeriod !== undefined && node.pendingWalletEffectivePeriod <= period) {
       const previous = node.rewardWallet;
@@ -112,9 +110,29 @@ function settlePeriod(
         period,
       }, apply);
     }
+    if (node.reclaimEffectivePeriod !== undefined && node.reclaimEffectivePeriod <= period) {
+      // The owner of the bound address released it. The node keeps its identity, loses the binding, and is paid
+      // nothing until its operator binds another wallet (CHANGE_WALLET). The released address is free for anyone.
+      const reclaimed = node.reclaimWallet;
+      if (reclaimed && node.rewardWallet === reclaimed) {
+        state.removeNodeWallet(reclaimed, node.nodeId);
+        node.rewardWallet = '';
+      }
+      if (reclaimed && node.pendingWallet === reclaimed) {
+        state.removeNodeWallet(reclaimed, node.nodeId);
+        node.pendingWallet = undefined;
+        node.pendingWalletEffectivePeriod = undefined;
+        node.pendingWalletRequestedAtHeight = undefined;
+      }
+      node.reclaimEffectivePeriod = undefined;
+      node.reclaimWallet = undefined;
+      state.putNode(node);
+      state.emit('NODE_WALLET_RECLAIMED', { nodeId: node.nodeId, wallet: reclaimed ?? '', period }, apply);
+    }
   }
 
-  const nodes = state.registeredNodes();
+  // Banned nodes are not part of the network any more: they neither earn nor count in the peer universe.
+  const nodes = state.registeredNodes().filter((node) => node.bannedAtHeight === undefined);
   pool.lastSettledPeriod = period;
   if (nodes.length === 0) {
     // No node runner to pay, but the treasury still must be: this branch used to return before the
@@ -151,7 +169,7 @@ function settlePeriod(
 
   const evidence = candidates.map((node) => {
     const record = state.s.nodeEvidence.get(`${period}:${node.nodeId}`);
-    const heartbeats = record?.heartbeats ?? 0;
+    const liveWindows = popcount(record?.liveWindows ?? 0);
     const distinctAttesters = record?.attesters.length ?? 0;
     const attested = record?.attested.length ?? 0;
     const faultReporters = record?.faultReporters.length ?? 0;
@@ -162,7 +180,8 @@ function settlePeriod(
     const entry: { nodeId: string; evidence: NodeEvidence } = {
       nodeId: node.nodeId,
       evidence: {
-        liveness: { registered: true, heartbeats, distinctAttesters, peerUniverse },
+        // A node with no bound wallet (reclaimed) is scored as unregistered: it cannot be paid anywhere.
+        liveness: { registered: node.rewardWallet !== '', liveWindows, distinctAttesters, peerUniverse },
         participation: {
           blocksProduced: record?.blocksProduced ?? 0,
           blocksExpected: fairShare,
@@ -170,7 +189,7 @@ function settlePeriod(
         },
         reliability: { faults: corroboratedFaults, invalidAttestations: record?.invalidAttestations ?? 0 },
         responsiveness: {
-          responsiveHeartbeats: heartbeats - (record?.staleHeartbeats ?? 0),
+          responsiveHeartbeats: liveWindows,
           staleHeartbeats: record?.staleHeartbeats ?? 0,
         },
       },

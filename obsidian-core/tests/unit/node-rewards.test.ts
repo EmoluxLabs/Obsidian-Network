@@ -18,6 +18,7 @@ import {
   rewardPeriodAt,
   rewardPeriodEnd,
   rewardPeriodStart,
+  allocateReward,
   scoreNode,
   settleNodeRewards,
   type NodeEvidence,
@@ -31,10 +32,10 @@ const NR = CONSENSUS_PARAMS.nodeRewards;
 /** Evidence for a node that did everything right in a network of `peers`. */
 function perfectEvidence(peers = 4): NodeEvidence {
   return {
-    liveness: { registered: true, heartbeats: NR.heartbeatsPerPeriod, distinctAttesters: peers - 1, peerUniverse: peers },
+    liveness: { registered: true, liveWindows: NR.uptimeWindowsPerPeriod, distinctAttesters: peers - 1, peerUniverse: peers },
     participation: { blocksProduced: 10, blocksExpected: 10, attestationsMade: peers - 1 },
     reliability: { faults: 0, invalidAttestations: 0 },
-    responsiveness: { responsiveHeartbeats: NR.heartbeatsPerPeriod, staleHeartbeats: 0 },
+    responsiveness: { responsiveHeartbeats: NR.uptimeWindowsPerPeriod, staleHeartbeats: 0 },
   };
 }
 
@@ -86,7 +87,7 @@ describe('the 90/10 ONS revenue split', () => {
     expect(kinds).toContain(TxType.MINING_CLAIM);
     expect(kinds).toContain(TxType.ORACLE);
     expect(kinds).toContain(TxType.TREASURY);
-    expect(kinds).toContain(TxType.VALIDATOR);
+    expect(kinds).toContain(TxType.NODE_REGISTRY);
     for (const entry of NOT_ONS_REVENUE) expect(entry.because.length).toBeGreaterThan(10);
   });
 });
@@ -121,7 +122,7 @@ describe('node scoring', () => {
     const full = scoreNode(perfectEvidence());
     const half = scoreNode({
       ...perfectEvidence(),
-      liveness: { registered: true, heartbeats: 0, distinctAttesters: 3, peerUniverse: 4 },
+      liveness: { registered: true, liveWindows: 0, distinctAttesters: 3, peerUniverse: 4 },
       responsiveness: { responsiveHeartbeats: 0, staleHeartbeats: 0 },
     });
     expect(half.scoreBps).toBeLessThan(full.scoreBps);
@@ -132,7 +133,7 @@ describe('node scoring', () => {
   it('cannot be satisfied by self-assertion: uptime needs independent attesters', () => {
     const unattested = scoreNode({
       ...perfectEvidence(),
-      liveness: { registered: true, heartbeats: NR.heartbeatsPerPeriod, distinctAttesters: 0, peerUniverse: 4 },
+      liveness: { registered: true, liveWindows: NR.uptimeWindowsPerPeriod, distinctAttesters: 0, peerUniverse: 4 },
     });
     // The node sent its heartbeat and claims to be up. Without any peer saying
     // the same, the uptime component collapses to zero.
@@ -144,7 +145,7 @@ describe('node scoring', () => {
   it('scales uptime by how much independent corroboration exists', () => {
     const partial = scoreNode({
       ...perfectEvidence(),
-      liveness: { registered: true, heartbeats: NR.heartbeatsPerPeriod, distinctAttesters: 1, peerUniverse: 4 },
+      liveness: { registered: true, liveWindows: NR.uptimeWindowsPerPeriod, distinctAttesters: 1, peerUniverse: 4 },
     });
     // One of the two required attesters: half credit, not full and not zero.
     expect(partial.uptimeBps).toBe(5_000);
@@ -152,10 +153,10 @@ describe('node scoring', () => {
 
   it('caps a peerless network honestly instead of pretending it is verified', () => {
     const alone = scoreNode({
-      liveness: { registered: true, heartbeats: NR.heartbeatsPerPeriod, distinctAttesters: 0, peerUniverse: 1 },
+      liveness: { registered: true, liveWindows: NR.uptimeWindowsPerPeriod, distinctAttesters: 0, peerUniverse: 1 },
       participation: { blocksProduced: 5, blocksExpected: 5, attestationsMade: 0 },
       reliability: { faults: 0, invalidAttestations: 0 },
-      responsiveness: { responsiveHeartbeats: NR.heartbeatsPerPeriod, staleHeartbeats: 0 },
+      responsiveness: { responsiveHeartbeats: NR.uptimeWindowsPerPeriod, staleHeartbeats: 0 },
     });
     expect(alone.uptimeBps).toBe(NR.bootstrapUptimeBps);
     expect(alone.reasons.join(' ')).toMatch(/peerless network/);
@@ -168,7 +169,7 @@ describe('node scoring', () => {
 
     const stale = scoreNode({
       ...perfectEvidence(),
-      responsiveness: { responsiveHeartbeats: 0, staleHeartbeats: NR.heartbeatsPerPeriod },
+      responsiveness: { responsiveHeartbeats: 0, staleHeartbeats: NR.uptimeWindowsPerPeriod },
     });
     expect(stale.responsivenessBps).toBe(0);
     expect(stale.reasons.join(' ')).toMatch(/behind/);
@@ -181,7 +182,7 @@ describe('node scoring', () => {
     });
     expect(unregistered.eligible).toBe(false);
     expect(unregistered.weight).toBe(0);
-    expect(unregistered.reasons.join(' ')).toMatch(/signed proof of ownership/);
+    expect(unregistered.reasons.join(' ')).toMatch(/not registered with a bound reward wallet/);
   });
 
   it('weights the four components exactly as the parameters declare', () => {
@@ -211,12 +212,11 @@ describe('settlement arithmetic', () => {
       ],
     });
     expect(settlement.allocations).toHaveLength(2);
-    // Two identical nodes, but the per-node cap is 5%, so neither can take half
-    // of the pool: the rest is carried to the next period rather than paid out.
-    for (const allocation of settlement.allocations) {
-      expect(allocation.shareBps).toBeLessThanOrEqual(NR.maxNodeShareBps);
-    }
-    expect(settlement.distributedSeals + settlement.carriedSeals).toBe(pool);
+    // Two identical nodes split the pool EXACTLY in half: the per-node ceiling is max(5%, ceil(100% / contributors)),
+    // so a small network is paid in full instead of stranding the pool. Nothing is lost to rounding either.
+    expect(settlement.allocations.map((a) => a.amount)).toEqual([pool / 2n, pool / 2n]);
+    expect(settlement.distributedSeals).toBe(pool);
+    expect(settlement.carriedSeals).toBe(0n);
   });
 
   it('never distributes more than the pool holds', () => {
@@ -231,7 +231,7 @@ describe('settlement arithmetic', () => {
 
   it('pays an offline node nothing while paying an online one', () => {
     const offline: NodeEvidence = {
-      liveness: { registered: true, heartbeats: 0, distinctAttesters: 0, peerUniverse: 2 },
+      liveness: { registered: true, liveWindows: 0, distinctAttesters: 0, peerUniverse: 2 },
       participation: { blocksProduced: 0, blocksExpected: 10, attestationsMade: 0 },
       reliability: { faults: 0, invalidAttestations: 0 },
       responsiveness: { responsiveHeartbeats: 0, staleHeartbeats: 0 },
@@ -257,7 +257,7 @@ describe('settlement arithmetic', () => {
         {
           nodeId: 'idle',
           evidence: {
-            liveness: { registered: true, heartbeats: 0, distinctAttesters: 0, peerUniverse: 3 },
+            liveness: { registered: true, liveWindows: 0, distinctAttesters: 0, peerUniverse: 3 },
             participation: { blocksProduced: 0, blocksExpected: 5, attestationsMade: 0 },
             reliability: { faults: 0, invalidAttestations: 0 },
             responsiveness: { responsiveHeartbeats: 0, staleHeartbeats: 0 },
@@ -291,14 +291,47 @@ describe('settlement arithmetic', () => {
     expect(byId.get('bbb') ?? 0n).toBeGreaterThanOrEqual(byId.get('ccc') ?? 0n);
   });
 
-  it('caps any single node so one operator cannot take a whole period', () => {
+  it('caps one node at the ceiling in a network large enough for the ceiling to bind, and redistributes the overflow', () => {
+    // 30 nodes: ceil(10000/30) = 334 bps < 500, so the 5% ceiling is the binding one. One node with 100x the weight
+    // of the rest would earn far more than 5% proportionally; it is held at the ceiling and the rest is re-split.
+    const nodes = Array.from({ length: 30 }, (_, index) => ({
+      nodeId: `n-${String(index).padStart(2, '0')}`,
+      evidence: perfectEvidence(30),
+    }));
+    const settlement = settleNodeRewards({ period: 11, poolSeals: pool, nodes });
+    const ceiling = (pool * BigInt(NR.maxNodeShareBps)) / 10_000n;
+    for (const allocation of settlement.allocations) expect(allocation.amount).toBeLessThanOrEqual(ceiling);
+    expect(settlement.distributedSeals + settlement.carriedSeals).toBe(pool);
+  });
+
+  it('allocateReward: caps the heavy node, redistributes its overflow, and never exceeds the pool', () => {
+    const out = allocateReward(1_000n, [1_000n, 1n, 1n, 1n], 400n);
+    expect(out[0]).toBe(400n);
+    expect(out.reduce((a, b) => a + b, 0n)).toBe(1_000n);
+    expect(out.slice(1).every((v) => v >= 199n && v <= 201n)).toBe(true);
+  });
+
+  it('allocateReward: largest-remainder rounding is exact, order-stable and mints nothing', () => {
+    const weights = [3n, 3n, 3n];
+    const a = allocateReward(10n, weights, 10n);
+    expect(a.reduce((x, y) => x + y, 0n)).toBe(10n);
+    expect(a).toEqual([4n, 3n, 3n]); // the leftover seal goes to the first of the equal remainders
+    expect(allocateReward(10n, weights, 10n)).toEqual(a);
+    expect(allocateReward(0n, weights, 10n)).toEqual([0n, 0n, 0n]);
+    expect(allocateReward(10n, [], 10n)).toEqual([]);
+  });
+
+  it('carries sub-minimum dust instead of paying it, and the books still balance', () => {
+    const tiny = NR.minPayoutSeals * 2n - 1n; // two nodes: each is below the minimum payout
     const settlement = settleNodeRewards({
-      period: 11,
-      poolSeals: pool,
-      nodes: [{ nodeId: 'solo', evidence: perfectEvidence(3) }],
+      period: 12,
+      poolSeals: tiny,
+      nodes: [
+        { nodeId: 'aaa', evidence: perfectEvidence() },
+        { nodeId: 'bbb', evidence: perfectEvidence() },
+      ],
     });
-    const [allocation] = settlement.allocations;
-    expect(allocation.shareBps).toBeLessThanOrEqual(NR.maxNodeShareBps);
-    expect(allocation.amount).toBeLessThanOrEqual((pool * BigInt(NR.maxNodeShareBps)) / 10_000n);
+    expect(settlement.distributedSeals).toBe(0n);
+    expect(settlement.carriedSeals).toBe(tiny);
   });
 });

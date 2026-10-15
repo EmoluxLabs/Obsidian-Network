@@ -29,6 +29,7 @@ import { NetworkIdentityError, buildManifest, resolveIdentity, writeManifest } f
 import { CONSENSUS_PARAMS } from './protocol/params.js';
 import { maxBig } from './protocol/amount.js';
 import type { Block, ProtocolEvent } from './protocol/types.js';
+import { NodeAgent, AGENT_INTERVAL_SECONDS } from './node-agent.js';
 
 export interface NodeRuntimeInfo {
   chain: ChainManager;
@@ -97,7 +98,7 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
   logger.info('node identity ready', { nodeId, keystore: config.keystorePath });
 
   // ── Chain ────────────────────────────────────────────────────────────────
-  const genesisDocument = genesisDocumentFor(net, config.bootstrapValidatorPublicKeys, config.miningGatePublicKeys);
+  const genesisDocument = genesisDocumentFor(net, config.miningGatePublicKeys);
   const chain = new ChainManager({
     dataDir: config.dataDir,
     net,
@@ -205,14 +206,13 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
     }
   });
 
-  // The double-sign lock closed a slot this validator had already signed. It is
-  // the safe outcome — signing twice in one slot is the equivocation the
-  // protocol punishes — but an operator watching a node that stopped proposing
+  // The double-sign lock closed a slot this node had already signed on. It is the safe outcome — signing twice on
+  // one parent is the equivocation that bans a node — but an operator watching a node that stopped producing
   // deserves to see why.
-  chain.on('proposal-lock', (info: { height: number; round: number }) => {
-    logger.warn('proposal slot already signed by this validator; waiting for the next round', {
+  chain.on('proposal-lock', (info: { height: number; parentHash: string }) => {
+    logger.warn('this node already signed a block on this parent; waiting for the chain to move on', {
       height: info.height,
-      round: info.round,
+      parent: info.parentHash,
     });
   });
 
@@ -233,11 +233,6 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
 
   // ── Loops ────────────────────────────────────────────────────────────────
   const timers: NodeJS.Timeout[] = [];
-  // Set while the chain is halted for want of validators, so the halt is
-  // reported once rather than on every production tick. Cleared the moment the
-  // chain is producing again, so a later halt is reported too.
-  let productionHalted = false;
-
   // Sync loop: ask the best peer for blocks whenever it holds a better chain.
   timers.push(
     setInterval(() => {
@@ -254,33 +249,13 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
       // Still catching up: building on a stale head only mints a block nobody
       // will accept. Wait until we are level with the best peer.
       if (p2p.behindBy() > 1) return;
-      // Three distinct states, and only one of them is permissionless. The
-      // canonical decision reads them from committed state; the old
-      // `scheduledProposerNow() === null` test could not tell bootstrap mode
-      // from a halt, because both read as null.
+      // The schedule is read from committed state, the same way block validation reads it. OPEN means no node has
+      // registered yet (the founding state); otherwise exactly one address is entitled to this slot.
       const decision = chain.productionDecisionNow();
-      if (decision.kind === 'HALTED') {
-        // The rotation is closed and no validator is active: nobody may propose,
-        // in any round, and consensus refuses every candidate. Do not build, do
-        // not sign, do not broadcast — stay idle until the validator state
-        // changes (a jail term lapsing, or a new registration). One line per
-        // halt, not one per tick: the chain may sit here for hours.
-        if (!productionHalted) {
-          logger.warn('block production halted: no active validator', {
-            height: chain.height + 1,
-            reason: decision.reason,
-          });
-          productionHalted = true;
-        }
+      if (decision.kind === 'SCHEDULED' && decision.producer !== identity.address) {
+        logger.debug('not this node’s slot', { height: chain.height + 1, scheduled: decision.producer });
         return;
       }
-      productionHalted = false;
-      if (decision.kind === 'SCHEDULED' && decision.proposer !== identity.address) {
-        logger.debug('not this node’s slot', { height: chain.height + 1, scheduled: decision.proposer });
-        return;
-      }
-      // OPEN falls through: no validator has ever registered, so the existing
-      // bootstrap production behaviour is unchanged.
       try {
         const block = chain.buildNextBlock({
           address: identity.address,
@@ -305,6 +280,19 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
     }, Math.max(1_000, config.blockProductionIntervalSeconds * 1_000)),
   );
 
+  // Node participation: register, heartbeat, attest and report, signed by this node's own key (see node-agent.ts).
+  const agent = new NodeAgent({
+    chain,
+    p2p,
+    net,
+    dataDir: config.dataDir,
+    identity: { address: identity.address, publicKey: identity.publicKey, privateKey: identity.privateKey, nodeId },
+    participating: () => config.miningEnabled,
+    behind: () => p2p.behindBy() > 1,
+    log: (level, message, fields) => logger[level](message, fields),
+  });
+  timers.push(setInterval(() => agent.tick(), AGENT_INTERVAL_SECONDS * 1_000));
+
   // Mempool hygiene: drop expired transactions.
   timers.push(
     setInterval(() => {
@@ -324,7 +312,9 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
         supplyObs: status.supply,
         activeMiners: status.activeMiners,
         genesisClaimed: status.genesisAllocationClaimed,
-        validators: status.validators,
+        nodes: status.nodes,
+        scheduleTier: status.scheduleTier,
+        finalizedHeight: status.finalizedHeight,
         syncing: status.syncing,
       });
     }, 60_000),
@@ -399,7 +389,7 @@ export async function validateDataDir(loaded: LoadedConfig): Promise<{ ok: boole
     const chain = new ChainManager({
       dataDir: config.dataDir,
       net,
-      genesisDocument: genesisDocumentFor(net, effective.bootstrapValidatorPublicKeys, effective.miningGatePublicKeys),
+      genesisDocument: genesisDocumentFor(net, effective.miningGatePublicKeys),
     });
     await chain.init();
     return chain.verifyIntegrity();

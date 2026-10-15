@@ -498,7 +498,7 @@ describe('private material never crosses the wire', () => {
       '/nodes',
       '/peers',
       '/oracle',
-      '/validators',
+      '/producers',
       '/blocks',
       '/mempool',
       '/names',
@@ -574,10 +574,11 @@ describe('private material never crosses the wire', () => {
     expect(response.raw.toLowerCase()).not.toContain('hash rate');
   });
 
-  it('publishes the v1.6 validator bond and ONS revenue split', async () => {
+  it('publishes the producer schedule parameters (no bond) and the ONS revenue split', async () => {
     const response = await get('/params');
     expect(response.status).toBe(200);
-    expect(response.body.consensus.validatorBondObs).toBe('20000.000000000000000000');
+    expect(JSON.stringify(response.body.consensus)).not.toMatch(/validatorBond|unbonding/i);
+    expect(response.body.consensus.producers.maturityBlocks).toBeGreaterThan(0);
     expect(response.body.nodeRewards.nodePoolBps).toBe(9_000);
     expect(response.body.nodeRewards.treasuryBps).toBe(1_000);
   });

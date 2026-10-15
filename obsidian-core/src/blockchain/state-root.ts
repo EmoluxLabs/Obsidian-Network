@@ -106,24 +106,6 @@ function encodeAccount(w: Writer, address: string, a: Account): void {
     w.u128(m.totalReward);
     w.boolean(m.eligible);
   }
-  const v = a.validator;
-  w.boolean(Boolean(v));
-  if (v) {
-    w.string(v.validatorKey);
-    w.u128(v.bond);
-    w.u32(v.commissionBps);
-    w.u32(v.registeredAtHeight);
-    // Protocol time, not height: see ValidatorState.jailedUntilTime. u64 so no
-    // reachable timestamp can wrap, and 0 for "not jailed".
-    w.u64(BigInt(Math.trunc(v.jailedUntilTime ?? 0)));
-    w.u32(v.missedSlots);
-    w.string(v.status);
-    w.u32(v.unbondingStartHeight ?? 0);
-    // The facts behind a slash are consensus state: two nodes that disagree
-    // about which evidence was applied disagree about the bond.
-    w.u32(v.slashedAtHeight ?? 0);
-    w.string(v.slashEvidenceId ?? '');
-  }
 }
 
 function encodeGenesis(w: Writer, g: GenesisState): void {
@@ -133,9 +115,6 @@ function encodeGenesis(w: Writer, g: GenesisState): void {
   w.u32(g.claimedAtHeight ?? 0);
   w.string(g.claimedByTxId ?? '');
   w.u128(g.amount);
-  const bootstrapKeys = [...g.bootstrapValidatorKeys].sort();
-  w.u32(bootstrapKeys.length);
-  for (const publicKey of bootstrapKeys) w.string(publicKey);
   // The gate keys decide who may mine, so they are committed in every state root, not just in the genesis id.
   const gateKeys = [...g.miningGateKeys].sort();
   w.u32(gateKeys.length);
@@ -159,6 +138,23 @@ function encodeName(w: Writer, n: OnsRecord): void {
   w.u64(BigInt(Math.trunc(n.registeredAt)));
   w.u64(BigInt(Math.trunc(n.expiresAt)));
   w.u32(n.transferCount);
+  // 1.9.0: an open offer, the recovery address and a recovery in flight decide who can hold the name tomorrow.
+  const offer = n.pendingTransfer;
+  w.boolean(Boolean(offer));
+  if (offer) {
+    w.string(offer.to);
+    w.u64(BigInt(Math.trunc(offer.offeredAt)));
+    w.u64(BigInt(Math.trunc(offer.offerExpiresAt)));
+  }
+  w.string(n.recoveryAddress ?? '');
+  const recovery = n.pendingRecovery;
+  w.boolean(Boolean(recovery));
+  if (recovery) {
+    w.string(recovery.by);
+    w.string(recovery.newAddress);
+    w.u64(BigInt(Math.trunc(recovery.startedAt)));
+    w.u64(BigInt(Math.trunc(recovery.effectiveAt)));
+  }
 }
 
 function encodeOracle(w: Writer, o: OracleState): void {
@@ -210,8 +206,6 @@ function encodeMetrics(w: Writer, m: Metrics): void {
   w.u128(m.totalOnsRunnerShare);
   w.u128(m.totalOnsTreasuryShare);
   w.u128(m.totalNodeRewardsPaid);
-  w.u128(m.totalSlashedToPool);
-  w.u32(m.totalSlashes);
   w.u32(m.registeredNodes);
   w.u32(m.totalNamesRegistered);
 }
@@ -224,6 +218,18 @@ function encodeNode(w: Writer, n: NodeRecord): void {
   w.u32(n.registeredAtHeight);
   w.u64(BigInt(Math.trunc(n.registeredAt)));
   w.u32(n.deregisteredAtHeight ?? 0);
+  // 1.9.0 producer-schedule state: every field below can change who produces the next block, so all of it is in the root.
+  w.string(n.producerAddress);
+  w.u64(BigInt(Math.trunc(n.lastActiveAt)));
+  w.u32(n.missedSlots);
+  w.u32(n.suspensions);
+  w.u64(BigInt(Math.trunc(n.suspendedUntil ?? 0)));
+  w.u32(n.bannedAtHeight ?? 0);
+  w.boolean(n.bannedAtHeight !== undefined);
+  w.string(n.banEvidenceId ?? '');
+  w.i128(BigInt(n.reclaimEffectivePeriod ?? -1));
+  w.string(n.reclaimWallet ?? '');
+  w.u32(n.blocksProduced);
   w.string(n.pendingWallet ?? '');
   w.i128(BigInt(n.pendingWalletEffectivePeriod ?? -1));
   w.u32(n.pendingWalletRequestedAtHeight ?? 0);
@@ -236,6 +242,7 @@ function encodeNodeEvidence(w: Writer, e: NodeEvidenceRecord): void {
   w.string(e.nodeId);
   w.i128(BigInt(e.period));
   w.u32(e.heartbeats);
+  w.u32(e.liveWindows);
   w.u32(e.attesters.length);
   for (const attester of [...e.attesters].sort()) w.string(attester);
   w.u32(e.blocksProduced);
@@ -309,14 +316,6 @@ export function encodeState(state: MutableState): Uint8Array {
   w.u32(claimIds.length);
   for (const id of claimIds) w.string(id);
 
-  // Committed BEFORE the list it qualifies, so the root of a chain that has
-  // never had a validator differs from the root of one where every validator
-  // has left — both have an empty list, and only this bit tells them apart.
-  w.boolean(state.validatorModeEstablished);
-  const validators = [...state.validators].sort();
-  w.u32(validators.length);
-  for (const address of validators) w.string(address);
-
   // Node runner registry, evidence and pool: every field can decide a future
   // payout, so all of it is committed. Omitting any of it would let two nodes
   // disagree about money without their state roots disagreeing.
@@ -333,22 +332,14 @@ export function encodeState(state: MutableState): Uint8Array {
 
   encodeNodeRewards(w, state.nodeRewards);
 
-  // Applied slashes. Consensus state: this ledger is what makes a replayed
-  // slash transaction a no-op rather than a second penalty, so omitting it from
-  // the root would let two nodes disagree about a validator's bond.
-  const slashIds = [...state.slashes.keys()].sort();
-  w.u32(slashIds.length);
-  for (const id of slashIds) {
-    const record = state.slashes.get(id)!;
-    w.string(id);
-    w.string(record.type);
-    w.string(record.validator);
-    w.u32(record.height);
-    w.u32(record.round);
-    w.u128(record.amount);
-    w.u128(record.bondBefore);
-    w.u128(record.bondAfter);
-    w.u32(record.slashedAtHeight);
+  // Derived finality: consensus state, so two nodes cannot disagree about it without disagreeing about the root.
+  w.u32(state.finality.finalizedHeight);
+  w.string(state.finality.finalizedHash);
+  w.u32(state.finality.recent.length);
+  for (const entry of state.finality.recent) {
+    w.u32(entry.height);
+    w.string(entry.producer);
+    w.string(entry.hash);
   }
 
   const paramsHash = PARAMS_HASH;

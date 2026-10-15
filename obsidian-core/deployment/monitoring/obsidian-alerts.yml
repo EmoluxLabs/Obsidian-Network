@@ -49,12 +49,12 @@ groups:
           description: 'Total supply exceeds the 21,000,000 OBS maximum. Stop this node and investigate before it serves anyone.'
 
       - alert: ObsidianFinalityStalled
-        expr: obsidian_finality_lag_blocks > 64 and obsidian_finality_validators > 0
+        expr: obsidian_finality_lag_blocks > 64 and obsidian_finality_producers >= 3
         for: 10m
         labels: { severity: warning }
         annotations:
           summary: 'PoT finality is {{ $value }} blocks behind on {{ $labels.instance }}'
-          description: 'An eligible committee exists but no recent certificate is verified. Check peers, validator availability, version agreement, and /finality.'
+          description: 'At least three established producers exist but the finalized checkpoint is not advancing. Check peers, producer availability (a third of them offline stalls finality), version agreement, and /finality.'
 
       - alert: ObsidianNodeSyncing
         expr: obsidian_syncing == 1

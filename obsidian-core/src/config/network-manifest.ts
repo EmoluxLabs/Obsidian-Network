@@ -3,7 +3,7 @@
  *
  * WHY IT EXISTS
  *   A network's identity (its genesis id) is a hash over PUBLIC inputs that are supplied through configuration:
- *   the bootstrap validator keys and the mining gate issuer keys. Until now the only record of which inputs a
+ *   the mining gate issuer keys. Until now the only record of which inputs a
  *   data directory was created from was the chain itself, so an operator who restarted with the environment
  *   variable missing, or mistyped, got a refusal ("genesis mismatch") that did not say what differed, and
  *   a joining node had no safe way to learn the keys at all.
@@ -41,7 +41,6 @@ import {
   buildGenesisBlock,
   genesisDocumentFor,
   genesisId,
-  normalizeBootstrapValidatorPublicKeys,
   normalizeMiningGatePublicKeys,
 } from '../genesis/initialize.js';
 import type { GenesisDocument } from '../blockchain/chain.js';
@@ -50,7 +49,7 @@ import type { NetworkDefinition } from '../protocol/networks.js';
 import type { LoadedConfig } from './config.js';
 
 export const MANIFEST_FILE = 'network.json';
-export const MANIFEST_VERSION = 1;
+export const MANIFEST_VERSION = 2;
 
 export type ManifestOrigin =
   | { kind: 'init' }
@@ -66,7 +65,6 @@ export interface NetworkManifest {
   protocolVersion: string;
   genesisId: string;
   genesisHash: string;
-  bootstrapValidatorPublicKeys: string[];
   miningGatePublicKeys: string[];
   createdAt: string;
   origin: ManifestOrigin;
@@ -110,9 +108,8 @@ export function readManifest(dataDir: string): NetworkManifest | undefined {
   if (typeof parsed.protocolVersion !== 'string') bad('protocolVersion missing');
   if (typeof parsed.genesisId !== 'string' || !HEX40.test(parsed.genesisId)) bad('genesisId is not 40 hex characters');
   if (typeof parsed.genesisHash !== 'string' || !HEX64.test(parsed.genesisHash)) bad('genesisHash is not 64 hex characters');
-  if (!Array.isArray(parsed.bootstrapValidatorPublicKeys) || !Array.isArray(parsed.miningGatePublicKeys)) bad('key lists missing');
+  if (!Array.isArray(parsed.miningGatePublicKeys)) bad('key list missing');
   try {
-    normalizeBootstrapValidatorPublicKeys(parsed.bootstrapValidatorPublicKeys as string[]);
     normalizeMiningGatePublicKeys(parsed.miningGatePublicKeys as string[]);
   } catch (error) {
     bad((error as Error).message);
@@ -127,8 +124,8 @@ export interface Derived {
 }
 
 /** The genesis a set of public inputs produces. Deterministic: same inputs, same answer, on any machine. */
-export function deriveGenesis(net: NetworkDefinition, bootstrapKeys: readonly string[], gateKeys: readonly string[]): Derived {
-  const document = genesisDocumentFor(net, bootstrapKeys, gateKeys);
+export function deriveGenesis(net: NetworkDefinition, gateKeys: readonly string[]): Derived {
+  const document = genesisDocumentFor(net, gateKeys);
   return {
     document,
     genesisId: genesisId(document, net),
@@ -145,7 +142,6 @@ export function buildManifest(net: NetworkDefinition, derived: Derived, origin: 
     protocolVersion: derived.document.protocolVersion,
     genesisId: derived.genesisId,
     genesisHash: derived.genesisHash,
-    bootstrapValidatorPublicKeys: [...(derived.document.bootstrapValidatorPublicKeys ?? [])],
     miningGatePublicKeys: [...(derived.document.miningGatePublicKeys ?? [])],
     createdAt: new Date().toISOString(),
     origin,
@@ -190,7 +186,6 @@ export function resolveIdentity(loaded: LoadedConfig): EffectiveIdentity {
   const { config, net } = loaded;
   const manifest = readManifest(config.dataDir);
   const adopted: string[] = [];
-  let bootstrap = config.bootstrapValidatorPublicKeys;
   let gate = config.miningGatePublicKeys;
   if (manifest) {
     if (manifest.network !== net.name || manifest.chainId !== net.chainId || manifest.networkId !== net.networkId) {
@@ -201,8 +196,6 @@ export function resolveIdentity(loaded: LoadedConfig): EffectiveIdentity {
       );
     }
     const operatorGate = config.miningGatePublicKeys.length > 0 ? normalizeMiningGatePublicKeys(config.miningGatePublicKeys) : [];
-    const operatorBootstrap =
-      config.bootstrapValidatorPublicKeys.length > 0 ? normalizeBootstrapValidatorPublicKeys(config.bootstrapValidatorPublicKeys) : [];
     if (operatorGate.length > 0 && operatorGate.join(',') !== manifest.miningGatePublicKeys.join(',')) {
       throw new NetworkIdentityError(
         'the mining gate keys you supplied differ from the ones this data directory was created with. ' +
@@ -210,18 +203,10 @@ export function resolveIdentity(loaded: LoadedConfig): EffectiveIdentity {
           'A different list is a different network. Remove the setting to use the recorded one, or use a new --data-dir for a new network.',
       );
     }
-    if (operatorBootstrap.length > 0 && operatorBootstrap.join(',') !== manifest.bootstrapValidatorPublicKeys.join(',')) {
-      throw new NetworkIdentityError(
-        'the bootstrap validator keys you supplied differ from the ones this data directory was created with ' +
-          `(genesis id ${manifest.genesisId}). A different committee is a different network.`,
-      );
-    }
     if (operatorGate.length === 0 && manifest.miningGatePublicKeys.length > 0) adopted.push('mining gate keys');
-    if (operatorBootstrap.length === 0 && manifest.bootstrapValidatorPublicKeys.length > 0) adopted.push('bootstrap validator keys');
     gate = manifest.miningGatePublicKeys;
-    bootstrap = manifest.bootstrapValidatorPublicKeys;
   }
-  const derived = deriveGenesis(net, bootstrap, gate);
+  const derived = deriveGenesis(net, gate);
   if (manifest && derived.genesisId !== manifest.genesisId) {
     throw new NetworkIdentityError(
       `this software derives genesis id ${derived.genesisId} from the recorded inputs, but the directory was created as ` +
@@ -231,7 +216,7 @@ export function resolveIdentity(loaded: LoadedConfig): EffectiveIdentity {
   }
   const state: IdentityState = manifest ? 'existing' : hasChainData(config.dataDir) ? 'existing-unrecorded' : 'new';
   return {
-    loaded: { ...loaded, config: { ...config, bootstrapValidatorPublicKeys: [...bootstrap], miningGatePublicKeys: [...gate] } },
+    loaded: { ...loaded, config: { ...config, miningGatePublicKeys: [...gate] } },
     derived,
     manifest,
     state,
@@ -270,7 +255,6 @@ export interface InitResult {
   dataDir: string;
   manifest: string;
   miningGatePublicKeys: string[];
-  bootstrapValidatorPublicKeys: string[];
   gateAuthority?: {
     generated: boolean;
     /** The first key's keystore and public key (kept for scripts written against 1.7.0). */
@@ -374,7 +358,7 @@ export function initNetwork(loaded: LoadedConfig, options: InitOptions = {}): In
     finalIdentity = {
       ...identity,
       loaded: { ...identity.loaded, config: { ...identity.loaded.config, miningGatePublicKeys: publicKeys } },
-      derived: deriveGenesis(net, identity.loaded.config.bootstrapValidatorPublicKeys, publicKeys),
+      derived: deriveGenesis(net, publicKeys),
     };
     if (count < 3) {
       notes.push(
@@ -414,7 +398,6 @@ function describeInit(state: 'created' | 'existing', identity: EffectiveIdentity
     dataDir,
     manifest: manifestPath(dataDir),
     miningGatePublicKeys: [...(document.miningGatePublicKeys ?? [])],
-    bootstrapValidatorPublicKeys: [...(document.bootstrapValidatorPublicKeys ?? [])],
     notes,
   };
 }
@@ -446,17 +429,15 @@ export function verifyPeerGenesis(net: NetworkDefinition, reply: PeerGenesisRepl
       `the peer's genesis is protocol ${String(doc.protocolVersion)} and this build is protocol ${PROTOCOL_VERSION}: they cannot be the same network. Nothing was written.`,
     );
   }
-  let bootstrap: string[];
   let gate: string[];
   try {
-    bootstrap = normalizeBootstrapValidatorPublicKeys((doc.bootstrapValidatorPublicKeys as string[] | undefined) ?? []);
     gate = normalizeMiningGatePublicKeys((doc.miningGatePublicKeys as string[] | undefined) ?? []);
   } catch (error) {
     throw new NetworkIdentityError(`the peer sent unusable keys (${(error as Error).message}). Nothing was written.`);
   }
   let derived: Derived;
   try {
-    derived = deriveGenesis(net, bootstrap, gate);
+    derived = deriveGenesis(net, gate);
   } catch (error) {
     throw new NetworkIdentityError(`the peer's keys do not form a valid genesis for ${net.name}: ${(error as Error).message}`);
   }
@@ -502,7 +483,6 @@ export async function joinNetwork(
       ...identity.loaded,
       config: {
         ...identity.loaded.config,
-        bootstrapValidatorPublicKeys: [...(derived.document.bootstrapValidatorPublicKeys ?? [])],
         miningGatePublicKeys: [...(derived.document.miningGatePublicKeys ?? [])],
       },
     },

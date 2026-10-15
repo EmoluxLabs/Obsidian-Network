@@ -15,20 +15,14 @@ import type { WorldState } from '../../src/blockchain/state.js';
 import { buildBlock, blockHash, encodeBlock, decodeBlock } from '../../src/blockchain/block.js';
 import { signTransaction } from '../../src/transactions/encode.js';
 import { generateRecoveryPhrase, deriveWallet } from '../../src/crypto/mnemonic.js';
-import { addressFromPublicKey, generateKeyPair, keyPairFromPrivateKey, nodeIdFromPublicKey, signDigest } from '../../src/crypto/keys.js';
-import { sha256, toHex, utf8 } from '../../src/crypto/hash.js';
-import { DOMAIN } from '../../src/protocol/domains.js';
+import { addressFromPublicKey, generateKeyPair, keyPairFromPrivateKey, nodeIdFromPublicKey } from '../../src/crypto/keys.js';
 import { NodeRegistryOp } from '../../src/protocol/types.js';
-import {
-  attestationMessage,
-  encodeNodeRegistryBody,
-  heartbeatMessage,
-} from '../../src/transactions/executors/node-registry.js';
-import { nodeRegistrationMessage, rewardPeriodAt } from '../../src/economy/node-rewards.js';
-import { committedBootstrapValidatorKeys } from '../../src/genesis/bootstrap-keys.js';
+import { rewardPeriodAt, uptimeWindowIndex } from '../../src/economy/node-rewards.js';
+import { encodeNodeRegistryBody } from '../../src/transactions/executors/node-registry.js';
 import { TxType, type TxEnvelope, type Block } from '../../src/protocol/types.js';
 import { ProtocolError } from '../../src/protocol/errors.js';
 import { getNetwork, type NetworkDefinition } from '../../src/protocol/networks.js';
+import { producerDecision, proposerRound } from '../../src/consensus/schedule.js';
 import { applyBlock } from '../../src/blockchain/state-machine.js';
 import { PARAMS_HASH } from '../../src/blockchain/state-root.js';
 import { PROTOCOL_VERSION } from '../../src/version.js';
@@ -37,7 +31,6 @@ import { encodeMiningBody, computeClaimId } from '../../src/transactions/executo
 import { issueMiningGateCertificate } from '../../src/mining/gate.js';
 import { encodeOracleBody } from '../../src/transactions/executors/oracle.js';
 import { encodeOnsBody } from '../../src/transactions/executors/ons.js';
-import { encodeValidatorBody } from '../../src/transactions/executors/validator.js';
 import { encodeTreasuryBody } from '../../src/transactions/executors/treasury.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { alignedCycleStart, evaluateMining } from '../../src/mining/rules.js';
@@ -99,6 +92,11 @@ export interface Harness {
   producer: TestWallet;
   dir: string;
   /**
+   * Every key the test can sign blocks with, by producer address. When a block option names no producer the harness
+   * asks the schedule who is due and signs with that key if it is known (registerNode adds the node key here).
+   */
+  signers: Map<string, TestWallet>;
+  /**
    * Build and sign a block WITHOUT adding it (used to assert rejections).
    * Roots are computed by simulating, so the block is valid except for whatever
    * the test deliberately breaks.
@@ -129,7 +127,7 @@ export interface Harness {
   close(): void;
 }
 
-export async function createHarness(options: { network?: string; producer?: TestWallet; bootstrapValidatorPublicKeys?: string[]; miningGatePublicKeys?: string[] } = {}): Promise<Harness> {
+export async function createHarness(options: { network?: string; producer?: TestWallet; miningGatePublicKeys?: string[] } = {}): Promise<Harness> {
   const net = options.network ? getNetwork(options.network) : DEVNET;
   const dir = mkdtempSync(join(tmpdir(), 'obsidian-test-'));
   const producer = options.producer ?? makeWallet(net);
@@ -142,16 +140,19 @@ export async function createHarness(options: { network?: string; producer?: Test
       protocolVersion: PROTOCOL_VERSION,
       timestamp: 1_767_225_600,
       note: 'test genesis',
-      // Exactly what a real node does: a network with a committed committee
-      // (mainnet, testnet) gets it without asking, and the refusal paths are
-      // what an operator-supplied list goes through.
-      bootstrapValidatorPublicKeys: options.bootstrapValidatorPublicKeys
-        ?? [...committedBootstrapValidatorKeys(net)],
       miningGatePublicKeys: options.miningGatePublicKeys ?? [GATE_ISSUER.publicKey],
     },
     enforceProposerRotation: true,
   });
   await chain.init();
+
+  const signers = new Map<string, TestWallet>([[producer.address, producer]]);
+  /** The scheduled producer's key when the harness holds it, else the default producer. */
+  const dueProducer = (state: WorldState, height: number, parentTimestamp: number, timestamp: number): TestWallet => {
+    const decision = producerDecision(state, height, proposerRound(parentTimestamp, timestamp), timestamp);
+    if (decision.kind === 'SCHEDULED') return signers.get(decision.producer) ?? producer;
+    return producer;
+  };
 
   const sign: Harness['sign'] = (wallet, type, body, opts = {}) => {
     const account = chain.world.getAccount(wallet.address);
@@ -176,7 +177,7 @@ export async function createHarness(options: { network?: string; producer?: Test
     const head = chain.tip!;
     const height = head.height + 1;
     const timestamp = options.timestamp ?? Math.max(chain.protocolTime, head.timestamp + 1);
-    const blockProducer = options.producer ?? producer;
+    const blockProducer = options.producer ?? dueProducer(chain.world, height, head.timestamp, timestamp);
     // Simulate so the header commits to the real post-state roots. Tests that
     // intentionally include an invalid transaction set `simulate: false`,
     // because the transaction is rejected before the roots are ever compared.
@@ -203,9 +204,7 @@ export async function createHarness(options: { network?: string; producer?: Test
               },
               transactions: txs,
             },
-            // The harness applies blocks the way a node does, so a trial that
-            // carries evidence gets the same historical context a node would use.
-            { net, skipRootCheck: true, evidence: chain.consensusEvidenceContext() },
+            { net, skipRootCheck: true },
           );
     const block = buildBlock({
       protocolVersion: PROTOCOL_VERSION,
@@ -227,7 +226,7 @@ export async function createHarness(options: { network?: string; producer?: Test
   const makeBlockOn: Harness['makeBlockOn'] = (parent, txs = [], options = {}) => {
     const height = parent.height + 1;
     const timestamp = options.timestamp ?? Math.max(chain.protocolTime, parent.height + 1);
-    const blockProducer = options.producer ?? producer;
+    const blockProducer = options.producer ?? dueProducer(parent.state, height, parent.state.s.timestamp, timestamp);
     const trial = applyBlock(
       parent.state,
       {
@@ -248,9 +247,7 @@ export async function createHarness(options: { network?: string; producer?: Test
         },
         transactions: txs,
       },
-      // The harness applies blocks the way a node does, so a trial that
-            // carries evidence gets the same historical context a node would use.
-            { net, skipRootCheck: true, evidence: chain.consensusEvidenceContext() },
+      { net, skipRootCheck: true },
     );
     const block = buildBlock({
       protocolVersion: PROTOCOL_VERSION,
@@ -305,6 +302,7 @@ export async function createHarness(options: { network?: string; producer?: Test
     net,
     producer,
     dir,
+    signers,
     makeBlock,
     makeBlockOn,
     tryBlock,
@@ -424,143 +422,103 @@ export function onsBody(op: number, name: string, extra: { address?: string; to?
   return encodeOnsBody({ op: op as never, name, fee: extra.fee ?? 0n, address: extra.address, to: extra.to });
 }
 
-export function validatorBody(op: number, bond: bigint, validatorKey: string, commissionBps = 0): Uint8Array {
-  return encodeValidatorBody({ op: op as never, bond, validatorKey, commissionBps });
-}
-
 export function treasuryBody(op: number, amount: bigint, purpose: string, to?: string): Uint8Array {
   return encodeTreasuryBody({ op: op as never, amount, purpose, to });
 }
 
 /**
- * Node runner test identity: a real secp256k1 keypair, used exactly as an
- * operator would use one — the node key signs the statement, the reward wallet
- * signs (and pays for) the transaction.
+ * Node test identity: a real secp256k1 keypair, used exactly as a running node uses its own. The NODE KEY signs every
+ * node statement (it is the transaction sender); the reward wallet is only an address that gets paid.
  */
 export interface TestNode {
   nodeId: string;
   publicKey: string;
   privateKey: string;
+  /** The producer address: the address of the node key. */
+  address: string;
+  /** The reward wallet bound to this node. Never signs anything node-related except RECLAIM_WALLET. */
   wallet: TestWallet;
 }
 
-export function makeNode(wallet: TestWallet): TestNode {
-  const keys = generateKeyPair();
+export function makeNode(wallet: TestWallet, net: NetworkDefinition = DEVNET): TestNode {
+  const keys = generateKeyPair(net.addressHrp);
   return {
     nodeId: nodeIdFromPublicKey(keys.publicKey),
     publicKey: keys.publicKey,
     privateKey: keys.privateKey,
+    address: addressFromPublicKey(keys.publicKey, net.addressHrp),
     wallet,
   };
 }
 
-/** Sign a node statement exactly the way the executor verifies it. */
-export function nodeProof(domain: string, message: string, privateKey: string): string {
-  return toHex(signDigest(sha256(utf8(`${domain}\n${message}`)), privateKey));
+/** A node viewed as a signing wallet (sender = producer address). */
+export function nodeSigner(node: TestNode): TestWallet {
+  return { ...node.wallet, address: node.address, privateKey: node.privateKey, publicKey: node.publicKey };
 }
 
 export function nodeRegistryBody(params: {
   op: number;
   node: TestNode;
   rewardWallet?: string;
-  proof: string;
   endpoint?: string;
   slot?: number;
   subject?: string;
   reportedHeight?: number;
   reason?: string;
-  issuedAt?: number;
-  expiresAt?: number;
+  firstHeader?: string;
+  secondHeader?: string;
+  nodeId?: string;
 }): Uint8Array {
   return encodeNodeRegistryBody({
     op: params.op as never,
-    nodeId: params.node.nodeId,
+    nodeId: params.nodeId ?? params.node.nodeId,
     rewardWallet: params.rewardWallet ?? params.node.wallet.address,
     nodePublicKey: params.node.publicKey,
-    proof: params.proof,
+    proof: '',
     endpoint: params.endpoint,
     slot: params.slot,
     subject: params.subject,
     reportedHeight: params.reportedHeight,
     reason: params.reason,
-    issuedAt: params.issuedAt,
-    expiresAt: params.expiresAt,
+    issuedAt: undefined,
+    expiresAt: undefined,
+    firstHeader: params.firstHeader,
+    secondHeader: params.secondHeader,
   });
 }
 
-/** Register a node runner the way an operator would, and assert it landed. */
-export function registerNode(harness: Harness, node: TestNode, options: { endpoint?: string } = {}): void {
-  const issuedAt = harness.chain.protocolTime;
-  const expiresAt = issuedAt + 600;
-  const endpoint = options.endpoint ?? '203.0.113.10:8631';
-  const message = nodeRegistrationMessage({
-    networkId: harness.net.networkId,
-    chainId: harness.net.chainId,
-    nodeId: node.nodeId,
-    rewardWallet: node.wallet.address,
-    endpoint,
-    issuedAt,
-    expiresAt,
+/** Sign one node statement with the node key. No gas, no wallet signature. */
+export function nodeStatement(
+  harness: Harness,
+  node: TestNode,
+  fields: Omit<Parameters<typeof nodeRegistryBody>[0], 'node'>,
+  options: { nonce?: number; protocolTime?: number } = {},
+): TxEnvelope {
+  return harness.sign(nodeSigner(node), TxType.NODE_REGISTRY, nodeRegistryBody({ ...fields, node }), {
+    gas: 0n,
+    ...options,
   });
-  const proof = nodeProof(DOMAIN.NODE_REGISTRATION, message, node.privateKey);
+}
+
+/** Register a node the way a running node does: signed by its own key, bound to a pasted wallet address. */
+export function registerNode(harness: Harness, node: TestNode, options: { endpoint?: string } = {}): void {
+  harness.signers.set(node.address, nodeSigner(node));
   harness.produce([
-    harness.sign(
-      node.wallet,
-      TxType.NODE_REGISTRY,
-      nodeRegistryBody({ op: NodeRegistryOp.REGISTER, node, proof, endpoint, issuedAt, expiresAt }),
-      { gas: 0n },
-    ),
+    nodeStatement(harness, node, { op: NodeRegistryOp.REGISTER, endpoint: options.endpoint ?? '203.0.113.10:8631' }),
   ]);
 }
 
-/** Send a heartbeat for the current reward period. */
-export function nodeHeartbeat(harness: Harness, node: TestNode, options: { reportedHeight?: number } = {}): TxEnvelope {
-  const period = rewardPeriodAt(harness.chain.protocolTime);
+/** Send a heartbeat for the current uptime window. */
+export function nodeHeartbeat(harness: Harness, node: TestNode, options: { reportedHeight?: number; slot?: number } = {}): TxEnvelope {
   const reportedHeight = options.reportedHeight ?? harness.chain.store.head?.height ?? 0;
-  const record = harness.chain.world.node(node.nodeId);
-  const message = heartbeatMessage({
-    networkId: harness.net.networkId,
-    chainId: harness.net.chainId,
-    nodeId: node.nodeId,
-    period,
-    reportedHeight,
-    endpoint: record?.endpoint ?? '',
-  });
-  const proof = nodeProof(DOMAIN.NODE_HEARTBEAT, message, node.privateKey);
-  return harness.sign(
-    node.wallet,
-    TxType.NODE_REGISTRY,
-    nodeRegistryBody({ op: NodeRegistryOp.HEARTBEAT, node, proof, slot: period, reportedHeight }),
-    { gas: 0n },
-  );
+  const slot = options.slot ?? uptimeWindowIndex(harness.chain.protocolTime);
+  return nodeStatement(harness, node, { op: NodeRegistryOp.HEARTBEAT, slot, reportedHeight });
 }
 
 /** One node attests another node's liveness for the current period. */
 export function nodeAttest(harness: Harness, observer: TestNode, subject: TestNode): TxEnvelope {
   const period = rewardPeriodAt(harness.chain.protocolTime);
-  const reportedHeight = harness.chain.store.head?.height ?? 0;
-  const message = attestationMessage({
-    networkId: harness.net.networkId,
-    chainId: harness.net.chainId,
-    observer: observer.nodeId,
-    subject: subject.nodeId,
-    period,
-    reportedHeight,
-  });
-  const proof = nodeProof(DOMAIN.NODE_ATTESTATION, message, observer.privateKey);
-  return harness.sign(
-    observer.wallet,
-    TxType.NODE_REGISTRY,
-    nodeRegistryBody({
-      op: NodeRegistryOp.ATTEST,
-      node: observer,
-      proof,
-      slot: period,
-      subject: subject.nodeId,
-      reportedHeight,
-    }),
-    { gas: 0n },
-  );
+  return nodeStatement(harness, observer, { op: NodeRegistryOp.ATTEST, slot: period, subject: subject.nodeId });
 }
 
 // ── Assertion helpers ────────────────────────────────────────────────────────

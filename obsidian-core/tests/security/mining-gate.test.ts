@@ -189,10 +189,10 @@ describe('the gate fails closed and does not decide eligibility', () => {
     expect([ErrCode.MINING_TOO_SOON, ErrCode.MINING_NOT_ELIGIBLE, ErrCode.MINING_CYCLE_LIMIT]).toContain(tooSoon.code);
   });
 
-  it('an issuer is not a validator: its key cannot produce blocks or vote', async () => {
+  it('an issuer is not a node: its key has no producer standing and no node record', async () => {
     const h = await harness();
-    expect(h.chain.world.s.genesis.bootstrapValidatorKeys).not.toContain(GATE_ISSUER.publicKey);
-    expect(h.chain.world.s.validators.has(GATE_ISSUER.address)).toBe(false);
+    expect(h.chain.world.nodeByProducer(GATE_ISSUER.address)).toBeUndefined();
+    expect(h.chain.world.registeredNodes()).toHaveLength(0);
   });
 });
 
@@ -201,10 +201,10 @@ describe('the issuer set is part of the chain identity', () => {
   it('moves the genesis id and the state root, so nodes with different issuers cannot share a chain', async () => {
     const a = generateKeyPair(devnet.addressHrp).publicKey;
     const b = generateKeyPair(devnet.addressHrp).publicKey;
-    const ids = [[], [a], [b], [a, b]].map((keys) => genesisId(genesisDocumentFor(devnet, [], keys), devnet));
+    const ids = [[], [a], [b], [a, b]].map((keys) => genesisId(genesisDocumentFor(devnet, keys), devnet));
     expect(new Set(ids).size).toBe(4);
     // order does not matter, only the set
-    expect(genesisId(genesisDocumentFor(devnet, [], [a, b]), devnet)).toBe(genesisId(genesisDocumentFor(devnet, [], [b, a]), devnet));
+    expect(genesisId(genesisDocumentFor(devnet, [a, b]), devnet)).toBe(genesisId(genesisDocumentFor(devnet, [b, a]), devnet));
 
     const x = await harness({ miningGatePublicKeys: [GATE_ISSUER.publicKey] });
     const y = await harness({ miningGatePublicKeys: [FOREIGN_GATE_ISSUER.publicKey] });

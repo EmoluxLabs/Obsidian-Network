@@ -6,7 +6,7 @@
  * the Node Runner Reward Pool and the exact remainder to the genesis-designated
  * treasury wallet (or recorded as unclaimed until that wallet exists).
  *
- * Gas, issuance, validator bonds, mining rewards, treasury grants and
+ * Gas, issuance, mining rewards, treasury grants and
  * user-to-user transfers are separate accounting categories and are never
  * counted as ONS revenue.
  */
@@ -33,7 +33,7 @@ export enum RevenueSource {
 export const NOT_ONS_REVENUE: ReadonlyArray<{ txType: TxType; name: string; because: string }> = [
   { txType: Tx.PAYMENT, name: 'user-to-user transfer', because: 'the sender owns the funds; the protocol is only the messenger' },
   { txType: Tx.MINING_CLAIM, name: 'mining reward', because: 'issued by the protocol schedule, never paid in by a user' },
-  { txType: Tx.VALIDATOR, name: 'validator bond', because: 'the bonded OBS remains attributable to its owner and is returned at unbonding' },
+  { txType: Tx.NODE_REGISTRY, name: 'node registration / heartbeat / attestation', because: 'carries no payment: gas is zero and there is no bond' },
   { txType: Tx.GOVERNANCE, name: 'governance action', because: 'carries no payment to the protocol' },
   { txType: Tx.ORACLE, name: 'oracle submission', because: 'an observation paid for by gas, not an ONS sale' },
   { txType: Tx.TREASURY, name: 'treasury grant', because: 'moves existing treasury funds; it creates no protocol revenue' },

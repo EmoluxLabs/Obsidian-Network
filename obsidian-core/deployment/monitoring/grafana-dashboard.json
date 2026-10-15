@@ -776,9 +776,9 @@
     },
     {
       "id": 20,
-      "title": "Validators",
+      "title": "Registered nodes",
       "type": "timeseries",
-      "description": "Zero on a genesis-open chain: any node may propose until the first validator registers.",
+      "description": "Zero on a genesis-open chain: any node may produce until the first node registers.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -792,7 +792,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "obsidian_validators{network=~\"$network\"}",
+          "expr": "obsidian_nodes{network=~\"$network\"}",
           "legendFormat": "{{network}} \u00b7 {{instance}}",
           "datasource": {
             "type": "prometheus",
@@ -812,7 +812,7 @@
       "id": 21,
       "title": "PoT Finality",
       "type": "timeseries",
-      "description": "Locally verified finalized height, finality lag, and eligible equal-membership validator committee. Finality supplements Proof of Time; this is not a generic BFT claim.",
+      "description": "Finalized height, finality lag and established producers, all derived from chain state. This is checkpoint finality, not a BFT claim.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -844,8 +844,8 @@
         },
         {
           "refId": "C",
-          "expr": "obsidian_finality_validators{network=~\"$network\"}",
-          "legendFormat": "validators \u00b7 {{network}} \u00b7 {{instance}}",
+          "expr": "obsidian_finality_producers{network=~\"$network\"}",
+          "legendFormat": "established producers \u00b7 {{network}} \u00b7 {{instance}}",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"

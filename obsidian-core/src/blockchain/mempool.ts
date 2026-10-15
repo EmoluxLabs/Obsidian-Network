@@ -16,7 +16,6 @@
 
 import { TxType, type TxEnvelope } from '../protocol/types.js';
 import { encodeSignedTx } from '../transactions/encode.js';
-import { slashEvidenceBytes } from '../transactions/executors/slash.js';
 
 export interface MempoolEntry {
   tx: TxEnvelope;
@@ -27,9 +26,9 @@ export interface MempoolEntry {
 }
 
 /**
- * Equivocation evidence is a resource class of its own.
+ * Free node-registry transactions are a resource class of its own.
  *
- * A SLASH transaction is free to submit (gas 0), costs the node public-key work
+ * A NODE_REGISTRY transaction (registration, heartbeat, attestation, equivocation report) is free to submit (gas 0), costs the node public-key work
  * to verify, and is the one transaction type a peer can produce in unlimited
  * variety from unlimited addresses. The generic pool limits — count, bytes,
  * per-sender — do not cover it: 10,000 evidence transactions from 10,000 fresh
@@ -100,7 +99,7 @@ export class Mempool {
     if (bytes > this.options.maxBytes) return { accepted: false, reason: 'transaction exceeds mempool byte budget' };
     // Evidence first, and ahead of eviction: a report may not displace an honest
     // transaction to get in, and a flood may not fill the pool with reports.
-    const evidenceSize = tx.type === TxType.SLASH ? slashEvidenceBytes(tx.body) : null;
+    const evidenceSize = tx.type === TxType.NODE_REGISTRY ? tx.body.length : null;
     if (evidenceSize !== null) {
       const perSender = this.evidencePerSender.get(tx.sender) ?? 0;
       if (this.evidenceCount >= this.options.maxPendingEvidence) {
@@ -175,8 +174,8 @@ export class Mempool {
     this.bytes -= entry.bytes;
     // Release the evidence reservation with the transaction, or the class would
     // slowly fill up with reports that are no longer here.
-    const released = slashEvidenceBytes(entry.tx.body);
-    if (entry.tx.type === TxType.SLASH && released !== null) {
+    const released = entry.tx.type === TxType.NODE_REGISTRY ? entry.tx.body.length : null;
+    if (released !== null) {
       this.evidenceCount = Math.max(0, this.evidenceCount - 1);
       this.evidenceBytes = Math.max(0, this.evidenceBytes - released);
       const perSender = this.evidencePerSender.get(entry.tx.sender) ?? 0;

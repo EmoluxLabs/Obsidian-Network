@@ -1213,7 +1213,7 @@ Exposed: `obsidian_chain_height`, `obsidian_peers`,
 `obsidian_max_supply_obs`, `obsidian_pool_balance_obs`,
 `obsidian_active_miners`, `obsidian_accounts_total`,
 `obsidian_transactions_total`, `obsidian_mining_claims_total`,
-`obsidian_names_total`, `obsidian_validators`,
+`obsidian_names_total`, `obsidian_nodes`,
 `obsidian_genesis_allocation_claimed`, `obsidian_supply_invariant_ok`,
 `obsidian_syncing`, `obsidian_uptime_seconds`.
 

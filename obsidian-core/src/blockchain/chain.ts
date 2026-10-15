@@ -7,7 +7,7 @@
  *   - maintain fork branches and switch the canonical chain by the deterministic
  *     fork-choice rule;
  *   - reorganise safely, recomputing state from the common ancestor;
- *   - build blocks for this node's proposer slots;
+ *   - build blocks for this node's producer slots (the schedule is derived from chain state);
  *   - expose chain queries for RPC, the explorer and the sync protocol.
  *
  * Nothing in this file trusts a peer: every block is re-validated and every
@@ -17,12 +17,7 @@
 import { EventEmitter } from 'node:events';
 import type {
   Block,
-  BlockHeader,
   BlockSummary,
-  ConsensusEvidenceContext,
-  EquivocationEvidence,
-  FinalityCertificate,
-  FinalityVote,
   GenesisState,
   ProtocolEvent,
   StateSnapshot,
@@ -49,76 +44,51 @@ import {
   buildBlock,
   potWeight,
   decodeBlock,
-  decodeSignedHeader,
   encodeBlock,
   encodeSignedHeader,
   transactionRootOf,
-  verifyBlockSignature,
 } from './block.js';
 import { BlockStore, CHECKPOINT_INTERVAL_BLOCKS, type IndexEntry } from '../storage/blockstore.js';
 import { DEFAULT_MEMPOOL_OPTIONS, Mempool } from './mempool.js';
 import {
+  assertProducerAllowed,
   checkBlockTimestamp,
   compareTips,
-  isProposerAllowed,
-  proposerDecision,
-  type ProposerDecision,
+  isProducerAllowed,
   medianTimePast,
-  missedProposersFor,
+  missedProducersFor,
+  producerDecision,
+  producerSetFor,
   proposerRound,
-  scheduledProposer,
-} from '../consensus/proposer.js';
-import { encodeSignedTx, validateTxStructure } from '../transactions/encode.js';
-import { decodeSlashBody } from '../transactions/executors/slash.js';
+  scheduledProducer,
+  type ProducerDecision,
+} from '../consensus/schedule.js';
+import { finalityReport, type FinalityReport } from '../consensus/finality.js';
+import { validateTxStructure } from '../transactions/encode.js';
 import {
   buildGenesisBlock,
   createGenesisState,
   genesisId,
-  normalizeBootstrapValidatorPublicKeys,
   normalizeMiningGatePublicKeys,
 } from '../genesis/initialize.js';
-import { committedBootstrapValidatorKeys } from '../genesis/bootstrap-keys.js';
 import { committedMiningGateKeys } from '../genesis/gate-keys.js';
 import { assertNetworkSafety } from '../protocol/networks.js';
 import { decodeGateAuthorityBody, verifyGateUpdate } from '../mining/gate-authority.js';
 import { CORE_VERSION, PROTOCOL_VERSION, STATE_SNAPSHOT_VERSION } from '../version.js';
-import { FinalityStore, type FinalityIdentity, type PersistedFinalityState } from '../storage/finality-store.js';
-import {
-  bootstrapFinalityValidators, certificateShape, evidenceSerializedBytes, finalityQuorum, finalityValidators,
-  finalityVoteId, makeProposerEvidence, makeVoteEvidence,
-  signFinalityVote, validatorSetHash,
-} from '../consensus/finality.js';
-import {
-  validateCanonicalFinalityVote,
-  type FinalityVoteVerdict,
-} from '../consensus/finality-vote.js';
-import { fromHex, toHex } from '../crypto/hash.js';
+import { SafetyStore, type SafetyIdentity, type SafetyRecord } from '../storage/safety-store.js';
+import { toHex } from '../crypto/hash.js';
 
 export interface ChainManagerOptions {
   dataDir: string;
   net: NetworkDefinition;
   /** Genesis document (fixed for the network). */
   genesisDocument: GenesisDocument;
-  /** Enforce proposer rotation once validators are registered. */
+  /** Enforce the producer schedule once nodes are registered. */
   enforceProposerRotation?: boolean;
   /** How many recent states to keep in memory for fast reorgs. */
   stateHistoryDepth?: number;
   mempoolSize?: number;
 }
-
-/**
- * Producer policy: how much equivocation evidence ONE block attempt will verify.
- *
- * Node policy, never consensus. A producer that leaves a report out loses
- * nothing — the report stays in the pool for the next slot — while a producer
- * that verified every evidence-carrying transaction an attacker could pool would
- * do unbounded public-key work per slot. The consensus per-block budget
- * (CONSENSUS_PARAMS.consensus.slashing) is deliberately SMALLER than this, so
- * the policy throttle can never be the reason a block cannot carry its full
- * allowance: it is a ceiling on VERIFICATION, not on inclusion.
- */
-const MAX_SLASH_VERIFICATIONS_PER_BLOCK = 32;
-const MAX_SLASH_VERIFICATION_BYTES_PER_BLOCK = 1024 * 1024;
 
 export interface GenesisDocument {
   networkId: string;
@@ -128,8 +98,6 @@ export interface GenesisDocument {
   timestamp: number;
   /** Foundation note stored in genesis state (no allocation implied). */
   note: string;
-  /** Sorted compressed validator public keys committed by the genesis state. */
-  bootstrapValidatorPublicKeys?: string[];
   /** Sorted compressed issuer public keys whose certificates open the mining gate (see mining/gate.ts). */
   miningGatePublicKeys?: string[];
 }
@@ -164,21 +132,18 @@ export interface ChainStatus {
   oracleStale: boolean;
   treasuryWallet: string;
   genesisAllocationClaimed: boolean;
-  validators: number;
+  /** Registered, non-banned nodes: the candidates the producer schedule is drawn from. */
+  nodes: number;
+  /** Which tier of the schedule is in force for the next block (see consensus/schedule.ts). */
+  scheduleTier: 'TIER1' | 'TIER2' | 'OPEN';
   lastBlockTimestamp: number;
-  finalizedHeight:number;
-  finalizedHash:string;
-  finalityLag:number;
-  finalityValidatorCount:number;
-  finalityQuorum:number;
-  finalityBootstrapConfigured:boolean;
+  finalizedHeight: number;
+  finalizedHash: string;
+  finalityLag: number;
+  finalityAvailable: boolean;
+  finalityEligibleProducers: number;
+  finalityQuorum: number;
 }
-
-export interface FinalityStatus {
-  finalizedHeight:number; finalizedHash:string; headHeight:number; confirmationsAfterFinality:number;
-  validatorCount:number; quorum:number; pendingVotes:number; pendingUnknownVotes:number; evidence:number; bootstrap:boolean; bootstrapConfigured:boolean;
-}
-export interface FinalityAdmissionResult { accepted:boolean; duplicate?:boolean; finalized?:boolean; code:ErrCode; message:string; evidence?:EquivocationEvidence }
 
 export class ChainManager extends EventEmitter {
   readonly store: BlockStore;
@@ -220,16 +185,14 @@ export class ChainManager extends EventEmitter {
   /** Corrupt/incompatible checkpoints ignored during recovery, exposed by integrity verification. */
   private readonly recoveryProblems: string[] = [];
   private syncing = false;
-  private readonly finalityStore:FinalityStore;
-  private finality!:PersistedFinalityState;
-  private readonly pendingFinalityVotes=new Map<string,FinalityVote>();
-  private readonly pendingCertifiedTargets=new Map<string,FinalityCertificate>();
+  private readonly safetyStore: SafetyStore;
+  private safety!: SafetyRecord;
 
   constructor(options: ChainManagerOptions) {
     super();
     this.options = options;
     this.store = new BlockStore(options.dataDir);
-    this.finalityStore = new FinalityStore(options.dataDir);
+    this.safetyStore = new SafetyStore(options.dataDir);
     this.mempool = new Mempool({
       ...DEFAULT_MEMPOOL_OPTIONS,
       maxTransactions: options.mempoolSize ?? DEFAULT_MEMPOOL_OPTIONS.maxTransactions,
@@ -238,8 +201,8 @@ export class ChainManager extends EventEmitter {
     });
     assertNetworkSafety(options.net);
     // Defence in depth for the one value that must never be substituted: a
-    // network with a committed bootstrap committee must be started with exactly
-    // that committee. `genesisDocumentFor` already resolves it, so this catches
+    // network with a committed mining gate issuer set must be started with exactly
+    // that set. `genesisDocumentFor` already resolves it, so this catches
     // a caller that assembles a GenesisDocument by hand.
     const committedGate = committedMiningGateKeys(options.net);
     if (committedGate.length > 0) {
@@ -247,16 +210,6 @@ export class ChainManager extends EventEmitter {
       if (supplied.join(',') !== normalizeMiningGatePublicKeys(committedGate).join(',')) {
         throw new Error(
           `${options.net.name} commits a fixed mining gate issuer set; refusing to start with ` +
-            `${supplied.length === 0 ? 'an empty' : 'a different'} set.`,
-        );
-      }
-    }
-    const committed = committedBootstrapValidatorKeys(options.net);
-    if (committed.length > 0) {
-      const supplied = normalizeBootstrapValidatorPublicKeys(options.genesisDocument.bootstrapValidatorPublicKeys ?? []);
-      if (supplied.length === 0 || supplied.join(',') !== normalizeBootstrapValidatorPublicKeys(committed).join(',')) {
-        throw new Error(
-          `${options.net.name} commits a fixed finality bootstrap committee; refusing to start with ` +
             `${supplied.length === 0 ? 'an empty' : 'a different'} set.`,
         );
       }
@@ -289,10 +242,9 @@ export class ChainManager extends EventEmitter {
       this.state = createGenesisState(
         genesisBlock,
         this.options.net,
-        this.options.genesisDocument.bootstrapValidatorPublicKeys ?? [],
         this.options.genesisDocument.miningGatePublicKeys ?? [],
       );
-      this.initializeFinality(genesisHash,genesisIdentifier);
+      this.initializeSafety(genesisIdentifier);
       this.persistCheckpoint(true);
       this.emit('ready', { genesisHash, genesisId: genesisIdentifier });
       return;
@@ -320,7 +272,7 @@ export class ChainManager extends EventEmitter {
       throw new Error('canonical chain does not start with the expected genesis block');
     }
     await this.reload();
-    this.recoverFinality(genesisHash,genesisIdentifier);
+    this.recoverSafety(genesisIdentifier);
     this.emit('ready', { genesisHash, genesisId: genesisIdentifier });
   }
 
@@ -337,166 +289,100 @@ export class ChainManager extends EventEmitter {
       this.state = createGenesisState(
         genesisBlock,
         this.options.net,
-        this.options.genesisDocument.bootstrapValidatorPublicKeys ?? [],
         this.options.genesisDocument.miningGatePublicKeys ?? [],
       );
-      this.initializeFinality(blockHash(genesisBlock.header),this.genesisId);
+      this.initializeSafety(this.genesisId);
       this.persistCheckpoint(true);
       return;
     }
     this.state = this.stateOf(head);
   }
 
-  private finalityIdentity(genesisIdentifier:string):FinalityIdentity { return {networkId:this.options.net.networkId,chainId:this.options.net.chainId,genesisId:genesisIdentifier,protocolVersion:PROTOCOL_VERSION,paramsHash:PARAMS_HASH}; }
-  private initializeFinality(genesisHash:string,genesisIdentifier:string):void { this.finality={version:1,...this.finalityIdentity(genesisIdentifier),finalizedHeight:0,finalizedHash:genesisHash,certificate:null,votes:[],evidence:[],lastProposal:null}; this.finalityStore.save(this.finality); }
-  private recoverFinality(genesisHash:string,genesisIdentifier:string):void {
-    const loaded=this.finalityStore.load();
-    if (!loaded) {
-      // A missing finality journal is harmless only for a chain that has never
-      // advanced beyond genesis. Resetting a non-empty chain to the genesis
-      // anchor would erase an irreversible local safety lock and let fork
-      // choice rewrite history after an accidental deletion or partial restore.
-      if ((this.store.head?.height ?? 0) > 0) {
-        throw new Error('finality state is missing for a non-genesis chain; refusing to forget a safety lock');
+  // ── Safety record and finality ────────────────────────────────────────────
+
+  private safetyIdentity(genesisIdentifier: string): SafetyIdentity {
+    return {
+      networkId: this.options.net.networkId,
+      chainId: this.options.net.chainId,
+      genesisId: genesisIdentifier,
+      protocolVersion: PROTOCOL_VERSION,
+      paramsHash: PARAMS_HASH,
+    };
+  }
+
+  private initializeSafety(genesisIdentifier: string): void {
+    this.safety = {
+      version: 1,
+      ...this.safetyIdentity(genesisIdentifier),
+      finalizedHeight: 0,
+      finalizedHash: '',
+      lastSigned: null,
+    };
+    this.safetyStore.save(this.safety);
+  }
+
+  /**
+   * Restart recovery. The head state carries the finalized checkpoint (it is consensus state), and the safety record
+   * remembers the highest one this node ever saw. They must agree: a head whose finalized height is LOWER than the
+   * remembered one means the data directory was rolled back or replaced, and a remembered checkpoint that is no
+   * longer on the canonical chain means the chain was swapped under us. Either way the node stops instead of
+   * quietly accepting history it had already treated as final.
+   */
+  private recoverSafety(genesisIdentifier: string): void {
+    const identity = this.safetyIdentity(genesisIdentifier);
+    const loaded = this.safetyStore.load();
+    if (loaded) {
+      for (const key of Object.keys(identity) as (keyof SafetyIdentity)[]) {
+        if (loaded[key] !== identity[key]) {
+          throw new Error(`safety record belongs to a different network or protocol (${key} differs); refusing to start`);
+        }
       }
-      this.initializeFinality(genesisHash, genesisIdentifier);
-      return;
+      this.safety = loaded;
+    } else {
+      this.safety = { version: 1, ...identity, finalizedHeight: 0, finalizedHash: '', lastSigned: null };
     }
-    const identity=this.finalityIdentity(genesisIdentifier);
-    for (const key of ['networkId','chainId','genesisId','protocolVersion','paramsHash'] as const) if (loaded[key]!==identity[key]) throw new Error(`finality state ${key} mismatch`);
-    if (loaded.version!==1 || !Number.isSafeInteger(loaded.finalizedHeight) || loaded.finalizedHeight<0 || !/^[0-9a-f]{64}$/.test(loaded.finalizedHash) || !Array.isArray(loaded.votes) || loaded.votes.length>CONSENSUS_PARAMS.consensus.finality.maxValidators || !Array.isArray(loaded.evidence) || loaded.evidence.length>CONSENSUS_PARAMS.consensus.finality.maxEvidenceRecords || (loaded.lastProposal!=null && (!Number.isSafeInteger(loaded.lastProposal.height) || loaded.lastProposal.height<0 || !Number.isSafeInteger(loaded.lastProposal.round) || loaded.lastProposal.round<0))) throw new Error('finality state is structurally invalid');
-    if (loaded.finalizedHeight===0) {
-      if (loaded.finalizedHash!==genesisHash || loaded.certificate!==null) throw new Error('genesis finality lock does not match chain');
-      this.finality=loaded; this.validateRecoveredVotes(); this.validateRecoveredEvidence(); return;
+    const fin = this.state.s.finality;
+    if (fin.finalizedHeight < this.safety.finalizedHeight) {
+      throw new Error(
+        `finality regressed: this node recorded height ${this.safety.finalizedHeight} as final but its chain ` +
+          `reports ${fin.finalizedHeight}; the data directory was rolled back or replaced. Refusing to start.`,
+      );
     }
-    if (!loaded.certificate || loaded.certificate.height!==loaded.finalizedHeight || loaded.certificate.blockHash!==loaded.finalizedHash) throw new Error('finality state is missing checkpoint certificate');
-    this.finality={version:1,...identity,finalizedHeight:0,finalizedHash:genesisHash,certificate:null,votes:[],evidence:loaded.evidence,lastProposal:loaded.lastProposal??null};
-    const verdict=this.validateFinalityCertificate(loaded.certificate); if (!verdict.ok) throw new Error(`stored finality certificate invalid: ${verdict.message}`);
-    this.finality=loaded;
-    if (this.store.getCanonicalHashAtHeight(loaded.finalizedHeight)!==loaded.finalizedHash) this.reorganise(loaded.finalizedHash,true);
-    this.validateRecoveredVotes(); this.validateRecoveredEvidence();
+    if (
+      this.safety.finalizedHeight > 0 &&
+      this.store.getCanonicalHashAtHeight(this.safety.finalizedHeight) !== this.safety.finalizedHash
+    ) {
+      throw new Error(
+        `the canonical chain no longer contains the block this node recorded as final (height ${this.safety.finalizedHeight}). Refusing to start.`,
+      );
+    }
+    this.recordFinality();
   }
 
-  private validateRecoveredVotes():void {
-    const seen=new Set<string>();
-    for (const vote of this.finality.votes) { const v=this.validateFinalityVote(vote,{allowUnknown:false,skipAnchorCheck:false}); if (!v.ok || seen.has(vote.validator)) throw new Error(`persisted finality vote invalid: ${v.ok?'duplicate validator':v.message}`); seen.add(vote.validator); }
-  }
-  private validateRecoveredEvidence():void {
-    const recovered=[...this.finality.evidence]; this.finality={...this.finality,evidence:[]};
-    for (const evidence of recovered) { const v=this.addEquivocationEvidence(evidence,false); if (!v.accepted) throw new Error(`persisted evidence invalid: ${v.message}`); }
-  }
-
-  private validateStoredProposal(block:Block):{ok:true}|{ok:false;message:string} {
+  /** Persist a newly advanced finalized checkpoint. Monotonic: it never moves backwards. */
+  private recordFinality(): void {
+    const fin = this.state.s.finality;
+    if (fin.finalizedHeight <= this.safety.finalizedHeight) return;
+    this.safety = { ...this.safety, finalizedHeight: fin.finalizedHeight, finalizedHash: fin.finalizedHash };
     try {
-      assertBlockSize(block);
-      if (block.header.protocolVersion!==PROTOCOL_VERSION || block.header.chainId!==this.options.net.chainId || block.header.paramsHash!==PARAMS_HASH) return {ok:false,message:'proposal identity incompatible'};
-      const parent=this.store.getIndexEntry(block.header.prevHash); if (!parent || block.header.height!==parent.height+1) return {ok:false,message:'proposal parent missing'};
-      if (block.header.cumulativePotWeight!==BigInt(parent.cumulativePotWeight)+1n || !verifyBlockSignature(block,this.options.net.addressHrp)) return {ok:false,message:'proposal weight or signature invalid'};
-      if (!isProposerAllowed(this.stateOf(parent),block.header.producer,block.header.height,proposerRound(parent.timestamp,block.header.timestamp))) return {ok:false,message:'proposal signer not scheduled'};
-      this.stateOf(this.store.getIndexEntry(blockHash(block.header))!,true); return {ok:true};
-    } catch(e) { return {ok:false,message:(e as Error).message}; }
-  }
-
-  private bootstrapKeys(): readonly string[] {
-    return this.options.genesisDocument.bootstrapValidatorPublicKeys ?? [];
-  }
-
-  private validatorsForAnchor(state: WorldState, finalizedHeight: number): ReturnType<typeof finalityValidators> {
-    return finalizedHeight === 0
-      ? bootstrapFinalityValidators(state, this.bootstrapKeys())
-      : finalityValidators(state);
-  }
-
-  private bootstrapCommitteeAtParent(parent: IndexEntry): ReturnType<typeof finalityValidators> {
-    const keys = this.bootstrapKeys();
-    if (keys.length === 0 || parent.height < CONSENSUS_PARAMS.consensus.finality.bootstrapSetStabilityBlocks) return [];
-    const committee = bootstrapFinalityValidators(this.stateOf(parent), keys);
-    if (committee.length !== keys.length) return [];
-    const expectedHash = validatorSetHash(committee);
-    let cursor: IndexEntry | undefined = parent;
-    for (let i = 0; i < CONSENSUS_PARAMS.consensus.finality.bootstrapSetStabilityBlocks; i += 1) {
-      if (!cursor) return [];
-      const atHeight = bootstrapFinalityValidators(this.stateOf(cursor), keys);
-      if (atHeight.length !== keys.length || validatorSetHash(atHeight) !== expectedHash) return [];
-      cursor = cursor.height === 0 ? undefined : this.store.getIndexEntry(cursor.prevHash);
+      this.safetyStore.save(this.safety);
+    } catch (error) {
+      // The chain state is authoritative and carries the checkpoint itself; losing this write only weakens the
+      // restart cross-check, so it is reported and never turns a committed block into a rejection.
+      this.noteRecoveryProblem(`safety record write failed: ${(error as Error).message}`);
     }
-    return committee;
   }
 
-  private isBootstrapTarget(block: Block, setHash: string, historical = false): boolean {
-    if ((!historical && this.finality.finalizedHeight !== 0) || block.header.height <= 1) return false;
-    const parent = this.store.getIndexEntry(block.header.prevHash);
-    if (!parent) return false;
-    const committee = this.bootstrapCommitteeAtParent(parent);
-    return committee.length > 0 && validatorSetHash(committee) === setHash;
+  /** The finalized checkpoint of the canonical head: a value read from consensus state, never a local timer. */
+  finalizedCheckpoint(): { height: number; hash: string } {
+    const fin = this.state.s.finality;
+    if (fin.finalizedHeight === 0) return { height: 0, hash: this.store.getMeta()?.genesisHash ?? '' };
+    return { height: fin.finalizedHeight, hash: fin.finalizedHash };
   }
 
-  private validateCertificateEnvelope(c:FinalityCertificate):{ok:true}|{ok:false;message:string} {
-    const shape=certificateShape(c); if(!shape.ok)return {ok:false,message:shape.reason};
-    const seen=new Set<string>();
-    for(const vote of c.votes){
-      // Not a second, shorter list of rules: the certificate's votes go through
-      // the SAME canonical predicate as an admitted vote, so a certificate can
-      // never be built out of votes this node would refuse individually. The
-      // local anchor is deliberately not required (the certificate may certify
-      // an anchor this node has not reached) and the target block may be one
-      // this node does not hold yet — that is the ordinary case when a certified
-      // branch arrives from a peer, and the quorum of signatures over a known
-      // committee is what makes it safe.
-      const verdict=this.validateFinalityVote(vote,{allowUnknown:true,skipAnchorCheck:true});
-      if(!verdict.ok&&!verdict.unknown)return {ok:false,message:`certificate vote invalid: ${verdict.message}`};
-      if(vote.finalizedHeight!==c.finalizedHeight||vote.finalizedHash!==c.finalizedHash||vote.height!==c.height||vote.blockHash!==c.blockHash||vote.parentHash!==c.parentHash||vote.validatorSetHash!==c.validatorSetHash||seen.has(vote.validator))return {ok:false,message:'certificate contains duplicate or mismatched vote'};
-      seen.add(vote.validator);
-    }
-    return seen.size>=c.quorum?{ok:true}:{ok:false,message:'certificate has too few distinct validators'};
-  }
-
-  private validateCertificateCommittee(c: FinalityCertificate): { ok: true } | { ok: false; message: string } {
-    const parent = this.store.getIndexEntry(c.parentHash);
-    if (!parent || c.height !== parent.height + 1) return { ok: false, message: 'certificate parent is unknown or inconsistent' };
-    const validators = this.validatorsForAnchor(this.stateOf(parent), c.finalizedHeight);
-    if (validators.length !== c.validatorCount || validatorSetHash(validators) !== c.validatorSetHash) {
-      return { ok: false, message: 'certificate validator set mismatch' };
-    }
-    const eligible = new Map(validators.map((validator) => [validator.address, validator.publicKey]));
-    if (c.votes.some((vote) => eligible.get(vote.validator) !== vote.publicKey)) {
-      return { ok: false, message: 'certificate includes an ineligible validator' };
-    }
-    return { ok: true };
-  }
-
-  private validateFinalityCertificate(c: FinalityCertificate): { ok: true } | { ok: false; message: string } {
-    const envelope = this.validateCertificateEnvelope(c);
-    if (!envelope.ok) return envelope;
-    const committee = this.validateCertificateCommittee(c);
-    if (!committee.ok) return committee;
-    const block = this.store.getBlockByHash(c.blockHash);
-    if (!block || block.header.height !== c.height || block.header.prevHash !== c.parentHash) {
-      return { ok: false, message: 'certificate target missing or inconsistent' };
-    }
-    const proposal = this.validateStoredProposal(block);
-    if (!proposal.ok) return proposal;
-    const ordinary = c.finalizedHeight > 0 && c.height === c.finalizedHeight + 1 && c.parentHash === c.finalizedHash &&
-      this.store.getIndexEntry(c.finalizedHash)?.height === c.finalizedHeight;
-    const bootstrap = c.finalizedHeight === 0 && c.finalizedHash === this.store.genesis?.hash &&
-      this.isBootstrapTarget(block, c.validatorSetHash, true);
-    if (!ordinary && !bootstrap) return { ok: false, message: 'certificate does not extend finality anchor' };
-
-    const parent = this.store.getIndexEntry(c.parentHash)!;
-    const validators = this.validatorsForAnchor(this.stateOf(parent), c.finalizedHeight);
-    const eligible = new Map(validators.map((validator) => [validator.address, validator.publicKey]));
-    const seen = new Set<string>();
-    for (const vote of c.votes) {
-      const verdict = this.validateFinalityVote(vote, { allowUnknown: false, skipAnchorCheck: true });
-      if (!verdict.ok) return verdict;
-      if (vote.finalizedHeight !== c.finalizedHeight || vote.finalizedHash !== c.finalizedHash ||
-          vote.height !== c.height || vote.blockHash !== c.blockHash || vote.parentHash !== c.parentHash ||
-          vote.validatorSetHash !== c.validatorSetHash || eligible.get(vote.validator) !== vote.publicKey || seen.has(vote.validator)) {
-        return { ok: false, message: 'certificate contains duplicate or mismatched vote' };
-      }
-      seen.add(vote.validator);
-    }
-    return seen.size >= c.quorum ? { ok: true } : { ok: false, message: 'certificate has too few distinct validators' };
+  finalityStatus(): FinalityReport {
+    const report = finalityReport(this.state);
+    return { ...report, finalizedHash: this.finalizedCheckpoint().hash };
   }
 
   private rememberState(entry: { hash: string; height: number }, state: WorldState): void {
@@ -635,226 +521,41 @@ export class ChainManager extends EventEmitter {
       oracleStale: this.state.s.oracle.stale,
       treasuryWallet: this.state.s.genesis.treasuryWallet,
       genesisAllocationClaimed: this.state.s.genesis.allocationClaimed,
-      validators: this.state.s.validators.size,
+      nodes: this.state.registeredNodes().filter((node) => node.bannedAtHeight === undefined).length,
+      scheduleTier: producerSetFor(this.state, (head?.height ?? 0) + 1, this.protocolTime).tier,
       lastBlockTimestamp: head?.timestamp ?? 0,
-      finalizedHeight: this.finality.finalizedHeight,
-      finalizedHash: this.finality.finalizedHash,
-      finalityLag: Math.max(0,(head?.height??0)-this.finality.finalizedHeight),
-      finalityValidatorCount: finalityStatus.validatorCount,
+      finalizedHeight: finalityStatus.finalizedHeight,
+      finalizedHash: finalityStatus.finalizedHash,
+      finalityLag: finalityStatus.lag,
+      finalityAvailable: finalityStatus.available,
+      finalityEligibleProducers: finalityStatus.eligibleProducers,
       finalityQuorum: finalityStatus.quorum,
-      finalityBootstrapConfigured: finalityStatus.bootstrapConfigured,
-    };
-  }
-
-  finalityStatus(): FinalityStatus {
-    const head = this.store.head;
-    let validators: ReturnType<typeof finalityValidators> = [];
-    try {
-      const committeeParent = this.finality.votes[0]
-        ? this.store.getIndexEntry(this.finality.votes[0].parentHash)
-        : this.finality.finalizedHeight === 0
-          ? head
-          : this.store.getIndexEntry(this.finality.finalizedHash);
-      if (committeeParent) {
-        validators = this.finality.finalizedHeight === 0 && !this.finality.votes.length
-          ? this.bootstrapCommitteeAtParent(committeeParent)
-          : this.validatorsForAnchor(this.stateOf(committeeParent), this.finality.finalizedHeight);
-      }
-    } catch {
-      validators = [];
-    }
-    return {
-      finalizedHeight: this.finality.finalizedHeight,
-      finalizedHash: this.finality.finalizedHash,
-      headHeight: head?.height ?? 0,
-      confirmationsAfterFinality: Math.max(0, (head?.height ?? 0) - this.finality.finalizedHeight),
-      validatorCount: validators.length,
-      quorum: finalityQuorum(validators.length),
-      pendingVotes: this.finality.votes.length,
-      pendingUnknownVotes: this.pendingFinalityVotes.size,
-      evidence: this.finality.evidence.length,
-      bootstrap: this.finality.finalizedHeight === 0,
-      bootstrapConfigured: this.bootstrapKeys().length > 0,
-    };
-  }
-
-  latestFinalityCertificate():FinalityCertificate|null { return this.finality.certificate?structuredClone(this.finality.certificate):null; }
-  equivocationEvidence():EquivocationEvidence[] { return structuredClone(this.finality.evidence); }
-
-  /** Unsigned payload a validator wallet can review and sign locally. */
-  finalityVoteTemplate(address: string, requested?: string): Omit<FinalityVote, 'signature'> | null {
-    let target = requested;
-    if (!target && this.finality.finalizedHeight > 0) {
-      target = this.store.getCanonicalHashAtHeight(this.finality.finalizedHeight + 1);
-    }
-    if (!target && this.finality.finalizedHeight === 0) {
-      const keys = this.bootstrapKeys();
-      if (keys.length === 0) return null;
-      for (let height = CONSENSUS_PARAMS.consensus.finality.bootstrapSetStabilityBlocks + 1; height <= this.height; height += 1) {
-        const hash = this.store.getCanonicalHashAtHeight(height);
-        const block = hash ? this.store.getBlockByHash(hash) : null;
-        const parent = block ? this.store.getIndexEntry(block.header.prevHash) : undefined;
-        if (!hash || !block || !parent) continue;
-        const committee = bootstrapFinalityValidators(this.stateOf(parent), keys);
-        if (committee.length === keys.length && this.isBootstrapTarget(block, validatorSetHash(committee))) {
-          target = hash;
-          break;
-        }
-      }
-    }
-    if (!target) return null;
-    const block = this.store.getBlockByHash(target);
-    const parent = block ? this.store.getIndexEntry(block.header.prevHash) : undefined;
-    if (!block || !parent || this.store.getCanonicalHashAtHeight(block.header.height) !== target) return null;
-
-    const validators = this.validatorsForAnchor(this.stateOf(parent), this.finality.finalizedHeight);
-    const validator = validators.find((member) => member.address === address);
-    if (!validator) return null;
-    const setHash = validatorSetHash(validators);
-    const ordinary = block.header.height === this.finality.finalizedHeight + 1 && block.header.prevHash === this.finality.finalizedHash;
-    const bootstrap = this.finality.finalizedHeight === 0 && this.isBootstrapTarget(block, setHash);
-    if (!ordinary && !bootstrap) return null;
-    if (this.finality.votes.some((vote) => vote.validator === address && vote.finalizedHash === this.finality.finalizedHash)) return null;
-
-    return {
-      protocolVersion: PROTOCOL_VERSION,
-      networkId: this.options.net.networkId,
-      chainId: this.options.net.chainId,
-      genesisId: this.genesisId,
-      paramsHash: PARAMS_HASH,
-      type: 'POT_FINALITY',
-      finalizedHeight: this.finality.finalizedHeight,
-      finalizedHash: this.finality.finalizedHash,
-      height: block.header.height,
-      round: proposerRound(parent.timestamp, block.header.timestamp),
-      blockHash: target,
-      parentHash: block.header.prevHash,
-      validatorSetHash: setHash,
-      validator: address,
-      publicKey: validator.publicKey,
-    };
-  }
-
-  createFinalityVote(identity: { address: string; publicKey: string; privateKey: string }, requested?: string): FinalityVote | null {
-    const template = this.finalityVoteTemplate(identity.address, requested);
-    if (!template || template.publicKey !== identity.publicKey) return null;
-    return signFinalityVote(template, identity.privateKey);
-  }
-
-  /**
-   * The historical lookups the canonical finality predicate needs, bound to
-   * THIS chain's storage and state.
-   *
-   * One factory, so every consumer — vote admission, vote restoration after a
-   * restart, certificate verification, the equivocation detector and slash
-   * evidence in a block being executed — asks the same question of the same
-   * data. Nothing here is node-local opinion: each lookup answers from stored
-   * blocks and from the state committed at a given block, and returns null when
-   * this node genuinely does not have the answer.
-   */
-  private finalityVoteContext(): ConsensusEvidenceContext {
-    return {
-      networkId: this.options.net.networkId,
-      chainId: this.options.net.chainId,
-      genesisId: this.genesisId,
-      paramsHash: PARAMS_HASH,
-      addressHrp: this.options.net.addressHrp,
-      anchorFor: (hash) => {
-        const entry = this.store.getIndexEntry(hash);
-        return entry ? { height: entry.height, timestamp: entry.timestamp } : null;
-      },
-      blockByHash: (hash) => this.store.getBlockByHash(hash) ?? null,
-      committeeFor: (parentHash, finalizedHeight) => {
-        const parent = this.store.getIndexEntry(parentHash);
-        if (!parent) return null;
-        return this.validatorsForAnchor(this.stateOf(parent), finalizedHeight);
-      },
-      isBootstrapTarget: (block, setHash, historical) => this.isBootstrapTarget(block, setHash, historical),
-      scheduledProposerFor: (parentHash, height, round, timestamp) => {
-        const parent = this.store.getIndexEntry(parentHash);
-        if (!parent) return null;
-        return scheduledProposer(this.stateOf(parent), height, round, timestamp);
-      },
     };
   }
 
   /**
-   * The same context, handed to the state transition so a SLASH transaction is
-   * verified against history rather than against whatever this node holds now.
-   *
-   * Public on purpose: a caller that applies a block itself — a test, a
-   * migration tool, an offline verifier — must supply the same history the chain
-   * would, or evidence inside that block cannot be judged at all.
+   * Two different signed blocks by one producer on one parent are an equivocation. Seeing the second one raises an
+   * event carrying both signed headers; the node agent turns it into a REPORT_EQUIVOCATION transaction. The chain
+   * itself never signs anything: it has no key.
    */
-  consensusEvidenceContext(): ConsensusEvidenceContext {
-    return this.finalityVoteContext();
-  }
-
-  /**
-   * Is this vote valid? Delegates to the canonical predicate in
-   * consensus/finality-vote.ts — the chain holds no rules of its own, so the
-   * answer cannot drift from the one the evidence verifier or a certificate
-   * gives. `skipAnchorCheck` is what separates ADMISSION (the vote must extend
-   * this node's own anchor) from judging a vote that arrived inside evidence or
-   * a certificate, where the offence may predate this node's anchor.
-   */
-  private validateFinalityVote(
-    vote: FinalityVote,
-    options: { allowUnknown: boolean; skipAnchorCheck: boolean },
-  ): FinalityVoteVerdict {
-    return validateCanonicalFinalityVote(vote, this.finalityVoteContext(), {
-      requireLocalAnchor: options.skipAnchorCheck
-        ? false
-        : { height: this.finality.finalizedHeight, hash: this.finality.finalizedHash },
-      requireTargetBlock: true,
-      allowUnknownTarget: options.allowUnknown,
-      allowBootstrapTarget: true,
-    });
-  }
-
-  addFinalityVote(vote:FinalityVote):FinalityAdmissionResult {
-    let id:string; try{id=finalityVoteId(vote);}catch{return {accepted:false,code:ErrCode.MALFORMED,message:'vote cannot be encoded'};}
-    if (this.finality.votes.some(v=>finalityVoteId(v)===id)||this.pendingFinalityVotes.has(id)) return {accepted:false,duplicate:true,code:ErrCode.REPLAY,message:'vote already known'};
-    const certifiedPrior=this.finality.certificate?.votes.find(v=>v.validator===vote.validator&&v.finalizedHeight===vote.finalizedHeight&&v.finalizedHash===vote.finalizedHash);
-    if (certifiedPrior) { if(certifiedPrior.blockHash===vote.blockHash&&certifiedPrior.height===vote.height)return {accepted:false,duplicate:true,code:ErrCode.REPLAY,message:'vote is already certified'}; const late=this.validateFinalityVote(vote,{allowUnknown:false,skipAnchorCheck:true}); if(!late.ok)return {accepted:false,code:ErrCode.BAD_SIGNATURE,message:late.message}; const evidence=makeVoteEvidence(certifiedPrior,vote); this.persistEvidence(evidence); return {accepted:true,code:ErrCode.OK,message:'late conflicting vote retained as evidence only',evidence}; }
-    const verdict=this.validateFinalityVote(vote,{allowUnknown:true,skipAnchorCheck:false});
-    if (!verdict.ok) { if (verdict.unknown&&this.pendingFinalityVotes.size<CONSENSUS_PARAMS.consensus.finality.maxPendingVotes) { if([...this.pendingFinalityVotes.values()].some(v=>v.validator===vote.validator&&v.finalizedHeight===vote.finalizedHeight&&v.finalizedHash===vote.finalizedHash))return {accepted:false,code:ErrCode.RATE_LIMITED,message:'validator already has a pending vote for this anchor'}; this.pendingFinalityVotes.set(id,vote); return {accepted:false,code:ErrCode.ORPHAN_BLOCK,message:'vote queued until block arrives'}; } return {accepted:false,code:ErrCode.BAD_SIGNATURE,message:verdict.message}; }
-    const prior=this.finality.votes.find(v=>v.validator===vote.validator&&v.finalizedHash===vote.finalizedHash);
-    if (prior&&(prior.blockHash!==vote.blockHash||prior.height!==vote.height)) { const evidence=makeVoteEvidence(prior,vote); this.persistEvidence(evidence); return {accepted:true,code:ErrCode.OK,message:'conflicting vote retained as evidence only',evidence}; }
-    const votes=[...this.finality.votes,vote]; this.finalityStore.save({...this.finality,votes}); this.finality={...this.finality,votes};
-    const matching=votes.filter(v=>v.blockHash===vote.blockHash&&v.height===vote.height&&v.validatorSetHash===vote.validatorSetHash); const parent=this.store.getIndexEntry(vote.parentHash)!; const validators=this.validatorsForAnchor(this.stateOf(parent),vote.finalizedHeight), quorum=finalityQuorum(validators.length);
-    if (matching.length<quorum) { this.emit('finality-vote',vote); return {accepted:true,code:ErrCode.OK,message:'finality vote accepted'}; }
-    const certificate:FinalityCertificate={version:1,finalizedHeight:vote.finalizedHeight,finalizedHash:vote.finalizedHash,height:vote.height,blockHash:vote.blockHash,parentHash:vote.parentHash,validatorSetHash:vote.validatorSetHash,quorum,validatorCount:validators.length,votes:matching.sort((a,b)=>a.validator.localeCompare(b.validator))}; this.commitFinalityCertificate(certificate); return {accepted:true,finalized:true,code:ErrCode.OK,message:'checkpoint finalized'};
-  }
-
-  addFinalityCertificate(c:FinalityCertificate):FinalityAdmissionResult {
-    if (!c||!Number.isSafeInteger(c.height)) return {accepted:false,code:ErrCode.MALFORMED,message:'certificate is malformed'};
-    const envelope=this.validateCertificateEnvelope(c);if(!envelope.ok)return {accepted:false,code:ErrCode.BAD_SIGNATURE,message:envelope.message};
-    if (c.height<this.finality.finalizedHeight||(c.height===this.finality.finalizedHeight&&c.blockHash===this.finality.finalizedHash)) return {accepted:false,duplicate:true,code:ErrCode.REPLAY,message:'certificate already known or older'};
-    if (c.height===this.finality.finalizedHeight || c.finalizedHeight<this.finality.finalizedHeight || (c.finalizedHeight===this.finality.finalizedHeight&&c.finalizedHash!==this.finality.finalizedHash)) return {accepted:false,code:ErrCode.FINALITY_CONFLICT,message:'certificate conflicts with local finality'};
-    if (c.finalizedHeight>this.finality.finalizedHeight&&this.store.getCanonicalHashAtHeight(c.finalizedHeight)!==c.finalizedHash) return {accepted:false,code:ErrCode.FINALITY_CONFLICT,message:'certificate anchor is not on the local canonical descendant'};
-    if(!this.store.getBlockByHash(c.blockHash)){
-      const committee=this.validateCertificateCommittee(c);if(!committee.ok)return {accepted:false,code:ErrCode.BAD_SIGNATURE,message:committee.message};
-      if(this.pendingCertifiedTargets.size>=CONSENSUS_PARAMS.consensus.finality.maxCandidatesPerHeight*2&&!this.pendingCertifiedTargets.has(c.blockHash))return {accepted:false,code:ErrCode.RATE_LIMITED,message:'pending certified target limit reached'};
-      this.pendingCertifiedTargets.set(c.blockHash,c);
-      return {accepted:false,code:ErrCode.ORPHAN_BLOCK,message:'certificate target is not stored'};
+  private detectEquivocation(block: Block): void {
+    const hash = blockHash(block.header);
+    for (const sibling of this.store.entriesAtHeight(block.header.height)) {
+      if (sibling.hash === hash || sibling.producer !== block.header.producer) continue;
+      const other = this.store.getBlockByHash(sibling.hash);
+      if (!other || other.header.prevHash !== block.header.prevHash) continue;
+      this.emit('equivocation', {
+        producer: block.header.producer,
+        height: block.header.height,
+        firstId: sibling.hash,
+        secondId: hash,
+        firstHeader: toHex(encodeSignedHeader(other.header)),
+        secondHeader: toHex(encodeSignedHeader(block.header)),
+      });
+      return;
     }
-    const v=this.validateFinalityCertificate(c); if (!v.ok) return {accepted:false,code:ErrCode.BAD_SIGNATURE,message:v.message}; this.commitFinalityCertificate(c); return {accepted:true,finalized:true,code:ErrCode.OK,message:'certificate accepted'};
-  }
-  private commitFinalityCertificate(c:FinalityCertificate):void { const next={...this.finality,finalizedHeight:c.height,finalizedHash:c.blockHash,certificate:c,votes:[]}; this.finalityStore.save(next); this.finality=next; this.pendingFinalityVotes.clear(); this.pendingCertifiedTargets.delete(c.blockHash); if (this.store.getCanonicalHashAtHeight(c.height)!==c.blockHash) this.reorganise(c.blockHash,true); this.pruneStateCache(); this.emit('finalized',c); }
-
-  private persistEvidence(e:EquivocationEvidence):boolean { if (evidenceSerializedBytes(e)>CONSENSUS_PARAMS.consensus.finality.maxEvidenceBytes||this.finality.evidence.some(x=>x.id===e.id)) return false; const evidence=[...this.finality.evidence,e].slice(-CONSENSUS_PARAMS.consensus.finality.maxEvidenceRecords); this.finalityStore.save({...this.finality,evidence}); this.finality={...this.finality,evidence}; this.emit('equivocation',e); return true; }
-  addEquivocationEvidence(e:EquivocationEvidence,persist=true):FinalityAdmissionResult {
-    if (!e||e.version!==1||evidenceSerializedBytes(e)>CONSENSUS_PARAMS.consensus.finality.maxEvidenceBytes) return {accepted:false,code:ErrCode.MALFORMED,message:'evidence malformed or oversized'};
-    if (this.finality.evidence.some(x=>x.id===e.id)) return {accepted:false,duplicate:true,code:ErrCode.REPLAY,message:'evidence already known'};
-    if (e.type==='VOTE_EQUIVOCATION') { const a=this.validateFinalityVote(e.firstVote,{allowUnknown:false,skipAnchorCheck:true}), b=this.validateFinalityVote(e.secondVote,{allowUnknown:false,skipAnchorCheck:true}); if (!a.ok||!b.ok||e.firstVote.validator!==e.secondVote.validator||e.firstVote.finalizedHash!==e.secondVote.finalizedHash||(e.firstVote.blockHash===e.secondVote.blockHash&&e.firstVote.height===e.secondVote.height)) return {accepted:false,code:ErrCode.BAD_SIGNATURE,message:'vote evidence does not prove conflict'}; let rebuilt:EquivocationEvidence; try{rebuilt=makeVoteEvidence(e.firstVote,e.secondVote);}catch{return {accepted:false,code:ErrCode.MALFORMED,message:'vote evidence cannot be canonicalized'};} if(rebuilt.id!==e.id)return {accepted:false,code:ErrCode.MALFORMED,message:'vote evidence identity noncanonical'}; }
-    else if (e.type==='PROPOSER_EQUIVOCATION') { let first:BlockHeader,second:BlockHeader; try{first=decodeSignedHeader(fromHex(e.firstHeader));second=decodeSignedHeader(fromHex(e.secondHeader));}catch{return {accepted:false,code:ErrCode.MALFORMED,message:'proposal headers cannot decode'};} const fp=this.store.getIndexEntry(first.prevHash),sp=this.store.getIndexEntry(second.prevHash); if (!fp||!sp||!verifyBlockSignature({header:first,transactions:[]},this.options.net.addressHrp)||!verifyBlockSignature({header:second,transactions:[]},this.options.net.addressHrp)||first.protocolVersion!==PROTOCOL_VERSION||second.protocolVersion!==PROTOCOL_VERSION||first.chainId!==this.options.net.chainId||second.chainId!==this.options.net.chainId||first.paramsHash!==PARAMS_HASH||second.paramsHash!==PARAMS_HASH||first.height!==fp.height+1||second.height!==sp.height+1||first.cumulativePotWeight!==BigInt(fp.cumulativePotWeight)+1n||second.cumulativePotWeight!==BigInt(sp.cumulativePotWeight)+1n||!isProposerAllowed(this.stateOf(fp),first.producer,first.height,proposerRound(fp.timestamp,first.timestamp))||!isProposerAllowed(this.stateOf(sp),second.producer,second.height,proposerRound(sp.timestamp,second.timestamp))||first.producer!==second.producer||first.height!==second.height||blockHash(first)===blockHash(second)||proposerRound(fp.timestamp,first.timestamp)!==proposerRound(sp.timestamp,second.timestamp)) return {accepted:false,code:ErrCode.BAD_SIGNATURE,message:'proposal evidence does not prove same-round equivocation'}; const rebuilt=makeProposerEvidence({validator:first.producer,height:first.height,round:proposerRound(fp.timestamp,first.timestamp),firstId:blockHash(first),secondId:blockHash(second),firstHeader:toHex(encodeSignedHeader(first)),secondHeader:toHex(encodeSignedHeader(second))}); if (rebuilt.id!==e.id) return {accepted:false,code:ErrCode.MALFORMED,message:'proposal evidence identity noncanonical'}; }
-    else return {accepted:false,code:ErrCode.MALFORMED,message:'unknown evidence type'};
-    if (persist) this.persistEvidence(e); else this.finality={...this.finality,evidence:[...this.finality.evidence,e]}; return {accepted:true,code:ErrCode.OK,message:'evidence accepted'};
   }
 
-  private detectProposerEquivocation(block:Block,round:number):void { const hash=blockHash(block.header); for (const siblingEntry of this.store.entriesAtHeight(block.header.height)) { if (siblingEntry.hash===hash||siblingEntry.producer!==block.header.producer) continue; const sibling=this.store.getBlockByHash(siblingEntry.hash),parent=sibling?this.store.getIndexEntry(sibling.header.prevHash):undefined; if (!sibling||!parent||proposerRound(parent.timestamp,sibling.header.timestamp)!==round) continue; this.persistEvidence(makeProposerEvidence({validator:block.header.producer,height:block.header.height,round,firstId:siblingEntry.hash,secondId:hash,firstHeader:toHex(encodeSignedHeader(sibling.header)),secondHeader:toHex(encodeSignedHeader(block.header))})); break; } }
-  private retryPendingFinalityVotes(hash:string):void { for (const [id,vote] of [...this.pendingFinalityVotes]) if (vote.blockHash===hash) { this.pendingFinalityVotes.delete(id); this.addFinalityVote(vote); } }
   private forkChoiceInput(entry: IndexEntry) {
     return { height: entry.height, cumulativePotWeight: BigInt(entry.cumulativePotWeight), hash: entry.hash };
   }
@@ -986,10 +687,15 @@ export class ChainManager extends EventEmitter {
     const header = block.header;
     assertBlockSize(block);
     const hash = blockHash(header);
-    if (header.height <= this.finality.finalizedHeight) {
-      if (this.store.getCanonicalHashAtHeight(header.height) !== hash) reject(ErrCode.FINALITY_CONFLICT, `block at height ${header.height} conflicts with finalized history`);
-    } else if (this.store.ancestorHashAt(parentEntry,this.finality.finalizedHeight)!==this.finality.finalizedHash) {
-      reject(ErrCode.FINALITY_CONFLICT,'block parent branch omits finalized checkpoint');
+    // Finality is a value in the HEAD state. A block is only worth validating if it extends the finalized prefix:
+    // anything that forks below it can never win fork choice here, so it is refused before any state work.
+    const finalized = this.finalizedCheckpoint();
+    if (header.height <= finalized.height) {
+      if (this.store.getCanonicalHashAtHeight(header.height) !== hash) {
+        reject(ErrCode.FINALITY_CONFLICT, `block at height ${header.height} conflicts with finalized history`);
+      }
+    } else if (this.store.ancestorHashAt(parentEntry, finalized.height) !== finalized.hash) {
+      reject(ErrCode.FINALITY_CONFLICT, 'block parent branch omits the finalized checkpoint');
     }
     if (header.chainId !== this.options.net.chainId) {
       reject(ErrCode.WRONG_CHAIN_ID, `block chain id ${header.chainId} != ${this.options.net.chainId}`);
@@ -1012,13 +718,15 @@ export class ChainManager extends EventEmitter {
     // back. Refuse it here, before any of that work: otherwise one cheap message
     // naming an old parent could make a node replay its chain from a snapshot.
     const currentHead = this.store.head;
-    if (currentHead && currentHead.height - parentEntry.height > CONSENSUS_PARAMS.consensus.maxReorgDepth && !this.pendingCertifiedTargets.has(hash)) {
+    if (currentHead && currentHead.height - parentEntry.height > CONSENSUS_PARAMS.consensus.maxReorgDepth ) {
       reject(
         ErrCode.STALE_BLOCK,
         `block forks at height ${parentEntry.height}, more than ${CONSENSUS_PARAMS.consensus.maxReorgDepth} blocks behind the head (${currentHead.height})`,
       );
     }
-    if (this.store.entriesAtHeight(header.height).length >= CONSENSUS_PARAMS.consensus.finality.maxCandidatesPerHeight && !this.pendingCertifiedTargets.has(hash)) reject(ErrCode.RATE_LIMITED,`candidate limit reached at height ${header.height}`);
+    if (this.store.entriesAtHeight(header.height).length >= CONSENSUS_PARAMS.consensus.maxCandidatesPerHeight) {
+      reject(ErrCode.RATE_LIMITED, `candidate limit reached at height ${header.height}`);
+    }
     assertBlockSignature(block, this.options.net.addressHrp);
 
     const ancestorTimestamps = this.store.ancestorTimestamps(header.prevHash, CONSENSUS_PARAMS.block.medianTimePastWindow);
@@ -1030,50 +738,27 @@ export class ChainManager extends EventEmitter {
     // Apply on top of the PARENT state, not the current head: this is what makes
     // fork branches validatable without trusting this node's own view.
     const parentState = this.stateOf(parentEntry);
-    // The round comes from the two timestamps the headers already commit to, so
-    // a block produced after the scheduled validator let its slot lapse is
-    // accepted from whoever the rotation hands the turn to next.
+    // The round comes from the two timestamps the headers already commit to, so a block produced after the scheduled
+    // producer let its slot lapse is accepted from whoever the schedule hands the turn to next.
     const round = proposerRound(parentEntry.timestamp, header.timestamp);
     if (this.options.enforceProposerRotation !== false) {
-      // One decision function, so a validating node and a producing node answer
-      // the same question the same way. It is read against the PARENT state at
-      // the BLOCK's own protocol time: a jail is a duration of time, so the set
-      // that names the proposer for this height is the set as it stands at this
-      // timestamp — which is what lets a validator whose term lapses exactly at
-      // this block be the one that produces it.
-      const decision = proposerDecision(parentState, header.height, round, header.timestamp);
-      if (decision.kind === 'HALTED') {
-        // Not "expecting somebody else": expecting NOBODY. An established chain
-        // with no active validator stops instead of accepting a block from any
-        // key that can sign one, because "no validators registered" is not
-        // distinguishable on-chain from "every validator left".
-        reject(
-          ErrCode.NOT_PRODUCER_TURN,
-          `the chain is halted for want of validators at height ${header.height}: ${decision.reason}`,
-        );
-      }
-      if (decision.kind === 'SCHEDULED' && decision.proposer !== header.producer) {
-        reject(
-          ErrCode.NOT_PRODUCER_TURN,
-          `proposer ${header.producer} is not scheduled for height ${header.height} round ${round}`,
-        );
+      // One decision function (consensus/schedule.ts), read against the PARENT state at the BLOCK's own protocol
+      // time, so a validating node and a producing node answer the same question the same way.
+      try {
+        assertProducerAllowed(parentState, block, parentEntry.timestamp);
+      } catch (error) {
+        reject(ErrCode.NOT_PRODUCER_TURN, (error as Error).message);
       }
     }
 
-    const applied = applyBlock(parentState, block, {
-      net: this.options.net,
-      // Evidence inside this block is verified against history: the committee
-      // and the anchor as they were when the offence happened, never this node's
-      // current view. Every node applying the block builds the same context from
-      // the same stored blocks, so the verdict is identical everywhere.
-      evidence: this.consensusEvidenceContext(),
-    });
+    const applied = applyBlock(parentState, block, { net: this.options.net });
 
     this.store.putBlock(block);
     const entry = this.store.getIndexEntry(hash)!;
     this.rememberState(entry, applied.state);
     this.rememberEvents(entry.hash, applied.events);
-    this.detectProposerEquivocation(block,round);
+    this.detectEquivocation(block);
+    void round;
 
     const tipEntry = this.store.head;
     if (!tipEntry || tipEntry.hash === entry.hash) {
@@ -1085,7 +770,6 @@ export class ChainManager extends EventEmitter {
     if (compareTips(candidate, currentTip) <= 0) {
       // Valid but not the heaviest chain: keep it as a stored side branch.
       this.emit('sidechain', { hash: entry.hash, height: entry.height });
-      this.retryPendingFinalityVotes(hash);
       return { state: this.state, reorged: false, connected: false };
     }
 
@@ -1104,6 +788,7 @@ export class ChainManager extends EventEmitter {
     } else {
       this.store.appendCanonical(entry);
       this.state = applied.state;
+      this.recordFinality();
       try {
         this.persistCheckpoint();
       } catch (error) {
@@ -1125,7 +810,6 @@ export class ChainManager extends EventEmitter {
     }
     this.pruneStateCache();
     this.emit('block', block, applied.events);
-    this.retryPendingFinalityVotes(hash);
     return { state: this.state, reorged, connected: true };
   }
 
@@ -1160,7 +844,7 @@ export class ChainManager extends EventEmitter {
         continue;
       }
       if (!state) state = this.stateOf(this.store.getCanonicalAtHeight(height - 1)!);
-      const applied = applyBlock(state, block, { net: this.options.net, evidence: this.consensusEvidenceContext() });
+      const applied = applyBlock(state, block, { net: this.options.net });
       state = applied.state;
       yield { block, events: applied.events };
     }
@@ -1186,15 +870,18 @@ export class ChainManager extends EventEmitter {
    * has already validated, and records the change as a marker plus the new tail
    * in the canonical log.
    */
-  private reorganise(newHeadHash: string, finalityAdoption = false): { forkHeight: number; abandoned: number; adopted: number } {
+  private reorganise(newHeadHash: string): { forkHeight: number; abandoned: number; adopted: number } {
     const branch = this.store.branchFromCanonical(newHeadHash);
     if (!branch) throw new Error('reorg failed: new head is not connected to the canonical chain');
     const { forkHeight, entries } = branch;
     const oldHead = this.store.head!;
     const abandoned = oldHead.height - forkHeight;
-    if (!finalityAdoption && forkHeight < this.finality.finalizedHeight) reject(ErrCode.FINALITY_CONFLICT,`reorg fork ${forkHeight} below finalized ${this.finality.finalizedHeight}`);
-    if (finalityAdoption && newHeadHash !== this.finality.finalizedHash) reject(ErrCode.FINALITY_CONFLICT,'only newly certified target may use certified adoption');
-    if (!finalityAdoption && (abandoned > CONSENSUS_PARAMS.consensus.maxReorgDepth || entries.length > CONSENSUS_PARAMS.consensus.maxReorgDepth)) {
+    // The reorg guard: a fork below the finalized checkpoint is refused outright, whatever its weight.
+    const finalizedAt = this.finalizedCheckpoint().height;
+    if (forkHeight < finalizedAt) {
+      reject(ErrCode.FINALITY_CONFLICT, `reorg fork ${forkHeight} is below the finalized height ${finalizedAt}`);
+    }
+    if (abandoned > CONSENSUS_PARAMS.consensus.maxReorgDepth || entries.length > CONSENSUS_PARAMS.consensus.maxReorgDepth) {
       reject(
         ErrCode.STALE_BLOCK,
         `reorg depth ${Math.max(abandoned, entries.length)} exceeds the protocol maximum ${CONSENSUS_PARAMS.consensus.maxReorgDepth}`,
@@ -1207,8 +894,7 @@ export class ChainManager extends EventEmitter {
     // silently drops those transactions on the floor — observed live, where a
     // depth-1 reorg erased a mining claim and the miner's balance with it.
     const orphaned: TxEnvelope[] = [];
-    const orphanScanStart=finalityAdoption?Math.max(forkHeight+1,oldHead.height-CONSENSUS_PARAMS.consensus.maxReorgDepth+1):forkHeight+1;
-    for (let height = orphanScanStart; height <= oldHead.height; height += 1) {
+    for (let height = forkHeight + 1; height <= oldHead.height; height += 1) {
       const hash = this.store.getCanonicalHashAtHeight(height);
       const block = hash ? this.store.getBlockByHash(hash) : null;
       if (!block) break;
@@ -1228,13 +914,14 @@ export class ChainManager extends EventEmitter {
         state = cached.state;
         continue;
       }
-      const applied = applyBlock(state, block, { net: this.options.net, evidence: this.consensusEvidenceContext() });
+      const applied = applyBlock(state, block, { net: this.options.net });
       state = applied.state;
       this.rememberState(entry, state);
       this.rememberEvents(entry.hash, applied.events);
     }
     this.store.reorganiseCanonical(forkHeight, entries);
     this.state = state;
+    this.recordFinality();
 
     // Return the orphaned transactions the winning branch did not already
     // re-include. `revalidateMempool` immediately below drops any that the new
@@ -1341,7 +1028,6 @@ export class ChainManager extends EventEmitter {
         base = createGenesisState(
         genesisBlock,
         this.options.net,
-        this.options.genesisDocument.bootstrapValidatorPublicKeys ?? [],
         this.options.genesisDocument.miningGatePublicKeys ?? [],
       );
         break;
@@ -1357,7 +1043,7 @@ export class ChainManager extends EventEmitter {
       const step = path[index]!;
       const block = this.store.getBlockByHash(step.hash);
       if (!block) throw new Error(`missing block ${step.hash} at height ${step.height}`);
-      state = applyBlock(state, block, { net: this.options.net, evidence: this.consensusEvidenceContext() }).state;
+      state = applyBlock(state, block, { net: this.options.net }).state;
       this.rememberState(step, state);
     }
     return state;
@@ -1376,44 +1062,33 @@ export class ChainManager extends EventEmitter {
   // ── Block production ──────────────────────────────────────────────────────
 
   /**
-   * Who is entitled to produce the next block at this node's current protocol
-   * time, or null when any node may. Shares its round arithmetic with
-   * `buildNextBlock` so the production loop and the builder can never disagree
-   * about whose turn it is.
+   * Who is entitled to produce the next block at this node's current protocol time, or null in OPEN mode (no node is
+   * registered yet). Shares its round arithmetic with `buildNextBlock`, so the production loop and the builder can
+   * never disagree about whose turn it is.
    */
-  scheduledProposerNow(): string | null {
+  scheduledProducerNow(): string | null {
     const head = this.store.head;
     if (!head) return null;
-    return scheduledProposer(this.state, head.height + 1, proposerRound(head.timestamp, this.protocolTime));
+    const timestamp = this.protocolTime;
+    return scheduledProducer(this.state, head.height + 1, proposerRound(head.timestamp, timestamp), timestamp);
   }
 
   /**
-   * Which of the three production states this chain is in, for the height this
-   * node would build next: OPEN, SCHEDULED or HALTED.
-   *
-   * `scheduledProposerNow() === null` is ambiguous by design — it means either
-   * bootstrap mode (no validator has ever registered, so any node may propose)
-   * or a halt (the rotation is closed and the active set is empty, so nobody
-   * may, in any round). A production loop that reads that null as "anyone may
-   * produce" keeps constructing, signing and broadcasting blocks that consensus
-   * refuses, every tick, for as long as the chain is halted.
-   *
-   * This adds no rule and no state: it is the canonical `proposerDecision` —
-   * the same function block validation calls — evaluated on the same head,
-   * height, round and protocol time that `scheduledProposerNow` and
-   * `buildNextBlock` use, so the loop and the builder cannot disagree. With no
-   * head there is nothing to build on; this reports OPEN and the builder returns
-   * null exactly as it did before.
+   * Which production state this chain is in for the height this node would build next: OPEN (no registered node, any
+   * key may produce) or SCHEDULED (exactly one address may, per round). The same `producerDecision` that block
+   * validation calls, evaluated on the same head, height, round and protocol time that `buildNextBlock` uses. There is
+   * no HALTED state: when every node is unavailable the schedule falls back to the registered set rather than stopping.
    */
-  productionDecisionNow(): ProposerDecision {
+  productionDecisionNow(): ProducerDecision {
     const head = this.store.head;
     if (!head) return { kind: 'OPEN' };
-    return proposerDecision(this.state, head.height + 1, proposerRound(head.timestamp, this.protocolTime));
+    const timestamp = this.protocolTime;
+    return producerDecision(this.state, head.height + 1, proposerRound(head.timestamp, timestamp), timestamp);
   }
 
   /**
    * Build the next block for this slot. Returns null when this node is not the
-   * scheduled proposer (validator rotation) — nodes never race to produce.
+   * scheduled producer — nodes never race to produce.
    */
   buildNextBlock(producer: { address: string; privateKey: string; publicKey: string }): Block | null {
     const head = this.store.head;
@@ -1423,39 +1098,32 @@ export class ChainManager extends EventEmitter {
     const timestamp = this.protocolTime;
     // Same round the verifiers will recompute from the finished header.
     const round = proposerRound(head.timestamp, timestamp);
-    if (!isProposerAllowed(this.state, producer.address, height, round)) return null;
+    if (!isProducerAllowed(this.state, producer.address, height, round, timestamp)) return null;
 
     // ── The double-sign lock ────────────────────────────────────────────────
-    // A proposer signs at most ONE proposal for a given (height, round). Two
-    // different signed headers for one slot are exactly what the equivocation
-    // penalty is for, so a slot this node has already signed is never signed
-    // again: not after a locally rejected block, not after a restart. The lock
-    // is armed and PERSISTED before the header is built, because the signature
-    // is the irreversible act — a crash between the two leaves the slot closed,
-    // which costs one turn instead of the bond. A later round of the same height
-    // is a different slot and stays available, so the liveness backstop
-    // (anyone may produce once every validator's slot has lapsed) still works.
-    const signed = this.finality.lastProposal ?? null;
-    if (signed && signed.height === height && signed.round === round) {
-      this.emit('proposal-lock', { height, round });
+    // A producer signs at most ONE block on a given parent. Two different signed headers on one parent are exactly
+    // what the equivocation ban is for, so a parent this node has already signed on is never signed on again: not
+    // after a locally rejected block, not after a restart. The lock is armed and PERSISTED before the header is built,
+    // because the signature is the irreversible act — a crash between the two leaves the slot closed, which costs one
+    // turn instead of the node's standing. A different parent is a different slot and stays available.
+    const signed = this.safety.lastSigned;
+    if (signed && signed.height === height && signed.parentHash === head.hash) {
+      this.emit('proposal-lock', { height, parentHash: head.hash });
       return null;
     }
-    this.finality = { ...this.finality, lastProposal: { height, round } };
-    this.finalityStore.save(this.finality);
+    this.safety = { ...this.safety, lastSigned: { height, parentHash: head.hash } };
+    this.safetyStore.save(this.safety);
 
     const ctx: BlockContext = {
       height,
       timestamp,
       chainId: this.options.net.chainId,
       producer: producer.address,
-      // A producer verifies the evidence it is about to include with exactly the
-      // context a validating node will use, so the two cannot reach different
-      // verdicts about the same transaction.
-      evidence: this.consensusEvidenceContext(),
+      parentHash: head.hash,
     };
     // Derived from the PARENT state before the working copy advances, exactly as
     // every validating node derives it from the finished block.
-    const missedProposers = missedProposersFor(this.state, height, head.timestamp, timestamp, producer.address);
+    const missedProducers = missedProducersFor(this.state, height, head.timestamp, timestamp, producer.address);
 
     const candidates = this.mempool.selectForBlock(
       CONSENSUS_PARAMS.block.maxBlockTransactions,
@@ -1470,23 +1138,7 @@ export class ChainManager extends EventEmitter {
       working.advanceBlock(height, timestamp);
       const events: ProtocolEvent[] = [];
       const accepted: TxEnvelope[] = [];
-      let evidenceAttempted = 0;
-      let evidenceAttemptBytes = 0;
       for (const tx of candidates) {
-        if (tx.type === TxType.SLASH) {
-          const size = encodeSignedTx(tx).length;
-          if (
-            evidenceAttempted >= MAX_SLASH_VERIFICATIONS_PER_BLOCK ||
-            evidenceAttemptBytes + size > MAX_SLASH_VERIFICATION_BYTES_PER_BLOCK
-          ) {
-            // Left in the pool on purpose: this is a candidate for a later slot,
-            // not a rejected transaction. Dropping it here would let one peer
-            // decide which accusations a node is willing to look at.
-            continue;
-          }
-          evidenceAttempted += 1;
-          evidenceAttemptBytes += size;
-        }
         const trial = working.clone();
         trial.advanceBlock(height, timestamp);
         try {
@@ -1514,7 +1166,7 @@ export class ChainManager extends EventEmitter {
           continue;
         }
       }
-      events.push(...runBlockRoutines(working, ctx, this.options.net, { missedProposers }));
+      events.push(...runBlockRoutines(working, ctx, this.options.net, { missedProducers }));
       return { accepted, finalized: finalizeBlock(working, events) };
     };
 
@@ -1537,7 +1189,7 @@ export class ChainManager extends EventEmitter {
         for (const tx of candidates) this.mempool.remove(tx.id);
         const working = this.state.clone();
         working.advanceBlock(height, timestamp);
-        const events = runBlockRoutines(working, ctx, this.options.net, { missedProposers });
+        const events = runBlockRoutines(working, ctx, this.options.net, { missedProducers });
         built = { accepted: [], finalized: finalizeBlock(working, events) };
       }
     }
@@ -1582,14 +1234,6 @@ export class ChainManager extends EventEmitter {
         height: this.height + 1,
         addressHrp: this.options.net.addressHrp,
       });
-      // A SLASH transaction *is* the evidence, so its body has to decode into
-      // the shape the state transition will verify. An undecodable body can
-      // never apply to any state, and relaying it spends bandwidth, pool space
-      // and verification work for nothing — so it is refused at gossip, where
-      // the penalty falls on the peer that relayed it. Structural only: no state
-      // is read and no verdict about the offence is formed here, because that
-      // stays a consensus decision.
-      if (tx.type === TxType.SLASH) decodeSlashBody(tx.body);
       // A gate authority update is relayed only if it is valid against the state this node has: it carries no gas,
       // so a stale or unauthorised one costs the network pool space and signature checks for nothing. A node a block
       // behind may refuse a genuinely new update for a moment; the submitter's own node, and the next gossip, retry.
@@ -1714,8 +1358,13 @@ export class ChainManager extends EventEmitter {
     }
     const invariant = this.state.verifySupplyInvariant();
     if (!invariant.ok) problems.push(invariant.reason);
-    if (this.store.getCanonicalHashAtHeight(this.finality.finalizedHeight)!==this.finality.finalizedHash) problems.push('finality lock is not canonical');
-    if (this.finality.certificate) { const v=this.validateFinalityCertificate(this.finality.certificate); if (!v.ok) problems.push(`finality certificate invalid: ${v.message}`); }
+    const finalized = this.finalizedCheckpoint();
+    if (this.store.getCanonicalHashAtHeight(finalized.height) !== finalized.hash) {
+      problems.push('the finalized checkpoint is not on the canonical chain');
+    }
+    if (this.safety.finalizedHeight > finalized.height) {
+      problems.push('the head state reports a lower finalized height than this node recorded');
+    }
     return { ok: problems.length === 0, problems };
   }
 

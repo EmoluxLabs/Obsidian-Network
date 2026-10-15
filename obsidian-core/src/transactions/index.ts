@@ -14,10 +14,8 @@ import { executePayment } from './executors/payment.js';
 import { executeMiningClaim } from './executors/mining.js';
 import { executeOns } from './executors/ons.js';
 import { executeOracle } from './executors/oracle.js';
-import { executeValidator } from './executors/validator.js';
 import { executeTreasury, executeGovernance } from './executors/treasury.js';
 import { executeNodeRegistry } from './executors/node-registry.js';
-import { executeSlash } from './executors/slash.js';
 import { executeGateAuthority } from './executors/gate-authority.js';
 
 export function executeTransaction(ctx: ExecutorContext, tx: TxEnvelope): ExecutorResult {
@@ -32,16 +30,12 @@ export function executeTransaction(ctx: ExecutorContext, tx: TxEnvelope): Execut
       return executeOns(ctx, tx);
     case TxType.ORACLE:
       return executeOracle(ctx, tx);
-    case TxType.VALIDATOR:
-      return executeValidator(ctx, tx);
     case TxType.TREASURY:
       return executeTreasury(ctx, tx);
     case TxType.GOVERNANCE:
       return executeGovernance(tx);
     case TxType.NODE_REGISTRY:
       return executeNodeRegistry(ctx, tx);
-    case TxType.SLASH:
-      return executeSlash(ctx, tx);
     case TxType.GATE_AUTHORITY:
       return executeGateAuthority(ctx, tx);
     default:

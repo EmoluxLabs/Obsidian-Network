@@ -41,9 +41,8 @@ import { CORE_VERSION, MIN_CORE_VERSION, PROTOCOL_VERSION, compareVersions } fro
 import type { NetworkDefinition } from '../protocol/networks.js';
 import { parsePeerAddress, PeerStore, type PeerRecord } from './peer-store.js';
 import { newLinkBudgets, type LinkBudgets } from './rate-limit.js';
-import { compareTips } from '../consensus/proposer.js';
-import type { Block, EquivocationEvidence, FinalityCertificate, FinalityVote, TxEnvelope } from '../protocol/types.js';
-import { certificateShape, finalityVoteId } from '../consensus/finality.js';
+import { compareTips } from '../consensus/schedule.js';
+import type { Block, TxEnvelope } from '../protocol/types.js';
 
 export interface NodeIdentity {
   address: string;
@@ -386,10 +385,6 @@ export class P2PService extends EventEmitter {
   private stopping = false;
   private readonly relayedBlocks = new Set<string>();
   private readonly relayedTxs = new Set<string>();
-  private readonly relayedFinalityVotes = new Set<string>();
-  private readonly relayedCertificates = new Set<string>();
-  private readonly relayedEvidence = new Set<string>();
-  private readonly pendingFinalityCertificates = new Map<string,{certificate:FinalityCertificate;link:PeerLink}>();
   /** Remote addresses refused for a while after they kept violating the protocol. */
   private readonly bannedIps = new Map<string, number>();
   private readonly onTransaction?: (tx: TxEnvelope) => void;
@@ -424,11 +419,6 @@ export class P2PService extends EventEmitter {
     }
     this.maxInbound = options.maxInboundPeers ?? 64;
     this.maxOutbound = Math.max(2, Math.min(options.maxPeers ?? 16, 32));
-    this.chain.on('finality-vote',(vote:FinalityVote)=>this.announceFinalityVote(vote));
-    this.chain.on('block',(block:Block)=>this.castFinalityVote(blockHash(block.header)));
-    this.chain.on('finalized',(certificate:FinalityCertificate)=>{this.announceFinalityCertificate(certificate);this.castFinalityVote();});
-    this.chain.on('equivocation',(evidence:EquivocationEvidence)=>this.announceEvidence(evidence));
-    this.castFinalityVote();
   }
 
   /** Tiny adapter so the service can log through a plain callback. */
@@ -598,7 +588,6 @@ export class P2PService extends EventEmitter {
     this.peers.recordHeight(link.address, height);
   }
 
-  private castFinalityVote(target?:string):void { if(this.chain.isSyncing)return; const vote=this.chain.createFinalityVote(this.identity,target); if(vote)this.chain.addFinalityVote(vote); }
 
   broadcastBlock(block: Block): void {
     this.announceBlock(block);
@@ -912,7 +901,7 @@ export class P2PService extends EventEmitter {
       weight: tip?.cumulativePotWeight ?? '0',
       finalizedHeight: this.chain.finalityStatus().finalizedHeight,
       finalizedHash: this.chain.finalityStatus().finalizedHash,
-      capabilities: ['sync', 'gossip', 'finality'],
+      capabilities: ['sync', 'gossip', 'derived-finality'],
       timestamp: Math.floor(this.now() / 1000),
       nonce: randomBytes(16).toString('hex'),
       challenge: answering,
@@ -1001,7 +990,7 @@ export class P2PService extends EventEmitter {
     // capped here, by the receiver.
     const bucket =
       message.t === 'newtx' ? link.budgets.tx : message.t === 'newblock' || message.t === 'blocks' ? link.budgets.block : link.budgets.control;
-    const signatureCost=message.t==='finality_certificate'?Math.max(1,Math.ceil((Array.isArray((message.certificate as {votes?:unknown[]}|undefined)?.votes)?(message.certificate as {votes:unknown[]}).votes.length:1)/8)):message.t==='equivocation'?2:1;
+    const signatureCost = 1;
     if (!bucket.take(signatureCost + Math.floor(size / 65_536))) {
       link.score -= 3;
       this.log.debug('peer over its message budget; message dropped', { address: link.address, type: message.t, score: link.score });
@@ -1044,16 +1033,6 @@ export class P2PService extends EventEmitter {
         case 'newtx':
           this.handleNewTx(link, message);
           break;
-        case 'finality_vote':
-          this.handleFinalityVote(link,message);
-          break;
-        case 'finality_certificate':
-          this.handleFinalityCertificate(link,message);
-          break;
-        case 'equivocation':
-          this.handleEvidence(link,message);
-          break;
-        case 'getfinality': { const certificate=this.chain.latestFinalityCertificate(); if(certificate) this.send(link,{v:WIRE_VERSION,t:'finality_certificate',certificate}); break; }
         case 'getaddr':
           this.send(link, { v: WIRE_VERSION, t: 'addr', peers: this.peers.gossipSample(32) });
           break;
@@ -1256,8 +1235,6 @@ export class P2PService extends EventEmitter {
       this.send(link, { v: WIRE_VERSION, t: 'status', ...this.tipFields() });
       this.send(link, { v: WIRE_VERSION, t: 'getaddr' });
     }
-    if (hello.finalizedHeight>localFinality.finalizedHeight) this.send(link,{v:WIRE_VERSION,t:'getfinality'});
-    else if (hello.finalizedHeight<localFinality.finalizedHeight) { const certificate=this.chain.latestFinalityCertificate(); if(certificate) this.send(link,{v:WIRE_VERSION,t:'finality_certificate',certificate}); }
 
     if (this.peerIsBetter(link)) void this.syncFrom(link);
     this.emit('peer', { address, nodeId: hello.nodeId, height: hello.height });
@@ -1320,7 +1297,7 @@ export class P2PService extends EventEmitter {
    *
    * A peer is only punished when its WHOLE attempt delivered nothing we did not already have.
    */
-  private async syncFrom(link: PeerLink, forceCertificateFetch = false): Promise<void> {
+  private async syncFrom(link: PeerLink): Promise<void> {
     if (link.syncing || this.stopping) return;
     if (!link.hello) return;
     if (this.now() - link.lastSyncMiss < SYNC_RETRY_GAP_MS) return;
@@ -1338,10 +1315,8 @@ export class P2PService extends EventEmitter {
       const maxRequests = 64 + 2 * Math.ceil((Math.max(link.height, this.chain.height) + maxBack) / this.syncBatch);
       let back = 16;
       let cursor = Math.max(1, this.chain.height - back);
-      let mustFetchCertificateTarget = forceCertificateFetch;
       this.log.debug('sync started', this.syncView(link, { from: cursor, limit: this.syncBatch }));
-      while (!this.stopping && (mustFetchCertificateTarget || this.peerIsBetter(link))) {
-        mustFetchCertificateTarget = false;
+      while (!this.stopping && this.peerIsBetter(link)) {
         if (requests >= maxRequests) {
           failure = 'request budget exhausted';
           break;
@@ -1416,7 +1391,6 @@ export class P2PService extends EventEmitter {
         link.lastSyncMiss = this.now();
       }
       this.chain.setSyncing(false);
-      this.castFinalityVote();
       if (this.chain.tip) this.emit('synced', { height: this.chain.height, hash: this.chain.tip.hash });
     }
   }
@@ -1558,7 +1532,6 @@ export class P2PService extends EventEmitter {
       const result = this.chain.addBlock(block);
       if (result.accepted) {
         outcome.accepted += 1;
-        this.retryPendingCertificate(hash);
         this.peers.recordValidBlock(link.address);
         this.emit('block', block);
       } else if (result.code === ErrCode.ORPHAN_BLOCK) {
@@ -1588,7 +1561,6 @@ export class P2PService extends EventEmitter {
     if (this.chain.getBlockByHash(hash)) return;
     const result = this.chain.addBlock(block);
     if (result.accepted) {
-      this.retryPendingCertificate(hash);
       this.peers.recordValidBlock(link.address);
       this.relayedBlocks.add(hash);
       this.emit('block', block);
@@ -1664,23 +1636,6 @@ export class P2PService extends EventEmitter {
     this.broadcast({ v: WIRE_VERSION, t: 'newtx', tx: toHex(encodeSignedTx(tx)) }, link);
   }
 
-  private handleFinalityVote(link:PeerLink,message:P2PMessage):void { const vote=message.vote as FinalityVote; let id:string; try{id=finalityVoteId(vote);}catch{this.penalise(link,'malformed','invalid finality vote encoding');return;} if(this.relayedFinalityVotes.has(id))return; const r=this.chain.addFinalityVote(vote); if(r.accepted){this.rememberRelay(this.relayedFinalityVotes,id);this.broadcast({v:WIRE_VERSION,t:'finality_vote',vote},link);} else if(!r.duplicate&&r.code!==ErrCode.ORPHAN_BLOCK)this.penalise(link,r.code===ErrCode.BAD_SIGNATURE?'invalid-block':'minor',`${r.code}: ${r.message}`); }
-  private handleFinalityCertificate(link:PeerLink,message:P2PMessage):void {
-    const certificate=message.certificate as FinalityCertificate, shape=certificateShape(certificate);
-    if(!shape.ok){this.penalise(link,'malformed',shape.reason);return;}
-    const id=`${certificate.height}:${certificate.blockHash}`; if(this.relayedCertificates.has(id))return;
-    const result=this.chain.addFinalityCertificate(certificate);
-    if(result.code===ErrCode.ORPHAN_BLOCK){
-      if([...this.pendingFinalityCertificates.values()].some(item=>item.link===link)){this.penalise(link,'minor','peer already has a pending certificate');return;}
-      if(this.pendingFinalityCertificates.size>=CONSENSUS_PARAMS.consensus.finality.maxCandidatesPerHeight*2){this.penalise(link,'minor','pending certificate limit reached');return;}
-      this.pendingFinalityCertificates.set(id,{certificate,link}); void this.syncFrom(link,true); return;
-    }
-    if(result.accepted){this.rememberRelay(this.relayedCertificates,id);this.broadcast({v:WIRE_VERSION,t:'finality_certificate',certificate},link);}
-    else if(!result.duplicate)this.penalise(link,result.code===ErrCode.BAD_SIGNATURE||result.code===ErrCode.FINALITY_CONFLICT?'invalid-block':'minor',`${result.code}: ${result.message}`);
-  }
-  private retryPendingCertificate(hash:string):void { for(const [id,item] of [...this.pendingFinalityCertificates])if(item.certificate.blockHash===hash){this.pendingFinalityCertificates.delete(id);this.handleFinalityCertificate(item.link,{v:WIRE_VERSION,t:'finality_certificate',certificate:item.certificate});} }
-  private handleEvidence(link:PeerLink,message:P2PMessage):void { const evidence=message.evidence as EquivocationEvidence; if(evidence&&this.relayedEvidence.has(evidence.id))return; const r=this.chain.addEquivocationEvidence(evidence);if(r.accepted){this.rememberRelay(this.relayedEvidence,evidence.id);this.broadcast({v:WIRE_VERSION,t:'equivocation',evidence},link);}else if(!r.duplicate)this.penalise(link,r.code===ErrCode.BAD_SIGNATURE?'invalid-block':'malformed',r.message); }
-  private rememberRelay(set:Set<string>,id:string):void { set.add(id);if(set.size>CONSENSUS_PARAMS.consensus.finality.maxPendingVotes){const oldest=set.values().next().value;if(oldest!==undefined)set.delete(oldest);} }
 
   // ── Gossip ─────────────────────────────────────────────────────────────────
 
@@ -1704,9 +1659,6 @@ export class P2PService extends EventEmitter {
     this.broadcast({ v: WIRE_VERSION, t: 'newblock', block: toHex(encodeBlock(block)) });
   }
 
-  announceFinalityVote(vote:FinalityVote):void { const id=finalityVoteId(vote);if(this.relayedFinalityVotes.has(id))return;this.rememberRelay(this.relayedFinalityVotes,id);this.broadcast({v:WIRE_VERSION,t:'finality_vote',vote}); }
-  announceFinalityCertificate(certificate:FinalityCertificate):void { const id=`${certificate.height}:${certificate.blockHash}`;if(this.relayedCertificates.has(id))return;this.rememberRelay(this.relayedCertificates,id);this.broadcast({v:WIRE_VERSION,t:'finality_certificate',certificate}); }
-  announceEvidence(evidence:EquivocationEvidence):void { if(this.relayedEvidence.has(evidence.id))return;this.rememberRelay(this.relayedEvidence,evidence.id);this.broadcast({v:WIRE_VERSION,t:'equivocation',evidence}); }
 
   private pruneRelaySets(): void {
     const cap = 20_000;
@@ -1714,7 +1666,7 @@ export class P2PService extends EventEmitter {
     // Sets preserve insertion order. Drop only the oldest half: clearing the
     // whole set at the cap created a predictable window in which every recent
     // transaction and block could be replay-relayed through this node again.
-    for (const seen of [this.relayedBlocks, this.relayedTxs, this.relayedFinalityVotes, this.relayedCertificates, this.relayedEvidence]) {
+    for (const seen of [this.relayedBlocks, this.relayedTxs]) {
       if (seen.size <= cap) continue;
       while (seen.size > retain) {
         const oldest = seen.values().next().value;

@@ -38,10 +38,6 @@ export const DOMAIN = {
   NODE_ATTESTATION: 'OBSIDIAN:NODE_ATTESTATION:v1',
   /** Fault report signed by an observing node about another node. */
   NODE_FAULT_REPORT: 'OBSIDIAN:NODE_FAULT_REPORT:v1',
-  /** Equal-membership bonded-validator checkpoint vote. */
-  FINALITY_VOTE: 'OBSIDIAN:POT_FINALITY_VOTE:v1',
-  /** Canonical hash of the finality validator committee. */
-  FINALITY_VALIDATOR_SET: 'OBSIDIAN:FINALITY_VALIDATOR_SET:v1',
   /** Mining gate certificate: an issuer key vouches that one wallet may make one specific claim. */
   MINING_GATE: 'OBSIDIAN:MINING_GATE:v1',
   /** Canonical identity of equivocation evidence. */
