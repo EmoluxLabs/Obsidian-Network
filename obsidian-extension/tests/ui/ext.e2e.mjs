@@ -200,7 +200,7 @@ try {
     assert.equal(stored, null, 'the design\u2019s demo store was never written');
   });
 
-  await step('NODE screen: real figures that match the node, and an honest validator section', async () => {
+  await step('NODE screen: real figures that match the node, and an honest producer section', async () => {
     await clickText(page, 'button', 'NODE & CONNECTION');
     await waitText(page, 'NODES BEHIND THIS SERVER');
     await page.waitForFunction(() => /\bCONNECTED\b/.test(document.body.innerText) && /HEALTHY/.test(document.body.innerText));
@@ -208,8 +208,8 @@ try {
     const status = await rpc(NODE, '/status');
     assert.ok(t.includes('CONNECTED'));
     assert.ok(t.includes(status.genesisId.slice(0, 12)), 'genesis id comes from the node');
-    assert.ok(/REGISTERED\s+0/.test(t) && /NOT AVAILABLE IN A BROWSER/.test(t));
-    assert.ok(/20000 OBS/.test(t), 'the validator bond comes from the node\u2019s own answer');
+    assert.ok(/REGISTERED NODES\s+0/.test(t) && /NOT AVAILABLE IN A BROWSER/.test(t));
+    assert.ok(/BLOCK PRODUCERS/.test(t) && !/validator|bond/i.test(t), 'there is no validator or bond on the NODE screen');
     await clickText(page, 'button', 'RUN CHECKS');
     await waitText(page, 'GENESIS AGREEMENT');
     await shot('03-node');

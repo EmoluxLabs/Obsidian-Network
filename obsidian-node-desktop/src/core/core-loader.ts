@@ -2,7 +2,7 @@
  * Locate and load the staged Obsidian Core.
  *
  * The app reuses the node's own implementations (keys, mnemonic, amounts, transaction
- * encoding, validator body encoding, keystore, network table). They are loaded from the
+ * encoding, node binding, keystore, network table). They are loaded from the
  * staged core directory at run time rather than copied, so there is exactly one
  * implementation of each. If the core directory is missing the app says so; it never
  * falls back to a local reimplementation.
@@ -19,7 +19,7 @@ import type * as Networks from '../../vendor/obsidian-core/dist/protocol/network
 import type * as Encode from '../../vendor/obsidian-core/dist/transactions/encode.js';
 import type * as Helpers from '../../vendor/obsidian-core/dist/transactions/helpers.js';
 import type * as Payment from '../../vendor/obsidian-core/dist/transactions/executors/payment.js';
-import type * as Validator from '../../vendor/obsidian-core/dist/transactions/executors/validator.js';
+import type * as AgentMod from '../../vendor/obsidian-core/dist/node-agent.js';
 import type * as KeystoreMod from '../../vendor/obsidian-core/dist/crypto/keystore.js';
 import type * as ParamsMod from '../../vendor/obsidian-core/dist/protocol/params.js';
 import type * as IndexerMod from '../../vendor/obsidian-core/dist/indexer/indexer.js';
@@ -37,7 +37,7 @@ export interface CoreModules {
   encode: typeof Encode;
   helpers: typeof Helpers;
   payment: typeof Payment;
-  validator: typeof Validator;
+  agent: typeof AgentMod;
   keystore: typeof KeystoreMod;
   version: typeof Version;
   params: typeof ParamsMod;
@@ -91,7 +91,7 @@ export function loadCore(dir: string = resolveCoreDir()): Promise<CoreModules> {
       );
     }
     const load = <T>(rel: string): Promise<T> => import(pathToFileURL(join(dir, 'dist', rel)).href) as Promise<T>;
-    const [keys, mnemonic, amount, types, networks, encode, helpers, payment, validator, keystore, version, params, indexer, stateRoot, recipient] =
+    const [keys, mnemonic, amount, types, networks, encode, helpers, payment, agent, keystore, version, params, indexer, stateRoot, recipient] =
       await Promise.all([
         load<typeof Keys>('crypto/keys.js'),
         load<typeof Mnemonic>('crypto/mnemonic.js'),
@@ -101,7 +101,7 @@ export function loadCore(dir: string = resolveCoreDir()): Promise<CoreModules> {
         load<typeof Encode>('transactions/encode.js'),
         load<typeof Helpers>('transactions/helpers.js'),
         load<typeof Payment>('transactions/executors/payment.js'),
-        load<typeof Validator>('transactions/executors/validator.js'),
+        load<typeof AgentMod>('node-agent.js'),
         load<typeof KeystoreMod>('crypto/keystore.js'),
         load<typeof Version>('version.js'),
         load<typeof ParamsMod>('protocol/params.js'),
@@ -109,7 +109,7 @@ export function loadCore(dir: string = resolveCoreDir()): Promise<CoreModules> {
         load<typeof StateRootMod>('blockchain/state-root.js'),
         load<typeof RecipientMod>('protocol/recipient.js'),
       ]);
-    return { dir, keys, mnemonic, amount, types, networks, encode, helpers, payment, validator, keystore, version, params, indexer, stateRoot, recipient };
+    return { dir, keys, mnemonic, amount, types, networks, encode, helpers, payment, agent, keystore, version, params, indexer, stateRoot, recipient };
   })();
   cached.catch(() => {
     cached = undefined;

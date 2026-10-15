@@ -31,7 +31,7 @@ export const help: Screen = {
     <div class="card" style="margin-top:14px"><div class="k">How this app works</div>
       ${[
         ['The node', 'Obsidian Node runs the real Obsidian Core node on this computer, with its own database. Starting and stopping it here uses the same startup and shutdown as the command-line node.'],
-        ['Node vs validator', 'Running a node does not make you a validator, and stopping it never unbonds funds. A validator is an on-chain registration that locks a bond; it uses the node’s identity key, which is a separate account from your personal wallet.'],
+        ['Node rewards', 'There are no validators and nothing is bonded. Every eligible node that is online takes part: it verifies, relays, produces blocks when scheduled, and earns a share of the node-reward pool for its verified uptime. You choose which OBS address receives the rewards by pasting it; the node signs for itself with its own key, which is separate from your wallet.'],
         ['Your wallet', 'Wallets are encrypted on this computer with your passphrase. The recovery phrase is shown once at creation. The app never displays or logs a key; every signature asks for the passphrase again.'],
         ['Confirmed vs submitted', '“Submitted” only means your node accepted the transaction. It is confirmed when a block includes it.'],
         ['Networks', 'Mainnet, Testnet, Staging and Devnet each have their own chain data, wallet and node identity. Switching never mixes them or resets data.'],

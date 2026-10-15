@@ -12,7 +12,7 @@ import { ChainService } from './chain-service.js';
 import { WalletService } from './wallet-service.js';
 import { TxService } from './tx-service.js';
 import { PaymentService } from './payment-service.js';
-import { ValidatorService } from './validator-service.js';
+import { ParticipationService } from './participation-service.js';
 import { ExplorerService } from './explorer-service.js';
 import { DiagnosticsService } from './diagnostics-service.js';
 
@@ -38,7 +38,7 @@ export interface AppContext {
   wallets: WalletService;
   tx: TxService;
   payments: PaymentService;
-  validators: ValidatorService;
+  participation: ParticipationService;
   explorer: ExplorerService;
   diagnostics: DiagnosticsService;
   dispose(): Promise<void>;
@@ -61,16 +61,14 @@ export function createContext(platform: PlatformInfo, overrides: { coreDir?: str
   });
   const chain = new ChainService({ supervisor });
   const wallets = new WalletService(paths, core);
-  let validators!: ValidatorService;
   const tx = new TxService({
     core,
     wallets,
     rpc: (network) => chain.rpc(network),
-    nodeIdentity: (network) => validators.identityKey(network),
     logs,
   });
   const payments = new PaymentService({ core, wallets, tx, rpc: (network) => chain.rpc(network) });
-  validators = new ValidatorService({ core, paths, supervisor, tx, rpcIfRunning: (network) => chain.rpcIfRunning(network) });
+  const participation = new ParticipationService({ core, paths, settings, rpcIfRunning: (network) => chain.rpcIfRunning(network) });
   const explorer = new ExplorerService(chain, core, () => supervisor.network);
   const diagnostics = new DiagnosticsService({
     core,
@@ -95,7 +93,7 @@ export function createContext(platform: PlatformInfo, overrides: { coreDir?: str
     wallets,
     tx,
     payments,
-    validators,
+    participation,
     explorer,
     diagnostics,
     async dispose() {

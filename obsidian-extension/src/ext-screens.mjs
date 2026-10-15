@@ -3,7 +3,7 @@
  *
  *   - the connect screen, shown instead of the app whenever there is no trustworthy server to ask;
  *   - the NODE screen: what this connection is and how healthy it is, read from the node through the
- *     server — connection, height, finality, peers, staleness, the validator set (read-only) and an
+ *     server — connection, height, finality, peers, staleness, the block-producer schedule (read-only) and an
  *     explicit statement of what a browser extension cannot do;
  *   - a small connection summary under the landing screen, so the settings are reachable when signed out;
  *   - the handlers the Menu rows call.
@@ -39,7 +39,7 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
     error: null, // why the latest attempt failed, or null
     status: null,
     nodes: null,
-    validators: null,
+    producers: null,
     diag: null,
     diagRunning: false,
   };
@@ -55,7 +55,7 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
         return { ok: false, error };
       }
     };
-    const [status, nodes, validators] = await Promise.all([ask(readRoute('/status')), ask(getNodes()), ask(readRoute('/validators'))]);
+    const [status, nodes, producers] = await Promise.all([ask(readRoute('/status')), ask(getNodes()), ask(readRoute('/producers'))]);
     view.loading = false;
     if (status.ok && Number.isInteger(status.value?.height)) {
       view.status = status.value;
@@ -65,7 +65,7 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
       view.error = status.ok ? 'The node answered, but not with a status this extension understands.' : String(status.error?.message ?? status.error);
     }
     view.nodes = nodes.ok && Array.isArray(nodes.value?.nodes) ? nodes.value : null;
-    view.validators = validators.ok && Array.isArray(validators.value?.registered) ? validators.value : null;
+    view.producers = producers.ok && Number.isInteger(producers.value?.registered) ? producers.value : null;
     repaint();
   }
 
@@ -92,7 +92,7 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
           : '';
 
     const nodes = view.nodes?.nodes ?? null;
-    const validators = view.validators;
+    const producers = view.producers;
     const diag = view.diag;
 
     return (
@@ -126,19 +126,18 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
               : '<div class="row mu">The server reports no nodes.</div>'
           }</div>`
         : `<div class="card"><div class="row mu">${view.loading ? 'Loading\u2026' : 'Unavailable \u2014 the server did not return its node list.'}</div></div>`) +
-      `<div class="lb">VALIDATORS</div>` +
-      (validators
+      `<div class="lb">BLOCK PRODUCERS</div>` +
+      (producers
         ? `<div class="card">` +
-          row('REGISTERED', esc(validators.registered.length), 'm') +
-          row('ACTIVE', dash(validators.count), 'm') +
-          validators.registered
-            .slice(0, 6)
-            .map((v) => `<div class="row"><div><b class="m" style="font-size:12px">${esc(v.address)}</b><div class="mu" style="font-size:11px">bond ${dash(v.bond)} OBS \u00b7 missed ${dash(v.missedSlots)}</div></div><span class="pill">${esc(v.status)}</span></div>`)
-            .join('') +
+          row('SCHEDULE', dash(producers.tier), 'm') +
+          row('ELIGIBLE NOW', dash(producers.eligible), 'm') +
+          row('REGISTERED NODES', dash(producers.registered), 'm') +
+          row('BANNED', dash(producers.banned), 'm') +
+          row('FINALITY', dash(producers.finality?.available === undefined ? null : producers.finality.available ? 'AVAILABLE' : 'UNAVAILABLE'), 'm') +
           `</div>`
-        : `<div class="card"><div class="row mu">${view.loading ? 'Loading\u2026' : 'Unavailable \u2014 the validator set could not be read.'}</div></div>`) +
+        : `<div class="card"><div class="row mu">${view.loading ? 'Loading\u2026' : 'Unavailable \u2014 the producer schedule could not be read.'}</div></div>`) +
       `<div class="card" style="margin-top:12px;padding:14px 16px"><div class="lb" style="margin:0 0 6px">NOT AVAILABLE IN A BROWSER</div>` +
-      `<p class="mu" style="font-size:12.5px;margin:0;line-height:1.5">Running a node, registering as a validator and bonding ${validators?.slashing?.bondObs ? esc(String(validators.slashing.bondObs).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')) + ' OBS' : 'the validator bond'} need a node\u2019s own signing key and a process that stays up. A browser extension can do neither safely, so those controls are not here and nothing on this screen pretends otherwise. Run them from Obsidian Node (the desktop app) or obsidian-core; this screen will show the result.</p></div>` +
+      `<p class="mu" style="font-size:12.5px;margin:0;line-height:1.5">Running a node and binding a reward wallet to it need a node\u2019s own signing key and a process that stays up. A browser extension can do neither safely, so those controls are not here and nothing on this screen pretends otherwise. Run them from Obsidian Node (the desktop app) or obsidian-core; this screen will show the result.</p></div>` +
       `<button class="btn" onclick="ObsidianExtRefreshNode()">${view.loading ? 'CHECKING\u2026' : 'REFRESH'}</button>` +
       `<div class="lb">DIAGNOSTICS</div>` +
       (diag

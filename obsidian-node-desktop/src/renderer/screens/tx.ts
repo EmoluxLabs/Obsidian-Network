@@ -72,7 +72,7 @@ export const tx: Screen = {
 function list(running: boolean): unknown {
   if (records.state === 'idle' || records.state === 'loading') return loadingCard();
   if (records.state !== 'ready') return unavailableCard('Could not read submissions', records.state === 'error' || records.state === 'unavailable' ? records.message : '', 'er');
-  if (records.data.length === 0) return html`<div class="sub" style="margin-top:8px">Nothing sent yet. Transfers and validator actions you authorize appear here, with their real state.</div>`;
+  if (records.data.length === 0) return html`<div class="sub" style="margin-top:8px">Nothing sent yet. Transfers you authorize appear here, with their real state.</div>`;
   return html`<table><thead><tr><th>Time</th><th>Action</th><th>Id</th><th>State</th><th></th></tr></thead><tbody>${records.data.map((r) => html`<tr><td class="m">${formatTime(r.submittedAt)}</td><td>${r.summary}${r.error ? html`<div class="sub er-t">${r.error}</div>` : ''}</td><td class="m">${mono(r.txId, { short: true, copy: true })}</td><td>${stateBadge(r)}</td><td>${r.state === 'unknown' ? html`<button class="btn" data-action="tx.resubmit" data-tx="${r.txId}" ${!running || resubmitting ? 'disabled' : ''}>${resubmitting === r.txId ? 'Sending…' : 'Check & resend'}</button>` : ''}</td></tr>`)}</tbody></table>${records.data.some((r) => r.state === 'unknown') ? warn('“Result unknown” means the node did not answer in time. “Check & resend” sends the identical signed bytes; the node ignores a duplicate, so it cannot pay twice.') : ''}`;
 }
 

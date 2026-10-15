@@ -6,7 +6,7 @@ child process, reads its RPC on `127.0.0.1`, and signs with the core's own key a
 code. The visual design is the template in `obsidian-node-design.zip` (kept untouched;
 `npm run verify:template` checks it).
 
-* Screens: Overview, Node, Network & Peers, Validator Centre, Wallet, Transactions, Explorer,
+* Screens: Overview, Node, Network & Peers, Node Rewards, Wallet, Transactions, Explorer,
   Logs & Diagnostics, Settings, Help. See [docs/IMPLEMENTATION-MAP.md](docs/IMPLEMENTATION-MAP.md)
   for what each screen and action is wired to.
 * Networks: mainnet, testnet, staging, devnet (one data directory, wallet and settings each).
@@ -58,7 +58,7 @@ npm run test:ui            # headless-browser end-to-end against a real devnet n
 
 Everything is under the OS user-data directory for "Obsidian Node": `settings.json`, `logs/`, and per network
 `networks/<network>/` with `data/` (chain), `node-key.json` + `node-key.pass` (the node's own identity keystore and
-its generated passphrase, owner-only files — this key holds no wallet funds unless you fund the validator account),
+its generated passphrase, owner-only files — this key signs the node's own statements and holds no wallet funds),
 and `wallet/vault.json` (your encrypted wallet).
 Uninstalling does not delete it. The app never initialises a genesis or wipes data without an
 explicit confirmation.

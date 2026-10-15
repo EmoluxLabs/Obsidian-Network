@@ -41,7 +41,7 @@ export async function startNode(): Promise<void> {
 export function stopNodeFlow(): void {
   openModal({
     title: 'Stop node?',
-    body: () => html`<p class="mu0">The node will shut down safely and stop syncing. Your node data stays on disk.</p>${warn(raw('Stopping the node does <b>not</b> unregister a validator or release bonded funds.'))}`,
+    body: () => html`<p class="mu0">The node will shut down safely and stop syncing. Your node data stays on disk.</p>${warn(raw('While it is stopped this node earns no rewards. Your reward wallet and node data stay as they are.'))}`,
     buttons: [
       { label: 'Cancel' },
       {

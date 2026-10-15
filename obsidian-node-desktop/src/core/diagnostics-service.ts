@@ -80,7 +80,7 @@ export class DiagnosticsService {
         add('peers', 'Peers', health.peers > 0 ? 'pass' : 'warn', health.peers > 0 ? `${health.peers} connected` : 'No peers connected. A node with no peers builds only its own chain.');
         add('supply', 'Supply invariant', health.supplyOk ? 'pass' : 'fail', health.supplyOk ? 'The node reports the supply invariant holds.' : 'The node reports the supply invariant is violated.');
         const finality = await client.finality();
-        add('finality', 'Finality', 'info', `Finalized height ${finality.finalizedHeight} of ${finality.headHeight}; ${finality.validatorCount} validator(s) in the committee.`);
+        add('finality', 'Finality', 'info', `Finalized height ${finality.finalizedHeight} of ${finality.headHeight}; ${finality.eligibleProducers} established producer(s); ${finality.available ? 'finality is being produced' : 'finality is not available yet'}.`);
       } catch (error) {
         add('rpc', 'Node RPC answers', 'fail', redactText((error as Error).message));
       }

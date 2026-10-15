@@ -1,7 +1,7 @@
 /**
  * Prepare → confirm → sign → submit → track.
  *
- * Consequential actions (payments and validator operations) go through one pipeline:
+ * Consequential actions (wallet payments) go through one pipeline:
  *
  *   1. `register` stores a PLAN (what would be signed) and returns a summary for the
  *      confirmation dialog. Nothing is signed and nothing leaves the machine.
@@ -61,8 +61,6 @@ export interface TxServiceDeps {
   wallets: WalletService;
   /** A client for the node of that network, or throws NODE_NOT_RUNNING. */
   rpc: (network: NetworkName) => RpcClient;
-  /** Open the node identity key (validator operations). */
-  nodeIdentity: (network: NetworkName) => Promise<{ address: string; publicKey: string; privateKeyHex: string }>;
   logs: LogBuffer;
 }
 
@@ -148,24 +146,10 @@ export class TxService {
       return { hex: Buffer.from(core.encode.encodeSignedTx(envelope)).toString('hex'), txId: core.encode.txIdOf(envelope) };
     };
 
-    let signed: { hex: string; txId: string };
-    if (plan.signer === 'wallet') {
-      if (!passphrase) throw new AppError('PASSPHRASE_REQUIRED', 'Enter your wallet passphrase to sign.');
-      signed = await this.deps.wallets.withWallet(plan.network, passphrase, sign);
-    } else {
-      signed = await sign(await this.deps.nodeIdentity(plan.network));
-    }
+    // Only the user's wallet signs here. The node's own key is never opened by this app: the node signs its own statements.
+    if (!passphrase) throw new AppError('PASSPHRASE_REQUIRED', 'Enter your wallet passphrase to sign.');
+    const signed = await this.deps.wallets.withWallet(plan.network, passphrase, sign);
     return { signed, nonce, client };
-  }
-
-  /**
-   * Ask the node whether it would accept this operation right now, WITHOUT sending it. Only for the
-   * node identity signer (no passphrase involved); the signed bytes are discarded.
-   */
-  async check(plan: InternalPlan): Promise<{ valid: boolean; error: string | null }> {
-    if (plan.signer !== 'node-identity') throw new AppError('CHECK_NOT_SUPPORTED', 'Pre-checks are only available for node identity operations.');
-    const { signed, client } = await this.buildSigned(plan, undefined);
-    return client.simulate(signed.hex);
   }
 
   private async run(plan: StoredPlan, passphrase: string | undefined): Promise<ExecuteResult> {

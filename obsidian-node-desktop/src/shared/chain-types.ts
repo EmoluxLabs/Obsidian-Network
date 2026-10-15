@@ -40,35 +40,39 @@ export interface StatusInfo {
   syncing: boolean;
   supplyObs: string;
   maxSupplyObs: string;
-  validators: number;
+  nodes: number;
+  scheduleTier: string;
   activeMiners: number;
   lastBlockTimestamp: number;
   finalizedHeight: number;
   finalizedHash: string;
   finalityLag: number;
-  finalityValidatorCount: number;
+  finalityAvailable: boolean;
+  finalityEligibleProducers: number;
   finalityQuorum: number;
   genesisAllocationClaimed: boolean;
 }
 
+/** `GET /finality`: derived from chain state alone. Checkpoint (economic) finality, not BFT. */
 export interface FinalityInfo {
+  model: string;
+  available: boolean;
+  /** Why finality is or is not being produced, in the node's own words. */
+  reason: string;
   finalizedHeight: number;
   finalizedHash: string;
   headHeight: number;
-  validatorCount: number;
+  lag: number;
+  eligibleProducers: number;
+  window: number;
   quorum: number;
-  pendingVotes: number;
-  evidenceCount: number;
-  bootstrap: boolean;
-  bootstrapConfigured: boolean;
+  minProducers: number;
+  assumptions: string;
 }
 
 export interface ParamsInfo {
   protocolVersion: string;
   paramsHash: string;
-  validatorBondObs: string;
-  unbondingBlocks: number;
-  maxValidators: number;
   blockTargetSeconds: number;
   gasBasisPoints: number;
   maxGasObs: string;
@@ -135,24 +139,44 @@ export interface PotInfo {
   transactionsPerMinute: number;
 }
 
-export interface ValidatorEntry {
-  /** Masked by the node: first 10 characters, an ellipsis, last 6. */
-  address: string;
-  status: string;
-  bond: string;
-  commissionBps: number;
+/** One registered node as `GET /producers` lists it. The producer address is masked by the node. */
+export interface ProducerEntry {
+  nodeId: string;
+  producer: string;
+  tier1: boolean;
   registeredAtHeight: number;
+  lastActiveAt: number;
+  blocksProduced: number;
   missedSlots: number;
-  slashedAtHeight: number | null;
+  suspensions: number;
+  suspendedUntil: number | null;
+  bannedAtHeight: number | null;
 }
 
-export interface ValidatorsInfo {
-  activeCount: number;
-  registered: ValidatorEntry[];
-  slashBps: number;
-  slashObs: string;
-  bondObs: string;
-  slashCount: number;
+export interface ProducersInfo {
+  tier: string;
+  eligible: number;
+  registered: number;
+  banned: number;
+  nodes: ProducerEntry[];
+}
+
+/** `GET /nodes/status/:nodeId`: one node's own on-chain record. Null fields mean "none", not "unknown". */
+export interface NodeStatusInfo {
+  nodeId: string;
+  rewardWallet: string;
+  registered: boolean;
+  bannedAtHeight: number | null;
+  deregisteredAtHeight: number | null;
+  registeredAtHeight: number;
+  lifetimeRewardObs: string;
+  pendingWalletChange: { wallet: string; effectivePeriod: number | null } | null;
+  pendingReclaim: { effectivePeriod: number } | null;
+  currentPeriod: number;
+  liveWindows: number;
+  expectedWindows: number;
+  heartbeats: number;
+  faults: number;
 }
 
 export interface BlockSummary {
@@ -246,9 +270,7 @@ export const TX_TYPE_NAMES: Readonly<Record<number, string>> = {
   2: 'ONS',
   6: 'ORACLE',
   7: 'MINING_CLAIM',
-  8: 'VALIDATOR',
   9: 'TREASURY',
   10: 'GOVERNANCE',
   11: 'NODE_REGISTRY',
-  12: 'SLASH',
 };

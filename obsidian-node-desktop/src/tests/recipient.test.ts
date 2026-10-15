@@ -58,7 +58,7 @@ async function setup() {
       return { accepted: true, duplicate: false, txId: 'x' };
     },
   };
-  const tx = new TxService({ core: () => loadCore(), wallets, rpc: () => client, nodeIdentity: async () => { throw new Error('unused'); }, logs: new LogBuffer(100) });
+  const tx = new TxService({ core: () => loadCore(), wallets, rpc: () => client, logs: new LogBuffer(100) });
   const payments = new PaymentService({ core: () => loadCore(), wallets, tx, rpc: () => client });
   return { core, world, tx, payments, other, registered, owner, cleanup };
 }

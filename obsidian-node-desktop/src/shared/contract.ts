@@ -7,13 +7,13 @@
  * validates every payload again; the renderer is never trusted. There is no channel that
  * reads or writes arbitrary files, runs a command, or returns a secret.
  */
-import type { AddressHistory, BlockDetail, BlockSummary, MempoolInfo, NetworkName, TxRecord, ValidatorsInfo } from './chain-types.js';
+import type { AddressHistory, BlockDetail, BlockSummary, MempoolInfo, NetworkName, TxRecord } from './chain-types.js';
 import type { AppSettings, NodeSettings } from './settings-types.js';
 import type { WalletStatus } from './wallet-types.js';
 import type { LogEntry, LogSeverity } from './log-types.js';
 import type { NodeProcessState } from './node-types.js';
 import type { ExecuteResult, PreparedPlan, SubmissionRecord, TxStatus } from './tx-types.js';
-import type { ValidatorView } from './validator-types.js';
+import type { BindResult, ParticipationView } from './participation-types.js';
 import type { AppInfo, ChainSnapshot, DiagnosticCheck, NetworkDetail, Remote, SearchResult } from './view-types.js';
 
 export const CHANNELS = {
@@ -51,9 +51,8 @@ export const CHANNELS = {
   txResubmit: 'tx:resubmit',
   txSubmissions: 'tx:submissions',
   txStatus: 'tx:status',
-  validatorView: 'validator:view',
-  validatorList: 'validator:list',
-  validatorPrepare: 'validator:prepare',
+  participationView: 'participation:view',
+  participationBind: 'participation:bind',
   diagRun: 'diag:run',
   diagReport: 'diag:report',
   diagSave: 'diag:save',
@@ -117,9 +116,8 @@ export interface Api {
   'tx:resubmit': { req: { txId: string }; res: ExecuteResult };
   'tx:submissions': { req: void; res: SubmissionRecord[] };
   'tx:status': { req: { txId: string }; res: TxStatus };
-  'validator:view': { req: void; res: ValidatorView };
-  'validator:list': { req: void; res: Remote<ValidatorsInfo> };
-  'validator:prepare': { req: { op: 'register' | 'unregister' | 'claim' }; res: PreparedPlan };
+  'participation:view': { req: void; res: ParticipationView };
+  'participation:bind': { req: { address: string }; res: BindResult };
   'diag:run': { req: void; res: DiagnosticCheck[] };
   'diag:report': { req: void; res: { text: string } };
   'diag:save': { req: void; res: { saved: boolean; path?: string } };

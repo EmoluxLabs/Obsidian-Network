@@ -180,7 +180,7 @@ export class ChainService extends EventEmitter {
     return { peers, pot, finality, params };
   }
 
-  /** Any other cached read the screens need (validators, mempool, ...). */
+  /** Any other cached read the screens need (producers, mempool, ...). */
   read<T>(key: string, load: (c: RpcClient) => Promise<T>): Promise<T> {
     const client = this.client();
     if (!client) return Promise.reject(new AppError('NODE_NOT_RUNNING', 'The node is not running. Start it from the Node screen.'));

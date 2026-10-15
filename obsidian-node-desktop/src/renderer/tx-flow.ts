@@ -1,6 +1,5 @@
 /**
- * The one confirmation flow for everything that signs: payment, validator register /
- * unbond / claim. Shows exactly what will be signed, asks for the passphrase when the wallet
+ * The one confirmation flow for everything that signs: payment. Shows exactly what will be signed, asks for the passphrase when the wallet
  * signs, and reports the real outcome. "Submitted" is never shown as "confirmed".
  */
 import { ApiError, call } from './api.js';

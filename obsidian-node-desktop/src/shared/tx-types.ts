@@ -1,5 +1,5 @@
-export type PlanKind = 'PAYMENT' | 'VALIDATOR_REGISTER' | 'VALIDATOR_UNREGISTER' | 'VALIDATOR_CLAIM';
-export type SignerKind = 'wallet' | 'node-identity';
+export type PlanKind = 'PAYMENT';
+export type SignerKind = 'wallet';
 
 export interface PlanRow {
   label: string;

@@ -234,13 +234,8 @@ export function createHandlers(ctx: AppContext, platform: PlatformActions): Hand
     'tx:submissions': async () => ctx.tx.list(network()),
     'tx:status': async (raw) => ctx.tx.status(network(), reqString(payloadObject(raw).txId, 'txId', 80)),
 
-    'validator:view': async () => ctx.validators.view(network()),
-    'validator:list': async () => remote(() => ctx.chain.read('validators', (c) => c.validators())),
-    'validator:prepare': async (raw) => {
-      const op = payloadObject(raw).op;
-      if (op !== 'register' && op !== 'unregister' && op !== 'claim') throw new AppError('BAD_REQUEST', 'Unknown validator operation.');
-      return ctx.validators.prepare(network(), op);
-    },
+    'participation:view': async () => ctx.participation.view(network()),
+    'participation:bind': async (raw) => ctx.participation.bind(network(), reqString(payloadObject(raw).address, 'address', 200)),
 
     'diag:run': async () => ctx.diagnostics.run(),
     'diag:report': async () => ({ text: await ctx.diagnostics.report() }),

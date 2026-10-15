@@ -130,7 +130,7 @@ try {
         await sleep(300);
       }
     }
-    // the NODE screen, which shows server-provided text by design (versions, node urls, validator names)
+    // the NODE screen, which shows server-provided text by design (versions, node urls, node ids)
     await page.evaluate(() => { [...document.querySelectorAll('.nav a')].find((e) => e.textContent.trim() === 'MENU')?.click(); });
     await sleep(600);
     await page.evaluate(() => { [...document.querySelectorAll('[data-obs-click], [onclick]')].find((e) => /NODE/.test(e.textContent))?.click(); });

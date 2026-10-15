@@ -26,7 +26,8 @@ import type {
   StatusInfo,
   SubmitResult,
   TxRecord,
-  ValidatorsInfo,
+  ProducersInfo,
+  NodeStatusInfo,
   VersionInfoRpc,
   WalletBalance,
 } from '../shared/chain-types.js';
@@ -155,7 +156,16 @@ export class RpcClient {
   network = (): Promise<NetworkInfo> => this.get('/network', parseNetwork);
   peers = (): Promise<PeersInfo> => this.get('/peers', parsePeers);
   pot = (): Promise<PotInfo> => this.get('/pot', parsePot);
-  validators = (): Promise<ValidatorsInfo> => this.get('/validators', parseValidators);
+  producers = (): Promise<ProducersInfo> => this.get('/producers', parseProducers);
+  /** 404 (the node is not registered) is an answer, not a failure: it resolves to null. */
+  nodeStatus = async (nodeId: string): Promise<NodeStatusInfo | null> => {
+    try {
+      return await this.get(`/nodes/status/${encodeURIComponent(nodeId)}`, parseNodeStatus);
+    } catch (error) {
+      if (error instanceof RpcError && error.kind === 'http' && error.status === 404 && error.code === 'ERR_NODE_NOT_REGISTERED') return null;
+      throw error;
+    }
+  };
   mempool = (): Promise<MempoolInfo> => this.get('/mempool', parseMempool);
   version = (): Promise<VersionInfoRpc> => this.get('/version', parseVersion);
 
@@ -272,13 +282,15 @@ export function parseStatus(json: unknown): StatusInfo {
     syncing: bool(o.syncing, 'status.syncing'),
     supplyObs: obsAmount(o.supplyObs, 'status.supplyObs'),
     maxSupplyObs: obsAmount(o.maxSupplyObs, 'status.maxSupplyObs'),
-    validators: int(o.validators, 'status.validators', 0),
+    nodes: int(o.nodes, 'status.nodes', 0),
+    scheduleTier: str(o.scheduleTier, 'status.scheduleTier', 16),
     activeMiners: int(o.activeMiners, 'status.activeMiners', 0),
     lastBlockTimestamp: int(o.lastBlockTimestamp, 'status.lastBlockTimestamp', 0),
     finalizedHeight: int(o.finalizedHeight, 'status.finalizedHeight', 0),
     finalizedHash: str(o.finalizedHash, 'status.finalizedHash', 80),
     finalityLag: int(o.finalityLag, 'status.finalityLag', 0),
-    finalityValidatorCount: int(o.finalityValidatorCount, 'status.finalityValidatorCount', 0),
+    finalityAvailable: bool(o.finalityAvailable, 'status.finalityAvailable'),
+    finalityEligibleProducers: int(o.finalityEligibleProducers, 'status.finalityEligibleProducers', 0),
     finalityQuorum: int(o.finalityQuorum, 'status.finalityQuorum', 0),
     genesisAllocationClaimed: bool(o.genesisAllocationClaimed, 'status.genesisAllocationClaimed'),
   };
@@ -287,30 +299,29 @@ export function parseStatus(json: unknown): StatusInfo {
 export function parseFinality(json: unknown): FinalityInfo {
   const o = rec(json, 'finality');
   return {
+    model: str(o.model, 'finality.model', 64),
+    available: bool(o.available, 'finality.available'),
+    reason: str(o.reason, 'finality.reason', 400),
     finalizedHeight: int(o.finalizedHeight, 'finality.finalizedHeight', 0),
     finalizedHash: str(o.finalizedHash, 'finality.finalizedHash', 80),
     headHeight: int(o.headHeight, 'finality.headHeight', 0),
-    validatorCount: int(o.validatorCount, 'finality.validatorCount', 0),
+    lag: int(o.lag, 'finality.lag', 0),
+    eligibleProducers: int(o.eligibleProducers, 'finality.eligibleProducers', 0),
+    window: int(o.window, 'finality.window', 0),
     quorum: int(o.quorum, 'finality.quorum', 0),
-    pendingVotes: int(o.pendingVotes, 'finality.pendingVotes', 0),
-    evidenceCount: arr(o.evidence, 'finality.evidence').length,
-    bootstrap: bool(o.bootstrap, 'finality.bootstrap'),
-    bootstrapConfigured: bool(o.bootstrapConfigured, 'finality.bootstrapConfigured'),
+    minProducers: int(o.minProducers, 'finality.minProducers', 0),
+    assumptions: str(o.assumptions, 'finality.assumptions', 600),
   };
 }
 
 export function parseParams(json: unknown): ParamsInfo {
   const o = rec(json, 'params');
   const consensus = rec(o.consensus, 'params.consensus');
-  const finality = rec(consensus.finality, 'params.consensus.finality');
   const block = rec(o.block, 'params.block');
   const gas = rec(o.gas, 'params.gas');
   return {
     protocolVersion: str(o.protocolVersion, 'params.protocolVersion', 32),
     paramsHash: str(o.paramsHash, 'params.paramsHash', 80),
-    validatorBondObs: obsAmount(consensus.validatorBondObs, 'params.consensus.validatorBondObs'),
-    unbondingBlocks: int(consensus.unbondingBlocks, 'params.consensus.unbondingBlocks', 0),
-    maxValidators: int(finality.maxValidators, 'params.consensus.finality.maxValidators', 0),
     blockTargetSeconds: int(block.targetSeconds, 'params.block.targetSeconds', 1),
     gasBasisPoints: int(gas.basisPoints, 'params.gas.basisPoints', 0),
     maxGasObs: obsAmount(gas.maxGasObs, 'params.gas.maxGasObs'),
@@ -394,27 +405,53 @@ export function parsePot(json: unknown): PotInfo {
   };
 }
 
-export function parseValidators(json: unknown): ValidatorsInfo {
-  const o = rec(json, 'validators');
-  const slashing = rec(o.slashing, 'validators.slashing');
+export function parseProducers(json: unknown): ProducersInfo {
+  const o = rec(json, 'producers');
   return {
-    activeCount: int(o.count, 'validators.count', 0),
-    registered: arr(o.registered, 'validators.registered', 1000).map((entry, i) => {
-      const e = rec(entry, `validators.registered[${i}]`);
+    tier: str(o.tier, 'producers.tier', 16),
+    eligible: int(o.eligible, 'producers.eligible', 0),
+    registered: int(o.registered, 'producers.registered', 0),
+    banned: int(o.banned, 'producers.banned', 0),
+    nodes: arr(o.nodes, 'producers.nodes', 1000).map((entry, i) => {
+      const e = rec(entry, `producers.nodes[${i}]`);
       return {
-        address: str(e.address, `validators.registered[${i}].address`, 96),
-        status: str(e.status, `validators.registered[${i}].status`, 32),
-        bond: obsAmount(e.bond, `validators.registered[${i}].bond`),
-        commissionBps: int(e.commissionBps, `validators.registered[${i}].commissionBps`, 0),
-        registeredAtHeight: int(e.registeredAtHeight, `validators.registered[${i}].registeredAtHeight`, 0),
-        missedSlots: int(e.missedSlots, `validators.registered[${i}].missedSlots`, 0),
-        slashedAtHeight: optInt(e.slashedAtHeight, `validators.registered[${i}].slashedAtHeight`) ?? null,
+        nodeId: str(e.nodeId, `producers.nodes[${i}].nodeId`, 80),
+        producer: str(e.producer, `producers.nodes[${i}].producer`, 96),
+        tier1: bool(e.tier1, `producers.nodes[${i}].tier1`),
+        registeredAtHeight: int(e.registeredAtHeight, `producers.nodes[${i}].registeredAtHeight`, 0),
+        lastActiveAt: int(e.lastActiveAt, `producers.nodes[${i}].lastActiveAt`, 0),
+        blocksProduced: int(e.blocksProduced, `producers.nodes[${i}].blocksProduced`, 0),
+        missedSlots: int(e.missedSlots, `producers.nodes[${i}].missedSlots`, 0),
+        suspensions: int(e.suspensions, `producers.nodes[${i}].suspensions`, 0),
+        suspendedUntil: optInt(e.suspendedUntil, `producers.nodes[${i}].suspendedUntil`) ?? null,
+        bannedAtHeight: optInt(e.bannedAtHeight, `producers.nodes[${i}].bannedAtHeight`) ?? null,
       };
     }),
-    slashBps: int(slashing.slashBps, 'validators.slashing.slashBps', 0),
-    slashObs: obsAmount(slashing.slashObs, 'validators.slashing.slashObs'),
-    bondObs: obsAmount(slashing.bondObs, 'validators.slashing.bondObs'),
-    slashCount: int(slashing.count, 'validators.slashing.count', 0),
+  };
+}
+
+export function parseNodeStatus(json: unknown): NodeStatusInfo {
+  const o = rec(json, 'nodeStatus');
+  const evidence = rec(o.evidence, 'nodeStatus.evidence');
+  const wallet = o.pendingWalletChange === null || o.pendingWalletChange === undefined ? null : rec(o.pendingWalletChange, 'nodeStatus.pendingWalletChange');
+  const reclaim = o.pendingReclaim === null || o.pendingReclaim === undefined ? null : rec(o.pendingReclaim, 'nodeStatus.pendingReclaim');
+  return {
+    nodeId: str(o.nodeId, 'nodeStatus.nodeId', 80),
+    rewardWallet: str(o.rewardWallet, 'nodeStatus.rewardWallet', 96),
+    registered: bool(o.registered, 'nodeStatus.registered'),
+    bannedAtHeight: optInt(o.bannedAtHeight, 'nodeStatus.bannedAtHeight') ?? null,
+    deregisteredAtHeight: optInt(o.deregisteredAtHeight, 'nodeStatus.deregisteredAtHeight') ?? null,
+    registeredAtHeight: int(o.registeredAtHeight, 'nodeStatus.registeredAtHeight', 0),
+    lifetimeRewardObs: obsAmount(o.lifetimeRewardObs, 'nodeStatus.lifetimeRewardObs'),
+    pendingWalletChange: wallet
+      ? { wallet: str(wallet.wallet, 'nodeStatus.pendingWalletChange.wallet', 96), effectivePeriod: optInt(wallet.effectivePeriod, 'nodeStatus.pendingWalletChange.effectivePeriod') ?? null }
+      : null,
+    pendingReclaim: reclaim ? { effectivePeriod: int(reclaim.effectivePeriod, 'nodeStatus.pendingReclaim.effectivePeriod', 0) } : null,
+    currentPeriod: int(o.currentPeriod, 'nodeStatus.currentPeriod', 0),
+    liveWindows: int(evidence.liveWindows, 'nodeStatus.evidence.liveWindows', 0),
+    expectedWindows: int(evidence.expectedWindows, 'nodeStatus.evidence.expectedWindows', 1),
+    heartbeats: int(evidence.heartbeats, 'nodeStatus.evidence.heartbeats', 0),
+    faults: int(evidence.faults, 'nodeStatus.evidence.faults', 0),
   };
 }
 

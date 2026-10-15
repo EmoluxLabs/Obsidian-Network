@@ -4,14 +4,14 @@ import type { LogEntry } from '../shared/log-types.js';
 import type { NodeProcessState } from '../shared/node-types.js';
 import type { AppInfo, ChainSnapshot } from '../shared/view-types.js';
 
-export const ROUTES = ['overview', 'node', 'network', 'validator', 'wallet', 'tx', 'explorer', 'logs', 'settings', 'help'] as const;
+export const ROUTES = ['overview', 'node', 'network', 'participation', 'wallet', 'tx', 'explorer', 'logs', 'settings', 'help'] as const;
 export type Route = (typeof ROUTES)[number];
 
 export const NAV: ReadonlyArray<{ id: Route; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: 'M3 11l9-8 9 8v9H3z' },
   { id: 'node', label: 'Node', icon: 'M4 5h16v5H4zM4 14h16v5H4z' },
   { id: 'network', label: 'Network', icon: 'M12 4v8M12 12l-6 7M12 12l6 7' },
-  { id: 'validator', label: 'Validator Centre', icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z' },
+  { id: 'participation', label: 'Node Rewards', icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z' },
   { id: 'wallet', label: 'Wallet', icon: 'M3 7h18v12H3zM3 7l3-3h12M16 13h2' },
   { id: 'tx', label: 'Transactions', icon: 'M4 8h14l-3-3M20 16H6l3 3' },
   { id: 'explorer', label: 'Blockchain Explorer', icon: 'M11 4a7 7 0 100 14 7 7 0 000-14zM21 21l-5-5' },

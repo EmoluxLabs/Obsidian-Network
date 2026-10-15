@@ -11,7 +11,7 @@ import type { Screen } from './screens/common.js';
 import { overview } from './screens/overview.js';
 import { nodeScreen } from './screens/node.js';
 import { network } from './screens/network.js';
-import { validator } from './screens/validator.js';
+import { participation } from './screens/participation.js';
 import { wallet } from './screens/wallet.js';
 import { tx } from './screens/tx.js';
 import { explorer } from './screens/explorer.js';
@@ -23,7 +23,7 @@ import type { LogEntry } from '../shared/log-types.js';
 import type { NodeProcessState } from '../shared/node-types.js';
 import type { ChainSnapshot } from '../shared/view-types.js';
 
-const SCREENS: Record<Route, Screen> = { overview, node: nodeScreen, network, validator, wallet, tx, explorer, logs, settings, help };
+const SCREENS: Record<Route, Screen> = { overview, node: nodeScreen, network, participation, wallet, tx, explorer, logs, settings, help };
 const LABELS = Object.fromEntries(NAV.map((n) => [n.id, n.label])) as Record<Route, string>;
 
 // ── rendering with state preservation ────────────────────────────────────────

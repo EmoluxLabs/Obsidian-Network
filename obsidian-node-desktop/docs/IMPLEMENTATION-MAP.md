@@ -2,7 +2,7 @@
 
 Every screen and action of Obsidian Node, the code that serves it, and the part of the
 **existing** Obsidian Network implementation it relies on. Nothing here re-implements
-consensus, the transaction format, keys, validators or the RPC server: the app runs the real
+consensus, the transaction format, keys, node participation or the RPC server: the app runs the real
 `@obsidian/core` node (staged into `vendor/obsidian-core`, see `scripts/stage-core.mjs`) and
 talks to it over its own HTTP RPC on `127.0.0.1`.
 
@@ -17,17 +17,19 @@ library**.
 | --- | --- |
 | Node process, genesis, storage, lock, block production | `dist/index.js start --network … --data-dir … --keystore … ` (run by `node-supervisor.ts` through `main/node-host.ts`; the app never opens the database itself) |
 | Network constants (chain id, address prefix, ports) | `protocol/networks.js` → `NETWORKS` |
-| Consensus parameters shown in the UI | `protocol/params.js` → `CONSENSUS_PARAMS`, `VALIDATOR`; `blockchain/state-root.js` → `PARAMS_HASH` |
+| Consensus parameters shown in the UI | `protocol/params.js` → `CONSENSUS_PARAMS`; `blockchain/state-root.js` → `PARAMS_HASH` |
 | Recovery phrase, key derivation | `crypto/mnemonic.js` → `generateRecoveryPhrase`, `deriveWallet`, `isValidRecoveryPhrase` |
 | Addresses | `crypto/keys.js` → `addressFromPublicKey`, `isValidAddress` |
 | Amounts, gas | `protocol/amount.js` → `parseObs`, `formatObs`; `transactions/helpers.js` → `expectedGas` |
-| Payment / validator bodies | `transactions/executors/{payment,validator}.js` → `encodePaymentBody`, `encodeValidatorBody` |
+| Payment body | `transactions/executors/payment.js` → `encodePaymentBody` |
+| Reward-wallet binding file | `node-agent.js` → `readNodeBinding`, `writeNodeBinding` (the running node reads the same file and registers itself) |
 | Signing and tx id | `transactions/encode.js` → `signTransaction`, `encodeSignedTx`, `txIdOf` |
-| Node identity key (validator account) | `crypto/keystore.js` → `Keystore` (the file the node itself created) |
+| Node identity (`nodeId`) | `crypto/keys.js` → `nodeIdFromPublicKey`, from the keystore's public key; the app never opens the private key |
 
 ## RPC routes used (all verified in `obsidian-core/src/rpc/server.ts` and against a running devnet node)
 
-`GET /health /status /finality /params /network /peers /pot /validators /mempool /version`,
+`GET /health /status /finality /params /network /peers /pot /producers /mempool /version`,
+`GET /nodes/status/:nodeId` (404 when the node is not registered),
 `GET /blocks /block/:id /tx/:id /address/:addr /wallet/:addr/next-nonce`,
 `POST /wallet/balance /tx/simulate /tx/submit`.
 No other route is called. Responses are shape-checked in `core/rpc-client.ts` (`parse*`),
@@ -41,7 +43,7 @@ too-large | refused`). The client refuses any host that is not loopback.
 | Overview (`#/overview`) | `screens/overview.ts` | `chain:snapshot`, `node:state`, `node:logs` | `chain-service.ts` | `/health /status /finality /pot /peers /mempool` |
 | Node Management (`#/node`) | `screens/node.ts`, `node-actions.ts` | `node:start/stop/restart/state`, `chain:detail` | `node-supervisor.ts` | node process; `/health` readiness (running is reported only after `/health` answers) |
 | Network & Peers (`#/network`) | `screens/network.ts` | `chain:detail`, `network:switch` | `chain-service.ts` | `/network /peers /params /version` |
-| Validator Centre (`#/validator`) | `screens/validator.ts` | `validator:view/list/prepare`, `tx:execute`, `tx:cancel` | `validator-service.ts`, `tx-service.ts` | `/validators`, `/params`, `/wallet/:addr/next-nonce`, `/tx/simulate` (claim readiness), `/tx/submit`; tx type `VALIDATOR` ops REGISTER, UNREGISTER, CLAIM_UNBONDED |
+| Node Rewards (`#/participation`) | `screens/participation.ts` | `participation:view`, `participation:bind` | `participation-service.ts` | `/health`, `/producers`, `/finality`, `/nodes/status/:nodeId`; the reward wallet is saved by core `writeNodeBinding` — no transaction is signed by the app |
 | Wallet (`#/wallet`) | `screens/wallet.ts` | `wallet:status/begin-create/finish-create/cancel-create/import/balance/history/remove`, `tx:prepare-payment` | `wallet-service.ts`, `vault.ts`, `payment-service.ts` | `/wallet/balance`, `/address/:addr`; keys by core mnemonic functions |
 | Transactions (`#/tx`) | `screens/tx.ts` | `tx:submissions/status/resubmit`, `explorer:mempool` | `tx-service.ts` | `/tx/:id`, `/mempool`, `/tx/submit` (idempotent resubmit of identical bytes) |
 | Explorer (`#/explorer`) | `screens/explorer.ts` | `explorer:blocks/block/tx/address/mempool/search` | `explorer-service.ts` | `/blocks /block/:id /tx/:id /address/:addr /mempool` |
@@ -50,8 +52,7 @@ too-large | refused`). The client refuses any host that is not loopback.
 | Help & Support (`#/help`) | `screens/help.ts` | `app:info`, `app:open-external`, `diag:report`, `diag:save` | `handlers.ts`, `core-loader.ts` | core version, source commit, protocol version, `PARAMS_HASH` |
 
 The template has 17 mock screens; the ones that only existed to show states of these screens
-(empty, error, dialogs) are rendered by the same screen code from real states. The template
-lacks JAILED and SLASHED validator states, which the protocol has; they were added.
+(empty, error, dialogs) are rendered by the same screen code from real states. The template's validator screen was replaced in v1.9.0: the protocol has no validators, so the screen shows the node's own participation state.
 
 ## Actions
 
@@ -62,13 +63,13 @@ lacks JAILED and SLASHED validator states, which the protocol has; they were add
 | Switch network | `network:switch` | confirmation dialog; refused while a node process exists; each network has its own data dir, vault and settings |
 | Create / import wallet | `wallet.create`, `wallet.import` | core derivation; vault `obsidian.vault.v1` (PBKDF2-SHA256 600k, AES-GCM) — the same format as the web app, interoperability is tested |
 | Send | `wallet.review` → `tx:prepare-payment` → dialog → `tx:execute` | prepare shows amount, fee and total from `expectedGas`; passphrase needed per transaction; node simulation of the exact signed bytes; "submitted" only after `/tx/submit` accepts; "confirmed" only when `/tx/:id` says so |
-| Validator register / unbond / claim | `validator.prepare` → dialog → `tx:execute` | amounts and gas from core params; availability from live state; **claim availability is a node dry-run** (`/tx/simulate`), so it is offered only when the node would accept it |
+| Choose reward wallet | `participation.bind` → `participation:bind` | the core's own address check (network prefix and checksum) runs first; an invalid address is refused and nothing is written; no gas, no signature, no private key; the file holds an address and a timestamp only |
 | Copy / save diagnostics | `help.report-copy`, `help.report-save` | report passes through `redact.ts`; save goes through a native save dialog |
 | Open external link | `app:open-external` | allow-list: `https://github.com/EmoluxLabs/…` only |
 
 ## Not supported (and shown as such)
 
 * A persistent "unlock wallet" session: every signature asks for the passphrase.
-* Validator operations beyond REGISTER / UNREGISTER / CLAIM_UNBONDED: the protocol has none.
+* Wallet change/reclaim transactions for the reward wallet: the screen saves the operator's choice and shows the chain's state; a reclaim is signed by the wallet itself (see `docs/node-binding-v1.9.0.md` in the repository root).
 * Connecting to a remote node: the app only talks to the node it started (loopback).
 * Auto-update and code signing: not configured (see README).

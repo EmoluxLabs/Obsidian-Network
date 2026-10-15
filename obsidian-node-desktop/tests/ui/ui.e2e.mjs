@@ -60,7 +60,7 @@ try {
   await waitText(page, 'Node stopped');
 
   await step('every route renders, honest stopped state, no demo text', async () => {
-    const heads = { overview: 'Overview', node: 'Node Management', network: 'Network & Peers', validator: 'Validator Centre', wallet: 'Wallet', tx: 'Transactions', explorer: 'Blockchain Explorer', logs: 'Logs & Diagnostics', settings: 'Settings', help: 'Help & Support' };
+    const heads = { overview: 'Overview', node: 'Node Management', network: 'Network & Peers', participation: 'Node Rewards', wallet: 'Wallet', tx: 'Transactions', explorer: 'Blockchain Explorer', logs: 'Logs & Diagnostics', settings: 'Settings', help: 'Help & Support' };
     for (const [route, h] of Object.entries(heads)) {
       await go(route);
       const t = await text();
@@ -229,89 +229,42 @@ try {
     await shot('tx-confirmed');
   });
 
-  let identity;
-  await step('validator: identity account shown; register refused until funded, with the real reason', async () => {
-    await go('validator');
-    await waitText(page, 'Validator account');
-    const v = (await api('validator:view')).data;
-    identity = v.identityAddress;
-    assert.match(identity, /^dobs1/);
-    assert.equal(v.operations.register.allowed, false);
-    assert.match(v.operations.register.reason, /needs/);
-    await waitText(page, 'Not registered');
-    await shot('validator-unfunded');
-    const disabled = await page.$eval('button[data-op=register]', (b) => b.disabled);
-    assert.equal(disabled, true);
+  await step('node rewards: no validator, no bond; an invalid address is refused; a valid one is saved without any signature', async () => {
+    await go('participation');
+    await waitText(page, 'Reward wallet');
+    const t = await text();
+    assert.ok(!/validator|bond/i.test(t.replace(/not a validator|no validator|nothing is bonded|nothing to bond/gi, '')), 'no validator or bond wording on the screen');
+    const v = (await api('participation:view')).data;
+    assert.match(v.nodeId, /^[0-9a-f]{40,64}$/);
+    assert.equal(v.chosenWallet, null);
+    await type('#pt-wallet', 'not an address');
+    await clickText(page, 'button', 'Save reward wallet');
+    await waitText(page, 'Nothing was saved');
+    assert.equal((await api('participation:view')).data.chosenWallet, null);
+    await shot('node-rewards-refused');
+    await type('#pt-wallet', walletAddress);
+    await clickText(page, 'button', 'Save reward wallet');
+    for (let i = 0; i < 30; i += 1) {
+      if ((await api('participation:view')).data.chosenWallet === walletAddress) break;
+      await sleep(500);
+      if (i === 29) throw new Error('the reward wallet was never saved');
+    }
+    await shot('node-rewards-saved');
   });
 
-  await step('validator: fund the identity account from the wallet through the UI', async () => {
-    const bal = (await api('wallet:balance')).data.data.balanceObs;
-    assert.ok(Number(bal) > 20001.5, `wallet balance ${bal} is enough to fund the bond`);
-    await clickText(page, 'button', 'Send OBS to this account');
-    await waitText(page, 'Send OBS');
-    assert.equal(await page.$eval('#send-to', (e) => e.value), identity);
-    await type('#send-amount', '20001');
-    await clickText(page, 'button[type=submit]', 'Review transfer');
-    await waitText(page, 'Sign and send');
-    await type('#plan-pass', PASS);
-    await clickText(page, '.md button', 'Sign and send');
-    await waitText(page, 'Submitted to the node');
-    await clickText(page, '.md button', 'Copy id').catch(() => {});
-    await page.evaluate(() => document.querySelector('.md button.p')?.click());
-    for (let i = 0; i < 60; i += 1) {
-      const v = (await api('validator:view')).data;
-      if (v.operations.register.allowed) return;
+  await step('node rewards: the running node registers itself with its own key; the app signs nothing', async () => {
+    await go('participation');
+    for (let i = 0; i < 120; i += 1) {
+      const v = (await api('participation:view')).data;
+      if (v.phase === 'registered' || v.phase === 'changing') {
+        assert.equal(v.record.rewardWallet, walletAddress, 'the chain holds exactly the wallet that was pasted');
+        break;
+      }
       await sleep(1000);
+      if (i === 119) throw new Error('the node never registered; phase ' + v.phase);
     }
-    throw new Error('identity account never became funded');
-  });
-
-  await step('validator: register through review → authorize → active on the node', async () => {
-    await go('validator');
-    await waitText(page, 'Become a Validator');
-    await page.waitForFunction(() => { const b = document.querySelector('button[data-op=register]'); return b && !b.disabled; }, { timeout: 20000 });
-    await clickText(page, 'button', 'Become a Validator');
-    await waitText(page, 'Review validator registration');
-    await shot('validator-register-review');
-    const dlg = await page.$eval('.md', (e) => e.innerText);
-    assert.match(dlg, /20,000\.00/);
-    assert.match(dlg, /Signed with this node/);
-    await clickText(page, '.md button', 'Authorize registration');
-    await waitText(page, 'Submitted to the node');
-    await page.evaluate(() => document.querySelector('.md button.p')?.click());
-    for (let i = 0; i < 90; i += 1) {
-      const v = (await api('validator:view')).data;
-      if (v.phase === 'active') break;
-      await sleep(1000);
-      if (i === 89) throw new Error('validator never became active; phase ' + v.phase);
-    }
-    await go('validator');
-    await waitText(page, 'Active validator');
-    await shot('validator-active');
-  });
-
-  await step('validator: unbonding requires confirmation and reaches UNBONDING; claim stays unavailable until the delay passes', async () => {
-    await go('validator');
-    await page.waitForFunction(() => { const b = document.querySelector('button[data-op=unregister]'); return b && !b.disabled; }, { timeout: 30000 });
-    await clickText(page, 'button', 'Request Unbonding');
-    await waitText(page, 'Request unbonding?');
-    await clickText(page, '.md button', 'Cancel');
-    await sleep(300);
-    assert.equal((await api('validator:view')).data.phase, 'active', 'cancel changed nothing');
-    await clickText(page, 'button', 'Request Unbonding');
-    await waitText(page, 'Request unbonding?');
-    await clickText(page, '.md button', 'Request Unbonding');
-    await waitText(page, 'Submitted to the node');
-    await page.evaluate(() => document.querySelector('.md button.p')?.click());
-    for (let i = 0; i < 90; i += 1) {
-      const v = (await api('validator:view')).data;
-      if (v.phase === 'unbonding') { assert.equal(v.operations.claim.allowed, false); break; }
-      await sleep(1000);
-      if (i === 89) throw new Error('never unbonding; phase ' + v.phase);
-    }
-    await go('validator');
-    await waitText(page, 'Unbonding');
-    await shot('validator-unbonding');
+    await waitText(page, 'Registered');
+    await shot('node-rewards-registered');
   });
 
   await step('logs: live node lines, severity filter, redaction of secrets; diagnostics run for real', async () => {

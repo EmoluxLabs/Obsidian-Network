@@ -69,11 +69,9 @@ export const network: Screen = {
     <div class="g g2" style="margin-top:14px">
       ${remoteView(d?.finality, (f) => html`<div class="card"><div class="k">Finality</div>
         <div class="row"><span>Finalized height</span><span class="m">${formatInt(f.finalizedHeight)} of ${formatInt(f.headHeight)}</span></div>
-        <div class="row"><span>Committee / quorum</span><span class="m">${f.validatorCount} / ${f.quorum}</span></div>
-        <div class="row"><span>Pending votes</span><span class="m">${f.pendingVotes}</span></div>
-        <div class="row"><span>Equivocation evidence</span><span class="m">${f.evidenceCount}</span></div>
-        <div class="row"><span>Bootstrap mode</span>${badge(f.bootstrap ? 'ON' : 'OFF', f.bootstrap ? 'wn' : 'ok')}</div>
-        ${f.bootstrap ? html`<div class="sub" style="margin-top:8px">Until the first validator registers, blocks are not finalized by a committee.</div>` : ''}</div>`, 'Finality')}
+        <div class="row"><span>Established producers / quorum</span><span class="m">${f.eligibleProducers} / ${f.quorum}</span></div>
+        <div class="row"><span>Finality</span>${badge(f.available ? 'AVAILABLE' : 'NOT YET', f.available ? 'ok' : 'wn')}</div>
+        <div class="sub" style="margin-top:8px">${f.reason}</div></div>`, 'Finality')}
       ${remoteView(d?.peers, (pe) => html`<div class="card"><div class="k">This node on the network</div>
         <div class="row"><span>Name</span><span class="m">${pe.name}</span></div>
         <div class="row"><span>Node id</span>${mono(pe.nodeId, { short: true, copy: true })}</div>

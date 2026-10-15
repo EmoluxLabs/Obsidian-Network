@@ -11,9 +11,8 @@ npm i --no-save puppeteer-core @sparticuz/chromium
 npm run test:ui                   # SHOTS_DIR=/tmp/shots node tests/ui/ui.e2e.mjs for screenshots
 ```
 
-* `ui.e2e.mjs` — 19 steps: routes, network switch, settings, node start, wallet create, claim
-  funds, send (wrong passphrase refused), validator fund → register → active → unbond (claim
-  blocked until the delay), logs/diagnostics, help, stop, restart, SIGKILL honesty, and no
+* `ui.e2e.mjs` — steps: routes, network switch, settings, node start, wallet create, claim
+  funds, send (wrong passphrase refused), reward wallet (invalid refused, valid saved) → the node registers itself on chain, logs/diagnostics, help, stop, restart, SIGKILL honesty, and no
   console errors.
 * `fund.mjs` — helper that funds a devnet wallet through the node's own first mining claim.
 * `browser.mjs` — launcher and small helpers (`waitText` is case-insensitive because the CSS
