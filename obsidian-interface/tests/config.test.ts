@@ -125,7 +125,7 @@ describe('configuration validation', () => {
   });
 });
 
-describe('the interface role (protocol 1.8.0: the account store lives on one primary host)', () => {
+describe('the interface role (the account store lives on one primary host)', () => {
   const base = ['--network', 'devnet', '--nodes', 'http://127.0.0.1:38630'];
   it('is primary unless the operator says edge', () => {
     expect(loadInterfaceConfig(base, {}).config.role).toBe('primary');

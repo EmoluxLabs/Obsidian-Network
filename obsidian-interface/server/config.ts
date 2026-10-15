@@ -118,7 +118,7 @@ Environment:
     same shared durable volume), OBSIDIAN_INTERFACE_LEASE_TTL_MS (default 15000, min 3000),
     OBSIDIAN_INTERFACE_MAX_CLOCK_SKEW_MS (default 2000), OBSIDIAN_INTERFACE_ADVERTISE_URL (this host's public URL)
 
-Roles (protocol 1.8.0 — the account store lives on ONE host):
+Roles (the account store lives on ONE host):
   primary  holds the accounts, wallet links and the gate key. Run exactly one per network.
   edge     serves the chain, explorer and wallet pages from its own nodes and refuses sign-in, account, wallet-link and
            mining routes with ERR_EDGE_READ_ONLY (503), so a second host can take read traffic without a second,

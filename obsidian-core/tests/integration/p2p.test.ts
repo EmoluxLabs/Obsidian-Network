@@ -397,8 +397,21 @@ describe('the handshake gate', () => {
     expect(a.p2p.peerCount).toBe(0);
   });
 
-  it('a node on the previous patch release (same protocol) is accepted; one below the minimum core is refused', async () => {
-    // 1.8.1 changed no consensus rule, so a 1.8.0 node must keep peering: a patch release is not a network split.
+  it('a 1.8.2 validator-era node is refused at the handshake, whether it claims its old protocol or its old core version', async () => {
+    // 1.9.0 is a fresh start with no validators: a 1.8.x node holds a different chain and different rules.
+    const a = await startNode();
+    for (const overrides of [{ protocolVersion: '1.8.2' }, { version: '1.8.2' }]) {
+      const peer = await rawPeer(a.port);
+      await waitFor(() => challengeOf(peer) !== '');
+      peer.send(helloFor(a, generateKeyPair(net.addressHrp), challengeOf(peer), overrides));
+      await waitFor(() => peer.received.some((message) => message.t === 'reject'));
+      expect((peer.received.find((message) => message.t === 'reject') as { code: string }).code, JSON.stringify(overrides)).toBe('ERR_VERSION_MISMATCH');
+    }
+    expect(a.p2p.peerCount).toBe(0);
+  });
+
+  it('a node on the minimum core version (same protocol) is accepted; one below the minimum core is refused', async () => {
+    // A node on the minimum core version of this protocol must keep peering; one below it is refused.
     const a = await startNode();
     const okKeys = generateKeyPair(net.addressHrp);
     const previous = await rawPeer(a.port);

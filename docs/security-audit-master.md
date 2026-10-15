@@ -1,5 +1,7 @@
 # Security audit: master execution pass (core 1.7.x)
 
+> Historical record. The findings below concern the data-directory lock, handshake, RPC surface and origins, which 1.9.0 keeps. The slashing and validator mechanisms the earlier audits it cites covered were removed in 1.9.0 (`docs/upgrading-1.9.0.md`).
+
 Scope and honesty: this pass concentrated on process startup and the data-directory lock, network identity, the P2P
 handshake and peer reporting, the RPC surface (health/readiness, privileged routes), trusted origins and cookies, and
 dependency state. It was **not** a fresh line-by-line review of every file in the monorepo; earlier audits

@@ -6,7 +6,7 @@
  *
  * Every defect this test pins was found the same way a user finds it: by clicking. The browser signed
  * transactions the node refused, nothing could say where revenue went, and nothing could prove that a
- * validator's bond was the one consensus demands. The unit tests cannot see those, because each side
+ * a retired validator surface was still reachable. The unit tests cannot see those, because each side
  * was self-consistent; only the two together disagree.
  *
  * So this bundles the REAL `operations.ts`, `client.ts` and `wallet.ts` the browser ships, runs them in
@@ -143,9 +143,8 @@ before(async () => {
       `export { ObsidianClient, ChainError } from ${JSON.stringify(join(lib_, 'client.ts'))};`,
       `export { Wallet } from ${JSON.stringify(join(lib_, 'wallet.ts'))};`,
       `export { decodeOnsBody, encodeOnsBody } from ${JSON.stringify(join(IFACE, 'web', 'core', 'transactions', 'executors', 'ons.js'))};`,
-      `export { decodeValidatorBody, encodeValidatorBody } from ${JSON.stringify(join(IFACE, 'web', 'core', 'transactions', 'executors', 'validator.js'))};`,
       `export { decodeSignedTxFromBytes } from ${JSON.stringify(join(IFACE, 'web', 'core', 'transactions', 'encode.js'))};`,
-      `export { TxType, OnsOp, ValidatorOp } from ${JSON.stringify(join(IFACE, 'web', 'core', 'protocol', 'types.js'))};`,
+      `export { TxType, OnsOp } from ${JSON.stringify(join(IFACE, 'web', 'core', 'protocol', 'types.js'))};`,
       `export { CONSENSUS_PARAMS } from ${JSON.stringify(join(IFACE, 'web', 'core', 'protocol', 'params.js'))};`,
       `export { PROTOCOL_VERSION } from ${JSON.stringify(join(IFACE, 'web', 'core', 'version.js'))};`,
       `export { parseObs } from ${JSON.stringify(join(IFACE, 'web', 'core', 'protocol', 'amount.js'))};`,
@@ -267,36 +266,24 @@ test('a renewal is ONS revenue too, and the split adds back to the whole', { ski
   assert.equal(after.split.treasuryUnclaimedObs, '0.000000000000000000', 'a designated treasury leaves nothing unclaimed');
 });
 
-test('validator registration carries exactly the 20,000 OBS bond, and anything else is refused', { skip, timeout: ms(180_000) }, async () => {
-  const { miner } = wallets;
-  const bond = lib.CONSENSUS_PARAMS.consensus.validatorBond;
-  assert.equal(bond, 20_000n * 10n ** 18n, 'the protocol fixes the bond at exactly 20,000 OBS');
+test('there is no validator, bond or staking surface; producers and finality are served instead', { skip, timeout: ms(60_000) }, async () => {
+  // The browser library has no validator operation and the protocol has no validator transaction type.
+  assert.equal(lib.operations.registerValidator, undefined, 'the browser library offers no validator registration');
+  assert.equal(lib.TxType.VALIDATOR, undefined, 'the protocol has no VALIDATOR transaction type');
+  assert.equal(lib.CONSENSUS_PARAMS.consensus.validatorBond, undefined, 'the protocol fixes no validator bond');
 
-  // Too little: the node refuses it in the mempool simulation, naming the protocol
-  // code in the message, and nothing is ever signed into a block.
-  await assert.rejects(
-    lib.operations.registerValidator(client, miner, { bondObs: '1000', validatorKey: '02' + 'ab'.repeat(32) }),
-    (error) =>
-      error instanceof lib.ChainError &&
-      error.code === 'ERR_REJECTED' &&
-      /ERR_VALIDATOR_BOND_MISMATCH: validator bond must equal exactly 20000\.000000000000000000 OBS/.test(error.message),
-    'a bond that is not exactly 20,000 OBS is refused with the protocol code',
-  );
+  // The node has no /validators route, and the interface proxy does not invent one.
+  assert.equal((await get(`${NODE_URL}/validators`)).status, 404, 'the node has no /validators route');
+  assert.notEqual((await get(`${UI_URL}/api/rpc?path=${encodeURIComponent('/validators')}`)).status, 200, 'the proxy serves no /validators');
 
-  const nonce = await nonceOf(miner);
-  const status = await client.status();
-  const signed = miner.sign({
-    chainId: status.chainId,
-    protocolVersion: lib.PROTOCOL_VERSION,
-    type: lib.TxType.VALIDATOR,
-    nonce,
-    gas: lib.gasFor(bond),
-    body: lib.encodeValidatorBody({ op: lib.ValidatorOp.REGISTER, bond, validatorKey: '02' + 'ab'.repeat(32), commissionBps: 0 }),
-    validUntil: status.lastBlockTimestamp + 600,
-  });
-  const decoded = lib.decodeValidatorBody(lib.decodeSignedTxFromBytes(signed).body);
-  assert.equal(decoded.bond, bond, 'the bytes the browser signed carry the exact bond');
-  assert.equal(lib.decodeSignedTxFromBytes(signed).type, lib.TxType.VALIDATOR);
+  // What replaced it is readable through the same proxy a page uses.
+  const producers = await get(`${UI_URL}/api/rpc?path=${encodeURIComponent('/producers')}`);
+  assert.equal(producers.status, 200, '/producers is served through the interface proxy');
+  assert.ok(['TIER1', 'TIER2', 'OPEN'].includes(producers.body.tier), `the producer tier is reported (saw ${producers.body.tier})`);
+  const finality = await get(`${UI_URL}/api/rpc?path=${encodeURIComponent('/finality')}`);
+  assert.equal(finality.status, 200, '/finality is served through the interface proxy');
+  assert.equal(finality.body.model, 'PRODUCER_DIVERSITY_CHECKPOINT');
+  assert.equal(typeof finality.body.available, 'boolean', 'finality says plainly whether it is available');
 });
 
 test('the interface proxy refuses every route of a discontinued product', { skip }, async () => {

@@ -183,7 +183,7 @@ jobs:
       - run: node --test tests/e2e/operations.test.mjs
       # The interface's own browser code (operations, client, wallet), bundled and run against a real
       # node behind a real interface: ONS registration and renewal, the 90/10 revenue split, the
-      # 20,000 OBS validator bond and trusted origins, checked on the chain afterwards. Binds ports
+      # the absence of any validator surface and trusted origins, checked on the chain afterwards. Binds ports
       # 49130-49131 and 49288.
       - run: node --test tests/e2e/ecosystem.test.mjs
       # The one-command-per-network helper the Termux and VPS guides use, run on

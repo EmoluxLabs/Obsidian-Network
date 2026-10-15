@@ -78,7 +78,13 @@ check('gas returns to the mining pool', 'MINING_POOL', P.gas.destination);
 // ── consensus: Proof of Time ─────────────────────────────────────────────────
 check('consensus is Proof of Time', 'PROOF_OF_TIME', P.proofOfTime.consensus);
 check('PoT fork choice uses deterministic lowest-hash tie-break', 'FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH', P.proofOfTime.weightRule);
-check('fork choice agrees across params', 'FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH', P.consensus.forkChoice);
+// `weightRule` names the comparison (published by /pot); `forkChoice` names the full rule, which in 1.9.0 requires the finalized prefix.
+check('fork choice requires the finalized prefix, then weight, height, lowest hash', 'FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH', P.consensus.forkChoice);
+check('there is no validator bond, slashing parameter or bootstrap committee', 'undefined,undefined,undefined',
+  [P.consensus.validatorBond, P.consensus.equivocationSlashBps, P.consensus.bootstrap].map(String).join(','));
+check('finality is derived from producers, never voted', 'PRODUCER_DIVERSITY_CHECKPOINT', P.consensus.finality.model);
+check('finality needs at least 3 producers and a 2/3 quorum', '3,2,3', [P.consensus.finality.minProducers, P.consensus.finality.quorumNumerator, P.consensus.finality.quorumDenominator].join(','));
+check('a new node waits 64 blocks before it can produce', 64, P.consensus.producers.maturityBlocks);
 check('the block target is 5 seconds', 5, P.proofOfTime.difficultyTargetSeconds);
 check('the future-drift bound is 60 seconds', 60, P.block.maxFutureDriftSeconds);
 check('median time past uses 11 blocks', 11, P.block.medianTimePastWindow);
@@ -95,8 +101,7 @@ check('integer split preserves all seals for adversarial fee amounts', 'true', S
 })));
 check('no node may take more than 5% of a period', 500, P.nodeRewards.maxNodeShareBps);
 check('node registration funds nothing', 'undefined', String(typeof P.nodeRewards.registrationBond));
-check('the only bond is the validator bond', (20000n * OBS).toString(), String(P.consensus.validatorBond));
-check('a proven equivocation costs half the bond', '5000', String(P.consensus.equivocationSlashBps));
+check('no bond of any kind exists', 'undefined', String(P.consensus.validatorBond));
 check('a reward period is 24 hours', 86_400, P.nodeRewards.periodSeconds);
 check('scoring weights total 100%',
   10_000,
@@ -111,7 +116,7 @@ check('ONS registration costs 0.05 OBS', '50000000000000000', String(P.ons.regis
 check('ONS renewal costs 0.05 OBS', '50000000000000000', String(P.ons.renewalFee));
 check('ONS fees are independent of oracle pricing', 'true',
   String(P.ons.registrationFeeUsd === undefined && P.ons.renewalFeeUsd === undefined));
-check('validator registration requires exactly 20,000 OBS', (20_000n * OBS).toString(), String(P.consensus.validatorBond));
+check('node registration moves no funds (no gas, no deposit)', 'undefined', String(P.nodeRewards.registrationBond));
 check('an account may issue at most 5 invites', 5, P.registry.maxInvitesPerAccount);
 
 // ── things that were removed and must stay removed ───────────────────────────

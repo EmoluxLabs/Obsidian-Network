@@ -364,7 +364,7 @@ export const CONSENSUS_PARAMS = {
       maturityBlocks: 64,
       /**
        * A node is schedulable only if it has shown life (registered, heartbeat, or produced a block) within this
-       * many seconds of protocol time. Heartbeats are one per reward period, so this is two periods.
+       * many seconds of protocol time. Heartbeats are hourly uptime windows, so two days of silence ends eligibility.
        */
       activityWindowSeconds: 2 * 24 * 60 * 60,
       /** Consecutive missed scheduled slots after which a producer is suspended. */

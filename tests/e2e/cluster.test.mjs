@@ -20,7 +20,7 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -94,6 +94,10 @@ function certificateFor(wallet, claimId) {
 function startNode(node) {
   const dataDir = mkdtempSync(join(tmpdir(), `obsidian-${node.name}-`));
   dataDirs.push(dataDir);
+  // Protocol 1.9.0: a node joins the producer schedule by registering, and registering needs a reward wallet NAMED by
+  // address (no wallet key, no gas). `register` only writes <data-dir>/node-binding.json; the node registers itself.
+  const bound = spawnSync(process.execPath, [ENTRY, 'register', newWallet().address, '--network', 'devnet', '--data-dir', dataDir], { cwd: CORE, encoding: 'utf8' });
+  assert.equal(bound.status, 0, `binding a reward wallet failed: ${bound.stderr || bound.stdout}`);
   const args = [
     ENTRY,
     'start',
@@ -146,9 +150,8 @@ async function loadCore() {
     { expectedGas },
     { parseObs },
     { usdMicroToSeals },
-    { TxType, OnsOp, ValidatorOp },
+    { TxType, OnsOp },
     { addressFromPublicKey, generateKeyPair },
-    { encodeValidatorBody },
     { Keystore },
     { issueMiningGateCertificate },
   ] = await Promise.all([
@@ -163,15 +166,14 @@ async function loadCore() {
     import(join(CORE, 'dist', 'transactions', 'helpers.js')),
     import(join(CORE, 'dist', 'protocol', 'types.js')),
     import(join(CORE, 'dist', 'crypto', 'keys.js')),
-    import(join(CORE, 'dist', 'transactions', 'executors', 'validator.js')),
     import(join(CORE, 'dist', 'crypto', 'keystore.js')),
     import(join(CORE, 'dist', 'mining', 'gate.js')),
   ]);
   return {
     generateRecoveryPhrase, deriveWallet, signTransaction, encodeSignedTx,
     encodePaymentBody, encodeMiningBody, encodeOnsBody, encodeOracleBody,
-    encodeValidatorBody, expectedGas, parseObs, usdMicroToSeals, TxType, OnsOp,
-    ValidatorOp, addressFromPublicKey, Keystore, generateKeyPair, issueMiningGateCertificate,
+    expectedGas, parseObs, usdMicroToSeals, TxType, OnsOp,
+    addressFromPublicKey, Keystore, generateKeyPair, issueMiningGateCertificate,
   };
 }
 
@@ -832,115 +834,47 @@ test('the ONS revenue split is 90/10 and adds back to the whole on every node', 
 });
 
 /**
- * Validator-set safety through an outage.
+ * A producer going offline costs the network a slot, not the chain (protocol 1.9.0).
  *
- * Timeout rounds rotate only through bonded validators. The former fallback
- * opened production to any key after one pass through the active set, allowing
- * an unbonded producer to bypass registration (and to reach the fallback early
- * with the future-drift allowance). This test registers a single validator,
- * kills it, and proves surviving unregistered nodes do not manufacture blocks.
+ * Every node registered itself with its own key (no validator, no bond). When the first node (the seed of the other
+ * two) is killed with SIGKILL, the schedule skips its turns deterministically and the survivors keep producing and
+ * keep agreeing; the finalized checkpoint, which needs two thirds of at least three established producers, never
+ * moves backwards.
  *
  * This is deliberately the LAST test: it destroys node A.
  */
-test('unregistered survivors cannot produce when the only validator goes offline', { skip, timeout: ms(420_000) }, async () => {
-  const miner = await ensureMiner();
+test('the chain keeps going and the survivors agree when one producer goes offline', { skip, timeout: ms(420_000) }, async () => {
   const recordA = children.find((record) => record.node.name === A.name);
   assert.ok(recordA, 'node A must be running');
 
-  // Node A's consensus identity, read from the keystore this harness created
-  // for it. Blocks are signed with that key, so this is the address that has
-  // to be registered for A to become the scheduled proposer.
-  const keyPair = core.Keystore.read(join(recordA.dataDir, 'node-key.json'), PASSPHRASE);
-  const validatorAddress = core.addressFromPublicKey(keyPair.publicKey, HRP);
-
-  // 1. Fund node A's address so it can post a bond.
-  // The bond is not a floor: consensus fixes it at exactly this amount, and the
-  // node publishes it. Read it from the node rather than from a test constant.
-  const published = (await params(A)).consensus.validatorBondObs;
-  const bond = core.parseObs(published);
-  assert.equal(bond, core.parseObs('20000'), 'the validator bond is exactly 20,000 OBS');
-  const registerGas = core.expectedGas(bond);
-  const funding = bond + registerGas + core.parseObs('1'); // bond, its gas, and headroom
-  const fundingAt = await protocolTime(A);
-  const fundingNonce = await nextChainNonce(miner.address);
-  const funded = await submit(A, core.encodeSignedTx(core.signTransaction({
-    protocolVersion: PROTOCOL_VERSION,
-    chainId: CHAIN_ID,
-    sender: miner.address,
-    nonce: fundingNonce,
-    type: core.TxType.PAYMENT,
-    gas: core.expectedGas(funding),
-    body: core.encodePaymentBody({ to: validatorAddress, amount: funding }),
-    validUntil: fundingAt + 600,
-    privateKeyHex: miner.privateKey,
-    publicKeyHex: miner.publicKey,
-  })));
-  assert.equal(funded.status, 200, `funding the validator failed: ${JSON.stringify(funded.body)}`);
+  // All three nodes registered themselves on chain, signed by their own identity keys.
   await waitFor(async () => {
-    for (const record of children) assertAlive(record);
-    const seen = await Promise.all(NODES.map((node) => balance(node, validatorAddress)));
-    return seen.every((value) => BigInt(value.balanceSeals) >= bond + registerGas) ? seen : false;
-  }, { timeoutMs: ms(60_000), intervalMs: 400, what: `every node to see the bond funded at ${validatorAddress}` });
+    const counts = await Promise.all(NODES.map((node) => get(`${rpc(node)}/producers`).then((r) => r.body.registered)));
+    return counts.every((count) => count === 3);
+  }, { timeoutMs: ms(180_000), intervalMs: 1000, what: 'every node to see all three registered producers' });
 
-  // 2. Register node A as the one and only validator. From that block on the
-  //    rotation has exactly one member, so round 0 of EVERY height names A and
-  //    nobody else may produce until a slot has elapsed.
-  const registerAt = await protocolTime(A);
-  const registerNonce = await nextChainNonce(validatorAddress);
-  const registered = await submit(B, core.encodeSignedTx(core.signTransaction({
-    protocolVersion: PROTOCOL_VERSION,
-    chainId: CHAIN_ID,
-    sender: validatorAddress,
-    nonce: registerNonce,
-    type: core.TxType.VALIDATOR,
-    gas: registerGas,
-    body: core.encodeValidatorBody({
-      op: core.ValidatorOp.REGISTER,
-      bond,
-      validatorKey: keyPair.publicKey,
-      commissionBps: 0,
-    }),
-    validUntil: registerAt + 600,
-    privateKeyHex: keyPair.privateKey,
-    publicKeyHex: keyPair.publicKey,
-  })));
-  assert.equal(registered.status, 200, `validator registration failed: ${JSON.stringify(registered.body)}`);
-  await waitForMined(validatorAddress, registerNonce);
+  const before = await Promise.all(NODES.map((node) => status(node)));
+  const finalizedBefore = Math.max(...before.map((entry) => entry.finalizedHeight ?? 0));
 
-  // Every node has to see the same single-member rotation, or the outage below
-  // proves nothing.
-  await waitFor(async () => {
-    for (const record of children) assertAlive(record);
-    const counts = await Promise.all(NODES.map((node) => get(`${rpc(node)}/validators`).then((r) => r.body.count)));
-    return counts.every((value) => value === 1);
-  }, { timeoutMs: ms(60_000), what: 'all three nodes to see exactly one active validator' });
-
-  // ...and A has to actually be producing, so that killing it really does
-  // remove the scheduled proposer rather than an idle registration.
-  await waitFor(async () => {
-    for (const record of children) assertAlive(record);
-    const height = (await status(B)).height;
-    const { body } = await get(`${rpc(B)}/block/${height}`);
-    return body?.header?.producer === validatorAddress;
-  }, { timeoutMs: ms(90_000), intervalMs: 500, what: 'the registered validator to produce a block' });
-
-  // 3. The outage. SIGKILL, because a validator that crashes does not get to
-  //    hand over gracefully.
-  const heightAtOutage = (await status(B)).height;
+  // The outage. SIGKILL, because a producer that crashes does not get to say goodbye.
   recordA.child.kill('SIGKILL');
-  await waitFor(() => recordA.code !== null || recordA.signal !== null,
-    { timeoutMs: ms(30_000), intervalMs: 200, what: 'node A to exit' });
+  await new Promise((resolvePromise) => recordA.child.once('exit', () => resolvePromise()));
+  const heightAtOutage = Math.max((await status(B)).height, (await status(C)).height);
 
-  // Let any block A had already broadcast settle, then establish a common
-  // survivor height. Three more target slots must not open the set.
+  // The survivors produce on, past A's scheduled turns, and converge on one tip.
   await waitFor(async () => {
-    const [onB, onC] = await Promise.all([status(B), status(C)]);
-    return onB.height === onC.height ? onB.height : false;
-  }, { timeoutMs: ms(30_000), intervalMs: 300, what: 'survivors to agree after the validator exits' });
-  const stalledHeight = (await status(B)).height;
-  assert.ok(stalledHeight >= heightAtOutage, 'survivors must retain the last committed height');
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, ms(20_000)));
-  const [afterB, afterC] = await Promise.all([status(B), status(C)]);
-  assert.equal(afterB.height, stalledHeight, 'unregistered node B must not bypass the validator set');
-  assert.equal(afterC.height, stalledHeight, 'unregistered node C must not bypass the validator set');
+    const [b, c] = await Promise.all([status(B), status(C)]);
+    return b.height >= heightAtOutage + 6 && c.height >= heightAtOutage + 6;
+  }, { timeoutMs: ms(120_000), intervalMs: 1000, what: 'the surviving producers to keep producing blocks' });
+  await waitFor(async () => {
+    const [b, c] = await Promise.all([status(B), status(C)]);
+    const common = Math.min(b.height, c.height) - 1;
+    const [blockB, blockC] = await Promise.all([get(`${rpc(B)}/block/${common}`), get(`${rpc(C)}/block/${common}`)]);
+    return blockB.status === 200 && blockC.status === 200 && blockB.body.hash === blockC.body.hash;
+  }, { timeoutMs: ms(60_000), intervalMs: 1000, what: 'the survivors to agree on the same block' });
+
+  const after = await Promise.all([status(B), status(C)]);
+  for (const entry of after) {
+    assert.ok((entry.finalizedHeight ?? 0) >= finalizedBefore, 'the finalized checkpoint must never move backwards');
+  }
 });

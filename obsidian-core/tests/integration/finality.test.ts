@@ -181,6 +181,62 @@ describe('finality on a real chain', () => {
     expect(h.chain.world.s.finality.finalizedHeight).toBe(0);
   });
 
+  it('a partition into minorities finalizes nothing on either side; on healing every node picks the same branch whatever order it hears them in', async () => {
+    const { h, nodes } = await fleetHarness(3);
+    growTo(h, P.maturityBlocks + 4);
+    const forkHeight = h.chain.height;
+    const sideX = new Set([nodes[0].address, nodes[1].address]); // two of the three
+    const sideY = new Set([nodes[2].address]); // the third, alone
+
+    /** Extend a branch from `from` using only producers in `allowed`; late rounds hand the turn on deterministically. */
+    const extend = (from: ReturnType<typeof forkParent>, allowed: Set<string>, count: number) => {
+      const blocks = [] as ReturnType<Harness['makeBlockOn']>['block'][];
+      let parent = from;
+      for (let i = 0; i < count; i += 1) {
+        const parentTimestamp = parent.state.s.timestamp;
+        let built: ReturnType<Harness['makeBlockOn']> | undefined;
+        for (let round = 0; round < 12 && !built; round += 1) {
+          const timestamp = parentTimestamp + SLOT * (round + 1);
+          const decision = producerDecision(parent.state, parent.height + 1, round, timestamp);
+          if (decision.kind === 'SCHEDULED' && allowed.has(decision.producer)) {
+            built = h.makeBlockOn(parent, [], { timestamp, producer: h.signers.get(decision.producer)! });
+          }
+        }
+        expect(built, `a producer of this side is due within 12 rounds at height ${parent.height + 1}`).toBeDefined();
+        blocks.push(built!.block);
+        parent = { hash: blockHash(built!.block.header), height: built!.block.header.height, cumulativePotWeight: built!.block.header.cumulativePotWeight, state: built!.state };
+      }
+      return blocks;
+    };
+
+    const base = forkParent(h, forkHeight);
+    const branchX = extend(base, sideX, 70);
+    const branchY = extend(base, sideY, 45);
+    expect(branchX[0].header.prevHash).toBe(branchY[0].header.prevHash);
+    expect(blockHash(branchX[0].header)).not.toBe(blockHash(branchY[0].header));
+
+    // The side that heard X first, then Y after the partition heals.
+    for (const block of branchX) expect(h.chain.addBlock(block).accepted).toBe(true);
+    for (const block of branchY) h.chain.addBlock(block); // a valid sibling branch: accepted as a side branch
+    expect(h.chain.world.s.finality.finalizedHeight, 'a minority side cannot finalize').toBe(0);
+    const tipX = blockHash(branchX[branchX.length - 1].header);
+    expect(h.chain.tip!.hash, 'the heavier branch wins').toBe(tipX);
+
+    // A node that heard the other side first reaches the same head, because fork choice ignores arrival order.
+    const replica = await createHarness({ producer: h.producer });
+    harnesses.push(replica);
+    for (let height = 1; height <= forkHeight; height += 1) {
+      const block = h.chain.store.getBlockByHash(h.chain.store.getCanonicalHashAtHeight(height)!)!;
+      expect(replica.chain.addBlock(block).accepted).toBe(true);
+    }
+    for (const block of branchY) expect(replica.chain.addBlock(block).accepted).toBe(true);
+    expect(replica.chain.tip!.hash).toBe(blockHash(branchY[branchY.length - 1].header));
+    for (const block of branchX) expect(replica.chain.addBlock(block).accepted).toBe(true);
+    expect(replica.chain.tip!.hash, 'after hearing both, the replica agrees with the first node').toBe(h.chain.tip!.hash);
+    expect(replica.chain.world.s.finality.finalizedHeight).toBe(0);
+    expect(replica.chain.world.s.finality).toEqual(h.chain.world.s.finality);
+  });
+
   it('is computed identically by an independent node replaying the blocks, and a wrong claim fails the state root', async () => {
     const { h } = await fleetHarness(3);
     growTo(h, P.maturityBlocks + finalityWindow(3) + 30);

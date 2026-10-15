@@ -190,7 +190,7 @@ Verify on a running node:
 curl -s localhost:8630/supply | jq '{totalSupplyObs, maxSupplyObs, invariantOk}'
 curl -s localhost:8630/revenue | jq .                 # ONS revenue and the 90/10 split, from chain data
 curl -s localhost:8630/audit/compliance | jq .        # no admin mint, no sale, no native exchange
-node scripts/check-invariants.mjs                     # 55 checks; exits non-zero on drift
+node scripts/check-invariants.mjs                     # exits non-zero on drift
 ```
 
 ## 6. What deliberately does not exist
