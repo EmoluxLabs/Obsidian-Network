@@ -20,7 +20,8 @@
 
 import { encodeSignedTx, signTransaction, type UnsignedTx } from '../../core/transactions/encode.js';
 import { deriveWallet, generateRecoveryPhrase, isValidRecoveryPhrase } from '../../core/crypto/mnemonic.js';
-import { addressFromPublicKey, signMessage } from '../../core/crypto/keys.js';
+import { addressFromPublicKey, signMessage, keyPairFromPrivateKey } from '../../core/crypto/keys.js';
+import { walletFromPrivateKeyInput } from '../../core/crypto/private-key.js';
 import { TxType } from '../../core/protocol/types.js';
 
 export interface WalletAccount {
@@ -160,6 +161,11 @@ async function deriveVaultKey(
 
 export interface VaultPayload {
   phrase: string;
+  /**
+   * Set only for a wallet recovered from a private key (then `phrase` is ''): the one secp256k1 key it controls, 64
+   * lowercase hex. Such a wallet has a single account (0/0) and cannot derive more.
+   */
+  importedKey?: string;
   /** Network prefix every address in this vault was derived with. */
   addressHrp: string;
   accounts: Array<{ address: string; publicKey: string; label: string; createdAt: number; account: number; index: number }>;
@@ -206,6 +212,33 @@ export class Wallet {
     return new Wallet(payload);
   }
 
+  /**
+   * Recover a wallet from a private key. The key is validated locally (`parsePrivateKeyInput`); an invalid one throws
+   * with a reason that never contains the key, and nothing is stored. The address is the one the node derives from
+   * the same key, so the wallet is the same one a phrase created. Callers show `Wallet.addressForPrivateKey` for
+   * confirmation first.
+   */
+  static async fromPrivateKey(input: string, addressHrp: string, passphrase: string, label = 'Main wallet'): Promise<Wallet> {
+    if (passphrase.length < MIN_VAULT_PASSPHRASE_LENGTH) throw new Error(`use a passphrase of at least ${MIN_VAULT_PASSPHRASE_LENGTH} characters`);
+    if (!/^[a-z]{2,8}$/.test(addressHrp)) throw new Error(`"${addressHrp}" is not a usable address prefix`);
+    const found = walletFromPrivateKeyInput(input, addressHrp);
+    if (!found.ok) throw new Error(found.message);
+    const payload: VaultPayload = {
+      phrase: '',
+      importedKey: found.privateKey,
+      addressHrp,
+      accounts: [{ address: found.address, publicKey: found.publicKey, label, createdAt: Date.now(), account: 0, index: 0 }],
+    };
+    await persist(payload, passphrase);
+    return new Wallet(payload);
+  }
+
+  /** The address a pasted private key controls, or the reason it is refused. Pure: nothing is stored. */
+  static addressForPrivateKey(input: string, addressHrp: string): { ok: true; address: string } | { ok: false; message: string } {
+    const found = walletFromPrivateKeyInput(input, addressHrp);
+    return found.ok ? { ok: true, address: found.address } : { ok: false, message: found.message };
+  }
+
   static async unlock(passphrase: string): Promise<Wallet> {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) throw new Error('no wallet exists in this browser');
@@ -242,6 +275,11 @@ export class Wallet {
     // when derivation became real BIP-32), every transaction would be stamped
     // with the stored address but signed by a different key and refused with a
     // bare "bad signature". Say so here, once, instead.
+    if (payload.importedKey) {
+      const pair = keyPairFromPrivateKey(payload.importedKey, payload.addressHrp);
+      if (pair.publicKey !== payload.accounts[0]?.publicKey) throw new LegacyVaultError(payload.accounts[0]?.address ?? '');
+      return new Wallet(payload);
+    }
     for (const account of payload.accounts) {
       if (deriveWallet(payload.phrase, account.account, account.index).publicKey !== account.publicKey) {
         throw new LegacyVaultError(account.address);
@@ -315,8 +353,22 @@ export class Wallet {
   }
 
   revealPrivateKey(index = 0): string {
-    return deriveWallet(this.payload.phrase, this.payload.accounts[index]!.account, this.payload.accounts[index]!.index)
-      .privateKey;
+    return this.derive(this.payload.accounts[index]!.account, this.payload.accounts[index]!.index).privateKey;
+  }
+
+  /** The key pair for an account: derived from the phrase, or the imported key (its only account). */
+  private derive(account: number, index: number): { privateKey: string; publicKey: string } {
+    if (this.payload.importedKey) {
+      if (account !== 0 || index !== 0) throw new Error('a wallet recovered from a private key has one address only');
+      const pair = keyPairFromPrivateKey(this.payload.importedKey, this.payload.addressHrp);
+      return { privateKey: pair.privateKey, publicKey: pair.publicKey };
+    }
+    return deriveWallet(this.payload.phrase, account, index);
+  }
+
+  /** True when this wallet came from a private key and so has no recovery phrase. */
+  get hasPhrase(): boolean {
+    return !this.payload.importedKey;
   }
 
   async save(passphrase: string): Promise<void> {
@@ -324,7 +376,7 @@ export class Wallet {
   }
 
   addressFor(account: number, index: number): string {
-    return addressFromPublicKey(deriveWallet(this.payload.phrase, account, index).publicKey, this.payload.addressHrp);
+    return addressFromPublicKey(this.derive(account, index).publicKey, this.payload.addressHrp);
   }
 
   /**
@@ -343,7 +395,7 @@ export class Wallet {
     index?: number;
   }): Uint8Array {
     const entry = this.payload.accounts[input.index ?? 0]!;
-    const derived = deriveWallet(this.payload.phrase, entry.account, entry.index);
+    const derived = this.derive(entry.account, entry.index);
     const unsigned: UnsignedTx = {
       protocolVersion: input.protocolVersion,
       chainId: input.chainId,
@@ -371,7 +423,7 @@ export class Wallet {
   signMessageFor(address: string, domain: string, message: string): { publicKey: string; signature: string } {
     const entry = this.payload.accounts.find((candidate) => candidate.address === address);
     if (!entry) throw new Error('that address is not in this wallet');
-    const derived = deriveWallet(this.payload.phrase, entry.account, entry.index);
+    const derived = this.derive(entry.account, entry.index);
     return {
       publicKey: derived.publicKey,
       signature: signMessage(domain, new TextEncoder().encode(message), derived.privateKey),
@@ -380,7 +432,7 @@ export class Wallet {
 
   /** Derive an additional address from the same phrase (same wallet, new index). */
   async addAccount(passphrase: string, index: number, label: string): Promise<string> {
-    const derived = deriveWallet(this.payload.phrase, 0, index);
+    const derived = this.derive(0, index);
     const address = addressFromPublicKey(derived.publicKey, this.payload.addressHrp);
     this.payload.accounts.push({
       address,
@@ -468,12 +520,16 @@ export function exportBundle(wallet: Wallet, index = 0): string {
     '',
     `Private key:    ${wallet.revealPrivateKey(index)}`,
     '',
-    'Recovery phrase (24 words):',
-    wallet.revealPhrase(),
-    '',
-    'The 24 words are not network-specific: they restore this same key pair on',
-    'any Obsidian network. Only the address prefix differs.',
-    '',
+    ...(wallet.hasPhrase
+      ? [
+          'Recovery phrase (24 words):',
+          wallet.revealPhrase(),
+          '',
+          'The 24 words are not network-specific: they restore this same key pair on',
+          'any Obsidian network. Only the address prefix differs.',
+          '',
+        ]
+      : ['This wallet was recovered from a private key, so it has no recovery phrase.', '']),
     'Keep this file offline. Anyone with the private key or the phrase controls',
     'the wallet and no one — including Obsidian — can reverse a transfer.',
     'Obsidian will never ask you for this file.',

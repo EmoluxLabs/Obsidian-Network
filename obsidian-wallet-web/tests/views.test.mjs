@@ -99,7 +99,7 @@ test('a test network says so, and mainnet does not pretend to be one', () => {
   assert.match(V.home(state({ net: { state: 'error', name: '', chainId: null, hrp: '', error: 'x' } })), /UNVERIFIED/);
 });
 
-test('no screen offers a private key, a plaintext download or clipboard phrase copy', () => {
+test('no screen offers to copy or download a secret (the private key is shown and typed, never copied out)', () => {
   for (const [name, view] of Object.entries(V)) {
     const html = view(state({ view: name }), 'a '.repeat(24).trim());
     assert.ok(!/data-a="(copyPk|copyRk|dlRk|showPk)"/.test(html), name);
@@ -182,4 +182,39 @@ test('a balance is shown to 6 decimals with the exact value one hover away; a re
   assert.ok(home(1n).includes('&lt;0.000001 <span class="unit">OBS</span>'), 'one seal is not shown as zero');
   const long = home(21_000_000n * 10n ** 18n + 123456789012345678n);
   assert.match(long, /class="m balv bl"/, 'a long figure steps down in size');
+});
+
+// ── 1.9.0: private key shown at creation, private-key recovery ──────────────────────────────────────────────────
+
+test('creation shows the recovery phrase AND the private key, with backup advice and an explicit confirmation', () => {
+  const key = 'ab'.repeat(32);
+  const html = V.create2(state({ view: 'create2' }), { phrase: 'word '.repeat(24).trim(), privateKey: key });
+  assert.match(html, /RECOVERY PHRASE AND PRIVATE KEY/);
+  assert.ok(html.includes(key), 'the key is on screen');
+  assert.match(html, /each control the same wallet/);
+  assert.match(html, /written down my recovery phrase and my private key/);
+  assert.match(html, /id="ck" type="checkbox"/);
+  assert.ok(!/data-a="(copyPk|dlRk)"/.test(html), 'no copy or download of the key');
+});
+
+test('the import screen has a private-key tab: step one asks for the key, step two shows the address for confirmation', () => {
+  const one = V.import(state({ view: 'import', tab: 'key', keyAddress: '' }));
+  assert.match(one, /data-submit="checkKey"/);
+  assert.match(one, /type="password"/, 'the key field does not show what is typed');
+  assert.match(one, /never sent anywhere and is never printed back/);
+  const two = V.import(state({ view: 'import', tab: 'key', keyAddress: 'obs1exampleaddressonly' }));
+  assert.match(two, /THIS KEY CONTROLS/);
+  assert.match(two, /obs1exampleaddressonly/);
+  assert.match(two, /data-submit="importKey"/);
+  assert.match(two, /id="ckaddr" type="checkbox"/);
+  assert.ok(!/id="pk"/.test(two), 'the key field is gone once the address is shown');
+});
+
+test('the backup screen shows the key beside the phrase, and says a key wallet has no phrase', () => {
+  const both = V.backup(state({ view: 'backup' }), { phrase: 'one two three', privateKey: 'cd'.repeat(32) });
+  assert.match(both, /RECOVERY PHRASE/);
+  assert.match(both, /PRIVATE KEY/);
+  const keyOnly = V.backup(state({ view: 'backup' }), { privateKey: 'cd'.repeat(32) });
+  assert.match(keyOnly, /no recovery phrase/);
+  assert.ok(!/<ol class="words">/.test(keyOnly));
 });

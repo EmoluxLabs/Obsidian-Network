@@ -33,7 +33,7 @@ test('nothing the design invented as a placeholder ships', () => {
     [/QRLIB|BarcodeDetector/, 'the demo QR code path'],
     [/\bobsw\b|\bobsd\b/, 'the demo storage keys'],
     [/placeholder\)\.|Replace WL/, 'the demo word list note'],
-    [/private key/i, null], // handled below: only allowed in sentences that say it is NOT supported
+    [/data-a="(copyPk|copyRk|dlRk|showPk)"|COPY PRIVATE KEY|EXPORT PRIVATE KEY/, 'the design\u2019s private-key copy/export controls'],
   ];
   for (const file of shipped) {
     const text = readFileSync(file, 'utf8');
@@ -41,9 +41,11 @@ test('nothing the design invented as a placeholder ships', () => {
       if (!what) continue;
       assert.ok(!pattern.test(text), `${file} contains ${what}`);
     }
+    // Since 1.9.0 a private key can be SHOWN at creation/backup and IMPORTED after local validation. It is never copied,
+    // downloaded, sent, logged or stored in the clear: no clipboard, network, console or storage call may share a line with a key.
     for (const line of text.split('\n')) {
-      if (/private key/i.test(line)) {
-        assert.match(line, /cannot be imported|no separate|not|never|without|deliberately/i, `${file}: "${line.trim().slice(0, 80)}" must say private keys are not handled`);
+      if (/private ?key|pendingKey/i.test(line)) {
+        assert.ok(!/clipboard|fetch\(|sendBeacon|XMLHttpRequest|console\.|localStorage|sessionStorage/.test(line), `${file}: a private-key line must not copy, send, log or store: "${line.trim().slice(0, 80)}"`);
       }
     }
   }

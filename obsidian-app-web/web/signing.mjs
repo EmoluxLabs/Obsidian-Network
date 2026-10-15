@@ -24,6 +24,7 @@ import {
   isValidRecoveryPhrase,
 } from '../../obsidian-interface/web/core/crypto/mnemonic.js';
 import { addressFromPublicKey, signMessage } from '../../obsidian-interface/web/core/crypto/keys.js';
+import { parsePrivateKeyInput, walletFromPrivateKeyInput } from '../../obsidian-interface/web/core/crypto/private-key.js';
 import { encodePayload, decodePayload } from '../../obsidian-interface/web/core/crypto/bech32.js';
 import {
   signTransaction,
@@ -62,6 +63,9 @@ export function isValidPhrase(phrase) {
  */
 export function walletFromPhrase(phrase, hrp) {
   const words = String(phrase ?? '').trim();
+  // A wallet that was recovered from its private key has no phrase. Its vault holds the key under this marker, and the
+  // address comes from the same canonical key-to-address function the phrase path ends in.
+  if (words.startsWith(KEY_SECRET_PREFIX)) return walletFromPrivateKey(words.slice(KEY_SECRET_PREFIX.length), hrp);
   if (!isValidRecoveryPhrase(words)) {
     throw new Error('That recovery phrase is not valid.');
   }
@@ -87,6 +91,51 @@ export function walletFromPhrase(phrase, hrp) {
     publicKey: wallet.publicKey,
     privateKeyHex: wallet.privateKey,
   };
+}
+
+/**
+ * How a vault holds a wallet that was recovered from a private key. The vault is encrypted exactly as before; only the
+ * secret inside differs. Anything that opens a vault gets a wallet through `walletFromPhrase`, which understands both.
+ */
+export const KEY_SECRET_PREFIX = 'obsidian-key:v1:';
+
+/** True when a vault's secret is a private key rather than a recovery phrase. */
+export function isKeySecret(secret) {
+  return typeof secret === 'string' && secret.trim().startsWith(KEY_SECRET_PREFIX);
+}
+
+/**
+ * The wallet a pasted private key controls. Validated locally by the core's own parser (length, hex, curve range, and
+ * the common mix-ups: a phrase, a public key); throws the parser's reason, which never echoes the input.
+ */
+export function walletFromPrivateKey(input, hrp) {
+  if (hrp !== undefined && !(typeof hrp === 'string' && /^[a-z]{2,10}$/.test(hrp))) {
+    throw new Error('the node reported an unusable address prefix');
+  }
+  const result = walletFromPrivateKeyInput(input, hrp);
+  if (!result.ok) throw new Error(result.message);
+  return { address: result.address, publicKey: result.publicKey, privateKeyHex: result.privateKey };
+}
+
+/** Validate a pasted private key without deriving anything: { ok, message }. */
+export function checkPrivateKey(input) {
+  const result = parsePrivateKeyInput(input);
+  return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message };
+}
+
+/** The vault secret for a private key (normalised to 64 lowercase hex digits). */
+export function secretFromPrivateKey(input) {
+  const result = parsePrivateKeyInput(input);
+  if (!result.ok) throw new Error(result.message);
+  return `${KEY_SECRET_PREFIX}${result.privateKey}`;
+}
+
+/**
+ * The private key a recovery phrase controls at account 0, index 0 — the key this app signs with. Shown at creation so
+ * it can be backed up beside the phrase; recovering from it later gives the same address.
+ */
+export function privateKeyForPhrase(phrase, hrp) {
+  return walletFromPhrase(phrase, hrp).privateKeyHex;
 }
 
 /**

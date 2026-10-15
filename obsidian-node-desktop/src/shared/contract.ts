@@ -42,6 +42,8 @@ export const CHANNELS = {
   walletFinishCreate: 'wallet:finish-create',
   walletCancelCreate: 'wallet:cancel-create',
   walletImport: 'wallet:import',
+  walletPreviewKey: 'wallet:preview-key',
+  walletImportKey: 'wallet:import-key',
   walletBalance: 'wallet:balance',
   walletHistory: 'wallet:history',
   walletRemove: 'wallet:remove',
@@ -103,10 +105,12 @@ export interface Api {
   'explorer:mempool': { req: void; res: MempoolInfo };
   'explorer:search': { req: { query: string }; res: SearchResult };
   'wallet:status': { req: void; res: WalletStatus };
-  'wallet:begin-create': { req: void; res: { pendingId: string; phrase: string; confirmPositions: number[] } };
+  'wallet:begin-create': { req: void; res: { pendingId: string; phrase: string; privateKey: string; confirmPositions: number[] } };
   'wallet:finish-create': { req: { pendingId: string; passphrase: string; confirmWords: string[] }; res: WalletStatus };
   'wallet:cancel-create': { req: { pendingId: string }; res: void };
   'wallet:import': { req: { phrase: string; passphrase: string }; res: WalletStatus };
+  'wallet:preview-key': { req: { privateKey: string }; res: { address: string } };
+  'wallet:import-key': { req: { privateKey: string; passphrase: string; confirmAddress: string }; res: WalletStatus };
   'wallet:balance': { req: void; res: Remote<WalletBalanceView> };
   'wallet:history': { req: void; res: Remote<AddressHistory> };
   'wallet:remove': { req: { passphrase: string }; res: void };

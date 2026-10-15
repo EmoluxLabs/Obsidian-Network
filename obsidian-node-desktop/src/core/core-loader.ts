@@ -25,6 +25,7 @@ import type * as ParamsMod from '../../vendor/obsidian-core/dist/protocol/params
 import type * as IndexerMod from '../../vendor/obsidian-core/dist/indexer/indexer.js';
 import type * as StateRootMod from '../../vendor/obsidian-core/dist/blockchain/state-root.js';
 import type * as RecipientMod from '../../vendor/obsidian-core/dist/protocol/recipient.js';
+import type * as PrivateKeyMod from '../../vendor/obsidian-core/dist/crypto/private-key.js';
 import type * as Version from '../../vendor/obsidian-core/dist/version.js';
 
 export interface CoreModules {
@@ -44,6 +45,7 @@ export interface CoreModules {
   indexer: typeof IndexerMod;
   stateRoot: typeof StateRootMod;
   recipient: typeof RecipientMod;
+  privateKey: typeof PrivateKeyMod;
 }
 
 export interface CoreManifest {
@@ -91,7 +93,7 @@ export function loadCore(dir: string = resolveCoreDir()): Promise<CoreModules> {
       );
     }
     const load = <T>(rel: string): Promise<T> => import(pathToFileURL(join(dir, 'dist', rel)).href) as Promise<T>;
-    const [keys, mnemonic, amount, types, networks, encode, helpers, payment, agent, keystore, version, params, indexer, stateRoot, recipient] =
+    const [keys, mnemonic, amount, types, networks, encode, helpers, payment, agent, keystore, version, params, indexer, stateRoot, recipient, privateKey] =
       await Promise.all([
         load<typeof Keys>('crypto/keys.js'),
         load<typeof Mnemonic>('crypto/mnemonic.js'),
@@ -108,8 +110,9 @@ export function loadCore(dir: string = resolveCoreDir()): Promise<CoreModules> {
         load<typeof IndexerMod>('indexer/indexer.js'),
         load<typeof StateRootMod>('blockchain/state-root.js'),
         load<typeof RecipientMod>('protocol/recipient.js'),
+        load<typeof PrivateKeyMod>('crypto/private-key.js'),
       ]);
-    return { dir, keys, mnemonic, amount, types, networks, encode, helpers, payment, agent, keystore, version, params, indexer, stateRoot, recipient };
+    return { dir, keys, mnemonic, amount, types, networks, encode, helpers, payment, agent, keystore, version, params, indexer, stateRoot, recipient, privateKey };
   })();
   cached.catch(() => {
     cached = undefined;

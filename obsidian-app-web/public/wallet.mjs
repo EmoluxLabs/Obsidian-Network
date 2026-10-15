@@ -80,17 +80,45 @@ export async function walletAddress() {
   return loadWalletAddress();
 }
 
-/** Decrypt the phrase and hand it back for display. Never stored, never sent. */
-export async function revealPhrase(passphrase) {
-  const { loadVault, openVault, PassphraseError } = await api();
+/**
+ * Open the vault and say what it holds: { kind: 'phrase', phrase, privateKey } for a wallet made from a recovery
+ * phrase (the key is the one that phrase controls), or { kind: 'key', privateKey } for a wallet recovered from a
+ * private key. For display only; never stored, never sent. Throws PassphraseError for a wrong passphrase.
+ */
+export async function revealSecret(passphrase) {
+  const { loadVault, openVault, PassphraseError, isKeySecret, KEY_SECRET_PREFIX, walletFromPhrase } = await api();
   const vault = loadVault();
   if (!vault) throw new Error('No wallet is set up on this device yet.');
   try {
-    return await openVault(vault, passphrase);
+    const secret = await openVault(vault, passphrase);
+    const { addressHrp } = await getContext();
+    if (isKeySecret(secret)) return { kind: 'key', privateKey: secret.trim().slice(KEY_SECRET_PREFIX.length) };
+    return { kind: 'phrase', phrase: secret, privateKey: walletFromPhrase(secret, addressHrp).privateKeyHex };
   } catch (error) {
     if (error instanceof PassphraseError) throw error;
     throw new Error(error?.message || 'That passphrase is not correct.');
   }
+}
+
+/** The address the vault's secret controls, derived by opening it with the passphrase (the unlock check). */
+export async function unlockAddress(passphrase) {
+  const { loadVault, openVault, PassphraseError, walletFromPhrase } = await api();
+  const vault = loadVault();
+  if (!vault) throw new Error('No wallet is set up on this device yet.');
+  try {
+    const secret = await openVault(vault, passphrase);
+    const { addressHrp } = await getContext();
+    return walletFromPhrase(secret, addressHrp).address;
+  } catch (error) {
+    if (error instanceof PassphraseError) throw error;
+    throw new Error(error?.message || 'That passphrase is not correct.');
+  }
+}
+
+/** Decrypt the phrase and hand it back for display. Never stored, never sent. A key wallet has no phrase: its key is shown, labelled. */
+export async function revealPhrase(passphrase) {
+  const secret = await revealSecret(passphrase);
+  return secret.kind === 'key' ? `PRIVATE KEY (this wallet has no recovery phrase): ${secret.privateKey}` : secret.phrase;
 }
 
 export async function walletKdf() {
@@ -107,7 +135,9 @@ export async function walletKdf() {
  * cached so the screens can show a balance without another decryption.
  */
 export async function setupWallet({ phrase, passphrase }) {
-  const { isValidPhrase, walletFromPhrase, createVault, saveVault, saveWalletAddress } = await api();
+  const { isValidPhrase, walletFromPhrase, createVault, saveVault, saveWalletAddress, isKeySecret, KEY_SECRET_PREFIX } = await api();
+  // An encrypted backup of a key-recovered wallet carries its key; it is restored through the key path, validated the same way.
+  if (isKeySecret(phrase)) return setupWalletFromKey({ privateKey: String(phrase).trim().slice(KEY_SECRET_PREFIX.length), passphrase });
   if (!isValidPhrase(phrase)) throw new Error('That recovery phrase is not valid.');
   if (!passphrase || passphrase.length < MIN_PASSPHRASE_LENGTH) {
     throw new Error(
@@ -120,6 +150,39 @@ export async function setupWallet({ phrase, passphrase }) {
   saveVault(vault);
   saveWalletAddress(wallet.address);
   return { address: wallet.address };
+}
+
+/**
+ * Seal a wallet recovered from its PRIVATE KEY into a vault on this device. The key is validated locally first; the
+ * address it controls is returned so the caller can have the person confirm it BEFORE anything is stored.
+ */
+export async function setupWalletFromKey({ privateKey, passphrase }) {
+  const { walletFromPrivateKey, secretFromPrivateKey, createVault, saveVault, saveWalletAddress } = await api();
+  if (!passphrase || passphrase.length < MIN_PASSPHRASE_LENGTH) {
+    throw new Error(
+      `Choose a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters. It encrypts the key on this device.`,
+    );
+  }
+  const { addressHrp } = await getContext();
+  const wallet = walletFromPrivateKey(privateKey, addressHrp); // throws the parser's reason, never the input
+  const vault = await createVault(secretFromPrivateKey(privateKey), passphrase, addressHrp);
+  saveVault(vault);
+  saveWalletAddress(wallet.address);
+  return { address: wallet.address };
+}
+
+/** The address a pasted private key controls, for the confirmation step. Nothing is kept. */
+export async function addressForPrivateKey(privateKey) {
+  const { walletFromPrivateKey } = await api();
+  const { addressHrp } = await getContext();
+  return walletFromPrivateKey(privateKey, addressHrp).address;
+}
+
+/** The private key of a freshly generated phrase, to be backed up beside it. Held in memory by the caller only. */
+export async function privateKeyOfPhrase(phrase) {
+  const { privateKeyForPhrase } = await api();
+  const { addressHrp } = await getContext();
+  return privateKeyForPhrase(phrase, addressHrp);
 }
 
 /**

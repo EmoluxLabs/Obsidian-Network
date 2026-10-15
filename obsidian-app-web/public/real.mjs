@@ -84,6 +84,9 @@ import {
   addressOnNetwork,
   walletKdf,
   setupWallet,
+  setupWalletFromKey,
+  addressForPrivateKey,
+  privateKeyOfPhrase,
   newPhrase,
   qrFor,
   decodeFrame,
@@ -136,7 +139,7 @@ const state = {
   mfa: null,
   mfaRequired: false,
   ons: { query: '', result: null },
-  setup: { mode: 'create', draft: null },
+  setup: { mode: 'create', draft: null, keyPreview: null },
   qr: null,
   // A `.obs` recipient that has been resolved and is waiting for the user to confirm it. Nothing is signed until then.
   sendReview: null,
@@ -213,6 +216,8 @@ function go(target) {
   state.busy = null;
   // A phrase that was generated but never sealed does not survive leaving the screen.
   state.setup.draft = null;
+  state.setup.keyPreview = null;
+  discardPendingKey();
   state.sendReview = null;
   if (state.screen === 'wallet' && !state.walletAddress) state.wt = 'setup';
   window.scrollTo(0, 0);
@@ -454,6 +459,16 @@ async function boot() {
 }
 
 // ── actions ──────────────────────────────────────────────────────────────────
+
+/**
+ * A private key typed or pasted for recovery. Held here, outside `state`, from the moment its address has been shown
+ * until the wallet is sealed or the person leaves the screen: the key is never put back into the page, never sent and
+ * never logged.
+ */
+let pendingKey = null;
+function discardPendingKey() {
+  pendingKey = null;
+}
 
 function field(id) {
   return document.getElementById(id)?.value ?? '';
@@ -736,7 +751,8 @@ function install() {
 
   // ── the wallet on this device ──────────────────────────────────────────────
   g.ObsidianSetupMode = (mode) => {
-    state.setup = { mode: mode === 'import' ? 'import' : 'create', draft: null };
+    pendingKey = null;
+    state.setup = { mode: mode === 'import' ? 'import' : mode === 'key' ? 'key' : 'create', draft: null, keyPreview: null };
     state.error = '';
     render();
   };
@@ -748,8 +764,59 @@ function install() {
       // browser's CSPRNG and shown in order.
       const picks = new Set();
       while (picks.size < 3) picks.add(1 + (crypto.getRandomValues(new Uint32Array(1))[0] % words.length));
-      state.setup = { mode: 'create', draft: { words, check: [...picks].sort((a, b) => a - b) } };
+      // The private key this phrase controls, shown beside it so both can be backed up.
+      const privateKey = await privateKeyOfPhrase(words.join(' '));
+      state.setup = { mode: 'create', draft: { words, privateKey, check: [...picks].sort((a, b) => a - b) } };
     });
+
+  /** Step one of recovery from a private key: validate locally and show the address it controls. Nothing is stored. */
+  g.ObsidianCheckKey = () => {
+    const typed = field('pk');
+    return withBusy('checkkey', async () => {
+      pendingKey = null;
+      state.setup = { mode: 'key', draft: null, keyPreview: null };
+      let address;
+      try {
+        address = await addressForPrivateKey(typed);
+      } catch (error) {
+        return setError(error.message); // the reason, never the input
+      }
+      pendingKey = typed;
+      state.setup = { mode: 'key', draft: null, keyPreview: { address } };
+    });
+  };
+
+  g.ObsidianDiscardKey = () => {
+    pendingKey = null;
+    state.setup = { mode: 'key', draft: null, keyPreview: null };
+    state.error = '';
+    render();
+  };
+
+  /** Step two: the person confirmed the address is theirs; choose a passphrase and seal. */
+  g.ObsidianSealKey = () => {
+    const passphrase = field('pp');
+    const confirm = field('p2');
+    const confirmed = document.getElementById('ckaddr')?.checked === true;
+    return withBusy('setup', async () => {
+      if (!pendingKey || !state.setup.keyPreview) return setError('Enter your private key and check its address first.');
+      if (!confirmed) return setError('Confirm that this is your address before continuing.');
+      if (!passphrase || passphrase.length < MIN_PASSPHRASE_LENGTH) {
+        return setError(`Choose a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters.`);
+      }
+      if (passphrase !== confirm) return setError('Passphrases do not match.');
+      const key = pendingKey;
+      const expected = state.setup.keyPreview.address;
+      const { address } = await setupWalletFromKey({ privateKey: key, passphrase });
+      pendingKey = null;
+      if (address !== expected) throw new Error('The sealed wallet does not match the address you confirmed. It was not kept.');
+      state.setup = { mode: 'create', draft: null, keyPreview: null };
+      state.walletAddress = address;
+      state.wt = 'receive';
+      setNotice('Wallet recovered from your private key and sealed on this device.');
+      await refreshWallet();
+    });
+  };
 
   g.ObsidianDiscardPhrase = () => {
     state.setup = { mode: 'create', draft: null };
@@ -767,6 +834,9 @@ function install() {
     return withBusy('setup', async () => {
       if (!importing) {
         if (!draft) return setError('Generate a recovery phrase first.');
+        if (document.getElementById('cksaved')?.checked !== true) {
+          return setError('Confirm that you have saved both the recovery phrase and the private key.');
+        }
         const right = draft.check.every((n, i) => proof[i].trim().toLowerCase() === draft.words[n - 1]);
         // Deliberately does not say which word was wrong.
         if (!right) return setError('Those words do not match the phrase above. Check what you wrote down.');

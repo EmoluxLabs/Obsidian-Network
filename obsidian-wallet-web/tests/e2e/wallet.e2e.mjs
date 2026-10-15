@@ -333,7 +333,7 @@ try {
 
   // ── import: phrase and encrypted backup, in clean browser profiles ─────────
   const second = await newPage('import');
-  await step('import: a wrong phrase, a bad checksum, a short password and a private key are all refused', async () => {
+  await step('import: a wrong phrase, a bad checksum, a short password and a private key in the phrase box are all refused', async () => {
     await waitText(second, 'DECENTRALISED OBS COIN WALLET');
     await importPhrase(second, 'not a real phrase at all', PASS_FUNDER);
     await waitErr(second, 'not valid');
@@ -361,7 +361,8 @@ try {
     await submit(second, 'importPhrase');
     await waitErr(second, 'not valid');
     assert.equal((await storage(second)).includes('obsidian.vault'), false, 'a refused import stores nothing');
-    assert.match(await text(second), /Private keys cannot be imported/);
+    assert.match(await text(second), /private key is checked on this device/i);
+    assert.match(await text(second), /use the PRIVATE KEY tab/);
   });
 
   await step('import: the funded phrase becomes a wallet whose balance and history come from the node', async () => {

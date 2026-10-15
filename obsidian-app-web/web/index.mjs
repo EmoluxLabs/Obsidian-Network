@@ -16,6 +16,12 @@
 export {
   isValidPhrase,
   walletFromPhrase,
+  walletFromPrivateKey,
+  checkPrivateKey,
+  secretFromPrivateKey,
+  privateKeyForPhrase,
+  isKeySecret,
+  KEY_SECRET_PREFIX,
   generatePhrase,
   retargetAddress,
   sign,

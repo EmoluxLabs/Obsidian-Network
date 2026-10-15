@@ -14,7 +14,7 @@ import type { WalletStatus } from '../shared/wallet-types.js';
 import { AppError } from '../shared/errors.js';
 import type { CoreModules } from './core-loader.js';
 import type { AppPaths } from './paths.js';
-import { MIN_PASSPHRASE_LENGTH, PassphraseError, openVaultPhrase, readVaultFile, removeVaultFile, sealVault, writeVaultFile } from './vault.js';
+import { MIN_PASSPHRASE_LENGTH, KEY_SECRET_PREFIX, PassphraseError, openVaultPhrase, walletFromSecret, readVaultFile, removeVaultFile, sealVault, writeVaultFile } from './vault.js';
 
 export type { WalletStatus };
 
@@ -61,7 +61,7 @@ export class WalletService {
   }
 
   /** Step 1 of creating a wallet: generate a phrase with the core's generator and hold it in memory. */
-  async beginCreate(network: NetworkName): Promise<{ pendingId: string; phrase: string; confirmPositions: number[] }> {
+  async beginCreate(network: NetworkName): Promise<{ pendingId: string; phrase: string; privateKey: string; confirmPositions: number[] }> {
     const core = await this.core();
     if ((await this.status(network)).exists) throw new AppError('WALLET_EXISTS', `A ${network} wallet already exists on this computer.`);
     this.sweep();
@@ -72,7 +72,10 @@ export class WalletService {
     const positions = [...indexes].sort((a, b) => a - b);
     const pendingId = randomUUID();
     this.pending.set(pendingId, { phrase, network, indexes: positions, expires: Date.now() + PENDING_TTL_MS });
-    return { pendingId, phrase, confirmPositions: positions.map((i) => i + 1) };
+    // The key this phrase controls (account 0, index 0), shown beside it so both can be backed up. Same derivation as the vault.
+    const hrp = core.networks.NETWORKS[network].addressHrp;
+    const { privateKey } = walletFromSecret(core, phrase, hrp);
+    return { pendingId, phrase, privateKey, confirmPositions: positions.map((i) => i + 1) };
   }
 
   /** Step 2: the user proves they wrote the phrase down; only now is a vault written. */
@@ -105,6 +108,31 @@ export class WalletService {
     return this.status(network);
   }
 
+  /**
+   * Recovery from a private key, step one: validate locally and say which address it controls, so the person can confirm
+   * it. Nothing is written. A refusal carries the core's reason, which never contains the key.
+   */
+  async previewPrivateKey(network: NetworkName, input: string): Promise<{ address: string }> {
+    const core = await this.core();
+    const hrp = core.networks.NETWORKS[network].addressHrp;
+    const found = core.privateKey.walletFromPrivateKeyInput(input, hrp);
+    if (!found.ok) throw new AppError('INVALID_PRIVATE_KEY', found.message);
+    return { address: found.address };
+  }
+
+  /** Step two: the address was confirmed (it must be the one step one showed) and a passphrase chosen; only now is a vault written. */
+  async importPrivateKey(network: NetworkName, input: string, passphrase: string, confirmAddress: string): Promise<WalletStatus> {
+    const core = await this.core();
+    if ((await this.status(network)).exists) throw new AppError('WALLET_EXISTS', `A ${network} wallet already exists on this computer. Remove it first if you want to replace it.`);
+    const { address } = await this.previewPrivateKey(network, input);
+    if (address !== confirmAddress) throw new AppError('ADDRESS_NOT_CONFIRMED', 'The address you confirmed is not the one this key controls. Nothing was saved.');
+    this.checkPassphraseStrength(passphrase);
+    const found = core.privateKey.parsePrivateKeyInput(input);
+    if (!found.ok) throw new AppError('INVALID_PRIVATE_KEY', found.message);
+    await this.save(network, `${KEY_SECRET_PREFIX}${found.privateKey}`, passphrase);
+    return this.status(network);
+  }
+
   private checkPassphraseStrength(passphrase: string): void {
     if (typeof passphrase !== 'string' || passphrase.length < MIN_PASSPHRASE_LENGTH) {
       throw new AppError('WEAK_PASSPHRASE', `Use a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters.`);
@@ -117,7 +145,7 @@ export class WalletService {
     const vault = await sealVault(core, phrase, passphrase, hrp);
     // Prove the file opens before it is the only copy: read it back with the passphrase.
     const reopened = await openVaultPhrase(vault, passphrase);
-    if (reopened !== core.mnemonic.normalizePhrase(phrase)) throw new AppError('VAULT_SELF_CHECK_FAILED', 'The wallet file did not read back correctly, so it was not saved.');
+    if (reopened !== walletFromSecret(core, phrase, hrp).canonical) throw new AppError('VAULT_SELF_CHECK_FAILED', 'The wallet file did not read back correctly, so it was not saved.');
     writeVaultFile(this.paths.forNetwork(network).vault, vault);
   }
 
@@ -142,8 +170,8 @@ export class WalletService {
       throw new AppError('VAULT_UNREADABLE', (error as Error).message);
     }
     this.attempts = [];
-    const derived = core.mnemonic.deriveWallet(phrase, 0, 0, undefined, hrp);
-    const address = derived.address ?? core.keys.addressFromPublicKey(derived.publicKey, hrp);
+    const derived = walletFromSecret(core, phrase, hrp);
+    const address = derived.address;
     phrase = '';
     if (address !== vault.address) {
       throw new AppError('WALLET_ADDRESS_MISMATCH', 'The wallet file describes a different address than its key produces. Nothing was signed.');

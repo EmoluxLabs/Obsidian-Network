@@ -57,6 +57,8 @@ button.row.tx>div{min-width:0}
 .pill.e{background:#FBE9E9;color:var(--er)}
 .wr{margin-top:14px;padding:12px 14px;border-radius:12px;border:1px solid #F0DDA8;background:#FFF4DC;color:#6B4A00;font-size:13px;line-height:1.5}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.key-hex{word-break:break-all;line-height:1.5}
 .back{cursor:pointer;font-size:13px;font-weight:800;letter-spacing:.1em;background:none;border:0;padding:8px 0;color:inherit}
 .back.link{letter-spacing:0;border-bottom:2px solid var(--go);padding:0;font-size:inherit;text-align:left}
 .logo{border-radius:50%;display:block}

@@ -124,6 +124,8 @@ function drawCreate(): void {
 
   const restore = el('button', { class: 'ghost', type: 'button', id: 'restore' }, 'Restore from recovery phrase');
   restore.addEventListener('click', () => drawRestore());
+  const restoreKey = el('button', { class: 'ghost', type: 'button', id: 'restore-key' }, 'Restore from private key');
+  restoreKey.addEventListener('click', () => drawRestoreKey());
 
   panel.replaceChildren(
     el('h2', {}, 'Create a wallet'),
@@ -134,25 +136,45 @@ function drawCreate(): void {
     ),
     el('div', { class: 'field' }, el('label', { for: 'passphrase' }, 'Vault passphrase'), passphrase),
     el('div', { class: 'field' }, el('label', { for: 'passphrase-confirm' }, 'Confirm'), confirm),
-    el('div', { class: 'row' }, create, restore),
+    el('div', { class: 'row' }, create, restore, restoreKey),
     el('p', { class: 'fineprint' }, 'The passphrase encrypts the vault file inside this browser. It is not a password for any server, and there is no "forgot passphrase" — by design.'),
     output,
   );
 }
 
 function reveal(wallet: Wallet, passphrase: string): void {
+  // Restoring replaces the whole panel, so the backup view gets a fresh container instead of silently showing nothing.
+  if (!document.getElementById('create-output')) panel.replaceChildren(el('h2', {}, 'Your wallet'), el('div', { id: 'create-output' }));
   const output = document.getElementById('create-output');
   if (!output) return;
-  const phraseBox = el('textarea', { class: 'phrase', readonly: 'readonly', rows: '3', id: 'phrase' }, wallet.revealPhrase());
+  const phraseBox = wallet.hasPhrase
+    ? el('textarea', { class: 'phrase', readonly: 'readonly', rows: '3', id: 'phrase' }, wallet.revealPhrase())
+    : el('p', { class: 'fineprint', id: 'no-phrase' }, 'This wallet was restored from a private key, so it has no recovery phrase. The private key below is the only way to restore it.');
   const keyBox = el('input', { class: 'mono', readonly: 'readonly', id: 'private-key', value: wallet.revealPrivateKey(0) });
   const bundle = exportBundle(wallet);
+
+  // The way on is hidden until the person says, explicitly, that the backup is done.
+  const next = el('div', { class: 'row', id: 'next-steps', hidden: 'hidden' }, anchor('/mine/', 'Mine with this wallet', 'primary'), anchor('/wallet/', 'Go to wallet', 'ghost'));
+  const saved = el('input', { type: 'checkbox', id: 'backup-saved' }) as HTMLInputElement;
+  saved.addEventListener('change', () => {
+    if (saved.checked) next.removeAttribute('hidden');
+    else next.setAttribute('hidden', 'hidden');
+  });
+  const savedGate = el(
+    'div',
+    {},
+    el('label', { class: 'check', for: 'backup-saved' }, saved, wallet.hasPhrase ? ' I have written down my recovery phrase and my private key and stored them safely' : ' I have written down my private key and stored it safely'),
+    next,
+  );
 
   output.replaceChildren(
     el('hr'),
     el('h3', {}, 'Back up now'),
-    el('p', {}, 'Write the recovery phrase on paper. It restores the wallet on any device, in any Obsidian interface, forever.'),
+    el('p', {}, wallet.hasPhrase
+      ? 'Write BOTH the recovery phrase and the private key on paper. Each one restores this same wallet on any device, in any Obsidian interface, forever. Keep them offline and apart from your devices.'
+      : 'Write the private key on paper and keep it offline, apart from your devices.'),
     phraseBox,
-    el('div', { class: 'row' }, copyButton(() => wallet.revealPhrase(), 'Copy phrase')),
+    ...(wallet.hasPhrase ? [el('div', { class: 'row' }, copyButton(() => wallet.revealPhrase(), 'Copy phrase'))] : []),
     el('h3', {}, 'Private key'),
     keyBox,
     el('div', { class: 'row' }, copyButton(() => wallet.revealPrivateKey(0), 'Copy private key'), downloadButton()),
@@ -172,7 +194,7 @@ function reveal(wallet: Wallet, passphrase: string): void {
       { class: 'fineprint' },
       'Anyone who reads this screen owns the wallet. Obsidian support will never ask for the phrase or the private key, and this interface has no code path that could transmit them.',
     ),
-    el('div', { class: 'row' }, anchor('/mine/', 'Mine with this wallet', 'primary'), anchor('/wallet/', 'Go to wallet', 'ghost')),
+    savedGate,
   );
 
   function downloadButton(): HTMLElement {
@@ -208,6 +230,61 @@ function drawRestore(): void {
     el('div', { class: 'field' }, passphrase),
     el('div', { class: 'row' }, go),
     el('p', { class: 'fineprint' }, 'Restoring overwrites the vault in this browser. Export the current one first if you still need it.'),
+  );
+}
+
+/**
+ * Recovery from a private key, in two steps. Step one validates the pasted key on this device and shows the address
+ * it controls; nothing is stored and an invalid key creates nothing. Step two (after the person confirms the address)
+ * asks for a new vault passphrase and seals the wallet.
+ */
+function drawRestoreKey(): void {
+  const keyInput = el('input', { type: 'password', class: 'mono', id: 'restore-key-input', placeholder: 'Private key — 64 hexadecimal characters', autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
+  const check = el('button', { class: 'primary', type: 'button', id: 'check-key' }, 'Check this key');
+  check.addEventListener('click', () => {
+    const found = Wallet.addressForPrivateKey(keyInput.value, network!.addressHrp);
+    if (!found.ok) return toast(found.message, 'error'); // the reason never contains the key; nothing was created
+    const typed = keyInput.value;
+    keyInput.value = '';
+    drawConfirmKey(typed, found.address);
+  });
+  panel.replaceChildren(
+    el('h2', {}, 'Restore from a private key'),
+    el('p', {}, 'The key is checked on this device only — it is never sent anywhere and never shown again. A recovery phrase is not accepted here, and a public key cannot restore a wallet.'),
+    el('div', { class: 'field' }, el('label', { for: 'restore-key-input' }, 'Private key'), keyInput),
+    el('div', { class: 'row' }, check),
+    el('p', { class: 'fineprint' }, 'The address this key controls is shown next, for you to confirm before anything is saved. Restoring overwrites the vault in this browser.'),
+  );
+}
+
+function drawConfirmKey(typed: string, address: string): void {
+  const passphrase = el('input', { type: 'password', id: 'restore-key-passphrase', placeholder: 'New vault passphrase', autocomplete: 'new-password' }) as HTMLInputElement;
+  const confirmed = el('input', { type: 'checkbox', id: 'address-confirmed' }) as HTMLInputElement;
+  const go = el('button', { class: 'primary', type: 'button', id: 'seal-key' }, 'Restore wallet');
+  go.addEventListener('click', async () => {
+    if (!confirmed.checked) return toast('Confirm that this is your address first.', 'error');
+    if (passphrase.value.length < MIN_VAULT_PASSPHRASE_LENGTH) return toast(`Use at least ${MIN_VAULT_PASSPHRASE_LENGTH} characters for the passphrase.`, 'error');
+    go.disabled = true;
+    try {
+      const restored = await Wallet.fromPrivateKey(typed, network!.addressHrp, passphrase.value);
+      if (restored.address !== address) throw new Error('The restored address does not match the one you confirmed.');
+      toast('Wallet restored.', 'success');
+      reveal(restored, passphrase.value);
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    } finally {
+      go.disabled = false;
+    }
+  });
+  const startOver = el('button', { class: 'ghost', type: 'button' }, 'Start over');
+  startOver.addEventListener('click', () => drawRestoreKey());
+  panel.replaceChildren(
+    el('h2', {}, 'Is this your address?'),
+    kv([['This key controls', identifier(address, { kind: 'address', detail: true, label: 'Wallet address' })]]),
+    el('label', { class: 'check', for: 'address-confirmed' }, confirmed, ' This is my address'),
+    el('div', { class: 'field' }, passphrase),
+    el('div', { class: 'row' }, go, startOver),
+    el('p', { class: 'fineprint' }, 'If it is not your address, stop: this is not the key for your wallet, and nothing has been saved.'),
   );
 }
 

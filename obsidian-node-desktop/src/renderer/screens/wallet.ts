@@ -52,7 +52,7 @@ export const wallet: Screen = {
       return html`${head}<div style="margin-top:18px">${warn(`There is no wallet for ${net} on this computer yet. A wallet is an independent key pair; it is never derived from an account or a password.`, 'in')}</div>
       <div class="g g2" style="margin-top:14px">
         <div class="card"><div class="k">Create a new wallet</div><div class="sub" style="font-size:13px;margin:8px 0 14px">Generates a 24-word recovery phrase and encrypts the wallet on this computer with a passphrase you choose.</div><button class="btn p" data-action="wallet.create">Create wallet</button></div>
-        <div class="card"><div class="k">Import an existing wallet</div><div class="sub" style="font-size:13px;margin:8px 0 14px">Restore from a 12 or 24-word recovery phrase. Wallet addresses are specific to ${net}.</div><button class="btn" data-action="wallet.import">Import recovery phrase</button></div>
+        <div class="card"><div class="k">Import an existing wallet</div><div class="sub" style="font-size:13px;margin:8px 0 14px">Restore from a 12 or 24-word recovery phrase or from a private key. Wallet addresses are specific to ${net}.</div><button class="btn" data-action="wallet.import">Import recovery phrase</button></div>
       </div>`;
     }
     const running = displayState() === 'synced' || displayState() === 'syncing';
@@ -92,7 +92,7 @@ function historyView(address: string | null): unknown {
 
 // ── create ───────────────────────────────────────────────────────────────────
 function createFlow(): void {
-  let pending: { pendingId: string; phrase: string; confirmPositions: number[] } | null = null;
+  let pending: { pendingId: string; phrase: string; privateKey: string; confirmPositions: number[] } | null = null;
   let step: 'intro' | 'phrase' | 'confirm' = 'intro';
   const clear = (): void => {
     if (pending) void call('wallet:cancel-create', { pendingId: pending.pendingId }).catch(() => undefined);
@@ -103,8 +103,8 @@ function createFlow(): void {
     wide: true,
     onClose: clear,
     body: () => {
-      if (step === 'intro') return html`<p class="mu0">A 24-word recovery phrase will be created. It is the only way to recover this wallet.</p>${warn('Anyone who has the phrase controls the funds. Nobody can reset it for you — not this app, not the project. Have a pen and paper ready, and make sure nobody can see your screen.')}`;
-      if (step === 'phrase' && pending) return html`<div class="words" aria-label="Recovery phrase">${pending.phrase.split(' ').map((w, i) => html`<div class="wd"><span>${i + 1}</span>${w}</div>`)}</div>${warn('Write these 24 words down in order and keep them offline. They will not be shown again. Do not photograph or copy them into a file or chat.')}<label class="chk"><input type="checkbox" id="cw-written"> I have written the phrase down and stored it safely.</label>`;
+      if (step === 'intro') return html`<p class="mu0">A 24-word recovery phrase and its private key will be created. Either one recovers this wallet; you will be asked to write both down.</p>${warn('Anyone who has the phrase controls the funds. Nobody can reset it for you — not this app, not the project. Have a pen and paper ready, and make sure nobody can see your screen.')}`;
+      if (step === 'phrase' && pending) return html`<div class="words" aria-label="Recovery phrase">${pending.phrase.split(' ').map((w, i) => html`<div class="wd"><span>${i + 1}</span>${w}</div>`)}</div><div class="fl" style="margin-top:12px">Private key</div><div class="in m" id="cw-key" style="height:auto;padding:10px;word-break:break-all;user-select:text">${pending.privateKey}</div><div class="sub" style="margin-top:6px">The phrase and this key control the same wallet. Either one restores it.</div>${warn('Write the 24 words in order AND the private key, and keep them offline and apart from this computer. They will not be shown again. Do not photograph them or copy them into a file or chat.')}<label class="chk"><input type="checkbox" id="cw-written"> I have written down both my recovery phrase and my private key and stored them safely.</label>`;
       if (step === 'confirm' && pending) return html`<p class="mu0">Prove you wrote it down: enter the words at these positions.</p><div class="frm" style="margin-top:8px">${pending.confirmPositions.map((pos, i) => html`<div><label class="fl" for="cw-${i}">Word #${pos}</label><input class="in m" id="cw-${i}" autocomplete="off" spellcheck="false"></div>`)}</div><div style="margin-top:12px">${passphraseField('cw-pass', 'Choose a passphrase (at least 12 characters)')}</div><div style="margin-top:12px">${passphraseField('cw-pass2', 'Repeat the passphrase')}</div><div class="sub" style="margin-top:8px">The passphrase encrypts the wallet on this computer. It cannot be recovered; the recovery phrase can restore the wallet if you forget it.</div>`;
       return html``;
     },
@@ -122,7 +122,7 @@ function createFlow(): void {
             return false;
           }
           if (step === 'phrase') {
-            if (!isChecked('cw-written')) throw new Error('Confirm that you have written the phrase down.');
+            if (!isChecked('cw-written')) throw new Error('Confirm that you have written down both the recovery phrase and the private key.');
             step = 'confirm';
             modal.title = 'Confirm and protect';
             return false;
@@ -143,28 +143,80 @@ function createFlow(): void {
 }
 
 function importFlow(): void {
-  openModal({
+  let mode: 'phrase' | 'key' = 'phrase';
+  /** Held only between "check this key" and "import"; cleared when the dialog closes or the key is refused. */
+  let checked: { key: string; address: string } | null = null;
+  const forget = (): void => {
+    checked = null;
+  };
+  const modal = openModal({
     title: 'Import a wallet',
     wide: true,
-    body: () => html`<label class="fl" for="iw-phrase">Recovery phrase (12 or 24 words)</label><textarea class="in m" id="iw-phrase" rows="3" autocomplete="off" spellcheck="false" style="height:84px;padding-top:10px"></textarea>
+    onClose: forget,
+    body: () => {
+      const tabs = html`<div class="row" style="gap:8px;margin-bottom:12px"><button class="btn ${mode === 'phrase' ? 'p' : ''}" data-action="wallet.import-mode" data-mode="phrase" type="button">Recovery phrase</button><button class="btn ${mode === 'key' ? 'p' : ''}" data-action="wallet.import-mode" data-mode="key" type="button">Private key</button></div>`;
+      if (mode === 'phrase') {
+        return html`${tabs}<label class="fl" for="iw-phrase">Recovery phrase (12 or 24 words)</label><textarea class="in m" id="iw-phrase" rows="3" autocomplete="off" spellcheck="false" style="height:84px;padding-top:10px"></textarea>
       <div style="margin-top:12px">${passphraseField('iw-pass', 'Choose a passphrase (at least 12 characters)')}</div><div style="margin-top:12px">${passphraseField('iw-pass2', 'Repeat the passphrase')}</div>
-      ${warn('Only enter your phrase on a computer you trust. The phrase is used once to create the encrypted wallet and is not stored.')}`,
+      ${warn('Only enter your phrase on a computer you trust. The phrase is used once to create the encrypted wallet and is not stored.')}`;
+      }
+      if (!checked) {
+        return html`${tabs}<label class="fl" for="ik-key">Private key (64 hexadecimal characters)</label><input class="in m" id="ik-key" type="password" autocomplete="off" spellcheck="false">
+      ${warn('The key is checked on this computer and never sent anywhere. A recovery phrase is not accepted here, and a public key cannot restore a wallet. You will see the address it controls before anything is saved.')}`;
+      }
+      return html`${tabs}<div class="fl">This key controls</div><div class="in m" style="height:auto;padding:10px;word-break:break-all;user-select:text">${checked.address}</div>
+      <label class="chk"><input type="checkbox" id="ik-ok"> This is my address.</label>
+      <div style="margin-top:12px">${passphraseField('ik-pass', 'Choose a passphrase (at least 12 characters)')}</div><div style="margin-top:12px">${passphraseField('ik-pass2', 'Repeat the passphrase')}</div>
+      ${warn('If this is not your address, cancel: this is not the key for your wallet. Nothing has been saved.')}`;
+    },
     buttons: [
       { label: 'Cancel' },
       {
-        label: 'Import wallet',
+        label: 'Continue',
         kind: 'p',
         run: async () => {
-          const pass = inputValue('iw-pass');
-          if (pass !== inputValue('iw-pass2')) throw new Error('The two passphrases do not match.');
-          await call('wallet:import', { phrase: inputValue('iw-phrase'), passphrase: pass });
+          if (mode === 'phrase') {
+            const pass = inputValue('iw-pass');
+            if (pass !== inputValue('iw-pass2')) throw new Error('The two passphrases do not match.');
+            await call('wallet:import', { phrase: inputValue('iw-phrase'), passphrase: pass });
+            toast('Wallet imported', 'ok');
+            refreshWallet();
+            return;
+          }
+          if (!checked) {
+            const typed = inputValue('ik-key');
+            try {
+              const { address } = await call('wallet:preview-key', { privateKey: typed });
+              checked = { key: typed, address };
+            } catch (error) {
+              forget();
+              throw error; // the core's reason; it never contains the key
+            }
+            modal.title = 'Is this your address?';
+            return false;
+          }
+          if (!isChecked('ik-ok')) throw new Error('Confirm that this is your address first.');
+          const pass = inputValue('ik-pass');
+          if (pass !== inputValue('ik-pass2')) throw new Error('The two passphrases do not match.');
+          const { key, address } = checked;
+          await call('wallet:import-key', { privateKey: key, passphrase: pass, confirmAddress: address });
+          forget();
           toast('Wallet imported', 'ok');
           refreshWallet();
         },
       },
     ],
   });
+  modeSwitch = (next) => {
+    mode = next;
+    forget();
+    modal.title = 'Import a wallet';
+    requestRender();
+  };
 }
+
+/** Set by the open import dialog so its mode buttons can reach it; cleared when none is open. */
+let modeSwitch: ((mode: 'phrase' | 'key') => void) | null = null;
 
 function removeFlow(): void {
   openModal({
@@ -188,6 +240,7 @@ function removeFlow(): void {
 registerActions({
   'wallet.create': () => createFlow(),
   'wallet.import': () => importFlow(),
+  'wallet.import-mode': (el) => modeSwitch?.((el as HTMLElement | undefined)?.dataset?.mode === 'key' ? 'key' : 'phrase'),
   'wallet.remove': () => removeFlow(),
   'wallet.review': async () => {
     if (preparing) return;

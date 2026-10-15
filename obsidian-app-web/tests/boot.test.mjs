@@ -320,7 +320,7 @@ test('the nonce is read from the dedicated route under the name it is sent as', 
 // ── creating a wallet ────────────────────────────────────────────────────────
 
 function typeInto(values) {
-  for (const [id, value] of Object.entries(values)) elements.set(id, { value });
+  for (const [id, value] of Object.entries(values)) elements.set(id, { value, checked: value === true });
 }
 
 function clearFields() {
@@ -348,12 +348,20 @@ test('a person with no wallet is offered CREATE first, and the phrase is shown o
   assert.ok(check.every((n) => n >= 1 && n <= 24));
   for (const n of check) assert.match(app.innerHTML, new RegExp(`WORD #${n}\\b`));
   assert.ok(words.every((w) => app.innerHTML.includes(`>${w}<`)), 'all 24 words are on screen');
+  // The private key the phrase controls is shown beside it, and it is that phrase's own key.
+  const { privateKeyOfPhrase } = await import('../public/wallet.mjs');
+  const key = real.state.setup.draft.privateKey;
+  assert.match(key, /^[0-9a-f]{64}$/, 'a 32-byte key');
+  assert.equal(key, await privateKeyOfPhrase(words.join(' ')), 'the key is derived from the phrase shown');
+  assert.ok(app.innerHTML.includes(key), 'the private key is on screen with the phrase');
+  assert.match(app.innerHTML, /YOUR PRIVATE KEY/);
+  assert.match(app.innerHTML, /I have saved both the recovery phrase and the private key/);
   assert.equal(JSON.stringify([...store.entries()]).includes(words[0] + ' ' + words[1]), false, 'nothing is stored yet');
 });
 
 test('the phrase is not sealed until the words are proven, and the refusal does not say which was wrong', needsBundle, async () => {
   const { words, check } = real.state.setup.draft;
-  typeInto({ cw0: words[check[0] - 1], cw1: 'wrong', cw2: words[check[2] - 1], pp: 'a long vault passphrase 42', p2: 'a long vault passphrase 42' });
+  typeInto({ cw0: words[check[0] - 1], cw1: 'wrong', cw2: words[check[2] - 1], pp: 'a long vault passphrase 42', p2: 'a long vault passphrase 42', cksaved: true });
   await window.ObsidianSetupWallet();
   assert.match(real.state.error, /do not match/);
   assert.doesNotMatch(real.state.error, new RegExp(`#?${check[1]}\\b`), 'it does not point at the wrong word');
@@ -361,9 +369,17 @@ test('the phrase is not sealed until the words are proven, and the refusal does 
   assert.ok(real.state.setup.draft, 'the phrase is kept so the person can try again');
 });
 
+test('sealing is refused until the person confirms both the phrase and the private key are saved', needsBundle, async () => {
+  const { words, check } = real.state.setup.draft;
+  typeInto({ cw0: words[check[0] - 1], cw1: words[check[1] - 1], cw2: words[check[2] - 1], pp: 'a long vault passphrase 42', p2: 'a long vault passphrase 42', cksaved: false });
+  await window.ObsidianSetupWallet();
+  assert.match(real.state.error, /saved both the recovery phrase and the private key/);
+  assert.equal(localStorage.getItem('obsidian.vault.v1'), null, 'nothing was sealed');
+});
+
 test('a short passphrase is refused even with the right words', needsBundle, async () => {
   const { words, check } = real.state.setup.draft;
-  typeInto({ cw0: words[check[0] - 1], cw1: words[check[1] - 1], cw2: words[check[2] - 1], pp: 'short', p2: 'short' });
+  typeInto({ cw0: words[check[0] - 1], cw1: words[check[1] - 1], cw2: words[check[2] - 1], pp: 'short', p2: 'short', cksaved: true });
   await window.ObsidianSetupWallet();
   assert.match(real.state.error, /at least 12/);
   assert.equal(localStorage.getItem('obsidian.vault.v1'), null);
@@ -373,7 +389,7 @@ test('the right words and a passphrase seal exactly the phrase that was shown', 
   const wallet = await import('../public/wallet.mjs');
   const { words, check } = real.state.setup.draft;
   const shown = words.join(' ');
-  typeInto({ cw0: words[check[0] - 1].toUpperCase(), cw1: words[check[1] - 1], cw2: words[check[2] - 1], pp: 'a long vault passphrase 42', p2: 'a long vault passphrase 42' });
+  typeInto({ cw0: words[check[0] - 1].toUpperCase(), cw1: words[check[1] - 1], cw2: words[check[2] - 1], pp: 'a long vault passphrase 42', p2: 'a long vault passphrase 42', cksaved: true });
   await window.ObsidianSetupWallet();
   assert.equal(real.state.error, '');
   assert.match(real.state.walletAddress, /^dobs1/, 'a devnet address, from the connected network');
@@ -381,6 +397,109 @@ test('the right words and a passphrase seal exactly the phrase that was shown', 
   assert.ok(localStorage.getItem('obsidian.vault.v1'), 'sealed in the platform’s vault format');
   assert.equal(JSON.stringify([...store.entries()]).includes(words[0]), false, 'the phrase is not in storage in the clear');
   assert.equal(await wallet.addressForPhrase(shown), real.state.walletAddress, 'the address belongs to the phrase that was shown');
+  clearFields();
+});
+
+// ── recovering from a private key ────────────────────────────────────────────
+
+const KEY_PASS = 'another long vault passphrase 77';
+
+async function startKeyRecovery() {
+  localStorage.removeItem('obsidian.vault.v1');
+  localStorage.removeItem('obsidian.address');
+  real.state.walletAddress = null;
+  real.state.wt = 'setup';
+  real.state.screen = 'wallet';
+  clearFields();
+  window.ObsidianSetupMode('key');
+}
+
+test('private-key recovery: the key shown at creation recovers the SAME address, and it is shown before anything is sealed', needsBundle, async () => {
+  const wallet = await import('../public/wallet.mjs');
+  const phrase = await wallet.newPhrase();
+  const key = await wallet.privateKeyOfPhrase(phrase);
+  const expected = await wallet.addressForPhrase(phrase);
+  await startKeyRecovery();
+  assert.match(app.innerHTML, /PRIVATE KEY/);
+  typeInto({ pk: `  0x${key.toUpperCase()}  ` });
+  await window.ObsidianCheckKey();
+  assert.equal(real.state.error, '');
+  assert.equal(real.state.setup.keyPreview.address, expected, 'the confirmation step shows the derived address');
+  assert.ok(app.innerHTML.includes(expected), 'the address is on screen to be confirmed');
+  assert.equal(app.innerHTML.includes(key), false, 'the key is not put back into the page');
+  assert.equal(localStorage.getItem('obsidian.vault.v1'), null, 'nothing is sealed before confirmation');
+  clearFields();
+  typeInto({ pp: KEY_PASS, p2: KEY_PASS, ckaddr: false });
+  await window.ObsidianSealKey();
+  assert.match(real.state.error, /Confirm that this is your address/);
+  assert.equal(localStorage.getItem('obsidian.vault.v1'), null, 'still nothing sealed');
+  clearFields();
+  typeInto({ pp: KEY_PASS, p2: 'different passphrase here', ckaddr: true });
+  await window.ObsidianSealKey();
+  assert.match(real.state.error, /do not match/);
+  clearFields();
+  typeInto({ pp: KEY_PASS, p2: KEY_PASS, ckaddr: true });
+  await window.ObsidianSealKey();
+  assert.equal(real.state.error, '');
+  assert.equal(real.state.walletAddress, expected, 'the wallet is the one the phrase created');
+  assert.equal(JSON.stringify([...store.entries()]).includes(key), false, 'the key is not in storage in the clear');
+  assert.ok(localStorage.getItem('obsidian.vault.v1'), 'sealed in the same vault format');
+  // The sealed key wallet signs like any other: the sealed secret opens to the same address.
+  const { loadVault, openVault, walletFromPhrase } = await import('../web/index.mjs').then(async (m) => ({ ...m, ...(await import('../web/vault.mjs')) }));
+  const secret = await openVault(loadVault(), KEY_PASS);
+  assert.equal(walletFromPhrase(secret, 'dobs').address, expected);
+  // Showing the secret later says it is a private key, not a phrase.
+  assert.match(await wallet.revealPhrase(KEY_PASS), /^PRIVATE KEY \(this wallet has no recovery phrase\): [0-9a-f]{64}$/);
+  clearFields();
+});
+
+test('private-key recovery: an invalid key fails safely with a reason, creates no wallet and never echoes the input', needsBundle, async () => {
+  const wallet = await import('../public/wallet.mjs');
+  const good = await wallet.privateKeyOfPhrase(await wallet.newPhrase());
+  const secretLooking = good.slice(0, 40); // a truncated key
+  const bad = [
+    ['', /Enter your private key/],
+    [secretLooking, /exactly 64 hexadecimal/],
+    [`${good.slice(0, 63)}z`, /only the digits/],
+    ['0'.repeat(64), /not a valid private key/],
+    ['f'.repeat(64), /not a valid private key/],
+    ['abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about', /recovery phrase/],
+    [`02${good}`, /public key/],
+  ];
+  for (const [input, message] of bad) {
+    await startKeyRecovery();
+    typeInto({ pk: input });
+    await window.ObsidianCheckKey();
+    assert.match(real.state.error, message);
+    assert.equal(real.state.setup.keyPreview, null, 'no address is offered for a refused key');
+    assert.equal(localStorage.getItem('obsidian.vault.v1'), null, 'no wallet was created');
+    assert.equal(localStorage.getItem('obsidian.address'), null);
+    if (input.length > 8) assert.equal(real.state.error.includes(input.slice(0, 8)), false, 'the refusal does not echo the input');
+    assert.equal(app.innerHTML.includes(input.slice(0, 20)) && input.length > 20, false, 'the page does not print the refused key back');
+  }
+  // Sealing with no checked key is refused too.
+  await startKeyRecovery();
+  typeInto({ pp: KEY_PASS, p2: KEY_PASS, ckaddr: true });
+  await window.ObsidianSealKey();
+  assert.match(real.state.error, /check its address first/);
+  assert.equal(localStorage.getItem('obsidian.vault.v1'), null);
+  clearFields();
+});
+
+test('private-key recovery: leaving the screen forgets a checked key', needsBundle, async () => {
+  const wallet = await import('../public/wallet.mjs');
+  const key = await wallet.privateKeyOfPhrase(await wallet.newPhrase());
+  await startKeyRecovery();
+  typeInto({ pk: key });
+  await window.ObsidianCheckKey();
+  assert.ok(real.state.setup.keyPreview);
+  real.go('explorer');
+  assert.equal(real.state.setup.keyPreview, null);
+  real.go('wallet');
+  typeInto({ pp: KEY_PASS, p2: KEY_PASS, ckaddr: true });
+  await window.ObsidianSealKey();
+  assert.match(real.state.error, /check its address first/, 'the key did not survive leaving the screen');
+  assert.equal(localStorage.getItem('obsidian.vault.v1'), null);
   clearFields();
 });
 

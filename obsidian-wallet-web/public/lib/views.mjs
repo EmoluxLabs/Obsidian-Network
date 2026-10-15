@@ -162,34 +162,68 @@ export const V = {
     field({ id: 'pw2', label: 'CONFIRM PASSWORD', type: 'password', autocomplete: 'new-password' }) +
     `${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'GENERATING KEYS…' : 'CREATE WALLET'}</button></form>`,
 
-  create2: (S, phrase) =>
-    `${hdr('RECOVERY')}<h1 class="h-24">SAVE YOUR RECOVERY PHRASE</h1>` +
-    `<p class="mu lh">Write these ${esc(phrase.split(' ').length)} words down, in order, on paper. They restore your wallet on any device. This is the only copy: nothing is saved on this device until you continue.</p>` +
-    `<div class="card pad"><ol class="words">${phrase
-      .split(' ')
-      .map((w, i) => `<li class="m"><span class="mu n">${i + 1}</span> ${esc(w)}</li>`)
-      .join('')}</ol></div>` +
-    `<div class="wr">Anyone with these words controls your funds. Store them offline. Obsidian cannot recover them for you. They are deliberately not copied or downloaded as a file: a file or the clipboard is easy to leak.</div>` +
-    `<form data-submit="finishCreate" novalidate><label class="check"><input id="ck" type="checkbox">I have written down my recovery phrase and stored it safely</label>` +
-    `${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'SEALING…' : 'CONTINUE'}</button></form>` +
-    `<button type="button" class="btn" data-a="cancelCreate">CANCEL</button>`,
+  create2: (S, shown) => {
+    // `shown` is { phrase, privateKey }; a bare phrase string is accepted too (no private key block is drawn for it).
+    const { phrase, privateKey } = typeof shown === 'string' ? { phrase: shown, privateKey: '' } : shown;
+    return (
+      `${hdr('RECOVERY')}<h1 class="h-24">SAVE YOUR RECOVERY PHRASE${privateKey ? ' AND PRIVATE KEY' : ''}</h1>` +
+      `<p class="mu lh">Write these ${esc(phrase.split(' ').length)} words down, in order, on paper. They restore your wallet on any device. This is the only copy: nothing is saved on this device until you continue.</p>` +
+      `<div class="card pad"><ol class="words">${phrase
+        .split(' ')
+        .map((w, i) => `<li class="m"><span class="mu n">${i + 1}</span> ${esc(w)}</li>`)
+        .join('')}</ol></div>` +
+      (privateKey
+        ? `<div class="lb">PRIVATE KEY</div><div class="card pad"><div class="m sm key-hex" id="pkshown">${esc(privateKey)}</div></div>` +
+          `<p class="mu sm lh">The recovery phrase and this private key each control the same wallet, and either one restores it. Write both on paper and keep them apart from your devices.</p>`
+        : '') +
+      `<div class="wr">Anyone with these words or this key controls your funds. Store them offline. Obsidian cannot recover them for you. They are deliberately not copied or downloaded as a file: a file or the clipboard is easy to leak.</div>` +
+      `<form data-submit="finishCreate" novalidate><label class="check"><input id="ck" type="checkbox">I have written down my recovery phrase${privateKey ? ' and my private key' : ''} and stored ${privateKey ? 'them' : 'it'} safely</label>` +
+      `${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'SEALING…' : 'CONTINUE'}</button></form>` +
+      `<button type="button" class="btn" data-a="cancelCreate">CANCEL</button>`
+    );
+  },
 
   import: (S) => {
-    const phrase = S.tab !== 'backup';
+    const tab = S.tab === 'backup' ? 'backup' : S.tab === 'key' ? 'key' : 'phrase';
+    const on = (name) => (tab === name ? ' p' : '');
+    let body;
+    if (tab === 'phrase') {
+      body =
+        `<form data-submit="importPhrase" novalidate>` +
+        `<label for="rp">RECOVERY PHRASE (12 OR 24 WORDS)</label><textarea id="rp" placeholder="word1 word2 word3 …" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>` +
+        field({ id: 'pw', label: 'NEW PASSWORD', type: 'password', placeholder: `At least ${S.minPass} characters`, autocomplete: 'new-password' }) +
+        field({ id: 'pw2', label: 'CONFIRM PASSWORD', type: 'password', autocomplete: 'new-password' }) +
+        `${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'IMPORTING…' : 'IMPORT WALLET'}</button></form>`;
+    } else if (tab === 'key' && !S.keyAddress) {
+      // Step one: the key is checked on this device and the address it controls is shown. Nothing is stored.
+      body =
+        `<form data-submit="checkKey" novalidate>` +
+        field({ id: 'pk', label: 'PRIVATE KEY (64 HEX CHARACTERS)', type: 'password', placeholder: '0123…abcd', autocomplete: 'off' }) +
+        `<p class="mu sm lh">Checked on this device only. A recovery phrase is not accepted here and a public key cannot restore a wallet. Nothing is created unless the key is valid.</p>` +
+        `${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'CHECKING…' : 'CHECK THIS KEY'}</button></form>`;
+    } else if (tab === 'key') {
+      // Step two: the person confirms the address, then chooses a password. Only now is anything sealed.
+      body =
+        `<div class="lb">THIS KEY CONTROLS</div><div class="card pad"><div class="m sm addr-l" id="keyaddr">${esc(S.keyAddress)}</div></div>` +
+        `<form data-submit="importKey" novalidate><label class="check"><input id="ckaddr" type="checkbox">This is my address. If it is not, stop: this is not the key for my wallet.</label>` +
+        field({ id: 'pw', label: 'NEW PASSWORD', type: 'password', placeholder: `At least ${S.minPass} characters`, autocomplete: 'new-password' }) +
+        field({ id: 'pw2', label: 'CONFIRM PASSWORD', type: 'password', autocomplete: 'new-password' }) +
+        `${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'IMPORTING…' : 'IMPORT WALLET'}</button></form>` +
+        `<button type="button" class="btn" data-a="discardKey">START OVER</button>`;
+    } else {
+      body =
+        `<form data-submit="importBackup" novalidate>` +
+        `<label for="bf">BACKUP FILE</label><input id="bf" type="file" accept="application/json,.json" class="file">` +
+        `<label for="bt">…OR PASTE ITS CONTENTS</label><textarea id="bt" placeholder='{"version":1,"kdf":"PBKDF2-SHA256", …}' spellcheck="false" autocomplete="off"></textarea>` +
+        field({ id: 'pw', label: 'THE BACKUP’S PASSWORD', type: 'password', autocomplete: 'current-password' }) +
+        `<p class="mu sm">The same password then protects the wallet on this device.</p>` +
+        `${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'IMPORTING…' : 'IMPORT WALLET'}</button></form>`;
+    }
     return (
-      `${back('welcome')}<h1>IMPORT WALLET</h1><p class="mu">Use your recovery phrase, or an encrypted backup file you downloaded from this wallet.</p>` +
-      `<div class="two mt-14"><button type="button" class="btn s${phrase ? ' p' : ''}" data-a="tab" data-v="phrase">RECOVERY PHRASE</button><button type="button" class="btn s${phrase ? '' : ' p'}" data-a="tab" data-v="backup">ENCRYPTED BACKUP</button></div>` +
-      `<form data-submit="${phrase ? 'importPhrase' : 'importBackup'}" novalidate>` +
-      (phrase
-        ? `<label for="rp">RECOVERY PHRASE (12 OR 24 WORDS)</label><textarea id="rp" placeholder="word1 word2 word3 …" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>` +
-          field({ id: 'pw', label: 'NEW PASSWORD', type: 'password', placeholder: `At least ${S.minPass} characters`, autocomplete: 'new-password' }) +
-          field({ id: 'pw2', label: 'CONFIRM PASSWORD', type: 'password', autocomplete: 'new-password' })
-        : `<label for="bf">BACKUP FILE</label><input id="bf" type="file" accept="application/json,.json" class="file">` +
-          `<label for="bt">…OR PASTE ITS CONTENTS</label><textarea id="bt" placeholder='{"version":1,"kdf":"PBKDF2-SHA256", …}' spellcheck="false" autocomplete="off"></textarea>` +
-          field({ id: 'pw', label: 'THE BACKUP’S PASSWORD', type: 'password', autocomplete: 'current-password' }) +
-          `<p class="mu sm">The same password then protects the wallet on this device.</p>`) +
-      `${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'IMPORTING…' : 'IMPORT WALLET'}</button></form>` +
-      `<div class="wr">Private keys cannot be imported: this wallet is restored from the recovery phrase only.</div>`
+      `${back('welcome')}<h1>IMPORT WALLET</h1><p class="mu">Use your recovery phrase, your private key, or an encrypted backup file you downloaded from this wallet.</p>` +
+      `<div class="three mt-14"><button type="button" class="btn s${on('phrase')}" data-a="tab" data-v="phrase">RECOVERY PHRASE</button><button type="button" class="btn s${on('key')}" data-a="tab" data-v="key">PRIVATE KEY</button><button type="button" class="btn s${on('backup')}" data-a="tab" data-v="backup">ENCRYPTED BACKUP</button></div>` +
+      body +
+      `<div class="wr">A private key is checked on this device, is never sent anywhere and is never printed back. The address it controls is shown for you to confirm before anything is saved.</div>`
     );
   },
 
@@ -310,14 +344,22 @@ export const V = {
     );
   },
 
-  backup: (S, phrase) =>
-    `${back('home')}<h1>BACKUP &amp; RECOVERY</h1><p class="mu lh">Your recovery phrase is the only thing that restores this wallet if this device is lost.</p>` +
-    (phrase
-      ? `<div class="lb">RECOVERY PHRASE</div><div class="card pad"><ol class="words">${phrase.split(' ').map((w, i) => `<li class="m"><span class="mu n">${i + 1}</span> ${esc(w)}</li>`).join('')}</ol></div>` +
-        `<div class="wr">Anyone with these words controls your funds. They hide again in one minute, when you lock, or when you leave this page.</div><button type="button" class="btn" data-a="hidePhrase">HIDE</button>`
-      : `<form data-submit="reveal" novalidate>${field({ id: 'pw', label: 'PASSWORD', type: 'password', autocomplete: 'current-password' })}${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'CHECKING…' : 'SHOW RECOVERY PHRASE'}</button></form>`) +
+  backup: (S, shown) => {
+    // `shown` is { phrase?, privateKey } once the password has been entered; a bare phrase string is accepted too.
+    const secret = typeof shown === 'string' ? { phrase: shown, privateKey: '' } : shown;
+    return (
+      `${back('home')}<h1>BACKUP &amp; RECOVERY</h1><p class="mu lh">Your recovery phrase and your private key each restore this wallet if this device is lost.</p>` +
+      (secret
+        ? (secret.phrase
+            ? `<div class="lb">RECOVERY PHRASE</div><div class="card pad"><ol class="words">${secret.phrase.split(' ').map((w, i) => `<li class="m"><span class="mu n">${i + 1}</span> ${esc(w)}</li>`).join('')}</ol></div>`
+            : `<div class="mu sm lh">This wallet was restored from a private key, so it has no recovery phrase.</div>`) +
+          (secret.privateKey ? `<div class="lb">PRIVATE KEY</div><div class="card pad"><div class="m sm key-hex">${esc(secret.privateKey)}</div></div>` : '') +
+          `<div class="wr">Anyone with these words or this key controls your funds. They hide again in one minute, when you lock, or when you leave this page.</div><button type="button" class="btn" data-a="hidePhrase">HIDE</button>`
+        : `<form data-submit="reveal" novalidate>${field({ id: 'pw', label: 'PASSWORD', type: 'password', autocomplete: 'current-password' })}${err(S)}<button type="submit" class="btn p"${S.busy ? ' disabled' : ''}>${S.busy ? 'CHECKING…' : 'SHOW RECOVERY PHRASE AND KEY'}</button></form>`) +
     `<div class="lb">ENCRYPTED BACKUP</div><div class="card pad"><p class="mu sm lh m0">A file that holds your wallet encrypted with your password. It is useless without the password, and it restores the wallet on the Import screen. It is not a replacement for the recovery phrase.</p></div>` +
-    `<button type="button" class="btn" data-a="downloadBackup">DOWNLOAD ENCRYPTED BACKUP</button>`,
+    `<button type="button" class="btn" data-a="downloadBackup">DOWNLOAD ENCRYPTED BACKUP</button>`
+    );
+  },
 
   remove: (S) =>
     `${back(S.address && S.unlocked ? 'home' : S.address ? 'unlock' : 'welcome')}<h1>REMOVE WALLET</h1>` +

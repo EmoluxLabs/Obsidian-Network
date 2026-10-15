@@ -7,7 +7,7 @@ consensus, the transaction format, keys, node participation or the RPC server: t
 talks to it over its own HTTP RPC on `127.0.0.1`.
 
 Layers: **renderer** (`src/renderer`, sandboxed, no Node) → **preload** (generated from
-`src/shared/contract.ts`, allow-list of 40 channels) → **handlers** (`src/core/handlers.ts`,
+`src/shared/contract.ts`, allow-list of 41 channels) → **handlers** (`src/core/handlers.ts`,
 validate every payload again) → **services** (`src/core/*-service.ts`) → **core node / core
 library**.
 
@@ -44,7 +44,7 @@ too-large | refused`). The client refuses any host that is not loopback.
 | Node Management (`#/node`) | `screens/node.ts`, `node-actions.ts` | `node:start/stop/restart/state`, `chain:detail` | `node-supervisor.ts` | node process; `/health` readiness (running is reported only after `/health` answers) |
 | Network & Peers (`#/network`) | `screens/network.ts` | `chain:detail`, `network:switch` | `chain-service.ts` | `/network /peers /params /version` |
 | Node Rewards (`#/participation`) | `screens/participation.ts` | `participation:view`, `participation:bind` | `participation-service.ts` | `/health`, `/producers`, `/finality`, `/nodes/status/:nodeId`; the reward wallet is saved by core `writeNodeBinding` — no transaction is signed by the app |
-| Wallet (`#/wallet`) | `screens/wallet.ts` | `wallet:status/begin-create/finish-create/cancel-create/import/balance/history/remove`, `tx:prepare-payment` | `wallet-service.ts`, `vault.ts`, `payment-service.ts` | `/wallet/balance`, `/address/:addr`; keys by core mnemonic functions |
+| Wallet (`#/wallet`) | `screens/wallet.ts` | `wallet:status/begin-create/finish-create/cancel-create/import/preview-key/import-key/balance/history/remove`, `tx:prepare-payment` | `wallet-service.ts`, `vault.ts`, `payment-service.ts` | `/wallet/balance`, `/address/:addr`; keys by core mnemonic functions |
 | Transactions (`#/tx`) | `screens/tx.ts` | `tx:submissions/status/resubmit`, `explorer:mempool` | `tx-service.ts` | `/tx/:id`, `/mempool`, `/tx/submit` (idempotent resubmit of identical bytes) |
 | Explorer (`#/explorer`) | `screens/explorer.ts` | `explorer:blocks/block/tx/address/mempool/search` | `explorer-service.ts` | `/blocks /block/:id /tx/:id /address/:addr /mempool` |
 | Logs & Diagnostics (`#/logs`) | `screens/logs.ts` | `node:logs`, `node:logs-clear`, `diag:run/report/save` | `log-buffer.ts`, `diagnostics-service.ts`, `redact.ts` | node stdout/stderr (JSON lines), `/health /version /params` |
@@ -61,7 +61,7 @@ The template has 17 mock screens; the ones that only existed to show states of t
 | Start node | `node.start` → `node:start` | refuses a taken port, refuses to talk to a foreign node on the RPC port, refuses to create a new chain unless the user confirms (never auto-initialises genesis) |
 | Stop / restart | `node:stop`, `node:restart` | SIGTERM → core's own graceful shutdown → wait for exit → SIGKILL only after a timeout, which is reported; the data-dir `LOCK` must be released |
 | Switch network | `network:switch` | confirmation dialog; refused while a node process exists; each network has its own data dir, vault and settings |
-| Create / import wallet | `wallet.create`, `wallet.import` | core derivation; vault `obsidian.vault.v1` (PBKDF2-SHA256 600k, AES-GCM) — the same format as the web app, interoperability is tested |
+| Create / import wallet | `wallet.create`, `wallet.import` (recovery phrase, or a private key in two steps: check, then confirm the address) | core derivation (`crypto/private-key.js` for keys; creation shows the phrase and the private key it controls, with a both-saved confirmation); vault `obsidian.vault.v1` (PBKDF2-SHA256 600k, AES-GCM) — the same format as the web app, interoperability is tested |
 | Send | `wallet.review` → `tx:prepare-payment` → dialog → `tx:execute` | prepare shows amount, fee and total from `expectedGas`; passphrase needed per transaction; node simulation of the exact signed bytes; "submitted" only after `/tx/submit` accepts; "confirmed" only when `/tx/:id` says so |
 | Choose reward wallet | `participation.bind` → `participation:bind` | the core's own address check (network prefix and checksum) runs first; an invalid address is refused and nothing is written; no gas, no signature, no private key; the file holds an address and a timestamp only |
 | Copy / save diagnostics | `help.report-copy`, `help.report-save` | report passes through `redact.ts`; save goes through a native save dialog |

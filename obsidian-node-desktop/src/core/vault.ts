@@ -53,18 +53,40 @@ async function deriveKey(passphrase: string, salt: Uint8Array, iterations: numbe
   return subtle.deriveKey({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 
+/**
+ * What a vault holds for a wallet recovered from a private key: `obsidian-key:v1:<64 hex>` in the same `phrase`
+ * field a recovery phrase uses. The identical marker is used by the web app wallet, so an encrypted vault moves
+ * between the products. Anything else is a recovery phrase.
+ */
+export const KEY_SECRET_PREFIX = 'obsidian-key:v1:';
+
+export function isKeySecret(secret: unknown): boolean {
+  return typeof secret === 'string' && secret.trim().startsWith(KEY_SECRET_PREFIX);
+}
+
+/** The wallet a vault secret (phrase or key marker) controls on a network. Throws with a message that never contains the secret. */
+export function walletFromSecret(core: CoreModules, secret: string, addressHrp: string): { canonical: string; address: string; publicKey: string; privateKey: string } {
+  if (isKeySecret(secret)) {
+    const found = core.privateKey.walletFromPrivateKeyInput(secret.trim().slice(KEY_SECRET_PREFIX.length), addressHrp);
+    if (!found.ok) throw new Error(found.message);
+    return { canonical: `${KEY_SECRET_PREFIX}${found.privateKey}`, address: found.address, publicKey: found.publicKey, privateKey: found.privateKey };
+  }
+  const words = core.mnemonic.normalizePhrase(String(secret ?? '').trim());
+  if (!core.mnemonic.isValidRecoveryPhrase(words)) throw new Error('That recovery phrase is not valid.');
+  const derived = core.mnemonic.deriveWallet(words, 0, 0, undefined, addressHrp);
+  const address = derived.address ?? core.keys.addressFromPublicKey(derived.publicKey, addressHrp);
+  return { canonical: words, address, publicKey: derived.publicKey, privateKey: derived.privateKey };
+}
+
 export async function sealVault(core: CoreModules, phrase: string, passphrase: string, addressHrp: string): Promise<VaultEnvelope> {
   if (typeof passphrase !== 'string' || passphrase.length < MIN_PASSPHRASE_LENGTH) {
     throw new Error(`Use a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters.`);
   }
-  const words = core.mnemonic.normalizePhrase(String(phrase ?? '').trim());
-  if (!core.mnemonic.isValidRecoveryPhrase(words)) throw new Error('That recovery phrase is not valid.');
-  const derived = core.mnemonic.deriveWallet(words, 0, 0, undefined, addressHrp);
-  const address = derived.address ?? core.keys.addressFromPublicKey(derived.publicKey, addressHrp);
+  const { canonical: words, address, publicKey } = walletFromSecret(core, phrase, addressHrp);
   const payload = {
     phrase: words,
     addressHrp,
-    accounts: [{ address, publicKey: derived.publicKey, label: 'Main wallet', createdAt: Date.now(), account: 0, index: 0 }],
+    accounts: [{ address, publicKey, label: 'Main wallet', createdAt: Date.now(), account: 0, index: 0 }],
   };
   const salt = webcrypto.getRandomValues(new Uint8Array(16));
   const iv = webcrypto.getRandomValues(new Uint8Array(12));

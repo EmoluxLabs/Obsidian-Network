@@ -200,6 +200,11 @@ export function createHandlers(ctx: AppContext, platform: PlatformActions): Hand
       const body = payloadObject(raw);
       return ctx.wallets.importPhrase(network(), reqString(body.phrase, 'phrase', 1000), reqString(body.passphrase, 'passphrase', 256));
     },
+    'wallet:preview-key': async (raw) => ctx.wallets.previewPrivateKey(network(), reqString(payloadObject(raw).privateKey, 'privateKey', 400, 0)),
+    'wallet:import-key': async (raw) => {
+      const body = payloadObject(raw);
+      return ctx.wallets.importPrivateKey(network(), reqString(body.privateKey, 'privateKey', 400, 0), reqString(body.passphrase, 'passphrase', 256), reqString(body.confirmAddress, 'confirmAddress', 120));
+    },
     'wallet:balance': async () => {
       const status = await ctx.wallets.status(network());
       if (!status.exists || !status.address) throw new AppError('NO_WALLET', 'There is no wallet on this network yet.');

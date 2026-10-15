@@ -753,8 +753,8 @@ function setupPanel(s) {
     `<button class="btn ${mode === key ? 'p' : ''}" style="margin:0;height:42px;font-size:11px;letter-spacing:.08em" onclick="ObsidianSetupMode('${key}')">${label}</button>`;
   return (
     `<p class="mu" style="line-height:1.55">A wallet is a 24-word recovery phrase, encrypted on this device with a passphrase you choose. It is what signs a mining claim or a payment — the platform never sees it, and nobody can recover it for you.</p>` +
-    `<div style="display:flex;gap:12px;margin-top:12px">${tab('create', 'CREATE NEW')}${tab('import', 'I HAVE A PHRASE')}</div>` +
-    (mode === 'import' ? importPanel(s) : createPanel(s))
+    `<div style="display:flex;gap:12px;margin-top:12px">${tab('create', 'CREATE NEW')}${tab('import', 'I HAVE A PHRASE')}${tab('key', 'I HAVE A PRIVATE KEY')}</div>` +
+    (mode === 'import' ? importPanel(s) : mode === 'key' ? keyPanel(s) : createPanel(s))
   );
 }
 
@@ -771,6 +771,29 @@ function importPanel(s) {
     designField('ph', 'RECOVERY PHRASE', 'text', '12 or 24 words, separated by spaces') +
     sealFields(s, 'SEAL WALLET ON THIS DEVICE') +
     `<p class="mu" style="font-size:12.5px;margin-top:12px">Use this to bring in a wallet made on the Obsidian Web platform or anywhere else: the same words give the same wallet in every Obsidian product.</p>`
+  );
+}
+
+/**
+ * Recover from a private key, in two steps so a wrong key can never silently become a wallet: (1) the key is validated
+ * on this device and the address it controls is SHOWN; (2) the person confirms it is theirs, picks a passphrase and
+ * only then is anything sealed. The key is never printed back, never sent and never logged.
+ */
+function keyPanel(s) {
+  const preview = s.setup?.keyPreview;
+  if (!preview) {
+    return (
+      designField('pk', 'PRIVATE KEY', 'password', '64 hexadecimal characters') +
+      `<button class="btn p" onclick="ObsidianCheckKey()">${busy('CHECK THIS KEY', s, 'checkkey')}</button>` +
+      `<p class="mu" style="font-size:12.5px;margin-top:12px;line-height:1.55">Use this if you saved the private key shown when the wallet was created. It is checked on this device only. A recovery phrase is not accepted here, and a public key cannot recover a wallet. Nothing is created unless the key is valid.</p>`
+    );
+  }
+  return (
+    `<div class="card" style="margin-top:14px;padding:16px"><div class="lb" style="margin:0 0 8px">THIS KEY CONTROLS</div>` +
+    `<div class="m" style="font-size:13px;word-break:break-all">${esc(preview.address)}</div></div>` +
+    `<label style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.5"><input type="checkbox" id="ckaddr" style="width:auto;margin-top:3px"> This is my address. If it is not, stop: the key is not the one for my wallet.</label>` +
+    sealFields(s, 'SEAL WALLET ON THIS DEVICE').replace('ObsidianSetupWallet()', 'ObsidianSealKey()') +
+    `<button class="btn" onclick="ObsidianDiscardKey()">START OVER</button>`
   );
 }
 
@@ -799,9 +822,12 @@ function createPanel(s) {
   return (
     `<div class="lb">YOUR RECOVERY PHRASE — WRITE IT DOWN NOW</div>` +
     `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">${words}</div>` +
-    `<p class="mu" style="font-size:12.5px;line-height:1.55;margin-top:12px">This is the only time it is shown unprompted. It is held in this page’s memory and is not stored until you seal it below.</p>` +
+    `<div class="lb">YOUR PRIVATE KEY — SAVE IT TOO</div>` +
+    `<div class="card" style="padding:12px 14px"><div class="m" style="font-size:12.5px;word-break:break-all">${esc(draft.privateKey)}</div></div>` +
+    `<p class="mu" style="font-size:12.5px;line-height:1.55;margin-top:12px">The recovery phrase and the private key each control this same wallet, and either one recovers it. Write both on paper and keep them apart from your devices. Anyone who sees either can take everything in the wallet; no one can reset or recover them for you. They are shown only here, are held in this page’s memory and are not stored in readable form: only the encrypted vault is kept when you seal it below.</p>` +
     `<div class="lb">PROVE YOU WROTE IT DOWN</div>` +
     draft.check.map((n, i) => designField(`cw${i}`, `WORD #${n}`, 'text', '')).join('') +
+    `<label style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.5"><input type="checkbox" id="cksaved" style="width:auto;margin-top:3px"> I have saved both the recovery phrase and the private key.</label>` +
     sealFields(s, 'SEAL WALLET ON THIS DEVICE') +
     `<button class="btn" onclick="ObsidianDiscardPhrase()">DISCARD AND START OVER</button>`
   );

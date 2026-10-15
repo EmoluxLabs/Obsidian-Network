@@ -283,3 +283,93 @@ describe('signing is domain-separated', () => {
     expect(forDev.signature.signature).not.toBe(forMain.signature.signature);
   }, 30_000);
 });
+
+describe('private-key recovery (1.9.0)', () => {
+  const HRP = 'tobs';
+
+  it('a key from a created wallet restores the SAME address and byte-identical signatures', async () => {
+    const created = await Wallet.create(HRP, PASSPHRASE);
+    const key = created.revealPrivateKey(0);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    const shown = Wallet.addressForPrivateKey(key, HRP);
+    expect(shown).toEqual({ ok: true, address: created.address });
+    window.localStorage.clear();
+    const restored = await Wallet.fromPrivateKey(key, HRP, PASSPHRASE);
+    expect(restored.address).toBe(created.address);
+    expect(restored.hasPhrase).toBe(false);
+    expect(restored.revealPrivateKey(0)).toBe(key);
+    const sign = (w: Wallet) => w.signMessageFor(w.address, 'obsidian.test', 'hello');
+    expect(sign(restored)).toEqual(sign(created));
+  });
+
+  it('accepts upper case and a 0x prefix, and persists a vault that unlocks with the vault passphrase', async () => {
+    const reference = await Wallet.fromPhrase(generateRecoveryPhrase(), HRP, PASSPHRASE);
+    const key = reference.revealPrivateKey(0);
+    window.localStorage.clear();
+    const restored = await Wallet.fromPrivateKey(`  0x${key.toUpperCase()}  `, HRP, PASSPHRASE);
+    expect(restored.address).toBe(reference.address);
+    const reopened = await Wallet.unlock(PASSPHRASE);
+    expect(reopened.address).toBe(reference.address);
+    expect(reopened.revealPrivateKey(0)).toBe(key);
+    expect(reopened.hasPhrase).toBe(false);
+    expect(reopened.revealPhrase()).toBe('');
+  });
+
+  it('refuses invalid keys safely: nothing is stored and the message never repeats the input', async () => {
+    const good = 'ab'.repeat(32);
+    const bad: string[] = [
+      '',
+      '   ',
+      'zz'.repeat(32),
+      good.slice(0, 62),
+      `${good}00`,
+      '00'.repeat(32),
+      'ff'.repeat(32),
+      `02${good}`,
+      `04${good}${good}`,
+      'one two three four five six seven eight nine ten eleven twelve',
+      'KxL5notarealwifkeyKxL5notarealwifkeyKxL5notarealwifkey',
+    ];
+    for (const input of bad) {
+      const preview = Wallet.addressForPrivateKey(input, HRP);
+      expect(preview.ok).toBe(false);
+      await expect(Wallet.fromPrivateKey(input, HRP, PASSPHRASE)).rejects.toThrow();
+      try {
+        await Wallet.fromPrivateKey(input, HRP, PASSPHRASE);
+      } catch (error) {
+        if (input.trim()) expect((error as Error).message).not.toContain(input.trim());
+      }
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    }
+  });
+
+  it('a short vault passphrase and a bad address prefix are refused before anything is stored', async () => {
+    await expect(Wallet.fromPrivateKey('ab'.repeat(32), HRP, 'short')).rejects.toThrow(/at least/);
+    await expect(Wallet.fromPrivateKey('ab'.repeat(32), 'NOT-A-PREFIX', PASSPHRASE)).rejects.toThrow(/prefix/);
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('the stored vault holds the key encrypted: no plaintext key or hex in localStorage', async () => {
+    const key = 'cd'.repeat(32);
+    await Wallet.fromPrivateKey(key, HRP, PASSPHRASE);
+    expect(window.localStorage.getItem(STORAGE_KEY)).not.toContain(key);
+  });
+
+  it('a key wallet signs transactions that verify against its address, can switch network, and cannot derive more addresses', async () => {
+    const wallet = await Wallet.fromPrivateKey('11'.repeat(32), HRP, PASSPHRASE);
+    await wallet.switchNetwork('obs', PASSPHRASE);
+    expect(wallet.address.startsWith('obs1')).toBe(true);
+    await expect(wallet.addAccount(PASSPHRASE, 1, 'second')).rejects.toThrow(/one address only/);
+    const proof = wallet.signMessageFor(wallet.address, 'obsidian.test', 'm');
+    expect(verifyMessage('obsidian.test', new TextEncoder().encode('m'), proof.signature, proof.publicKey)).toBe(true);
+  });
+
+  it('a tampered key-wallet vault (public key not matching its key) is refused at unlock, not silently used', async () => {
+    const good = await Wallet.fromPrivateKey('22'.repeat(32), HRP, PASSPHRASE);
+    const other = await Wallet.fromPrivateKey('33'.repeat(32), HRP, PASSPHRASE);
+    window.localStorage.clear();
+    await writeVault({ phrase: '', importedKey: '22'.repeat(32), addressHrp: HRP, accounts: [{ ...(other as unknown as { payload: VaultPayload }).payload.accounts[0]!, label: 'x' }] }, PASSPHRASE);
+    await expect(Wallet.unlock(PASSPHRASE)).rejects.toBeInstanceOf(LegacyVaultError);
+    expect(good.address).not.toBe(other.address);
+  });
+});

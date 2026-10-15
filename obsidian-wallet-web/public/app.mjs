@@ -62,6 +62,7 @@ const S = {
   txBack: 'home',
   qr: '',
   tab: 'phrase',
+  keyAddress: '',
   err: '',
   busy: false,
   copied: false,
@@ -72,7 +73,8 @@ const S = {
 /** Held outside `S` on purpose: a phrase being shown, and a wallet being created. Cleared by `wipe()`. */
 let shownPhrase = null;
 let shownTimer = null;
-let creating = null; // { phrase, password, address }
+let creating = null; // { phrase, privateKey, password, address }
+let pendingKey = null; // a private key that was checked and is waiting for the address confirmation; never put back on screen
 let bundle = null;
 let signing = false; // one submission at a time, whatever the buttons do
 let working = false; // a form is being processed: a second submit is ignored
@@ -84,7 +86,7 @@ let poller = null;
 
 function render() {
   const view = V[S.view];
-  const extra = S.view === 'create2' ? creating?.phrase ?? '' : S.view === 'backup' ? shownPhrase : undefined;
+  const extra = S.view === 'create2' ? (creating ? { phrase: creating.phrase, privateKey: creating.privateKey } : '') : S.view === 'backup' ? shownPhrase : undefined;
   app.innerHTML = view(S, extra);
   document.title = S.view === 'splash' ? 'Obsidian Wallet' : `Obsidian Wallet · ${S.net.state === 'ok' ? S.net.name : 'unverified'}`;
   after();
@@ -128,12 +130,18 @@ function go(view) {
     S.review = null;
   }
   if (view !== 'create2' && view !== 'create1') creating = null;
+  if (view !== 'import') discardKey();
   S.view = view;
   S.err = '';
   S.copied = false;
   if (view !== 'receive') S.qr = '';
   render();
   if (LIVE_VIEWS.has(view)) void refresh();
+}
+
+function discardKey() {
+  pendingKey = null;
+  S.keyAddress = '';
 }
 
 function wipePhrase() {
@@ -321,7 +329,14 @@ const A = {
   go: (el) => go(el.dataset.v),
 
   tab(el) {
-    S.tab = el.dataset.v === 'backup' ? 'backup' : 'phrase';
+    S.tab = el.dataset.v === 'backup' ? 'backup' : el.dataset.v === 'key' ? 'key' : 'phrase';
+    discardKey();
+    S.err = '';
+    render();
+  },
+
+  discardKey() {
+    discardKey();
     S.err = '';
     render();
   },
@@ -519,7 +534,9 @@ const F = {
       const phrase = await W.newPhrase();
       // The address is derived by the real implementation now, so a phrase that cannot become a wallet fails here.
       const address = await W.addressForPhrase(phrase);
-      creating = { phrase, password, address };
+      // The private key this phrase controls, shown beside it so both can be backed up.
+      const privateKey = await W.privateKeyOfPhrase(phrase);
+      creating = { phrase, privateKey, password, address };
       clear(form, 'pw', 'pw2');
       S.view = 'create2';
       S.err = '';
@@ -533,7 +550,7 @@ const F = {
 
   async finishCreate(form) {
     if (!creating) return go('create1');
-    if (!form.querySelector('#ck')?.checked) return setErr('Please confirm you have written down your recovery phrase.');
+    if (!form.querySelector('#ck')?.checked) return setErr('Please confirm you have written down your recovery phrase and your private key.');
     busy(form, true, 'SEALING…');
     try {
       const { phrase, password, address } = creating;
@@ -561,9 +578,59 @@ const F = {
     if (!check.ok) return setErr(check.message);
     busy(form, true, 'IMPORTING…');
     try {
-      if (!bundle.isValidPhrase(phrase)) throw new Error('That recovery phrase is not valid. Check the words and their order.');
+      if (!bundle.isValidPhrase(phrase)) {
+        // A key pasted into the phrase box gets a pointer to the right tab; the message never repeats what was pasted.
+        const hint = bundle.checkPrivateKey(phrase).ok ? ' That looks like a private key: use the PRIVATE KEY tab.' : '';
+        throw new Error(`That recovery phrase is not valid. Check the words and their order.${hint}`);
+      }
       const { address } = await W.setupWallet({ phrase, passphrase: password });
       clear(form, 'rp', 'pw', 'pw2');
+      await enter(address);
+    } catch (error) {
+      setErr(error?.message || 'Could not import this wallet.');
+    } finally {
+      busy(form, false);
+    }
+  },
+
+  /** Recovery from a private key, step one: validate locally and show the address. Nothing is stored. */
+  async checkKey(form) {
+    if (await W.hasWallet()) return setErr('A wallet is already set up on this device.');
+    const typed = val(form, 'pk');
+    busy(form, true, 'CHECKING…');
+    try {
+      const address = await W.addressForPrivateKey(typed);
+      pendingKey = typed;
+      clear(form, 'pk');
+      S.keyAddress = address;
+      S.err = '';
+      render();
+    } catch (error) {
+      pendingKey = null;
+      setErr(error?.message || 'That key could not be checked.'); // the parser's reason; it never contains the key
+    } finally {
+      busy(form, false);
+    }
+  },
+
+  /** Step two: the address was confirmed; seal with a new password. Refuses if the sealed address differs. */
+  async importKey(form) {
+    if (await W.hasWallet()) return setErr('A wallet is already set up on this device.');
+    if (!pendingKey || !S.keyAddress) return setErr('Enter your private key and check its address first.');
+    if (!form.querySelector('#ckaddr')?.checked) return setErr('Confirm that this is your address before continuing.');
+    const password = val(form, 'pw');
+    const check = checkNewPassword(password, val(form, 'pw2'), S.minPass);
+    if (!check.ok) return setErr(check.message);
+    busy(form, true, 'IMPORTING…');
+    try {
+      const expected = S.keyAddress;
+      const { address } = await W.setupWalletFromKey({ privateKey: pendingKey, passphrase: password });
+      if (address !== expected) {
+        await W.removeWallet().catch(() => {});
+        throw new Error('The sealed wallet does not match the address you confirmed. It was not kept.');
+      }
+      discardKey();
+      clear(form, 'pw', 'pw2');
       await enter(address);
     } catch (error) {
       setErr(error?.message || 'Could not import this wallet.');
@@ -590,7 +657,7 @@ const F = {
         if (error instanceof bundle.PassphraseError) throw new Error('That password does not open this backup.');
         throw error;
       }
-      if (!bundle.isValidPhrase(phrase)) throw new Error('The backup opened, but it does not hold a valid recovery phrase.');
+      if (!bundle.isValidPhrase(phrase) && !bundle.isKeySecret(phrase)) throw new Error('The backup opened, but it does not hold a valid recovery phrase or private key.');
       const { address } = await W.setupWallet({ phrase, passphrase: password });
       clear(form, 'bt', 'pw');
       await enter(address);
@@ -608,8 +675,7 @@ const F = {
     if (!password) return setErr('Enter your password.');
     busy(form, true, 'UNLOCKING…');
     try {
-      const phrase = await W.revealPhrase(password); // opens the vault: this is the check, and the phrase is dropped at once
-      const derived = await W.addressForPhrase(phrase);
+      const derived = await W.unlockAddress(password); // opens the vault: this is the check, and the secret is dropped at once
       if (derived !== S.address) {
         // The cached address was not the vault's. The vault is the truth; the cache is repaired from it.
         bundle.saveWalletAddress(derived);
@@ -725,7 +791,7 @@ const F = {
     if (!password) return setErr('Enter your password.');
     busy(form, true, 'CHECKING…');
     try {
-      shownPhrase = await W.revealPhrase(password);
+      shownPhrase = await W.revealSecret(password);
       clear(form, 'pw');
       clearTimeout(shownTimer);
       shownTimer = setTimeout(() => {

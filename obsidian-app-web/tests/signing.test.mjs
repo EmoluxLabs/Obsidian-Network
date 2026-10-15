@@ -237,3 +237,27 @@ test('a generated phrase is 24 valid words, different every time, and yields a u
   const wallet = await walletFromPhrase(a, 'dobs');
   assert.match(wallet.address, /^dobs1[0-9a-z]+$/);
 });
+
+// ── a wallet recovered from its private key signs exactly like the phrase wallet ─────────────────────────────────
+
+test('a key-recovered wallet has the same address and produces byte-identical signatures', async () => {
+  const { walletFromPrivateKey, secretFromPrivateKey, privateKeyForPhrase, checkPrivateKey } = await import('../web/signing.mjs');
+  const key = privateKeyForPhrase(PHRASE, 'obs');
+  assert.match(key, /^[0-9a-f]{64}$/);
+  const fromPhrase = walletFromPhrase(PHRASE, 'obs');
+  assert.equal(fromPhrase.address, PINNED_ADDRESS);
+  const fromKey = walletFromPrivateKey(`0x${key.toUpperCase()}`, 'obs');
+  assert.equal(fromKey.address, PINNED_ADDRESS, 'the key recovers the pinned address');
+  assert.equal(fromKey.publicKey, fromPhrase.publicKey);
+  // The vault secret for a key wallet goes through the same entry point every operation uses.
+  assert.equal(walletFromPhrase(secretFromPrivateKey(key), 'obs').address, PINNED_ADDRESS);
+  const args = { chainId: CHAIN_ID, protocolVersion: '1.9.0', nonce: 5, type: TxType.PAYMENT, gas: 0n, body: new Uint8Array([1, 2, 3]), validUntil: 1_900_000_000 };
+  const a = sign({ wallet: fromPhrase, ...args });
+  const b = sign({ wallet: walletFromPhrase(secretFromPrivateKey(key), 'obs'), ...args });
+  assert.equal(Buffer.from(a.bytes ?? a).toString('hex'), Buffer.from(b.bytes ?? b).toString('hex'));
+  // The prefix belongs to the network: the same key is a different string on another chain.
+  assert.match(walletFromPrivateKey(key, 'dobs').address, /^dobs1/);
+  assert.equal(checkPrivateKey('nope').ok, false);
+  assert.throws(() => walletFromPrivateKey('00'.repeat(32), 'obs'), /not a valid private key/);
+  assert.throws(() => secretFromPrivateKey(PHRASE), /recovery phrase/);
+});

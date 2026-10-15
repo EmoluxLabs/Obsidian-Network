@@ -20,7 +20,7 @@ not a second implementation: a signature made here and one made in the web app a
 
 The look is the supplied design (`EmoluxLabs/OBS-Dex-Wallet-Web-App`, `obsidian-wallet.html`), kept unmodified in
 `template/` (`TEMPLATE.sha256`; a test fails if it changes). Nothing the design invented was carried over: its P-256
-keys, `obs1` + 38 hex addresses, word list, `0.001` fee, "ledger", private-key export and sample balances do not exist on
+keys, `obs1` + 38 hex addresses, word list, `0.001` fee, "ledger", a private-key copy/export control and sample balances do not exist on
 this network and are not in the shipped code (`tests/template.test.mjs` and `npm run lint` check that).
 
 ## Run
@@ -48,7 +48,7 @@ Run a devnet with `scripts/obsidian-network.sh devnet start` at the repository r
 | Welcome | `welcome` | the active network and its prefix are named; test networks say their coins have no value |
 | Create wallet (password) | `create1` | 12-character minimum, confirmed twice, nothing generated before it passes |
 | Recovery phrase | `create2` | 24 real BIP-39 words from secure randomness; **nothing is stored until the backup is confirmed**; no copy, download or share control |
-| Import | `import` | recovery phrase (12 or 24 words) or an encrypted backup produced by this wallet. Private keys are refused: the only supported secret is the phrase |
+| Import | `import` | recovery phrase (12 or 24 words), a **private key** (64 hex characters; checked on the device, the address it controls is shown and must be confirmed before anything is sealed), or an encrypted backup produced by this wallet |
 | Unlock | `unlock` | wrong password is refused by the authenticated cipher; repeated failures are delayed |
 | Home | `home` | exact balance from the node, recent transactions, the network card, lock |
 | Receive | `receive` | the real address as a QR the web app's own decoder reads back, copy, share, network warning. The code holds the address only: this protocol defines no payment URI, so none is invented |
