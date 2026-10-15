@@ -34,7 +34,11 @@ delete baseEnv.OBSIDIAN_KEYSTORE_PASSPHRASE_FILE;
 delete baseEnv.OBSIDIAN_GENESIS_INVITE_HASH;
 delete baseEnv.OBSIDIAN_NETWORK;
 
-const run = (args, env = {}) => spawnSync('bash', [script, ...args], { encoding: 'utf8', env: { ...baseEnv, ...env }, timeout: 120_000 });
+// The helper never makes or keeps a passphrase; the operator gives one (here, through the environment, as a script would).
+const TEST_PASS = 'network-script-test-passphrase';
+const run = (args, env = {}) => spawnSync('bash', [script, ...args], { encoding: 'utf8', env: { ...baseEnv, OBSIDIAN_KEYSTORE_PASSPHRASE: TEST_PASS, ...env }, timeout: 120_000 });
+/** Every file under `dir` whose name says it holds a passphrase. */
+const passphraseFiles = (dir) => spawnSync('find', [dir, '-name', '*.pass', '-not', '-path', '*/gate/*'], { encoding: 'utf8' }).stdout.trim();
 const ports = { devnet: { rpc: 38630 + OFFSET, ui: 38788 + OFFSET }, testnet: { rpc: 18630 + OFFSET, ui: 18788 + OFFSET } };
 const get = async (url) => {
   try {
@@ -61,12 +65,15 @@ test('refuses a network that does not exist, and asks for one when none is given
   assert.equal(noCommand.status, 1);
 });
 
-test('mainnet will not invent a passphrase, and starts nothing without one', { skip }, async () => {
-  const started = run(['mainnet', 'start']);
-  assert.equal(started.status, 1);
-  assert.match(started.stderr, /mainnet needs a passphrase YOU chose/);
-  assert.equal(existsSync(join(home, 'mainnet', 'keystore.pass')), false);
-  assert.equal(existsSync(join(home, 'mainnet', 'node.pid')), false);
+test('no network invents a passphrase: a start without one stops, and nothing is written', { skip }, async () => {
+  for (const network of ['mainnet', 'devnet']) {
+    const started = run([network, 'start'], { OBSIDIAN_KEYSTORE_PASSPHRASE: undefined });
+    assert.equal(started.status, 1, network);
+    assert.match(started.stderr, /needs a passphrase for its key and none was given/, network);
+    assert.match(started.stderr, /never generates a passphrase or keeps one beside the key/, network);
+    assert.equal(passphraseFiles(join(home, network)), '', `${network}: no passphrase file was made`);
+    assert.equal(existsSync(join(home, network, 'node.pid')), false, `${network}: nothing was started`);
+  }
   assert.equal((await get(`http://127.0.0.1:${8630 + OFFSET}/health`)).status, 0);
 });
 
@@ -83,8 +90,10 @@ test('devnet: invite, start, use the invitation, stop — and the ports are free
   const started = run(['devnet', 'start']);
   assert.equal(started.status, 0, started.stderr + started.stdout);
   assert.match(started.stdout, new RegExp(`open the interface:  http://127.0.0.1:${ports.devnet.ui}`));
-  // A test network gets a generated passphrase, in its own file.
-  assert.match(readFileSync(join(home, 'devnet', 'keystore.pass'), 'utf8'), /\S{20,}/);
+  // The passphrase is the operator's: it is stored nowhere, and the key file is an encrypted container.
+  assert.equal(passphraseFiles(join(home, 'devnet')), '', 'no passphrase file is kept');
+  const nodeKey = readFileSync(join(home, 'devnet', 'node', 'node-key.json'), 'utf8');
+  assert.ok(!nodeKey.includes(TEST_PASS) && !/"privateKey"/.test(nodeKey), 'the node key is stored only encrypted');
 
   // Protocol 1.7.0: the chain takes a claim only through the mining gate. A test network gets its own issuer key,
   // encrypted, with its passphrase in its own file; the node is given the PUBLIC half and the interface the keystore.
@@ -136,8 +145,8 @@ test('two networks at once: stopping one never touches the other', { skip }, asy
   assert.equal((await get(`http://127.0.0.1:${ports.devnet.rpc}/status`)).body.networkId, 'obsidian-devnet-1');
   assert.equal((await get(`http://127.0.0.1:${ports.testnet.rpc}/status`)).body.networkId, 'obsidian-testnet-1');
   assert.equal((await get(`http://127.0.0.1:${ports.testnet.ui}/api/health`)).body.network, 'testnet');
-  // Different data, different passphrase files.
-  assert.notEqual(readFileSync(join(home, 'devnet', 'keystore.pass'), 'utf8'), readFileSync(join(home, 'testnet', 'keystore.pass'), 'utf8'));
+  // Different data, and no passphrase file for either.
+  assert.equal(passphraseFiles(home), '');
   assert.ok(existsSync(join(home, 'devnet', 'node', 'chain')) && existsSync(join(home, 'testnet', 'node', 'chain')));
 
   assert.equal(run(['devnet', 'stop']).status, 0);
@@ -158,7 +167,7 @@ test('reset deletes one test network only, only when told to, never mainnet', { 
   const done = run(['devnet', 'reset', '--yes']);
   assert.equal(done.status, 0, done.stderr);
   assert.equal(existsSync(join(home, 'devnet', 'node')), false);
-  assert.ok(existsSync(join(home, 'devnet', 'keystore.pass')), 'the passphrase file is kept');
+  assert.equal(passphraseFiles(join(home, 'devnet')), '', 'no passphrase file exists to keep');
   assert.ok(existsSync(join(home, 'devnet', 'genesis-invite.hash')), 'the invitation hash is kept');
   assert.ok(existsSync(join(home, 'testnet', 'node')), 'the other network is untouched');
 });
@@ -183,7 +192,7 @@ const freshHome = () => {
   homes.push(dir);
   return dir;
 };
-const runIn = (dir, args, env = {}) => spawnSync('bash', [script, ...args], { encoding: 'utf8', env: { ...baseEnv, OBSIDIAN_HOME: dir, ...env }, timeout: 120_000 });
+const runIn = (dir, args, env = {}) => spawnSync('bash', [script, ...args], { encoding: 'utf8', env: { ...baseEnv, OBSIDIAN_HOME: dir, OBSIDIAN_KEYSTORE_PASSPHRASE: TEST_PASS, ...env }, timeout: 120_000 });
 const stopAll = (dir) => {
   for (const network of ['devnet', 'testnet', 'staging', 'mainnet']) runIn(dir, [network, 'stop']);
 };
@@ -247,25 +256,24 @@ test('devnet\'s invitation never opens another network, however it got into the 
   }
 });
 
-test('a passphrase left in the shell cannot lock a node out of its own key, or protect a new one', { skip }, async () => {
+test('a wrong passphrase is refused and says what to do; the right one opens the same key, and none is ever stored', { skip }, async () => {
   const dir = freshHome();
   try {
     assert.equal(runIn(dir, ['devnet', 'start']).status, 0);
     runIn(dir, ['devnet', 'stop']);
-    // Exported "by hand" for something else, then the helper: this used to kill the node ("could not decrypt the keystore").
-    const again = runIn(dir, ['devnet', 'start'], { OBSIDIAN_KEYSTORE_PASSPHRASE: 'something-else-entirely' });
-    assert.equal(again.status, 0, said(again));
-    assert.match(again.stdout, /ignoring the passphrase in your shell: this devnet node's key uses the one in/);
+    const wrong = runIn(dir, ['devnet', 'start'], { OBSIDIAN_KEYSTORE_PASSPHRASE: 'something-else-entirely' });
+    assert.equal(wrong.status, 1, said(wrong));
+    assert.match(said(wrong), /could not decrypt the node keystore/);
+    assert.match(said(wrong), /Give the passphrase this key was made with/);
+    const right = runIn(dir, ['devnet', 'start']);
+    assert.equal(right.status, 0, said(right));
     assert.equal((await get(`http://127.0.0.1:${rpcPort.devnet}/status`)).body.chainId, 7780);
     runIn(dir, ['devnet', 'stop']);
-
-    // A new test-network key gets its own passphrase even when the shell holds one, so it opens later without it.
-    const created = runIn(dir, ['staging', 'start'], { OBSIDIAN_KEYSTORE_PASSPHRASE: 'left-over-from-mainnet' });
-    assert.equal(created.status, 0, said(created));
-    assert.match(created.stdout, /a new staging key gets its own generated passphrase/);
-    assert.ok(existsSync(join(dir, 'staging', 'keystore.pass')));
-    runIn(dir, ['staging', 'stop']);
-    assert.equal(runIn(dir, ['staging', 'start']).status, 0, 'the key opens in a new session, with nothing in the shell');
+    // The same rule on every network: a new staging key also needs one the operator gives.
+    const none = runIn(dir, ['staging', 'start'], { OBSIDIAN_KEYSTORE_PASSPHRASE: undefined });
+    assert.equal(none.status, 1);
+    assert.match(none.stderr, /needs a passphrase for its key and none was given/);
+    assert.equal(passphraseFiles(dir), '', 'no passphrase file anywhere');
   } finally {
     stopAll(dir);
   }
@@ -283,9 +291,9 @@ test('a key made by hand opens only with the passphrase it was made with, and th
     });
     assert.ok(existsSync(join(dir, 'staging', 'node', 'node-key.json')), 'the by-hand node made its key');
 
-    const none = runIn(dir, ['staging', 'start']);
+    const none = runIn(dir, ['staging', 'start'], { OBSIDIAN_KEYSTORE_PASSPHRASE: undefined });
     assert.equal(none.status, 1);
-    assert.match(none.stderr, /already has a key.*started by hand.*OBSIDIAN_KEYSTORE_PASSPHRASE=/s);
+    assert.match(none.stderr, /needs a passphrase for its key and none was given.*OBSIDIAN_KEYSTORE_PASSPHRASE/s);
 
     const wrong = runIn(dir, ['staging', 'start'], { OBSIDIAN_KEYSTORE_PASSPHRASE: 'a-different-passphrase' });
     assert.equal(wrong.status, 1);
@@ -393,7 +401,8 @@ test('doctor says what is wrong, in words, and exits non-zero only when somethin
     const running = runIn(dir, ['devnet', 'doctor']);
     assert.equal(running.status, 0, said(running));
     assert.match(running.stdout, /node RPC \d+ is held by this network's own process/);
-    assert.match(running.stdout, /passphrase: this network's own file/);
+    assert.match(running.stdout, /passphrase: (taken from your shell for this command|not needed while the node runs)/);
+    assert.doesNotMatch(running.stdout, /this network's own file/);
   } finally {
     stopAll(dir);
   }
@@ -419,7 +428,7 @@ test('it runs with only the tools a fresh Termux has', { skip }, async () => {
   const tmp = join(dir, 'tmp');
   mkdirSync(home);
   mkdirSync(tmp);
-  const termuxRun = (args) => spawnSync(bash, [script, ...args], { encoding: 'utf8', timeout: 120_000, env: { PATH: bin, HOME: home, TMPDIR: tmp, OBSIDIAN_PORT_OFFSET: String(OFFSET) } });
+  const termuxRun = (args) => spawnSync(bash, [script, ...args], { encoding: 'utf8', timeout: 120_000, env: { PATH: bin, HOME: home, TMPDIR: tmp, OBSIDIAN_PORT_OFFSET: String(OFFSET), OBSIDIAN_KEYSTORE_PASSPHRASE: 'termux-stand-in-passphrase-1' } });
   try {
     const started = termuxRun(['devnet', 'start']);
     assert.equal(started.status, 0, said(started));

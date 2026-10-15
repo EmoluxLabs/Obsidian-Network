@@ -64,7 +64,7 @@ Nothing on chain can change the set. This is deliberate: a rule that let anyone 
 backdoor. Mining keeps working only while the *active* keys' holders can still issue certificates; if every active key
 is gone, no new `MINING_CLAIM` can be certified.
 
-**The only recovery is a new genesis.** That is a new network: new genesis id, new gate keys, new bootstrap committee,
+**The only recovery is a new genesis.** That is a new network: new genesis id, new gate keys,
 a published migration for balances. It cannot be done silently and **this repository does not and must not do it for
 you**; follow your network's governance, publish the new genesis id through an independent channel, and treat the old
 chain as frozen. The cost of this path is the reason section "before any incident" asks for three or more keys.

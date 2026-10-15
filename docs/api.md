@@ -16,7 +16,7 @@ Error shape is stable:
 | --- | --- |
 | `GET /health` | status, core/protocol versions, network, chain id, genesis id, params hash, height, peers, syncing, supplyOk |
 | `GET /status` | everything in `/health` plus total blocks, supply, treasury wallet, `genesisAllocationClaimed`, last block timestamp, finalized height/hash, `finalityAvailable`, finality lag, `finalityEligibleProducers`, the producer tier (`scheduleTier`) and eligible-producer count |
-| `GET /finality` | the finality derived from chain state: `model`, `available` (and `reason` when not), `finalizedHeight`, `finalizedHash`, `headHeight`, `lag`, `eligibleProducers`, `window`, `quorum`, `minProducers`, `derivedFrom`, `assumptions`. Checkpoint (economic) finality, not BFT; see [finality-v1.9.0.md](finality-v1.9.0.md) |
+| `GET /finality` | the finality derived from chain state: `model`, `available` (and `reason` when not), `finalizedHeight`, `finalizedHash`, `headHeight`, `lag`, `eligibleProducers`, `producersSeen`, `candidateHeight`, `window`, `quorum`, `minProducers`, `derivedFrom`, `assumptions`. Checkpoint (economic) finality, not BFT; see [finality-v1.9.0.md](finality-v1.9.0.md) |
 | `GET /producers` | the producer schedule: `tier` (`TIER1`, `TIER2` or `OPEN`), `eligible`, `registered`, `banned`, the `rule`, per-node records (masked producer address, `tier1`, `registeredAtHeight`, `lastActiveAt`, `blocksProduced`, `missedSlots`, `suspensions`, `suspendedUntil`, `bannedAtHeight`), the `finality` block and recent `penalties`. There is no `/validators`: validators do not exist in 1.9.0 |
 | `GET /params` | protocol parameters, including `paramsHash`, `proofOfTime`, finality bounds and `nodeRewards` |
 | `GET /version` | version metadata and the minimum supported core version |

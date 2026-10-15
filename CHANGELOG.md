@@ -11,7 +11,7 @@ lines (their changelog entries, upgrade notes, remediation reports and archives)
 and is deliberately not repeated here, so that nothing in the tree can be mistaken for the build you are running.
 
 The authoritative params hash for a release is whatever `GET /params` reports on a node running it. For this release it is
-`97aed9670c701b4bd4f64271413e05a6` on every network.
+`38dd9243481cd35a68003648e2710001` on every network.
 
 ---
 
@@ -67,13 +67,25 @@ cannot join (the handshake carries the protocol version, genesis id and params h
 - The interface's `/api/auth/config` also returns `chainId` (additive).
 
 ### Fixed
+- **Finality under partition.** Suspension no longer shrinks the finality base, so neither half of a split can drop the other,
+  finalize on its own and produce two final chains (pinned for 2|2, 3|3 and 3|2 splits). `minProducers` is 2, so a two-node
+  network finalizes.
+- **No passphrase is ever generated or stored by the node or the helper script, on any network.** The order is
+  `OBSIDIAN_KEYSTORE_PASSPHRASE`, then a 0600 `OBSIDIAN_KEYSTORE_PASSPHRASE_FILE` you made, then a hidden prompt on the
+  terminal (twice for a new key); with none of these the start refuses and writes nothing. (A test network's *gate issuer*
+  key, a different key used only by the interface, still gets a generated passphrase file.)
+- **One name for the fork-choice rule.** The two parameters that name it (`weightRule` and `forkChoice`) now hold the same
+  value, and a repository invariant fails if they ever differ.
+- **Block pacing.** The producer loop woke only every 5 s and could therefore take a due turn up to 5 s late, stretching blocks
+  to about twice the target. It now wakes every second and leaves `blockProductionIntervalSeconds` after the parent.
+- Stale genesis ids and retired terms removed from the documentation; unused node-registry domain constants removed.
 - **Paying a `.obs` name.** Typing a registered name as the recipient was refused as an invalid OBS address in some
   interfaces. Every sender now resolves the name through one resolver, shows the whole resolved address and network for
   confirmation, re-resolves just before signing, and never guesses when the lookup fails. No consensus change.
 
 ### Known limits
 - Admission of nodes is rate-limited, not priced: a patient actor with many machines can capture a third of the producers.
-- Finality needs at least three established producers and fewer than a third faulty; it is not Byzantine finality.
+- Finality needs at least two established producers, a quorum of them alive, and fewer than a third faulty; it is quorum finality over producer diversity, not accountable BFT finality, and a partition longer than 30 reward periods can split it.
 - An unsigned wallet binding can be squatted until the wallet owner reclaims it.
 - ONS recovery protects against loss, not theft, of the owner key.
 - Reward weight is a composite score (uptime 40 %), not uptime alone.

@@ -105,6 +105,11 @@ make an invitation of your own with the two lines at the end of this section.)
 prints the address. A phone can take a minute: it prints a line every 15 seconds while it waits.
 Running it again is safe; it never starts a second copy.
 
+**The passphrase.** Every network asks you for the node key's passphrase, the same way mainnet does. The first start
+asks you to choose one (12 or more characters, typed twice, nothing is shown); every later start asks for it once. The
+helper never makes one for you and never keeps one on the phone, so write it down. To skip the question in a script,
+set `OBSIDIAN_KEYSTORE_PASSPHRASE` (or `OBSIDIAN_KEYSTORE_PASSPHRASE_FILE`, a 0600 file you made) for that command.
+
 **2. Open it.** In Chrome or Firefox on the same phone, type `http://127.0.0.1:38788` in the address bar.
 Create your account with the Genesis Invitation code you were given, then make a wallet on the Wallet page.
 
@@ -123,7 +128,7 @@ recovery phrase **once** and stores it nowhere: write it down. `doctor` checks t
 and says what to fix. `stop` stops devnet's node and interface and nothing else.
 
 **4. Start devnet over from block 0.** This deletes devnet's chain, its node key and its accounts, and
-nothing else. The invitation hash and the passphrase file are kept.
+nothing else. The invitation hash is kept. (No passphrase is ever kept: the next start asks for it.)
 
 ```bash
 cd ~/obsidian/run && bash obsidian-network.sh devnet stop
@@ -175,7 +180,7 @@ recovery phrase **once** and stores it nowhere: write it down. `doctor` checks t
 and says what to fix. `stop` stops testnet's node and interface and nothing else.
 
 **4. Start testnet over from block 0.** This deletes testnet's chain, its node key and its accounts, and
-nothing else. The invitation hash and the passphrase file are kept.
+nothing else. The invitation hash is kept. (No passphrase is ever kept: the next start asks for it.)
 
 ```bash
 cd ~/obsidian/run && bash obsidian-network.sh testnet stop
@@ -221,7 +226,7 @@ recovery phrase **once** and stores it nowhere: write it down. `doctor` checks t
 and says what to fix. `stop` stops staging's node and interface and nothing else.
 
 **4. Start staging over from block 0.** This deletes staging's chain, its node key and its accounts, and
-nothing else. The invitation hash and the passphrase file are kept.
+nothing else. The invitation hash is kept. (No passphrase is ever kept: the next start asks for it.)
 
 ```bash
 cd ~/obsidian/run && bash obsidian-network.sh staging stop
@@ -238,7 +243,7 @@ Chain id **7777** · addresses start `obs1` · node **8630** · peers **8631** �
 Read [mainnet-launch.md](mainnet-launch.md) before you start it, and run it with at least three independent
 operators: one node on a phone is a rehearsal of the commands, not a launch.
 
-Mainnet will not make a passphrase for you, because a passphrase stored next to the key it protects protects
+No network makes a passphrase for you, because a passphrase stored next to the key it protects protects
 nothing. You choose one (12 or more characters), keep a copy somewhere else, and give it to the node for the
 one command that starts it.
 
@@ -299,10 +304,10 @@ its whole output.
 | `Node.js 20.10 or newer is required` | Node is too old | `pkg upgrade -y` |
 | `node did not answer within 180s, but it is still running` | a slow phone, not a failure | wait a minute, then run `status` |
 | `node stopped while starting` | the log lines above it say why | the next rows match the usual causes |
-| `could not decrypt the node keystore` | this network's key was made with a different passphrase | the helper keeps the right one for test networks; if you made the key by hand, give that passphrase for the one command: `OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash obsidian-network.sh <network> start` |
+| `could not decrypt the node keystore` | this network's key was made with a different passphrase | the passphrase is kept nowhere (not even on a test network); give the one the key was made with for the command, or start from a terminal and be asked: `OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash obsidian-network.sh <network> start` |
 | `listen EADDRINUSE` | something already uses one of this network's ports | `stop` the network, or move every port by 10: `OBSIDIAN_PORT_OFFSET=10 bash obsidian-network.sh <network> start` |
 | `already running` and `was started BEFORE the build that is installed now` | you upgraded the files but the old program is still running | `bash obsidian-network.sh <network> restart` |
-| `mainnet needs a passphrase YOU chose` | mainnet never makes one | section 6, step 1, then the start line that names `MP` |
+| `needs a passphrase for its key and none was given` | no network makes one for you | section 6, step 1, then the start line that names `MP` |
 | `no Genesis Invitation is configured` | nobody can make the first account yet | `bash obsidian-network.sh <network> invite`, then `restart` |
 | `ignoring … from your shell` | a variable left in your session was set aside on purpose | nothing: it is a notice, and the network started with its own settings |
 | the page does not open | the address is wrong, or the network is not running | type `http://127.0.0.1:` and the interface port from that network's section, on the same phone; run `status` |

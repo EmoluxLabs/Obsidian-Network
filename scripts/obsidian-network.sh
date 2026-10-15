@@ -111,7 +111,6 @@ UI_DATA="$HOME_DIR/interface"
 LOG_DIR="$HOME_DIR/logs"
 NODE_PID="$HOME_DIR/node.pid"
 UI_PID="$HOME_DIR/interface.pid"
-PASS_FILE="$HOME_DIR/keystore.pass"
 INVITE_FILE="$HOME_DIR/genesis-invite.hash"
 GATE_DIR="$HOME_DIR/gate"
 GATE_KEYSTORE_FILE="$GATE_DIR/mining-gate.keystore.json"
@@ -153,7 +152,7 @@ explain_failure() {  # explain_failure <label>
   local log="$LOG_DIR/$1.log"
   [ -f "$log" ] || return 0
   if grep -qi "could not decrypt the node keystore" "$log"; then
-    say "→ this node's key was made with a different passphrase than the one it was given. On a test network this script keeps the right one in $PASS_FILE; if you started this network by hand earlier, give the passphrase you used:  OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash $0 $NETWORK start    (if nothing here is worth keeping:  $0 $NETWORK stop; $0 $NETWORK reset --yes)"
+    say "→ this node's key was made with a different passphrase than the one it was given. Give the passphrase this key was made with:  OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash $0 $NETWORK start    (if nothing here is worth keeping:  $0 $NETWORK stop; $0 $NETWORK reset --yes)"
   fi
   if grep -qi "EADDRINUSE" "$log"; then
     say "→ another program is already using one of this network's ports ($RPC, $P2P, $UI). If it is a copy of this network started by hand, stop it. Otherwise move every port by 10:  OBSIDIAN_PORT_OFFSET=10 bash $0 $NETWORK start"
@@ -182,38 +181,28 @@ wait_for() {  # wait_for <label> <url> <pidfile> <seconds>
   die "$label did not answer within ${seconds}s, but it is still running (pid $(cat "$pidfile")). It may only be slow: wait a minute, then run  $0 $NETWORK status  or  $0 $NETWORK doctor,  or read $LOG_DIR/${label}.log"
 }
 
-# Which passphrase protects this network's key.
-#   - A network this script manages has a passphrase file beside its data, made when the key was made. That
-#     file wins over whatever is in the shell: a passphrase exported "by hand" for something else would
-#     otherwise lock the node out of its own key.
-#   - A key that exists without such a file was made by hand: only the passphrase it was made with opens it.
-#   - Mainnet never gets a generated passphrase.
+# Which passphrase protects this network's node key. The SAME rule on every network, mainnet included:
+#   1. OBSIDIAN_KEYSTORE_PASSPHRASE (12+ characters), or OBSIDIAN_KEYSTORE_PASSPHRASE_FILE naming a file YOU made;
+#   2. otherwise, on a real terminal, you are asked (nothing is echoed; a new key asks twice);
+#   3. otherwise the start stops. The script never generates a passphrase and never stores one beside the key:
+#      a passphrase kept next to the key it protects protects nothing.
 resolve_passphrase() {
   local given="${OBSIDIAN_KEYSTORE_PASSPHRASE:-}${OBSIDIAN_KEYSTORE_PASSPHRASE_FILE:-}"
-  if [ -f "$PASS_FILE" ]; then
-    [ -z "$given" ] || say "ignoring the passphrase in your shell: this $NETWORK node's key uses the one in $PASS_FILE"
-    unset OBSIDIAN_KEYSTORE_PASSPHRASE
-    export OBSIDIAN_KEYSTORE_PASSPHRASE_FILE="$PASS_FILE"
+  if [ -n "$given" ]; then return 0; fi
+  if [ -t 0 ] && [ -t 2 ]; then
+    local first="" again=""
+    if [ -f "$KEY_FILE" ]; then
+      read -rsp "Passphrase for this $NETWORK node key: " first >&2 || true; echo >&2
+    else
+      read -rsp "Choose a passphrase for the new $NETWORK node key (12+ characters): " first >&2 || true; echo >&2
+      read -rsp "Type it again to confirm: " again >&2 || true; echo >&2
+      [ "$first" = "$again" ] || die "the two passphrases did not match; nothing was created"
+    fi
+    [ "${#first}" -ge 12 ] || die "the passphrase must be at least 12 characters"
+    export OBSIDIAN_KEYSTORE_PASSPHRASE="$first"
     return 0
   fi
-  if [ -f "$KEY_FILE" ]; then
-    # A key that exists without this script's passphrase file was made by hand: only the passphrase it was
-    # made with opens it, so the one in the shell is the right thing to use.
-    if [ -n "$given" ]; then return 0; fi
-    die "this $NETWORK node already has a key ($KEY_FILE) and its passphrase is not stored here, so it was started by hand. Give the passphrase you used:  OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash $0 $NETWORK start   (if nothing here is worth keeping:  $0 $NETWORK reset --yes)"
-  fi
-  if [ "$NETWORK" = "mainnet" ]; then
-    [ -n "$given" ] && return 0
-    die "mainnet needs a passphrase YOU chose, kept somewhere else. Set OBSIDIAN_KEYSTORE_PASSPHRASE (12+ characters), or put it in a 0600 file and set OBSIDIAN_KEYSTORE_PASSPHRASE_FILE. (A passphrase stored next to the key it protects protects nothing, so mainnet will not generate one.)"
-  fi
-  # A NEW key on a test network always gets its own generated passphrase. One left in the shell by another
-  # network would otherwise protect this key too, and nobody would remember that it did.
-  [ -z "$given" ] || say "ignoring the passphrase in your shell: a new $NETWORK key gets its own generated passphrase (a test network does not need one you chose)"
-  unset OBSIDIAN_KEYSTORE_PASSPHRASE OBSIDIAN_KEYSTORE_PASSPHRASE_FILE
-  mkdir -p "$HOME_DIR"
-  ( umask 077; node -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('base64url'))" > "$PASS_FILE" )
-  export OBSIDIAN_KEYSTORE_PASSPHRASE_FILE="$PASS_FILE"
-  say "generated a passphrase for this $NETWORK node at $PASS_FILE (fine for a test network)"
+  die "this $NETWORK node needs a passphrase for its key and none was given. Set OBSIDIAN_KEYSTORE_PASSPHRASE (12+ characters), or put it in a 0600 file YOU made and set OBSIDIAN_KEYSTORE_PASSPHRASE_FILE, or run this from a terminal and you will be asked. (The script never generates a passphrase or keeps one beside the key.)"
 }
 
 # The mining gate (protocol 1.7.0). The chain accepts a mining claim only with a certificate signed by an issuer key
@@ -455,7 +444,7 @@ cmd_reset() {
   [ "${1:-}" = "--yes" ] || die "this deletes the $NETWORK chain, its node key and its interface accounts ($HOME_DIR). Run again with --yes to confirm."
   alive "$NODE_PID" || alive "$UI_PID" && die "stop the $NETWORK node and interface first:  $0 $NETWORK stop"
   rm -rf "$NODE_DATA" "$UI_DATA" "$LOG_DIR" "$HOME_DIR/node.pid" "$HOME_DIR/interface.pid"
-  say "$NETWORK has been reset (its passphrase file and invitation hash were kept)"
+  say "$NETWORK has been reset (its invitation hash was kept)"
 }
 
 # Answers "why is it not working?" in one command, from facts rather than guesses. Uses only Node, df, grep,
@@ -532,25 +521,14 @@ cmd_doctor() {
 
   echo; echo "keys, passphrases and the invitation"
   local given="${OBSIDIAN_KEYSTORE_PASSPHRASE:-}${OBSIDIAN_KEYSTORE_PASSPHRASE_FILE:-}"
-  if [ -f "$PASS_FILE" ]; then
-    ok "passphrase: this network's own file ($PASS_FILE) is used"
-    [ -z "$given" ] || info "the passphrase in your shell is ignored: the file above belongs to this network's key"
+  if [ -n "$given" ]; then
+    ok "passphrase: taken from your shell for this command"
+  elif alive "$NODE_PID"; then
+    ok "passphrase: not needed while the node runs; the next start asks for it (or reads OBSIDIAN_KEYSTORE_PASSPHRASE)"
   elif [ -f "$KEY_FILE" ]; then
-    if [ -n "$given" ]; then
-      ok "passphrase: the one in your shell is used (this key has no stored passphrase)"
-    elif alive "$NODE_PID"; then
-      ok "passphrase: not needed while the node runs; the next start needs the one this key was made with"
-    elif [ "$NETWORK" = "mainnet" ]; then
-      info "passphrase: mainnet keeps none. Give it to the command that starts the node:  OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash $0 mainnet start"
-    else
-      bad "this network has a key ($KEY_FILE) but no stored passphrase, and none in your shell, so the next start will fail"
-      fix "give the one you used:  OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash $0 $NETWORK start     (nothing worth keeping here?  $0 $NETWORK reset --yes)"
-    fi
-  elif [ "$NETWORK" = "mainnet" ]; then
-    if [ -n "$given" ]; then ok "passphrase: taken from your shell for this command"; else info "passphrase: mainnet makes none for you. Set one for the command:  OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash $0 mainnet start"; fi
+    info "passphrase: this key's passphrase is kept nowhere. Give it to the command that starts the node:  OBSIDIAN_KEYSTORE_PASSPHRASE='…' bash $0 $NETWORK start   (or start from a terminal and be asked)"
   else
-    ok "passphrase: none yet; one will be generated on the first start (a test network does not need one you chose)"
-    [ -z "$given" ] || info "the passphrase in your shell is ignored: a new $NETWORK key gets its own"
+    info "passphrase: none yet. The first start asks you to choose one (or reads OBSIDIAN_KEYSTORE_PASSPHRASE); it is never generated or stored for you"
   fi
   if [ -f "$INVITE_FILE" ]; then
     ok "invitation: this network's own ($INVITE_FILE)"

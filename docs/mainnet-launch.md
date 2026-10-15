@@ -13,9 +13,9 @@ before it has users than after.
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
 | Genesis id | `a8f3020df9b83e9929a3c0ac14fc9ceff9a28fa0` |
-| Genesis hash | `24d078ca7c14056a796909a6d1572bcfcc36971bec720045a274b23c31802f93` |
+| Genesis hash | `8392a56c8ba93474a183a3847c550c7d97ab897e547c64416c1f2b9b69d6cf17` |
 | Protocol version | `1.9.0` |
-| Params hash | `97aed9670c701b4bd4f64271413e05a6` — published at `/params`; must be identical on every node |
+| Params hash | `38dd9243481cd35a68003648e2710001` — published at `/params`; must be identical on every node |
 | Default RPC port | 8630 |
 | Default p2p port | 8631 |
 | Address prefix | `obs1` |
@@ -452,7 +452,7 @@ evidence is what makes the bug findable.
 [ ] node scripts/check-invariants.mjs -> every invariant holds
 [ ] >= 3 bootstrap nodes, independent operators, independent hosting
 [ ] NTP disciplined on every host (timedatectl: synchronized yes)
-[ ] OBSIDIAN_KEYSTORE_PASSPHRASE set; companion .pass files deleted
+[ ] OBSIDIAN_KEYSTORE_PASSPHRASE (or a 0600 passphrase file you made) set; none kept beside the keystore
 [ ] Keystores backed up; passphrases stored separately
 [ ] genesis init prints the expected genesisId and hash on every host
 [ ] All nodes report height 0 and total supply 0 at first start

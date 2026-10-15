@@ -29,14 +29,15 @@ Let `H` be the head being applied and `n_head` the number of eligible producers 
 W = clamp(3 × n_head, 32, 1024)          blocks (the window)
 h = H − W                                the candidate checkpoint
 base(h) = nodes that were registered AND mature at height h and are, at H, still registered,
-          unbanned, unsuspended and live (a sign of life within 30 reward periods)
+          unbanned and live (a sign of life on this chain within 30 reward periods).
+          A SUSPENDED node still counts: see below.
 n = |base(h)|
 ```
 
 Block `h` (and every ancestor) becomes **final** if and only if
 
 ```
-n ≥ 3   and   |{ distinct producers of blocks h+1 … H that belong to base(h) }| ≥ floor(2n/3) + 1
+n ≥ 2   and   |{ distinct producers of blocks h+1 … H that belong to base(h) }| ≥ floor(2n/3) + 1
 ```
 
 The finalized height **only ever moves forward** (monotonic): a later head cannot lower it, and a restart reads it back
@@ -50,12 +51,14 @@ from state.
 | Genesis | `finalizedHeight = 0`, `finalizedHash = ''` (a genesis block cannot contain its own hash; the node reads `canonicalHashAt(0)`). |
 | Restart | The checkpoint is read from the stored state; it never regresses (test: "survives a restart"). |
 | Upgrade | None. 1.9.0 is a fresh start; there are no earlier checkpoints to migrate, and the old finality committee and votes do not exist. |
-| Fewer than 3 established producers | `available: false` and a reason. The chain keeps advancing and **nothing is called final**. A single-node network therefore never finalizes — by design, not by bug. |
+| Fewer than 2 established producers | `available: false` and a reason. The chain keeps advancing and **nothing is called final**. A single-node network therefore never finalizes — by design, not by bug. |
 
 ## 4. Exposure
 
 * `GET /finality` — `model`, `available`, `reason`, `finalizedHeight`, `finalizedHash`, `headHeight`, `lag`,
-  `eligibleProducers`, `window`, `quorum`, `minProducers`, `derivedFrom`, `assumptions`.
+  `eligibleProducers`, `window`, `quorum`, `minProducers`, `producersSeen`, `candidateHeight`, `derivedFrom`, `assumptions`.
+  `available` says the rule can run (at least `minProducers` established); when it is running but short of its quorum,
+  `reason` says how many of the required producers have built above `candidateHeight`.
 * `GET /status` — `finalizedHeight`, `finalizedHash`, `finalityAvailable`, `finalityEligibleProducers`.
 * `GET /producers` — the producer set and the same finality block.
 * `obsidian finality` (CLI) and `/readyz` (finality lag against `maxLag`).
@@ -77,7 +80,8 @@ larger than 2n/3 intersect in more than n/3 producers: each of those built on **
 | --- | --- |
 | A partition with each side holding a minority | Neither side finalizes (it needs two thirds). **No side can finalize itself.** |
 | A malicious producer alone | Cannot finalize anything (a single producer is one distinct producer; test: "a single producer … cannot finalize"). |
-| Two of three producers | Cannot finalize (the quorum for three is three). |
+| A half of a split suspends the other half | Suspension (three missed slots) does **not** remove a node from the base. If it did, each half of a partition would suspend the other half, shrink the denominator, and finalize itself, producing two conflicting final chains. This was a real defect found while writing the 3\|3 split test (the old rule finalized a block of its own at height 175 on one half) and is pinned by `finality.test.ts` for 2\|2, 3\|3 and 3\|2 splits. Whatever a half can finalize is a block both halves share. |
+| One of two producers, or two of three | Cannot finalize (the quorum for two is two, for three it is three). Finality simply waits until the missing producer is back, then resumes and catches up. |
 | One third or more of established producers faulty | The guarantee **is gone**: they can stall finality, or build on both sides. |
 | A producer that builds on two branches | It is counted on both. Nothing is locked and nothing is bonded, so it is **not punished for it**. (Producing two different blocks on one *parent* is punished by a permanent ban — see [consensus-v1.9.0.md](consensus-v1.9.0.md) §6 — but building on two different branches is not equivocation.) |
 | A node offline longer than the reorg window | Must obtain a recent finalized checkpoint from a source it trusts (weak subjectivity). The protocol cannot supply that proof. |
@@ -95,12 +99,16 @@ node scripts/verify-agreement.mjs http://127.0.0.1:38630 http://127.0.0.1:38640 
 ```
 
 `verify-agreement.mjs` checks that every reported finalized checkpoint is the block that every other node holds at that
-height. Finality is not available until at least three nodes have been registered for 64 blocks; with the 5-second target
+height. Finality is not available until at least two nodes have been registered for 64 blocks; with the 5-second target
 that is roughly a few minutes of block time on a fresh network, and then another window (32 blocks) after that.
 
 ## 7. Limits (the honest list)
 
 * Checkpoint finality is **not** BFT and is **not** a vote.
-* It assumes at least three established producers and fewer than one third of them faulty.
+* It needs at least two established producers, and a quorum of them alive: with `n` producers it advances only while `floor(2n/3)+1` of them are producing. Any finality that does not trust a single party has this liveness cost; the chain itself never waits for it.
+* The base shrinks only by **long silence**: a node with no sign of life on this chain for 30 reward periods stops
+  counting. A partition that lasts longer than that, with both halves still holding at least `minProducers` nodes, lets
+  each half drop the other and finalize separately. That horizon (30 days) is the price of finality that does not stall
+  for ever behind abandoned nodes; operators who see a split must heal it well before then.
 * It does not remove the need for weak subjectivity for nodes that were offline for a long time.
 * It does not defend against a Sybil fleet — see the producer-admission limits.

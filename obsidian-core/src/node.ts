@@ -12,14 +12,13 @@
  */
 
 import { join } from 'node:path';
-import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { mkdirSync, existsSync } from 'node:fs';
 import { ChainManager } from './blockchain/chain.js';
 import { RpcServer } from './rpc/server.js';
 import { P2PService } from './networking/p2p.js';
 import { PeerStore } from './networking/peer-store.js';
 import { Indexer } from './indexer/indexer.js';
-import { Keystore, keystorePassphraseFromEnv } from './crypto/keystore.js';
+import { Keystore, resolveKeystorePassphrase } from './crypto/keystore.js';
 import { addressFromPublicKey, nodeIdFromPublicKey } from './crypto/keys.js';
 import { genesisDocumentFor, genesisId as computeGenesisId } from './genesis/initialize.js';
 import { Logger } from './security/logger.js';
@@ -84,7 +83,7 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
   mkdirSync(config.dataDir, { recursive: true });
 
   // ── Identity key (the ONLY secret this process persists) ─────────────────
-  const passphrase = resolveKeystorePassphrase(config.keystorePath, logger, net.isProduction);
+  const passphrase = await resolveKeystorePassphrase({ creating: !Keystore.exists(config.keystorePath) });
   const identityKey = Keystore.exists(config.keystorePath)
     ? Keystore.read(config.keystorePath, passphrase)
     : Keystore.create(config.keystorePath, passphrase);
@@ -249,6 +248,11 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
       // Still catching up: building on a stale head only mints a block nobody
       // will accept. Wait until we are level with the best peer.
       if (p2p.behindBy() > 1) return;
+      // Pace: mint no sooner than the configured spacing after the parent. The loop wakes every second so a node
+      // whose turn has come produces when it is due, not up to a whole interval later (a coarse timer would stretch
+      // blocks to roughly double the target and could let a due turn pass to the next producer). The protocol itself
+      // only requires one second between blocks; this is the node's own pacing, not a consensus rule.
+      if (chain.protocolTime - chain.lastBlockTimestamp < config.blockProductionIntervalSeconds) return;
       // The schedule is read from committed state, the same way block validation reads it. OPEN means no node has
       // registered yet (the founding state); otherwise exactly one address is entitled to this slot.
       const decision = chain.productionDecisionNow();
@@ -277,7 +281,7 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
       } catch (error) {
         logger.error('block production failed', { error: (error as Error).message });
       }
-    }, Math.max(1_000, config.blockProductionIntervalSeconds * 1_000)),
+    }, 1_000),
   );
 
   // Node participation: register, heartbeat, attest and report, signed by this node's own key (see node-agent.ts).
@@ -340,40 +344,6 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
   });
 
   return { chain, rpc, p2p, indexer, config: options, nodeId, publicKey: identity.publicKey, stop };
-}
-
-/**
- * Resolve the keystore passphrase.
- *
- * Production path: OBSIDIAN_KEYSTORE_PASSPHRASE (or ..._FILE) must be set. On a
- * test network a first run may generate one and keep it with 0600 permissions
- * next to the keystore, with a loud warning — convenient for a phone or a
- * laptop. On MAINNET that fallback is refused: a passphrase stored beside the
- * file it protects protects nothing, and the identity key is the one that signs
- * blocks.
- */
-function resolveKeystorePassphrase(keystorePath: string, logger: Logger, production: boolean): string {
-  try {
-    return keystorePassphraseFromEnv();
-  } catch (error) {
-    if (production) {
-      throw new Error(
-        `${(error as Error).message} Mainnet will not fall back to a passphrase kept beside the keystore.`,
-      );
-    }
-    const companion = `${keystorePath}.pass`;
-    if (existsSync(companion)) {
-      return readFileSync(companion, 'utf8').trim();
-    }
-    const generated = randomBytes(32).toString('base64url');
-    writeFileSync(companion, `${generated}\n`, { mode: 0o600 });
-    logger.warn(
-      'OBSIDIAN_KEYSTORE_PASSPHRASE was not set: generated one and stored it beside the keystore. ' +
-        'Fine for a test network; mainnet refuses to start this way.',
-      { companion },
-    );
-    return generated;
-  }
 }
 
 /** Validate a data directory without starting the node (used by `obsidian-core validate`). */

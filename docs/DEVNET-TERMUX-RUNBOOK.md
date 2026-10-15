@@ -148,7 +148,7 @@ Fields that matter:
 | `network` / `networkId` | `devnet` / `obsidian-devnet-1` | you are on devnet, not another chain |
 | `chainId` | `7780` | transactions commit to this; another network's are refused |
 | `genesisId` | `ea8fe36d2036f1ed8def0ce34bdc27290027b3c4` | the identity of this chain |
-| `paramsHash` | `97aed9670c701b4bd4f64271413e05a6` | the consensus rules; a different value means different rules |
+| `paramsHash` | `38dd9243481cd35a68003648e2710001` | the consensus rules; a different value means different rules |
 | `coreVersion` / `protocolVersion` | `1.9.0` / `1.9.0` | |
 | `supplyOk` | `true` | the 21,000,000 OBS cap invariant holds |
 | `height` | climbing | the chain is alive |

@@ -315,9 +315,9 @@ All of these are compile-time constants of the protocol version, included in
 | Parameter | Value | Meaning |
 |---|---|---|
 | `proofOfTime.consensus` | `PROOF_OF_TIME` | The protocol's consensus identity |
-| `proofOfTime.weightRule` | `FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH` | Fork choice |
+| `proofOfTime.weightRule` | `FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH` | Fork choice |
 | `consensus.finality.quorum*` | `floor(2n/3)+1` | Distinct established producers that must have built on a block |
-| `consensus.finality.minProducers` | 3 | Fewer than this and finality is reported unavailable |
+| `consensus.finality.minProducers` | 2 | Fewer than this and finality is reported unavailable |
 | `consensus.finality.window*` | `clamp(3n, 32, 1024)` | Blocks above a candidate that are counted |
 | `proofOfTime.difficultyTargetSeconds` | 5 | Target block spacing |
 | `proofOfTime.difficultyWindowBlocks` | 720 | Difficulty measurement window |

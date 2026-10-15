@@ -149,3 +149,65 @@ export function keystorePassphraseFromEnv(): string {
   }
   return value;
 }
+
+/**
+ * Ask a person for the keystore passphrase on their own terminal, without echoing it.
+ *
+ * Returns undefined when there is no terminal to ask (a service, a container, a pipe): nothing is ever guessed,
+ * generated or kept in a file. The prompt writes to stderr so a passphrase can never end up in captured stdout, and the
+ * typed characters are never logged. Only a real TTY is ever prompted.
+ */
+export async function promptKeystorePassphrase(question: string): Promise<string | undefined> {
+  const input = process.stdin;
+  if (!input.isTTY || typeof input.setRawMode !== 'function') return undefined;
+  process.stderr.write(question);
+  return new Promise<string | undefined>((resolvePrompt) => {
+    let typed = '';
+    const wasRaw = input.isRaw;
+    const finish = (value: string | undefined) => {
+      input.setRawMode(wasRaw);
+      input.pause();
+      input.off('data', onData);
+      process.stderr.write('\n');
+      resolvePrompt(value);
+    };
+    const onData = (chunk: Buffer) => {
+      for (const character of chunk.toString('utf8')) {
+        if (character === '\r' || character === '\n' || character === '\u0004') return finish(typed);
+        if (character === '\u0003') return finish(undefined); // Ctrl-C: give up, never continue with half a passphrase
+        if (character === '\u007f' || character === '\b') typed = typed.slice(0, -1);
+        else typed += character;
+      }
+      return undefined;
+    };
+    input.setRawMode(true);
+    input.resume();
+    input.on('data', onData);
+  });
+}
+
+/**
+ * The passphrase for the node key: the environment (or a file the environment names), else a prompt on a real
+ * terminal. There is no other source. In particular nothing is generated and nothing is written beside the keystore,
+ * on any network: a passphrase kept next to the key it protects protects nothing.
+ */
+export async function resolveKeystorePassphrase(options: { creating: boolean }): Promise<string> {
+  try {
+    return keystorePassphraseFromEnv();
+  } catch (error) {
+    const first = await promptKeystorePassphrase(
+      options.creating ? 'Choose a passphrase for the new node key (12+ characters): ' : 'Passphrase for the node key: ',
+    );
+    if (first === undefined) {
+      throw new Error(
+        `${(error as Error).message} No terminal is attached to ask on, and the node never generates a passphrase or stores one beside the keystore.`,
+      );
+    }
+    if (first.length < 12) throw new Error('the passphrase must be at least 12 characters.');
+    if (options.creating) {
+      const again = await promptKeystorePassphrase('Type it again to confirm: ');
+      if (again !== first) throw new Error('the two passphrases did not match; nothing was created.');
+    }
+    return first;
+  }
+}

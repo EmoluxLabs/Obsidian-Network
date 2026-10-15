@@ -117,7 +117,7 @@ describe('status, params and metrics', () => {
     expect((await get(base, '/version')).json.coreVersion ?? CORE_VERSION).toBe('1.9.0');
     const params = (await get(base, '/params')).json;
     expect(params.consensus.producers.maturityBlocks).toBe(CONSENSUS_PARAMS.consensus.producers.maturityBlocks);
-    expect(params.consensus.finality.minProducers).toBe(3);
+    expect(params.consensus.finality.minProducers).toBe(2);
     expect(params.consensus.validatorBondObs).toBeUndefined();
     expect(JSON.stringify(params)).not.toMatch(/validator/i);
     const metrics = (await get(base, '/metrics')).text;

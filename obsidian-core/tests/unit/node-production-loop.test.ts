@@ -131,7 +131,9 @@ describe('N-01 the production decision comes from committed state', () => {
 
 // ── the loop itself ────────────────────────────────────────────────────────
 
-async function startMiningNode(): Promise<NodeRuntimeInfo> {
+async function startMiningNode(spacingSeconds = 1): Promise<NodeRuntimeInfo> {
+  // The node never invents a passphrase for its key (1.9.0): the operator gives one, here through the environment.
+  process.env.OBSIDIAN_KEYSTORE_PASSPHRASE ??= 'production-loop-test-passphrase';
   const net = getNetwork('devnet');
   const dir = mkdtempSync(join(tmpdir(), 'obs-n01-'));
   const runtime = await startNode({
@@ -143,7 +145,7 @@ async function startMiningNode(): Promise<NodeRuntimeInfo> {
       rpcEnabled: false,
       p2pEnabled: false,
       miningEnabled: true,
-      blockProductionIntervalSeconds: 1,
+      blockProductionIntervalSeconds: spacingSeconds,
       logLevel: 'error',
     },
     net,
@@ -172,6 +174,16 @@ describe('N-01 the production loop honours the two states', () => {
     // Bootstrap production is untouched: the loop builds, the chain accepts.
     expect(runtime.chain.height).toBeGreaterThan(0);
   });
+
+  it('TEST 6 — pacing: a due turn is taken within a second, and no block comes sooner than the configured spacing', async () => {
+    // Spacing 5 s: the first block is due at once (the chain's clock starts at genesis), the second five seconds after
+    // it. A producer that only woke every spacing interval would be late by up to a whole interval.
+    const runtime = await startMiningNode(5);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(runtime.chain.height).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 4_700));
+    expect(runtime.chain.height).toBe(2);
+  }, 20_000);
 
   it('TEST 3 — SCHEDULED for someone else: this node stays idle', async () => {
     const runtime = await startMiningNode();

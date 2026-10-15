@@ -347,7 +347,7 @@ curl -s localhost:38630/status
 `curl` fetches a web address and prints the result. Expect to see:
 
 - `"protocolVersion":"1.9.0"`
-- `"paramsHash":"97aed9670c701b4bd4f64271413e05a6"`
+- `"paramsHash":"38dd9243481cd35a68003648e2710001"`
 
 Stop the node with **Ctrl+C** in the first terminal.
 
@@ -365,7 +365,7 @@ This prints a JSON document. Deterministically, every time, it contains:
 
 ```json
 "genesisId": "a8f3020df9b83e9929a3c0ac14fc9ceff9a28fa0",
-"genesisHash": "24d078ca7c14056a796909a6d1572bcfcc36971bec720045a274b23c31802f93"
+"genesisHash": "8392a56c8ba93474a183a3847c550c7d97ab897e547c64416c1f2b9b69d6cf17"
 ```
 
 To see just those two lines:
@@ -727,9 +727,9 @@ node dist/index.js start --network devnet \
 ```
 
 `export` sets an environment variable for this terminal session. The keystore
-passphrase protects the node's identity key. If you do not set it, the node
-generates one, writes it beside the keystore and warns you — fine for a test,
-not for mainnet.
+passphrase protects the node's identity key. If you do not set it, the node asks
+for it on your terminal (nothing is echoed); with no terminal it refuses to start.
+It never generates a passphrase or stores one beside the keystore, on any network.
 
 **Expected output.** The node logs one JSON object per line; these are the important ones (shortened,
 with their timestamps removed):
@@ -835,7 +835,7 @@ for p in 38630 38640 38650; do
 done
 ```
 
-All three must print `97aed9670c701b4bd4f64271413e05a6`.
+All three must print `38dd9243481cd35a68003648e2710001`.
 
 ### C9. Create a wallet
 
@@ -1288,9 +1288,9 @@ of this. What follows is the same sequence with more explanation for a beginner.
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
 | Genesis id | `a8f3020df9b83e9929a3c0ac14fc9ceff9a28fa0` |
-| Genesis hash | `24d078ca7c14056a796909a6d1572bcfcc36971bec720045a274b23c31802f93` |
+| Genesis hash | `8392a56c8ba93474a183a3847c550c7d97ab897e547c64416c1f2b9b69d6cf17` |
 | Protocol version | `1.9.0` |
-| PARAMS_HASH | `97aed9670c701b4bd4f64271413e05a6` |
+| PARAMS_HASH | `38dd9243481cd35a68003648e2710001` |
 | RPC / P2P port | 8630 / 8631 |
 | Address prefix | `obs1` |
 | Max supply | 21,000,000 OBS |
@@ -1978,7 +1978,7 @@ equivalent check — it stops the interface and confirms the node keeps producin
 
 **Keys**
 - [ ] `OBSIDIAN_KEYSTORE_PASSPHRASE_FILE`, mode 0600, not the plain variable
-- [ ] Generated `.pass` companion files deleted
+- [ ] No passphrase file sits beside `node-key.json` (the node never makes one)
 - [ ] `node-key.json` backed up; passphrase stored separately
 - [ ] Node identity holds no funds — it is not a wallet
 - [ ] Wallet private keys and recovery phrases offline, never on a server
@@ -2111,7 +2111,7 @@ curl -s localhost:8630/pot
 ```
 Compare `cumulativePotWeight`. Differences at the tip are normal; persistent
 differences at the same height indicate a fork. Fork choice is
-`FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH`.
+`FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH`.
 
 ### Transaction rejected
 
@@ -2623,7 +2623,7 @@ curl -s https://rpc1.example.org/status
 
 **Protocol**
 - [ ] `/status` reports `protocolVersion: 1.9.0`
-- [ ] PARAMS_HASH `97aed9670c701b4bd4f64271413e05a6` on **every** node
+- [ ] PARAMS_HASH `38dd9243481cd35a68003648e2710001` on **every** node
 - [ ] `genesis init` deterministic across two machines
 - [ ] Mainnet genesis id `a8f3020df9b83e9929a3c0ac14fc9ceff9a28fa0`
 - [ ] Height 0 supply is 0; `invariantOk: true`
@@ -2655,7 +2655,7 @@ curl -s https://rpc1.example.org/status
 - [ ] `/peers` non-empty in both directions
 - [ ] Heights converge
 - [ ] NTP synchronised on all hosts
-- [ ] Keystore passphrase via file; `.pass` companions deleted
+- [ ] Keystore passphrase via a file you made (0600) or the environment
 - [ ] `node-key.json` backed up
 
 **Network**

@@ -753,7 +753,7 @@ test('every node reports the same Proof of Time state, derived from the blocks i
     assert.equal(code, 200, `${node.name}: /pot must be served`);
     assert.equal(body.consensus, 'PROOF_OF_TIME', `${node.name}: the consensus identity must be Proof of Time`);
     assert.equal(body.shortName, 'PoT');
-    assert.equal(body.weightRule, 'FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH');
+    assert.equal(body.weightRule, 'FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH');
     // PoT difficulty is published as a measurement, and says so.
     assert.equal(body.difficulty.role, 'MEASUREMENT', `${node.name}: difficulty must be labelled a measurement`);
     assert.ok(body.difficulty.difficultyBps >= 2_500 && body.difficulty.difficultyBps <= 40_000,

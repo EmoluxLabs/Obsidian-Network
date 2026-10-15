@@ -70,6 +70,13 @@ producer(height, round) = set[(height + round) mod |set|]
   suspend the node for `baseSuspensionSeconds` (10 min), doubling on each repeat up to `maxSuspensionSeconds` (24 h).
   Producing a block clears the counters. Suspension costs turns, never funds, and ends by itself
   (`consensus/producers.ts`).
+* **Pacing is local, not consensus.** The protocol requires only that a block be at least one second after its parent. A
+  node leaves `blockProductionIntervalSeconds` (default 5) after the parent before it produces, waking every second so a
+  due turn is taken promptly. A modified node could mint sooner than that when it is the scheduled producer, but only on turns the schedule gives it,
+  and every block it makes still has to pass the schedule check and the one-second timestamp floor.
+* **Low early heights.** Height counts blocks, not seconds. A fresh chain starts its clock at the genesis timestamp and its
+  first blocks jump to wall-clock time, then follow the 5-second pace, so a young chain shows a small height. That is
+  expected, and is why finality (which counts blocks) takes a few minutes to appear.
 * **Reconnect churn.** A node that drops and reconnects is not penalised for reconnecting: liveness comes from
   chain-recorded evidence (blocks and heartbeats), not from connection state.
 

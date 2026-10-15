@@ -18,66 +18,14 @@ export const CONSENSUS_PARAMS = {
   /**
    * Protocol version that owns these parameters.
    *
-   * 1.1.0 introduced two consensus-visible changes:
-   *   - the consensus identity is named and documented as Proof of Time (PoT):
-   *     the fork-choice weight is PoT Weight, the timing rule is PoT Difficulty
-   *     and the participation metric is Time-Rate (see `proofOfTime` below);
-   *   - qualifying platform revenue followed an earlier runner / treasury
-   *     policy; v1.6.0 replaces it with ONS-only 90% / 10% routing.
-   *
-   * 1.2.0 removed external-price dependence from protocol service pricing.
-   * ONS registration and renewal fees are fixed in OBS; an oracle outage can
-   * never make name registration or renewal unavailable. v1.6.0 separately
-   * resets the validator admission bond to exactly 20,000 OBS.
-   *
-   * 1.4.0 hardens mainnet consensus: each valid block contributes exactly one
-   * PoT weight unit, timeout rounds remain inside the validator set, validator
-   * registration binds its key to the sender, and per-transaction event limits
-   * are consensus enforced.
-   *
-   * 1.6.0 launches a fresh genesis with a public, genesis-committed finality
-   * bootstrap set; removes discontinued application transactions; fixes
-   * deterministic PoT fork choice; requires an exact 20,000 OBS validator bond;
-   * and routes ONS revenue 90% to node runners / 10% to treasury.
-   *
-   * 1.6.1 is a consensus-rule change with no economic change. Four rules move:
-   *
-   *   - VALIDATOR ADMISSION MODE is an explicit, state-committed indicator
-   *     (`validatorSetNeverReopens`). A chain that has never accepted a valid
-   *     registration is in bootstrap mode, where any node may propose so the
-   *     first validator can arrive; from the first successful registration the
-   *     rotation is closed for ever. A zero-validator chain after that point
-   *     HALTS. It never reopens to permissionless production, because
-   *     "no validators are registered" is not distinguishable, on the chain
-   *     alone, from "every validator left".
-   *   - JAILING IS MEASURED IN PROTOCOL TIME (`jailSlots` × target interval),
-   *     not in blocks. A jail measured in blocks cannot expire on a chain that
-   *     stopped producing, and stopping is exactly what a jail can cause.
-   *   - SLASH LIABILITY FOLLOWS THE REGISTRATION
-   *     (`slashLiabilityFollowsRegistration`): evidence about a tenure is
-   *     chargeable to that tenure's bond while it is escrowed, including after
-   *     the validator unregisters, and it names that exact tenure.
-   *   - EQUIVOCATION EVIDENCE HAS A PER-BLOCK BUDGET (`slashing`), so a peer
-   *     cannot make a block cost unbounded signature verification.
-   *
-   * These are rule changes, so the protocol version moves to 1.6.1 and the
-   * parameter hash changes with them: two nodes cannot share a protocol
-   * identity and disagree about the rules.
-   *
-   * 1.9.0 is a FRESH-START protocol (new genesis, no migration). It removes the validator model entirely: no
-   * VALIDATOR or SLASH transaction, no 20,000 OBS bond, no finality votes or certificates, no committed bootstrap
-   * committee. Block production is a deterministic schedule over every registered, mature, live node;
-   * finality is a pure function of chain history (producer-diversity checkpoints); a node's reward wallet is bound
-   * with its own identity key (no wallet signature, no gas); ONS names gain two-step transfer, wallet update and
-   * delayed recovery. The mining gate (1.7.0/1.8.0) is unchanged. A 1.8.x node cannot peer with a 1.9.0 node.
-   *
-   * 1.8.0 adds gate authority updates (rotate or revoke the mining gate issuer keys in consensus); the transaction type,
-   * the live issuer set in the state root and the `miningGate.maxRevoked`/`maxChangesPerUpdate` parameters all move the
-   * identity. A 1.7.0 node cannot peer with a 1.8.0 node.
-   *
-   * 1.7.0 closes the account bypass: a MINING_CLAIM must carry a certificate from a genesis-committed issuer key
-   * (see `miningGate` below), and the gate keys are part of the genesis id and of every state root. No economic rule
-   * moves. A 1.6.1 node cannot peer with a 1.7.0 node.
+   * 1.9.0 is a FRESH-START protocol (new genesis, no migration of earlier chain state). Block production is a
+   * deterministic schedule over every registered, mature, live node, with no stake, bond, committee or vote; finality
+   * is a pure function of chain history (producer-diversity checkpoints); a node's reward wallet is bound with the
+   * node's own identity key (no wallet signature, no gas); node rewards are 90% of the ONS-fee pool by uptime score;
+   * ONS names gain two-step transfer, wallet update and delayed recovery. The mining gate (1.7.0/1.8.0: certificates
+   * from genesis-committed issuer keys, rotatable on chain) is unchanged. Every earlier release has a different rule
+   * set and a different protocol identity: a 1.8.x node cannot peer with a 1.9.0 node. The history of the earlier
+   * rules is in the git log and CHANGELOG, not here.
    */
   protocolVersion: '1.9.0',
 
@@ -144,7 +92,7 @@ export const CONSENSUS_PARAMS = {
      * equal-weight/height branches resolve by the lowest block hash, independent
      * of peer arrival order or unauthenticated vote gossip.
      */
-    weightRule: 'FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH' as const,
+    weightRule: 'FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH' as const,
     /** Blocks of history used to recompute PoT Difficulty. */
     difficultyWindowBlocks: 720,
     /** Reference spacing in seconds that observational PoT Difficulty compares against. */
@@ -386,14 +334,14 @@ export const CONSENSUS_PARAMS = {
      *
      * A block B at height h is FINAL on a chain iff the `window(n)` blocks that follow it were produced by at
      * least `quorum(n)` DISTINCT nodes drawn from the n nodes that were registered and mature at height h and are
-     * still live, unsuspended and unbanned when the window closes, where n >= minProducers. A pure function of chain
+     * still live (a suspension does not count against it) and unbanned when the window closes, where n >= minProducers. A pure function of chain
      * history, evaluated inside the block state machine and committed in the state root: every node computes the
      * same answer, no message is sent and no local timer participates.
      */
     finality: {
       model: 'PRODUCER_DIVERSITY_CHECKPOINT' as const,
       /** Fewer mature producers than this and the protocol reports that finality is unavailable. */
-      minProducers: 3,
+      minProducers: 2,
       quorumNumerator: 2,
       quorumDenominator: 3,
       /** window(n) = clamp(windowPerProducer * n, windowMin, windowMax) blocks. */

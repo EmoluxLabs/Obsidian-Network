@@ -73,7 +73,7 @@ The **Mining Pool** is consensus state, `state.pool.balance`. A node serves it a
 (and as `GET /status` → `pool.balance`, with `lifetimeInflow` and `lifetimeDistributed`). It is a *recycling* pool,
 not a pre-funded allocation:
 
-* **In:** gas from payments, names, node registrations, treasury grants and validator bonds, slashed bonds, and the
+* **In:** gas from payments and names, treasury grants, and the
   treasury share of an ONS fee while no treasury wallet is designated.
 * **Out:** a mining claim's reward is paid from the pool **first**; only the shortfall is newly issued (and only that
   raises the mined supply).

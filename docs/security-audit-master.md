@@ -5,7 +5,7 @@
 Scope and honesty: this pass concentrated on process startup and the data-directory lock, network identity, the P2P
 handshake and peer reporting, the RPC surface (health/readiness, privileged routes), trusted origins and cookies, and
 dependency state. It was **not** a fresh line-by-line review of every file in the monorepo; earlier audits
-(`SECURITY-AUDIT-1.6.0-slashing.md`, `audit/index.html`, the 1.6.x/1.7.0 remediation notes) cover consensus, slashing,
+(the 1.6.0 slashing audit, since removed with the mechanism it covered; `audit/index.html`; the 1.6.x/1.7.0 remediation notes) covered consensus, slashing,
 the gate and the web apps, and their findings were not re-opened here. Severity is the author's judgement, not a CVSS
 score. Every finding below has a regression test unless it says otherwise.
 

@@ -28,7 +28,7 @@ network ids and address prefixes.
 ## Version and identity
 
 * Protocol and core `1.9.0`; `MIN_CORE_VERSION` `1.9.0`; state snapshot format 6; wire version 1.
-* Params hash (every network): `97aed9670c701b4bd4f64271413e05a6`.
+* Params hash (every network): `38dd9243481cd35a68003648e2710001`.
 * Genesis ids are different from 1.8.x. Read them from `obsidian genesis init --network <net>` (reproducible: every node
   computes the same genesis hash and state root) or from a running node's `GET /genesis`; they are listed in
   [LAUNCH-GUIDE.md](LAUNCH-GUIDE.md).
@@ -42,7 +42,7 @@ network ids and address prefixes.
 3. Bind a reward wallet by address (`obsidian register <address>`). **Never paste a private key into any node screen.**
 4. Run the node with block production on. It registers itself, heartbeats and attests on its own; the first blocks it can
    produce come after the **maturity** (64 blocks).
-5. Finality is `available: false` until at least three established producers exist. That is expected on a new network.
+5. Finality is `available: false` until at least two established producers exist. That is expected on a new network.
 
 ## A fresh test network, step by step (devnet)
 

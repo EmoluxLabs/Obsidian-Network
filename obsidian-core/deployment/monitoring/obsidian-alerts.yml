@@ -21,8 +21,8 @@ groups:
       - alert: ObsidianChainStalled
         # Height has not increased for five minutes. Blocks are produced about
         # every 5s on every network, so this is ~60 missed blocks.
-        # (If every validator is down the chain waits out a round per block, so
-        # this can also mean the validator set is offline.)
+        # (If the scheduled producers are offline the chain waits out a round per block, so
+        # this can also mean every registered node is offline.)
         expr: increase(obsidian_chain_height[5m]) == 0
         for: 5m
         labels: { severity: critical }

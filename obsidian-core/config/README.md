@@ -67,7 +67,7 @@ OBSIDIAN_LOG_LEVEL=debug node dist/index.js start \
 | `seedNodes` | bootstrap peers (`host:port`). Any node already on the network will do. |
 | `maxPeers`, `maxInboundPeers` | connection budgets. |
 | `miningEnabled` | produce blocks when this node's slot comes up. Off = validating follower. |
-| `blockProductionIntervalSeconds` | how often the producer checks its slot (the protocol decides the slot itself). |
+| `blockProductionIntervalSeconds` | minimum spacing, in seconds, this node leaves after the parent before it produces (the node wakes every second; the protocol decides whose slot it is). |
 
 ### Settings are checked, not guessed
 

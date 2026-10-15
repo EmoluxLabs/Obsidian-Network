@@ -105,10 +105,10 @@ state. Eligible tips are compared in this order:
 There is no arrival-order component and no support weighting. A node holds at most 8 candidates per height.
 
 **Finality** is derived from the chain itself, with no votes and no timer: a block is final once, within a window of
-`clamp(3n, 32, 1024)` blocks above it, at least `floor(2n/3)+1` distinct established producers have built on it (with `n ≥ 3`).
+`clamp(3n, 32, 1024)` blocks above it, at least `floor(2n/3)+1` distinct established producers have built on it (with `n ≥ 2`).
 The checkpoint is in the state root, never moves backwards and survives a restart. It is **checkpoint (economic) finality, not
 Byzantine finality**: it holds only while fewer than a third of the established producers are faulty
-([finality-v1.9.0.md](finality-v1.9.0.md)). With fewer than three established producers `/finality` says `available: false`
+([finality-v1.9.0.md](finality-v1.9.0.md)). With fewer than two established producers `/finality` says `available: false`
 and nothing is called final.
 
 ## 4. Equivocation

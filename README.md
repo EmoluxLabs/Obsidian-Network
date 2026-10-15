@@ -151,7 +151,7 @@ nonce search and no advantage to computing faster. Hashing and signatures secure
 identity and integrity; they are not the competition.
 
 * Fork choice: finalized anchor → fixed one-unit-per-valid-block **PoT Weight** → height → lowest block hash. Equal-height ties resolve by hash, so transaction volume, peer arrival order and header-hash grinding buy no authority.
-* Derived checkpoint finality: a block is final once `floor(2n/3)+1` distinct established producers (at least three) have built on it. There are no validators, bonds or votes; it is computed from the chain, is committed in the state root, and is not a BFT or immutability claim.
+* Derived checkpoint finality: a block is final once `floor(2n/3)+1` distinct established producers (at least two) have built on it. There are no validators, bonds or votes; it is computed from the chain, is committed in the state root, and is not a BFT or immutability claim.
 * **PoT Difficulty** reports how block spacing tracks the 5-second target. It is
   a published measurement, not an extra acceptance rule — `/pot` says so in the
   payload.

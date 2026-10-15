@@ -37,7 +37,7 @@ parameters:
 
 | Key | What `present: false` proves |
 | --- | --- |
-| `proofOfWorkConsensus` | the running consensus identity is `PROOF_OF_TIME` and the fork-choice rule is `FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH` |
+| `proofOfWorkConsensus` | the running consensus identity is `PROOF_OF_TIME` and the fork-choice rule is `FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH` |
 | `blockHeaderNonce` | there is no nonce in the block header, so there is nothing to grind |
 | `selfReportedNodeMetrics` | the node registry has no uptime, efficiency or hash-rate field; uptime needs signatures from *other* nodes |
 | `adminRewardOverride` | no route, flag or parameter accepts an operator-supplied payout — settlement is a block routine |

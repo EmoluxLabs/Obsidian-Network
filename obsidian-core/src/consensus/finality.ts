@@ -12,7 +12,7 @@
  *       W = clamp(windowPerProducer * n_head, windowMin, windowMax)         blocks
  *       h = H - W                                                           the candidate checkpoint
  *   Let base(h) be the nodes that were registered AND mature at height h and are, at H, still registered, unbanned,
- *   unsuspended and live (a sign of life within `inactivityPeriods` reward periods). Let n = |base(h)|.
+ *   and live (a sign of life within `inactivityPeriods` reward periods). A suspended node still counts (see inFinalityBase). Let n = |base(h)|.
  *   Block h (and every ancestor) becomes FINAL iff
  *       n >= minProducers  and  |{ distinct producers of blocks h+1 .. H that belong to base(h) }| >= floor(2n/3) + 1.
  *   The finalized height only ever moves forward.
@@ -59,12 +59,28 @@ export function inFinalityBase(node: NodeRecord, height: number, headTimestamp: 
   if (node.registeredAtHeight + P.maturityBlocks > height) return false;
   const cutoff = headTimestamp - F.inactivityPeriods * CONSENSUS_PARAMS.nodeRewards.periodSeconds;
   if (node.lastActiveAt < cutoff) return false;
-  if (node.suspendedUntil !== undefined && node.suspendedUntil > headTimestamp) return false;
+  // A suspension is deliberately NOT a reason to leave the base. A suspension is what a node earns by missing slots,
+  // and a partition makes every node on the far side miss slots: if suspended nodes stopped counting, each side of a
+  // split would shrink the denominator by suspending the other, and both would finalize. Only a long silence
+  // (inactivityPeriods whole reward periods with no sign of life on THIS chain) removes a node from the base.
   return true;
 }
 
 function baseAt(state: WorldState, height: number, headTimestamp: number): NodeRecord[] {
   return state.registeredNodes().filter((node) => inFinalityBase(node, height, headTimestamp));
+}
+
+/** How far the quorum for `candidate` has got by head `head`: n established producers, `seen` of them have built above it. */
+export function quorumProgress(state: WorldState, candidate: number, head: number, headTimestamp: number): { n: number; seen: number; checkpointHash: string } {
+  const base = baseAt(state, candidate, headTimestamp);
+  const members = new Set(base.map((node) => node.producerAddress));
+  const seen = new Set<string>();
+  let checkpointHash = '';
+  for (const entry of state.s.finality.recent) {
+    if (entry.height === candidate) checkpointHash = entry.hash;
+    if (entry.height > candidate && entry.height <= head && members.has(entry.producer)) seen.add(entry.producer);
+  }
+  return { n: base.length, seen: seen.size, checkpointHash };
 }
 
 export interface FinalityBlockContext {
@@ -93,16 +109,11 @@ export function processFinality(state: WorldState, ctx: FinalityBlockContext): v
   const candidate = ctx.height - window;
   if (candidate < 1 || candidate <= fin.finalizedHeight) return;
 
-  const base = baseAt(state, candidate, ctx.timestamp);
-  const n = base.length;
+  const progress = quorumProgress(state, candidate, ctx.height, ctx.timestamp);
+  const n = progress.n;
   if (n < F.minProducers) return;
-  const members = new Set(base.map((node) => node.producerAddress));
-  const seen = new Set<string>();
-  let checkpointHash = '';
-  for (const entry of fin.recent) {
-    if (entry.height === candidate) checkpointHash = entry.hash;
-    if (entry.height > candidate && entry.height <= ctx.height && members.has(entry.producer)) seen.add(entry.producer);
-  }
+  const checkpointHash = progress.checkpointHash;
+  const seen = { size: progress.seen };
   if (!checkpointHash) return;
   if (seen.size < finalityQuorum(n)) return;
 
@@ -132,6 +143,10 @@ export interface FinalityReport {
   window: number;
   quorum: number;
   minProducers: number;
+  /** Distinct established producers that have built above the current candidate checkpoint (head - window). */
+  producersSeen: number;
+  /** The candidate checkpoint the quorum is being counted for (0 when there is none yet). */
+  candidateHeight: number;
 }
 
 /** Read-only report for RPC and the UI, computed from a state. Never mutates it. */
@@ -139,19 +154,32 @@ export function finalityReport(state: WorldState): FinalityReport {
   const fin = state.s.finality;
   const nHead = baseAt(state, state.s.height, state.s.timestamp).length;
   const available = nHead >= F.minProducers;
+  const window = finalityWindow(nHead);
+  const candidate = Math.max(0, state.s.height - window);
+  const progress = candidate >= 1 ? quorumProgress(state, candidate, state.s.height, state.s.timestamp) : { n: nHead, seen: 0, checkpointHash: '' };
+  const quorum = finalityQuorum(nHead);
+  const waiting = candidate > fin.finalizedHeight && progress.n >= F.minProducers && progress.seen < finalityQuorum(progress.n);
+  let reason: string;
+  if (!available) {
+    reason = `finality is unavailable: ${nHead} established producer(s), at least ${F.minProducers} are required`;
+  } else if (waiting) {
+    reason = `finality is waiting for a quorum: ${progress.seen} of ${finalityQuorum(progress.n)} required distinct established producers have built above block ${candidate} (${progress.n} are established); it resumes by itself when they do`;
+  } else {
+    reason = 'finality advances when two thirds of the established producers have built on a block';
+  }
   return {
     model: F.model,
     available,
-    reason: available
-      ? 'finality advances when two thirds of the established producers have built on a block'
-      : `finality is unavailable: ${nHead} established producer(s), at least ${F.minProducers} are required`,
+    reason,
     finalizedHeight: fin.finalizedHeight,
     finalizedHash: fin.finalizedHash,
     headHeight: state.s.height,
     lag: Math.max(0, state.s.height - fin.finalizedHeight),
     eligibleProducers: nHead,
-    window: finalityWindow(nHead),
-    quorum: finalityQuorum(nHead),
+    window,
+    quorum,
     minProducers: F.minProducers,
+    producersSeen: progress.seen,
+    candidateHeight: candidate,
   };
 }

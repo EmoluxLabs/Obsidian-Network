@@ -146,7 +146,7 @@ curl -sI http://127.0.0.1:38788/js/explorer.js | head -3   # strict CSP on the b
 ```
 
 If the interface starts, you have a working reader; if the node answers `/health`
-with `supplyOk: true`, you have a validator whose supply invariant holds.
+with `supplyOk: true`, you have a node whose supply invariant holds.
 
 ## 7. Verify the chain you are about to trust
 

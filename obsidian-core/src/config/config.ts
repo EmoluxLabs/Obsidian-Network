@@ -83,7 +83,7 @@ export interface NodeConfig {
 
   // ── Mining / block production ─────────────────────────────────────────────
   miningEnabled: boolean;
-  /** How often this node checks whether it is scheduled to propose a block. */
+  /** Minimum seconds this node leaves after the parent block before it produces one (its own pacing, not a consensus rule). */
   blockProductionIntervalSeconds: number;
 
   version: string;

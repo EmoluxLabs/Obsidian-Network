@@ -68,8 +68,9 @@ stolen funds:
 
 ## Operational security for node operators
 
-* Set `OBSIDIAN_KEYSTORE_PASSPHRASE` and delete the generated `.pass` companion
-  file. A node that generates its own passphrase warns you for a reason.
+* Provide the node key's passphrase yourself, on every network: `OBSIDIAN_KEYSTORE_PASSPHRASE`, a 0600
+  `OBSIDIAN_KEYSTORE_PASSPHRASE_FILE` you made, or a hidden prompt on a terminal. The node never generates a passphrase
+  and never stores one beside the keystore (1.9.0 removed that fallback from test networks too).
 * Do not bind RPC to `0.0.0.0` without a reverse proxy, TLS and rate limiting.
   `rpcAllowSubmit` on a publicly reachable unauthenticated port is an invitation.
 * Keep `strictDataDir: true`.

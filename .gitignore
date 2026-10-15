@@ -34,12 +34,9 @@ tmp/
 *.pem
 *.key
 
-# ── Bootstrap validator PRIVATE keys (generated, never committed) ─────────────
-# Only the PUBLIC keys are protocol material; they are committed in
-# obsidian-core/src/genesis/bootstrap-keys.ts and hashed into the genesis id.
-# `node scripts/generate-bootstrap-keys.mjs` writes the private halves here.
-bootstrap-keys/*
-!bootstrap-keys/README.md
+# ── Legacy 1.8.x bootstrap-committee PRIVATE keys (never committed) ────────────
+# 1.9.0 has no committee and no such directory; this only stops an old backup from ever being added by accident.
+bootstrap-keys/
 
 # ── Mining gate issuer keystores (generated, never committed) ─────────────────
 # `node scripts/generate-mining-gate-key.mjs` writes the ENCRYPTED private key here.

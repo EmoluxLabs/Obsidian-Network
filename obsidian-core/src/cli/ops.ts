@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import type { LoadedConfig } from '../config/config.js';
 import { NetworkIdentityError, hasChainData, manifestPath, readManifest, resolveIdentity } from '../config/network-manifest.js';
 import { Keystore, keystorePassphraseFromEnv } from '../crypto/keystore.js';
+import { CONSENSUS_PARAMS } from '../protocol/params.js';
 
 /** Interface (web platform) port per network; this is the documented convention, mirrored from obsidian-interface. */
 export const INTERFACE_PORTS: Record<string, number> = { mainnet: 8788, testnet: 18788, staging: 28788, devnet: 38788 };
@@ -191,7 +192,7 @@ export function renderStatus(snapshot: NodeSnapshot): string {
   if (snapshot.finality) lines.push(
       snapshot.finality.available
         ? `finality:   height ${snapshot.finality.finalizedHeight}, ${snapshot.finality.lag} blocks behind the head (${snapshot.finality.eligibleProducers} established producers, ${snapshot.finality.quorum} needed)`
-        : `finality:   unavailable (${snapshot.finality.eligibleProducers} established producers; at least 3 are needed)`,
+        : `finality:   unavailable (${snapshot.finality.eligibleProducers} established producers; at least ${CONSENSUS_PARAMS.consensus.finality.minProducers} are needed)`,
     );
   if (snapshot.p2p) {
     lines.push(`p2p:        ${snapshot.p2p.listening ? `listening (${snapshot.p2p.endpoint})` : 'NOT LISTENING: this node cannot accept peers'}`);

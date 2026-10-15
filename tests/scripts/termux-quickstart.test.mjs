@@ -103,8 +103,9 @@ for (const { name, heading, chainId } of NETWORKS) {
       else runnable.push(block.split('\n').filter((line) => !/ logs$/.test(line)).join('\n')); // `logs` follows until Ctrl-C
     }
     assert.ok(runnable.some((block) => new RegExp(`obsidian-network\\.sh ${name} start`).test(block)), `the ${name} section has a start command`);
-    // The person typed their passphrase; the test stands in for them.
-    const typed = name === 'mainnet' ? { MP: 'a-twelve-plus-character-passphrase' } : {};
+    // The person types their passphrase (mainnet: into the `read` line; the others: at the prompt the first start shows).
+    // The test has no terminal to type on, so it stands in for them through the environment.
+    const typed = name === 'mainnet' ? { MP: 'a-twelve-plus-character-passphrase' } : { OBSIDIAN_KEYSTORE_PASSPHRASE: 'quickstart-typed-passphrase-1' };
 
     let started = false;
     try {

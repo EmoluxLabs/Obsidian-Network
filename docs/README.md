@@ -10,7 +10,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | --- | --- |
 | [Obsidian-Network-Technical-Paper.pdf](Obsidian-Network-Technical-Paper.pdf) | The whole network in one readable PDF: architecture, Proof of Time consensus, finality, mining and the gate, economics, node rewards, security model and limitations (a summary of the documents below, not a replacement) |
 | [protocol.md](protocol.md) | How the chain works: blocks, transactions, state roots, consensus, the four networks |
-| [consensus.md](consensus.md) | Block validity, fork choice, reorganisation, the validator set and jailing |
+| [consensus.md](consensus.md) | Block validity, fork choice, reorganisation, the producer schedule, derived finality and suspension |
 | [economics.md](economics.md) | Issuance, every OBS-denominated fee, the exact 90/10 ONS revenue split, node runner rewards and the supply invariant |
 | [proof-of-time.md](proof-of-time.md) | What Proof of Time is, how time is established and verified, PoT Difficulty, Time-Rate, and why cryptographic hashing does not make this a proof-of-work chain |
 | [mining.md](mining.md) | How OBS is issued, how a claim works, why your device clock is irrelevant |

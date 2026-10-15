@@ -20,6 +20,7 @@ import { NodeRegistryOp } from '../../src/protocol/types.js';
 import {
   createHarness,
   forkParent,
+  type ForkParent,
   makeNode,
   makeWallet,
   nodeSigner,
@@ -72,6 +73,27 @@ function growTo(h: Harness, height: number, onBlock?: () => void): void {
   }
 }
 
+/** Extend a branch from `from` using only producers in `allowed`; late rounds hand the turn on deterministically. */
+function extendBranch(h: Harness, from: ForkParent, allowed: Set<string>, count: number) {
+  const blocks: ReturnType<Harness['makeBlockOn']>['block'][] = [];
+  let parent = from;
+  for (let i = 0; i < count; i += 1) {
+    const parentTimestamp = parent.state.s.timestamp;
+    let built: ReturnType<Harness['makeBlockOn']> | undefined;
+    for (let round = 0; round < 16 && !built; round += 1) {
+      const timestamp = parentTimestamp + SLOT * (round + 1);
+      const decision = producerDecision(parent.state, parent.height + 1, round, timestamp);
+      if (decision.kind === 'SCHEDULED' && allowed.has(decision.producer)) {
+        built = h.makeBlockOn(parent, [], { timestamp, producer: h.signers.get(decision.producer)! });
+      }
+    }
+    if (!built) throw new Error(`no producer of this side is due within 16 rounds at height ${parent.height + 1}`);
+    blocks.push(built.block);
+    parent = { hash: blockHash(built.block.header), height: built.block.header.height, cumulativePotWeight: built.block.header.cumulativePotWeight, state: built.state };
+  }
+  return blocks;
+}
+
 const firstFinalizableHead = (registeredAt: number, n: number) => registeredAt + P.maturityBlocks + finalityWindow(n);
 
 describe('finality arithmetic', () => {
@@ -113,8 +135,10 @@ describe('finality on a real chain', () => {
 
   it('advances the checkpoint once three established producers have built on a block, never before maturity', async () => {
     const { h, nodes } = await fleetHarness(3);
-    const registeredAt = Math.max(...nodes.map((node) => h.chain.world.node(node.nodeId)!.registeredAtHeight));
-    const firstHead = firstFinalizableHead(registeredAt, 3);
+    // Registrations land two to a block, so two nodes are established one block before the third: the earliest a
+    // checkpoint can be judged is when those two have matured and one window has passed.
+    const registeredAt = Math.min(...nodes.map((node) => h.chain.world.node(node.nodeId)!.registeredAtHeight));
+    const firstHead = firstFinalizableHead(registeredAt, F.minProducers);
     const seen: number[] = [];
     growTo(h, firstHead - 1, () => seen.push(h.chain.world.s.finality.finalizedHeight));
     // Not mature yet: nothing can be final, whatever the block count.
@@ -153,9 +177,13 @@ describe('finality on a real chain', () => {
       if (!placed) throw new Error('the attacker is not scheduled in any of the next rounds');
     }
     expect(h.chain.world.s.finality.finalizedHeight).toBe(0);
-    // The others were skipped so often that they were suspended: the base shrank below the minimum, and the report says so.
+    // The others were skipped so often that they were suspended. A suspension does NOT shrink the denominator (that is
+    // how a partition would let each side finalize itself), so the report says it is waiting for the quorum.
     const report = finalityReport(h.chain.world);
     expect(report.finalizedHeight).toBe(0);
+    expect(report.eligibleProducers).toBe(3);
+    expect(report.producersSeen).toBe(1);
+    expect(report.reason).toMatch(/waiting for a quorum: 1 of 3/);
     expect(new Set([...Array(30).keys()].map((i) => h.chain.store.getBlockByHash(h.chain.store.getCanonicalHashAtHeight(h.chain.height - i)!)!.header.producer))).toEqual(
       new Set([attacker.address]),
     );
@@ -178,7 +206,12 @@ describe('finality on a real chain', () => {
         }
       }
     }
-    expect(h.chain.world.s.finality.finalizedHeight).toBe(0);
+    // Two nodes were established one block before the absent third: until the third matures the established set IS
+    // those two, and they may finalize what they alone built on. Past that point the quorum is three of three, and the
+    // two present nodes can never reach it.
+    const thirdEstablished = h.chain.world.node(absent.nodeId)!.registeredAtHeight + P.maturityBlocks;
+    expect(h.chain.world.s.finality.finalizedHeight).toBeLessThanOrEqual(thirdEstablished);
+    expect(h.chain.finalityStatus().reason).toMatch(/waiting for a quorum/);
   });
 
   it('a partition into minorities finalizes nothing on either side; on healing every node picks the same branch whatever order it hears them in', async () => {
@@ -188,26 +221,7 @@ describe('finality on a real chain', () => {
     const sideX = new Set([nodes[0].address, nodes[1].address]); // two of the three
     const sideY = new Set([nodes[2].address]); // the third, alone
 
-    /** Extend a branch from `from` using only producers in `allowed`; late rounds hand the turn on deterministically. */
-    const extend = (from: ReturnType<typeof forkParent>, allowed: Set<string>, count: number) => {
-      const blocks = [] as ReturnType<Harness['makeBlockOn']>['block'][];
-      let parent = from;
-      for (let i = 0; i < count; i += 1) {
-        const parentTimestamp = parent.state.s.timestamp;
-        let built: ReturnType<Harness['makeBlockOn']> | undefined;
-        for (let round = 0; round < 12 && !built; round += 1) {
-          const timestamp = parentTimestamp + SLOT * (round + 1);
-          const decision = producerDecision(parent.state, parent.height + 1, round, timestamp);
-          if (decision.kind === 'SCHEDULED' && allowed.has(decision.producer)) {
-            built = h.makeBlockOn(parent, [], { timestamp, producer: h.signers.get(decision.producer)! });
-          }
-        }
-        expect(built, `a producer of this side is due within 12 rounds at height ${parent.height + 1}`).toBeDefined();
-        blocks.push(built!.block);
-        parent = { hash: blockHash(built!.block.header), height: built!.block.header.height, cumulativePotWeight: built!.block.header.cumulativePotWeight, state: built!.state };
-      }
-      return blocks;
-    };
+    const extend = (from: ForkParent, allowed: Set<string>, count: number) => extendBranch(h, from, allowed, count);
 
     const base = forkParent(h, forkHeight);
     const branchX = extend(base, sideX, 70);
@@ -218,7 +232,8 @@ describe('finality on a real chain', () => {
     // The side that heard X first, then Y after the partition heals.
     for (const block of branchX) expect(h.chain.addBlock(block).accepted).toBe(true);
     for (const block of branchY) h.chain.addBlock(block); // a valid sibling branch: accepted as a side branch
-    expect(h.chain.world.s.finality.finalizedHeight, 'a minority side cannot finalize').toBe(0);
+    // Anything final on either side is a block both sides share (the prefix before the split), never a side block.
+    expect(h.chain.world.s.finality.finalizedHeight, 'a minority side cannot finalize a block of its own').toBeLessThanOrEqual(forkHeight);
     const tipX = blockHash(branchX[branchX.length - 1].header);
     expect(h.chain.tip!.hash, 'the heavier branch wins').toBe(tipX);
 
@@ -233,8 +248,46 @@ describe('finality on a real chain', () => {
     expect(replica.chain.tip!.hash).toBe(blockHash(branchY[branchY.length - 1].header));
     for (const block of branchX) expect(replica.chain.addBlock(block).accepted).toBe(true);
     expect(replica.chain.tip!.hash, 'after hearing both, the replica agrees with the first node').toBe(h.chain.tip!.hash);
-    expect(replica.chain.world.s.finality.finalizedHeight).toBe(0);
     expect(replica.chain.world.s.finality).toEqual(h.chain.world.s.finality);
+  });
+
+  it.each([
+    { n: 4, sizes: [2, 2] },
+    { n: 6, sizes: [3, 3] },
+    { n: 5, sizes: [3, 2] },
+  ])('an even-ish split of $n producers ($sizes): neither half finalizes, even after it has suspended the other half', async ({ n, sizes }) => {
+    // The regression this pins: if a suspended node stopped counting toward the base, each half of a split would shrink
+    // the denominator by suspending the other half and then finalize ITSELF, giving two conflicting final chains.
+    const { h, nodes } = await fleetHarness(n);
+    growTo(h, P.maturityBlocks + 12);
+    const forkHeight = h.chain.height;
+    const sides: Set<string>[] = [];
+    let at = 0;
+    for (const size of sizes) {
+      sides.push(new Set(nodes.slice(at, at + size).map((node) => node.address)));
+      at += size;
+    }
+    const base = forkParent(h, forkHeight);
+    const branches = sides.map((side) => extendBranch(h, base, side, 140));
+    for (const [index, branch] of branches.entries()) {
+      for (const block of branch) h.chain.addBlock(block);
+      const probe = await createHarness({ producer: h.producer });
+      harnesses.push(probe);
+      for (let height = 1; height <= forkHeight; height += 1) {
+        const stored = h.chain.store.getBlockByHash(h.chain.store.getCanonicalHashAtHeight(height)!)!;
+        expect(probe.chain.addBlock(stored).accepted).toBe(true);
+      }
+      for (const block of branch) expect(probe.chain.addBlock(block).accepted, `side ${index}`).toBe(true);
+      // Whatever a half finalized must be a block the halves SHARE (the prefix before the split): never a block of its own.
+      const finalized = probe.chain.world.s.finality;
+      expect(finalized.finalizedHeight, `side ${index} of a ${sizes.join('|')} split must not finalize a block of its own`).toBeLessThanOrEqual(forkHeight);
+      if (finalized.finalizedHeight > 0) {
+        expect(finalized.finalizedHash).toBe(h.chain.store.getCanonicalHashAtHeight(finalized.finalizedHeight));
+      }
+      const report = probe.chain.finalityStatus();
+      expect(report.eligibleProducers, 'suspension does not shrink the base').toBe(n);
+      expect(report.reason).toMatch(/waiting for a quorum/);
+    }
   });
 
   it('is computed identically by an independent node replaying the blocks, and a wrong claim fails the state root', async () => {

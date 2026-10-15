@@ -77,13 +77,13 @@ check('gas returns to the mining pool', 'MINING_POOL', P.gas.destination);
 
 // ── consensus: Proof of Time ─────────────────────────────────────────────────
 check('consensus is Proof of Time', 'PROOF_OF_TIME', P.proofOfTime.consensus);
-check('PoT fork choice uses deterministic lowest-hash tie-break', 'FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH', P.proofOfTime.weightRule);
-// `weightRule` names the comparison (published by /pot); `forkChoice` names the full rule, which in 1.9.0 requires the finalized prefix.
+check('PoT fork choice uses deterministic lowest-hash tie-break', 'FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH', P.proofOfTime.weightRule);
+check('the PoT weight rule and the consensus fork-choice rule are one and the same name', P.proofOfTime.weightRule, P.consensus.forkChoice);
 check('fork choice requires the finalized prefix, then weight, height, lowest hash', 'FINALIZED_PREFIX_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH', P.consensus.forkChoice);
 check('there is no validator bond, slashing parameter or bootstrap committee', 'undefined,undefined,undefined',
   [P.consensus.validatorBond, P.consensus.equivocationSlashBps, P.consensus.bootstrap].map(String).join(','));
 check('finality is derived from producers, never voted', 'PRODUCER_DIVERSITY_CHECKPOINT', P.consensus.finality.model);
-check('finality needs at least 3 producers and a 2/3 quorum', '3,2,3', [P.consensus.finality.minProducers, P.consensus.finality.quorumNumerator, P.consensus.finality.quorumDenominator].join(','));
+check('finality needs at least 2 producers and a 2/3 quorum', '2,2,3', [P.consensus.finality.minProducers, P.consensus.finality.quorumNumerator, P.consensus.finality.quorumDenominator].join(','));
 check('a new node waits 64 blocks before it can produce', 64, P.consensus.producers.maturityBlocks);
 check('the block target is 5 seconds', 5, P.proofOfTime.difficultyTargetSeconds);
 check('the future-drift bound is 60 seconds', 60, P.block.maxFutureDriftSeconds);
