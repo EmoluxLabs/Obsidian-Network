@@ -101,7 +101,7 @@ const PARAMS_FIXTURE = {
   },
   gas: { basisPoints: 2, maxGasObs: '0.010000000000000000', destination: 'MINING_POOL' },
   block: { targetSeconds: 5, maxBytes: 2_097_152, maxTransactions: 2000, confirmationDepthSoft: 12, confirmationDepthHard: 64 },
-  consensus: { forkChoice: 'FIXED_BLOCK_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HEADER_HASH', validatorBondObs: '20000.000000000000000000', unbondingBlocks: 20_160, maxReorgDepth: 256 },
+  consensus: { forkChoice: 'FIXED_BLOCK_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HEADER_HASH', producers: { maturityBlocks: 64 }, maxReorgDepth: 256 },
   ons: {
     // Field names must match the node exactly: fees are OBS-denominated and
     // the node sends `registrationFeeObs`/`renewalFeeObs`. A fixture that
@@ -127,7 +127,6 @@ const SUPPLY_FIXTURE = {
   invariantOk: true,
   genesisIssuedObs: '100000.000000000000000000',
   minedSupplyObs: '166.666666666666000000',
-  validatorBonds: '0.000000000000000000',
   poolBalanceObs: '0.000000000000000000',
   issuanceSources: ['GENESIS_ALLOCATION', 'MINING_REWARD'],
 };
@@ -224,7 +223,7 @@ function chainFixture(url: string): { status: number; body: unknown } {
   if (path.includes('/audit/compliance')) return { status: 200, body: { wac: { present: false, detail: 'removed' }, nativeExchange: { present: false, detail: 'removed' } } };
   if (path.includes('/audit/decentralization')) return { status: 200, body: { nodes: 1, activeMiners: 1 } };
   if (path.includes('/peers')) return { status: 200, body: { peers: [], count: 0 } };
-  if (path.includes('/validators')) return { status: 200, body: { validators: [], count: 0 } };
+  if (path.includes('/producers')) return { status: 200, body: { tier: 'OPEN', eligible: 0, registered: 0, banned: 0, nodes: [] } };
   if (path.includes('/pot')) return { status: 200, body: POT_FIXTURE };
   if (path.includes('/status')) return { status: 200, body: STATUS_FIXTURE };
   return { status: 200, body: {} };
@@ -926,7 +925,6 @@ const REWARDS_FIXTURE = {
   split: { nodePoolBps: 9000, treasuryBps: 1000, description: '90% node runners, 10% treasury' },
   pool: {
     balanceObs: '90.000000000000000000',
-    bondedObs: '20000.000000000000000000',
     lifetimeInflowObs: '90.000000000000000000',
     lifetimeDistributedObs: '0.000000000000000000',
     unclaimedTreasuryRevenueObs: '0.000000000000000000',

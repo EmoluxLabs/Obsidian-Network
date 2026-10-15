@@ -465,27 +465,32 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
 
 ## What is in this release
 
-* Proof of Time block production plus native sequential checkpoint finality:
-  \`floor(2N/3)+1\` equal active-validator memberships, a 64-parent-state
-  stable-set bootstrap, finalized-history reorg protection, and signed bounded
-  proposer/vote equivocation evidence
-* fork choice is finalized anchor → fixed PoT weight → height → the lowest
-  block hash, so equal-height ties resolve identically on every node
-* protocol $VERSION is genesis-bound: it rejects 1.7.x and older peers and data and includes no live-chain
-  migration (see docs/upgrading-1.8.0.md). \`v1.7.0\` is untouched
-* **new in 1.8.0, consensus:** the mining gate keys can be rotated, revoked and recovered on chain by a majority of the
-  current keys (\`GATE_AUTHORITY\`, \`obsidian gate status|propose|sign|submit\`, \`init --gate-key-count\`; docs/gate-authority.md).
-  A lost majority is recoverable only by a new genesis
-* **new in 1.8.0, operations:** \`obsidian start\` hosts the interface by default (\`--no-interface\` or
-  \`OBSIDIAN_NODE_ONLY=1\` opts out); interface roles \`primary\`/\`edge\` for several hosts (accounts are not replicated);
-  \`/peers\` detail is local-only; \`health\`/\`finality\` CLI reads are time-bounded; \`init\`, \`join\`, \`status\`, \`peers\`,
-  \`sync\`, \`doctor\`, \`/livez\`, \`/readyz\`; the \`mineobs.network\` trusted-origin policy
+* **fresh-start consensus (protocol $VERSION):** no validators, no bond, no votes and no bootstrap committee. Every
+  registered, synchronised, live node joins one deterministic producer schedule derived from chain state alone
+  (docs/consensus-v1.9.0.md). A chain with no producers does not halt: it falls back from established nodes to every
+  registered node, and from there to an open founding state
+* **finality is a pure function of chain history:** a checkpoint is final once enough distinct established producers
+  have built on it. It is checkpoint (economic) finality, not BFT and not probabilistic-free: it holds while fewer than
+  one third of the established producers are faulty, and it needs at least three producers (docs/finality-v1.9.0.md)
+* fork choice is finalized prefix → fixed PoT weight → height → the lowest block hash
+* **node wallet binding:** the operator pastes an OBS address (\`obsidian register <address>\`); the node registers with
+  its own key, with no gas and no wallet signature. One wallet backs one node. The binding does not prove wallet
+  ownership; docs/node-binding-v1.9.0.md covers squatting and reclaim
+* **node rewards:** 90% of ONS revenue is settled each day, inside a block, over the nodes whose uptime the chain itself
+  recorded (docs/node-rewards-v1.9.0.md)
+* **.obs names:** transfer is an offer the recipient must accept; the owner can re-point the name and set a recovery
+  address whose recovery completes only after a delay the owner can cancel (docs/ons.md)
+* **wallets:** creation shows both the passphrase and the private key; a separate private-key recovery flow shows the
+  derived address for confirmation before anything is stored
+* protocol $VERSION is genesis-bound: it rejects 1.8.x and older peers, snapshots and data, and includes no live-chain
+  migration (docs/upgrading-1.9.0.md). Earlier tags are untouched
+* the mining gate (\`MINING_CLAIM\` certificates, \`GATE_AUTHORITY\`) is unchanged
 * the archives now also carry the web app, the web wallet, the extension and the desktop sources
 * nothing is signed: no publisher key exists, so these archives prove integrity, not authorship
 ${TEST_SUMMARY}
 * the first valid miner still receives 100,000 OBS and becomes treasury; ONS
   registration and renewal are the only revenue source and split exactly 90%
-  node runners / 10% treasury, and the validator bond is exactly 20,000 OBS
+  node runners / 10% treasury, and there is no validator bond
 * no WAC, no \$5 activation, no legacy signup allocation, no admin mint, no
   native exchange — verify with \`curl -s localhost:8630/audit/compliance\`
 * no claim of general BFT, universal immutability, production readiness,

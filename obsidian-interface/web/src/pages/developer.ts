@@ -96,7 +96,7 @@ layout({
       el(
         'p',
         {},
-        'Every protocol fee is denominated in OBS and fixed by consensus: name registration and renewal, and the validator bond are entries in the parameter table, ' +
+        'Every protocol fee is denominated in OBS and fixed by consensus: name registration and renewal are entries in the parameter table, ' +
           'readable at GET /params and covered by the params hash. Nothing converts through an exchange rate, so no price feed can be stale, thin or manipulated into changing what anything costs, ' +
           'and a chain that has never seen a price submission prices every feature correctly.',
       ),

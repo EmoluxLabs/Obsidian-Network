@@ -59,8 +59,8 @@ export enum TxType {
   GOVERNANCE = 10,
   /**
    * Node Runner registry. Carries the signed statements that make node-runner
-   * rewards measurable: registration with a proof of reward-wallet ownership,
-   * wallet changes, deregistration, liveness heartbeats, peer attestations and
+   * rewards measurable: registration (signed by the node's own key; the reward wallet is only named, no wallet
+   * signature and no gas), wallet changes, deregistration, liveness heartbeats, peer attestations and
    * peer fault reports. None of these carry an amount: the protocol computes
    * every payout from the evidence it collects here (see src/economy/node-rewards.ts).
    */

@@ -301,7 +301,10 @@ describe('browser pages against a live node', () => {
 
     expect(typeof params.ons.registrationFeeObs).toBe('string');
     expect(typeof params.ons.renewalFeeObs).toBe('string');
-    expect(typeof params.consensus.validatorBondObs).toBe('string');
+    // There is no validator bond in 1.9.0: the producer and finality parameters took its place.
+    expect(params.consensus.validatorBondObs).toBeUndefined();
+    expect(typeof params.consensus.producers).toBe('object');
+    expect(typeof params.consensus.finality).toBe('object');
 
     // The old USD-denominated fee fields must be gone, not merely unused.
     expect(params.ons.registrationFeeUsd).toBeUndefined();
@@ -313,9 +316,8 @@ describe('browser pages against a live node', () => {
     expect(params.capsules).toBeUndefined();
 
     // The values the protocol now charges: ONS is the only fee, and the
-    // validator bond is exactly 20,000 OBS.
+    // there is no bond at all.
     expect(params.ons.registrationFeeObs).toBe('0.050000000000000000');
-    expect(params.consensus.validatorBondObs).toBe('20000.000000000000000000');
   });
 
   it('prices name registration from the protocol, on a chain with no price feed', async () => {

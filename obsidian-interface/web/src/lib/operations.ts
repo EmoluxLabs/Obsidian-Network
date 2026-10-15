@@ -9,8 +9,8 @@
  *
  * Step 3 is the only place a private key exists, and it never leaves the tab.
  *
- * The protocol has seven transaction types: PAYMENT, ONS, ORACLE, MINING_CLAIM,
- * VALIDATOR, TREASURY and NODE_REGISTRY. ONS is the protocol's only revenue
+ * The wallet signs PAYMENT, ONS, ORACLE, MINING_CLAIM and TREASURY. NODE_REGISTRY statements are signed by a node's own
+ * key on the node, never by this wallet. There are no validator transactions (removed in 1.9.0). ONS is the protocol's only revenue
  * source. Everything the interface can sign is in here; anything absent is
  * absent from the chain too.
  */
@@ -22,14 +22,13 @@ import { parseObs, formatObs } from '../../core/protocol/amount.js';
 import { displaySeals, EXACT_OBS } from '../../core/protocol/display.js';
 import { expectedGas } from '../../core/transactions/helpers.js';
 import { TxType } from '../../core/protocol/types.js';
-import { OnsOp, ValidatorOp, TreasuryOp } from '../../core/protocol/types.js';
+import { OnsOp, TreasuryOp } from '../../core/protocol/types.js';
 import { encodePaymentBody } from '../../core/transactions/executors/payment.js';
 import { encodeMiningBody } from '../../core/transactions/executors/mining.js';
 import { encodeOnsBody } from '../../core/transactions/executors/ons.js';
 import { PROTOCOL_VERSION } from '../../core/version.js';
 import { recipientKind, type ResolveDeps } from '../../core/protocol/recipient.js';
 import { encodeOracleBody } from '../../core/transactions/executors/oracle.js';
-import { encodeValidatorBody } from '../../core/transactions/executors/validator.js';
 import { encodeTreasuryBody } from '../../core/transactions/executors/treasury.js';
 
 export interface SubmitResult {
@@ -64,6 +63,27 @@ async function submit(client: ObsidianClient, signed: Uint8Array): Promise<Submi
     simulated: true,
     note: 'signed locally and accepted into the node mempool; included in the next block',
   };
+}
+
+/** One zero-gas ONS ownership operation (offer, accept, cancel, recovery). The signer is whoever the protocol requires. */
+async function nameOperation(
+  client: ObsidianClient,
+  wallet: Wallet,
+  op: OnsOp,
+  name: string,
+  extra: { to?: string; address?: string },
+): Promise<SubmitResult> {
+  const ctx = await context(client, wallet);
+  const signed = wallet.sign({
+    chainId: ctx.chainId,
+    protocolVersion: PROTOCOL_VERSION,
+    type: TxType.ONS,
+    nonce: ctx.nonce,
+    gas: 0n,
+    body: encodeOnsBody({ op, name, fee: 0n, to: extra.to, address: extra.address }),
+    validUntil: ctx.protocolTime + VALIDITY_SECONDS,
+  });
+  return submit(client, signed);
 }
 
 export { expectedGas, formatObs, parseObs };
@@ -203,18 +223,42 @@ export const operations = {
     return submit(client, signed);
   },
 
-  async transferName(client: ObsidianClient, wallet: Wallet, input: { name: string; to: string }): Promise<SubmitResult> {
-    const ctx = await context(client, wallet);
-    const signed = wallet.sign({
-      chainId: ctx.chainId,
-      protocolVersion: PROTOCOL_VERSION,
-      type: TxType.ONS,
-      nonce: ctx.nonce,
-      gas: 0n,
-      body: encodeOnsBody({ op: OnsOp.TRANSFER, name: input.name, fee: 0n, to: input.to }),
-      validUntil: ctx.protocolTime + VALIDITY_SECONDS,
-    });
-    return submit(client, signed);
+  /**
+   * Offer a name to another wallet (protocol 1.9.0). Nothing changes hands: the name stays with its owner until the
+   * recipient sends ACCEPT_TRANSFER, and the offer lapses by itself after seven days.
+   */
+  async offerNameTransfer(client: ObsidianClient, wallet: Wallet, input: { name: string; to: string }): Promise<SubmitResult> {
+    return nameOperation(client, wallet, OnsOp.TRANSFER, input.name, { to: input.to });
+  },
+
+  /** Take a name that was offered to this wallet. Only the wallet named in the offer can do this. */
+  async acceptNameTransfer(client: ObsidianClient, wallet: Wallet, input: { name: string }): Promise<SubmitResult> {
+    return nameOperation(client, wallet, OnsOp.ACCEPT_TRANSFER, input.name, {});
+  },
+
+  /** Withdraw an open offer (owner only). */
+  async cancelNameTransfer(client: ObsidianClient, wallet: Wallet, input: { name: string }): Promise<SubmitResult> {
+    return nameOperation(client, wallet, OnsOp.CANCEL_TRANSFER, input.name, {});
+  },
+
+  /** Set the recovery address of a name, or clear it with an empty address (owner only). */
+  async setNameRecovery(client: ObsidianClient, wallet: Wallet, input: { name: string; address: string }): Promise<SubmitResult> {
+    return nameOperation(client, wallet, OnsOp.SET_RECOVERY, input.name, { address: input.address });
+  },
+
+  /** Signed by the RECOVERY address: propose a new owner. It takes effect only after the recovery delay. */
+  async startNameRecovery(client: ObsidianClient, wallet: Wallet, input: { name: string; newOwner: string }): Promise<SubmitResult> {
+    return nameOperation(client, wallet, OnsOp.START_RECOVERY, input.name, { address: input.newOwner });
+  },
+
+  /** The current owner cancels a recovery in flight. */
+  async cancelNameRecovery(client: ObsidianClient, wallet: Wallet, input: { name: string }): Promise<SubmitResult> {
+    return nameOperation(client, wallet, OnsOp.CANCEL_RECOVERY, input.name, {});
+  },
+
+  /** Complete a recovery once the delay has passed (recovery address or the new owner). */
+  async finalizeNameRecovery(client: ObsidianClient, wallet: Wallet, input: { name: string }): Promise<SubmitResult> {
+    return nameOperation(client, wallet, OnsOp.FINALIZE_RECOVERY, input.name, {});
   },
 
   async updateNameAddress(
@@ -235,7 +279,7 @@ export const operations = {
     return submit(client, signed);
   },
 
-  // ── Oracle and validators ─────────────────────────────────────────────────
+  // ── Oracle ─────────────────────────────────────────────────
 
   async publishPrice(
     client: ObsidianClient,
@@ -256,36 +300,6 @@ export const operations = {
           { source: input.source, priceUsdMicro: BigInt(Math.round(input.priceUsd * 1_000_000)), observedAt },
         ],
         submissionId: randomHex(16),
-      }),
-      validUntil: ctx.protocolTime + VALIDITY_SECONDS,
-    });
-    return submit(client, signed);
-  },
-
-  /**
-   * Register as a validator. The bond is not a variable amount: consensus fixes
-   * it at exactly 20,000 OBS, and a registration offering anything else is
-   * refused with VALIDATOR_BOND_MISMATCH. The node's parameter table is the
-   * source of truth for the number the page shows.
-   */
-  async registerValidator(
-    client: ObsidianClient,
-    wallet: Wallet,
-    input: { bondObs: string; validatorKey: string; commissionBps?: number },
-  ): Promise<SubmitResult> {
-    const bond = parseObs(input.bondObs);
-    const ctx = await context(client, wallet);
-    const signed = wallet.sign({
-      chainId: ctx.chainId,
-      protocolVersion: PROTOCOL_VERSION,
-      type: TxType.VALIDATOR,
-      nonce: ctx.nonce,
-      gas: gasFor(bond),
-      body: encodeValidatorBody({
-        op: ValidatorOp.REGISTER,
-        bond,
-        validatorKey: input.validatorKey,
-        commissionBps: input.commissionBps ?? 0,
       }),
       validUntil: ctx.protocolTime + VALIDITY_SECONDS,
     });

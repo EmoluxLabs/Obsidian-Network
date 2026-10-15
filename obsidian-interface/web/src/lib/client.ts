@@ -147,7 +147,7 @@ export interface ChainParams {
     confirmationDepthSoft: number;
     confirmationDepthHard: number;
   };
-  consensus: { forkChoice: string; validatorBondObs: string; unbondingBlocks: number; maxReorgDepth: number; finality?: Record<string, unknown> };
+  consensus: { forkChoice: string; producers?: Record<string, unknown>; maxReorgDepth: number; finality?: Record<string, unknown> };
   ons: {
     // OBS-denominated since 1.2.0. The node sends `registrationFeeObs` and
     // `renewalFeeObs`; there is no dollar price and no oracle in this path.
@@ -239,7 +239,6 @@ export interface NodeRewardsResponse {
   split: { nodePoolBps: number; treasuryBps: number; description: string };
   pool: {
     balanceObs: string;
-    bondedObs: string;
     lifetimeInflowObs: string;
     lifetimeDistributedObs: string;
     unclaimedTreasuryRevenueObs: string;
@@ -278,6 +277,8 @@ export interface NodeStatusResponse {
   rewardWallet: string;
   registered: boolean;
   deregisteredAtHeight: number | null;
+  bannedAtHeight?: number | null;
+  pendingReclaim?: { effectivePeriod: number | null } | null;
   registeredAtHeight: number;
   endpoint: string | null;
   lifetimeRewardObs: string;
@@ -295,7 +296,9 @@ export interface NodeStatusResponse {
   };
   evidence: {
     heartbeats: number;
-    expectedHeartbeats: number;
+    /** Hourly uptime windows in which the node proved it was alive (a heartbeat or a block it produced). */
+    liveWindows: number;
+    expectedWindows: number;
     attesters: string[];
     blocksProduced: number;
     attestationsMade: number;
@@ -372,7 +375,6 @@ export interface SupplyState {
   invariantOk: boolean;
   genesisIssuedObs: string;
   minedSupplyObs: string;
-  validatorBonds: string;
   poolBalanceObs: string;
   issuanceSources: string[];
 }
@@ -653,8 +655,14 @@ export class ObsidianClient {
     return this.request(`/names/${encodeURIComponent(name)}`);
   }
 
-  validators(): Promise<Record<string, unknown>> {
-    return this.request('/validators');
+  /** The deterministic producer schedule and every registered node's standing (GET /producers). */
+  producers(): Promise<Record<string, unknown>> {
+    return this.request('/producers');
+  }
+
+  /** The consensus-derived finalized checkpoint (GET /finality). */
+  finality(): Promise<Record<string, unknown>> {
+    return this.request('/finality');
   }
 
   /**

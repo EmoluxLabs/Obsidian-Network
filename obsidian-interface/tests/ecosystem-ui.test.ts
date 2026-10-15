@@ -100,16 +100,27 @@ describe('ONS operations', () => {
     expect(body.fee).toBe(parseObs('0.01'));
   });
 
-  it('transfers and re-points a name without paying a fee, so neither mints revenue', async () => {
+  it('offers, accepts, re-points and recovers a name without paying a fee, so none of it mints revenue', async () => {
     const { client, submitted } = stubNode();
-    await operations.transferName(client, wallet, { name: 'alice.obs', to: 'dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr5z3j' });
-    await operations.updateNameAddress(client, wallet, { name: 'alice.obs', address: 'dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr5z3j' });
+    const other = 'dobs1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr5z3j';
+    await operations.offerNameTransfer(client, wallet, { name: 'alice.obs', to: other });
+    await operations.acceptNameTransfer(client, wallet, { name: 'alice.obs' });
+    await operations.cancelNameTransfer(client, wallet, { name: 'alice.obs' });
+    await operations.updateNameAddress(client, wallet, { name: 'alice.obs', address: other });
+    await operations.setNameRecovery(client, wallet, { name: 'alice.obs', address: other });
+    await operations.startNameRecovery(client, wallet, { name: 'alice.obs', newOwner: other });
+    await operations.cancelNameRecovery(client, wallet, { name: 'alice.obs' });
+    await operations.finalizeNameRecovery(client, wallet, { name: 'alice.obs' });
 
-    const [transfer, update] = submitted.map((bytes) => decodeSignedTxFromBytes(bytes));
-    expect(decodeOnsBody(transfer!.body).op).toBe(OnsOp.TRANSFER);
-    expect(decodeOnsBody(transfer!.body).fee).toBe(0n);
-    expect(decodeOnsBody(update!.body).op).toBe(OnsOp.UPDATE_ADDRESS);
-    expect(decodeOnsBody(update!.body).fee).toBe(0n);
+    const bodies = submitted.map((bytes) => decodeOnsBody(decodeSignedTxFromBytes(bytes).body));
+    expect(bodies.map((body) => body.op)).toEqual([
+      OnsOp.TRANSFER, OnsOp.ACCEPT_TRANSFER, OnsOp.CANCEL_TRANSFER, OnsOp.UPDATE_ADDRESS,
+      OnsOp.SET_RECOVERY, OnsOp.START_RECOVERY, OnsOp.CANCEL_RECOVERY, OnsOp.FINALIZE_RECOVERY,
+    ]);
+    expect(bodies.every((body) => body.fee === 0n)).toBe(true);
+    expect(submitted.map((bytes) => decodeSignedTxFromBytes(bytes).gas).every((gas) => gas === 0n)).toBe(true);
+    expect(bodies[0]!.to).toBe(other);
+    expect(bodies[5]!.address).toBe(other);
   });
 });
 
@@ -125,7 +136,10 @@ describe('discontinued products', () => {
 
   it('exposes exactly the still-shipping protocol operations', () => {
     expect(Object.keys(operations).sort()).toEqual(
-      ['claim', 'payRevenue', 'publishPrice', 'registerName', 'registerValidator', 'renewName', 'send', 'transferName', 'updateNameAddress'],
+      [
+        'acceptNameTransfer', 'cancelNameRecovery', 'cancelNameTransfer', 'claim', 'finalizeNameRecovery', 'offerNameTransfer',
+        'payRevenue', 'publishPrice', 'registerName', 'renewName', 'send', 'setNameRecovery', 'startNameRecovery', 'updateNameAddress',
+      ],
     );
   });
 

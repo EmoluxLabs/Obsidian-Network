@@ -86,7 +86,7 @@ void (async () => {
       decPanel.replaceChildren(
         el('h2', {}, 'Decentralisation'),
         ...decentralisationRows(decentralisation),
-        el('p', { class: 'fineprint' }, 'Mining distribution, node counts and validator participation are recomputed by each node from the chain it holds.'),
+        el('p', { class: 'fineprint' }, 'Mining distribution, node counts and producer participation are recomputed by each node from the chain it holds.'),
       );
     } else {
       decPanel.replaceChildren(el('h2', {}, 'Decentralisation'), el('p', { class: 'muted' }, 'This node does not expose the decentralisation report.'));

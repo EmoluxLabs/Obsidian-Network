@@ -27,7 +27,7 @@ const hero = el(
   el(
     'p',
     { class: 'lede' },
-    'Obsidian Network is an independent blockchain. Mining, payments, .obs names and validator bonds live inside the chain — ' +
+    'Obsidian Network is an independent blockchain. Mining, payments, .obs names and node rewards live inside the chain — ' +
       'not in a database owned by a company. Any node can be deleted; the chain survives, because consensus does not live in a server.',
   ),
   el(
@@ -56,7 +56,7 @@ const pillars = el(
     el(
       'p',
       {},
-      'Obsidian secures itself with verifiable time, not with a computational race. Blocks are produced on a validator schedule and accepted only when ' +
+      'Obsidian secures itself with verifiable time, not with a computational race. Blocks are produced on a deterministic schedule over every registered, live node and accepted only when ' +
         'protocol time has genuinely advanced, so nobody buys authority with electricity. Mining is a claim every four hours, six a day, on a fixed ' +
         'schedule that falls with adoption and never below 0.0002 OBS a day — and eligibility comes from block timestamps, never from your device clock.',
     ),
@@ -79,7 +79,7 @@ const pillars = el(
     el(
       'p',
       {},
-      'Names, balances, mining claims and validator bonds are chain state with a Merkle root every node recomputes. ' +
+      'Names, balances, mining claims and node registrations are chain state with a Merkle root every node recomputes. ' +
         'Their prices are consensus parameters denominated in OBS, so the protocol needs no exchange rate and no price source to function. ' +
         'The interface here is a window; it can be replaced by any node operator.',
     ),
@@ -180,7 +180,7 @@ void (async () => {
         'p',
         { class: 'fineprint' },
         badge('NO PRICE ORACLE', 'ok'),
-        ' Every protocol fee — name registration and renewal, and the validator bond — is denominated in OBS and fixed by consensus. ' +
+        ' Every protocol fee — name registration and renewal — is denominated in OBS and fixed by consensus. ' +
           'Nothing on this chain consults an external price source, so no feed can fail, stall or be manipulated into changing what anything costs. ' +
           'What OBS trades for elsewhere is a matter for those markets.',
       ),

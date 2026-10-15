@@ -1385,7 +1385,8 @@ export class InterfaceServer {
       target === '/nodes' ||
       target === '/peers' ||
       target === '/oracle' ||
-      target === '/validators' ||
+      target === '/producers' ||
+      target === '/finality' ||
       target === '/blocks' ||
       target === '/mempool' ||
       target === '/names' ||
