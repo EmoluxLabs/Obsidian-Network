@@ -4,11 +4,11 @@ The downloadable artefacts, the digests that prove they are unchanged, and the
 manifest that says what they contain. Everything here was produced by
 `scripts/package-releases.sh` from the commit named in `MANIFEST.json`.
 
-**This directory carries one release: the one in `MANIFEST.json`.** Earlier
-releases are not kept — their archives, release notes and tags were removed with
-the fresh start, so nothing here can be mistaken for the build you are running.
-Read the version out of `MANIFEST.json`, never out of this file: the table names
-the shape of each asset, and `<version>` stands for that number.
+**This directory carries one release: the one in `MANIFEST.json`, once it has been built.** Earlier releases are not kept —
+their archives, release notes and tags were removed with the fresh start, so nothing here can be mistaken for the build you
+are running. In a source checkout of a release candidate the archives are not yet present: build them from the tagged commit
+with `scripts/package-releases.sh`, then follow the verification steps below. Read the version out of `MANIFEST.json`, never
+out of this file: the table names the shape of each asset, and `<version>` stands for that number.
 
 | Asset | What it is | Who it is for |
 | --- | --- | --- |

@@ -14,8 +14,8 @@ section names the file and the route you can use to verify it.
 
 | | Proof of Work | Obsidian's Proof of Time |
 |---|---|---|
-| What buys the right to produce a block | Computation, spent in a race | The validator schedule, once protocol time has advanced |
-| What an attacker must acquire | Hash power | A majority of the validator set, and they still cannot move time |
+| What buys the right to produce a block | Computation, spent in a race | The producer schedule, once protocol time has advanced |
+| What an attacker must acquire | Hash power | A majority of the producer set, and they still cannot move time |
 | Headline network metric | Hash rate | **Time-Rate** — verified blocks and transactions per minute of protocol time |
 | "Difficulty" means | How many hashes a block costs | **PoT Difficulty** — how block spacing compares with the protocol target |
 | Fork choice | Most accumulated work | Finalized PoT anchor, fixed **PoT Weight**, height, then the lowest block hash |
@@ -61,7 +61,7 @@ The clock is the **median** timestamp of the last `medianTimePastWindow`
 (11) blocks, nearest parent first. Median, not maximum and not mean: one absurd
 timestamp cannot move it, whether it comes from honest clock skew or a hostile
 producer. Shifting median time past requires a majority of the window, which
-requires the validator schedule, which is the thing consensus already governs.
+requires control of the producer schedule, which is the thing consensus already governs.
 
 ### 3.2 The rules a block's timestamp must satisfy
 
@@ -115,41 +115,33 @@ asserts chain time must advance on every block.
 
 ## 4. Who may produce a block
 
-`scheduledProposer(state, height, round)` — `obsidian-core/src/consensus/proposer.ts`
+`scheduledProducer` — `obsidian-core/src/consensus/schedule.ts`
 
 ```
-round(parent, block) = max(0, floor((block.timestamp - parent.timestamp) / targetBlockSeconds) - 1)
-proposer(height, round) = activeValidators[(height + round) mod validatorCount]
+round(parent, block)    = max(0, floor((block.timestamp - parent.timestamp) / targetBlockSeconds) - 1)
+producer(height, round) = set[(height + round) mod |set|]
 ```
 
-Deterministic round-robin over the bonded, unjailed validator set, sorted by
-address. There is no randomness to grind, no leader election to win and no
-advantage to computing faster. While **no** validator is registered the network
-is in "genesis open" mode and any node may propose; the first registered
-validator closes open mode for every round.
-
-A block produced out of turn is rejected with `ERR_NOT_PRODUCER_TURN`.
+`set` is the registered, mature, live, unsuspended nodes, sorted by address (and, only when there are none, every non-banned
+node, and only when there are no nodes at all, any key). It is a deterministic round-robin: there is no randomness to grind,
+no leader election to win and no advantage to computing faster. No vote, stake, bond or administrator takes part. A block
+produced out of turn is rejected with `NOT_PRODUCER_TURN`.
 
 ### The round, and why it exists
 
-A validator that does not show up must cost the network **one slot, not the
-chain**. The round counts how many target intervals have elapsed since the
-parent block: a block produced on schedule is round 0 and the rule reduces to
-the plain `height mod validatorCount` rotation. Each further interval of silence advances the round and hands the turn to the
-next validator, cycling through the active set. It never falls through to an
-unregistered key. If the entire active set is offline the chain halts rather
-than permitting an unbonded node to bypass validator admission.
+A node that does not show up must cost the network **one slot, not the chain**. The round counts how many target intervals
+have elapsed since the parent block: a block produced on schedule is round 0 and the rule reduces to the plain
+`height mod |set|` rotation. Each further interval of silence advances the round and hands the turn to the next node,
+cycling through the set. The set is never empty in a way that halts the chain: if every mature node is gone the schedule falls
+back to the other registered nodes, and to any key only when nobody is registered at all.
 
-The round is derived entirely from two timestamps that are already committed to
-the headers, so every node computes the same answer from the block alone — no
-extra header field, no out-of-band round negotiation, and nothing new to sign.
-A proposer cannot simply claim a high round to steal a turn: the timestamp rules
-in section 3 bound how far ahead a block may be dated and require it to exceed
-the median time past, so the reachable round range is small and every node
-checks it against the same chain data.
+The round is derived entirely from two timestamps already committed to the headers, so every node computes the same answer
+from the block alone — no extra header field, no out-of-band negotiation, and nothing new to sign. A producer cannot simply
+claim a high round to steal a turn: the timestamp rules in section 3 bound how far ahead a block may be dated and require it
+to exceed the median time past, so the reachable round range is small and every node checks it against the same chain data.
 
-Verify it: `tests/e2e/cluster.test.mjs` registers a single validator, SIGKILLs
-it, and proves unregistered survivors do not manufacture later blocks.
+Verify it: `obsidian-core/tests/security/producer-schedule.test.ts` and `tests/unit/node-production-loop.test.ts`, and the
+multi-process procedure in [upgrading-1.9.0.md](upgrading-1.9.0.md).
 
 ---
 
@@ -157,30 +149,18 @@ it, and proves unregistered survivors do not manufacture later blocks.
 
 `potWeight(txCount) = 1` — `obsidian-core/src/blockchain/block.ts`
 
-Every valid scheduled block contributes exactly one unit, whether empty or full.
-Transaction volume, gas paid and computing speed cannot buy fork authority.
+Every valid scheduled block contributes exactly one unit, whether empty or full. Transaction volume, gas paid and computing
+speed cannot buy fork authority.
 
-A candidate must descend from the locally verified finalized checkpoint. Among
-eligible branches, `compareTips` prefers fixed PoT Weight, then height, then the
-lexicographically lowest block hash. The rule is a pure function of the two
-candidates, so every node resolves an equal-height fork to the same block
-regardless of peer arrival order or unauthenticated vote gossip. The identifier
-is `FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH`.
+A candidate must contain the finalized checkpoint the node derived from its own state. Among eligible branches, `compareTips`
+prefers fixed PoT Weight, then height, then the lexicographically lowest block hash. The rule is a pure function of the two
+candidates, so every node resolves an equal-height fork to the same block regardless of peer arrival order.
 
-Finality is native to PoT rather than replacement consensus. `ACTIVE` bonded
-validators in the target parent state each have one membership vote, regardless
-of bond size. `floor(2N/3)+1` signatures produce a sequential certificate only
-after target block, ancestry, proposer, state transition, network identity and
-validator-set hash checks. The first certificate requires a non-empty set stable
-for 64 parent states; later certificates advance one block at a time.
-
-A finalized block and every ancestor are a local safety lock. A valid certificate
-can resolve a deep partition beyond the 256-block ordinary reorg limit, with
-bounded recovery work. Votes and certificates do not trust wall-clock time.
-This gives checkpoint safety under the stated greater-than-two-thirds
-honest-membership assumption; it is not a blanket BFT, immutability, zero-reorg
-or production-readiness claim. Signed proposer and vote equivocation evidence is
-validated, bounded, persisted and gossiped, with no slashing in 1.7.0.
+Finality is derived from the chain, not voted: a block is final when enough distinct established producers have since built
+on it (`floor(2n/3)+1` of `n ≥ 3`, inside a window of `clamp(3n, 32, 1024)` blocks). The checkpoint is committed in the state
+root, never regresses, and survives a restart. It is checkpoint (economic) finality: it assumes fewer than a third of the
+established producers are faulty and is not Byzantine finality, immutability or a zero-reorg claim. Producing two blocks on one
+parent is an equivocation and bans the producer permanently. See [finality-v1.9.0.md](finality-v1.9.0.md).
 
 ---
 
@@ -206,7 +186,7 @@ worth saying why, because the opposite choice looks more rigorous and is worse:
 - a devnet, a catching-up node and a burst of real activity all legitimately
   produce blocks faster than target;
 - gating on them would slow a healthy network without making it harder to
-  attack, since an attacker's constraint is the validator schedule, not spacing;
+  attack, since an attacker's constraint is the producer schedule, not spacing;
 - the properties that actually matter — no backdating, no stalling, no running
   into the future — are already enforced by §3.2, which cannot be satisfied by
   computing faster.
@@ -336,8 +316,9 @@ All of these are compile-time constants of the protocol version, included in
 |---|---|---|
 | `proofOfTime.consensus` | `PROOF_OF_TIME` | The protocol's consensus identity |
 | `proofOfTime.weightRule` | `FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH` | Fork choice |
-| `consensus.finality.quorum` | `floor(2N/3)+1` | Equal-membership checkpoint threshold |
-| `consensus.finality.bootstrapSetStabilityBlocks` | 64 | Stable-set requirement before first certificate |
+| `consensus.finality.quorum*` | `floor(2n/3)+1` | Distinct established producers that must have built on a block |
+| `consensus.finality.minProducers` | 3 | Fewer than this and finality is reported unavailable |
+| `consensus.finality.window*` | `clamp(3n, 32, 1024)` | Blocks above a candidate that are counted |
 | `proofOfTime.difficultyTargetSeconds` | 5 | Target block spacing |
 | `proofOfTime.difficultyWindowBlocks` | 720 | Difficulty measurement window |
 | `proofOfTime.minDifficultyBps` / `maxDifficultyBps` | 2 500 / 40 000 | Published bounds |
@@ -351,7 +332,7 @@ All of these are compile-time constants of the protocol version, included in
 
 ## 13. Related documents
 
-- `docs/consensus.md` — validators, jailing, reorganisation.
+- `docs/consensus.md` — the producer schedule, fork choice, finality, reorganisation.
 - `docs/mining.md` — the claim schedule and its time rules.
 - `docs/node-runner-rewards.md` — the 90/10 ONS split and how node participation is
   measured (also time-based, also non-self-reported).

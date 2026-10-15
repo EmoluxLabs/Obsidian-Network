@@ -15,8 +15,9 @@ Error shape is stable:
 | Route | Returns |
 | --- | --- |
 | `GET /health` | status, core/protocol versions, network, chain id, genesis id, params hash, height, peers, syncing, supplyOk |
-| `GET /status` | everything in `/health` plus total blocks, supply, treasury wallet, `genesisAllocationClaimed`, last block timestamp, finalized height/hash, lag, committee size and quorum |
-| `GET /finality` | locally verified checkpoint, committee/quorum and pending counts, latest certificate, and bounded validated equivocation evidence |
+| `GET /status` | everything in `/health` plus total blocks, supply, treasury wallet, `genesisAllocationClaimed`, last block timestamp, finalized height/hash, `finalityAvailable`, finality lag, `finalityEligibleProducers`, the producer tier (`scheduleTier`) and eligible-producer count |
+| `GET /finality` | the finality derived from chain state: `model`, `available` (and `reason` when not), `finalizedHeight`, `finalizedHash`, `headHeight`, `lag`, `eligibleProducers`, `window`, `quorum`, `minProducers`, `derivedFrom`, `assumptions`. Checkpoint (economic) finality, not BFT; see [finality-v1.9.0.md](finality-v1.9.0.md) |
+| `GET /producers` | the producer schedule: `tier` (`TIER1`, `TIER2` or `OPEN`), `eligible`, `registered`, `banned`, the `rule`, per-node records (masked producer address, `tier1`, `registeredAtHeight`, `lastActiveAt`, `blocksProduced`, `missedSlots`, `suspensions`, `suspendedUntil`, `bannedAtHeight`), the `finality` block and recent `penalties`. There is no `/validators`: validators do not exist in 1.9.0 |
 | `GET /params` | protocol parameters, including `paramsHash`, `proofOfTime`, finality bounds and `nodeRewards` |
 | `GET /version` | version metadata and the minimum supported core version |
 | `GET /genesis` | the genesis document, its id and hash |
@@ -26,7 +27,6 @@ Error shape is stable:
 | `GET /gate` | the live mining gate set: `issuerKeys` (active), `revokedKeys`, `epoch`, `quorum`, network and chain ids; public keys only |
 | `GET /network` | network name, chain id, address prefix, p2p magic, genesis id, params hash and versions. `domains` lists the official hostnames **of this network only** (mainnet: `obsmainnet.us.ci`, `api.obsmainnet.us.ci` and its sites; devnet: `devnet.obsmainnet.us.ci`; testnet and staging likewise), so a practice chain cannot vouch for the names people use to check a mainnet address. `trust` says whether this node answers pages on the official domain and by which patterns; see [trusted-domains.md](trusted-domains.md) |
 | `GET /oracle` | current median price, sources, submission ages |
-| `GET /validators` | validator records, bonds, commission, missed slots, and the slashing rule: `slashing` (the parameter, the derived amount, the Mining Pool destination, a `treasuryShareObs` of zero, who may submit) plus `appliedSlashes` — the most recent page of slashes this chain applied, with canonical evidence ids, alongside `slashing.count` (the exact total) and `slashing.shown` (the page size). The ledger itself is unbounded consensus state; the HTTP answer is not |
 | `GET /blocks?limit=` | recent blocks (headers plus counts) |
 | `GET /block/<height\|hash>` | full block with its transactions |
 | `GET /tx/<txid>` | transaction description, masked addresses, inclusion height |
@@ -36,12 +36,12 @@ Error shape is stable:
 | `GET /revenue` | ONS revenue (the protocol's only source), the exact 90/10 split totals, a per-source breakdown, every protocol-held balance, and the flows that are explicitly not ONS revenue. `split.treasuryObs` is the whole 10% obligation, `treasuryCreditedObs` what has reached the treasury wallet, `treasuryUnclaimedObs` what is still owed before one is designated, and `sumsBack` re-adds the split. `treasury` gives the treasury wallet **in full** (a balance never appears on this route; ask `/wallet/balance` for the address); `timing` says when each share is paid: the treasury share in the same block as the ONS fee once a treasury is designated, the node-runner share once per protocol period, with `nextSettlementAt` and `secondsUntilNextSettlement` |
 | `GET /nodes/registry?limit=` | registered node runners with the current period's verified evidence (heartbeats, attesters, blocks produced, attestations made, faults) |
 | `GET /nodes/rewards?limit=` | the Node Runner Reward Pool, the scoring parameters, and every settled period with its per-node payouts |
-| `GET /nodes/status/<nodeId>` | one node: its score and four components, the reasons behind them, the recorded evidence, and its settled rewards |
+| `GET /nodes/status/<nodeId>` | one node: its bound reward wallet (and any pending change or reclaim), its score and four components, the reasons behind them, the recorded evidence, producer-schedule status and its settled rewards |
 | `GET /mining/schedule` | active miners, reward per day and per claim, floor state |
 | `GET /mining/status?address=` | eligibility, seconds remaining, next claim id and sequence, reward |
 | `GET /mining/claims?address=&limit=` | claims with sequence, reward, block, timestamp |
 | `GET /names?prefix=&limit=&offset=` | registered names, paged: `limit` 1–500 (default 200), `offset`; reply has `matched`, `offset`, `limit`, `hasMore`, and `count` = registry size. JSON-RPC `getnames` takes the same fields |
-| `GET /names/<name>` | one ONS record |
+| `GET /names/<name>` | one ONS record: `owner`, `address`, `registeredAt`, `expiresAt`, `transferCount`, and when present `pendingTransfer` (offered recipient and expiry), `recoveryAddress` and `pendingRecovery` ([ons.md](ons.md)). It does not check expiry; compare `expiresAt` with the head time |
 | `GET /wallet/<address>/next-nonce` | the next nonce to sign with for that address, and the height it was read at. It reads no balance; use `POST /wallet/balance` for that |
 | `GET /audit/decentralization` | ten yes/no questions (can one server, one interface or one administrator do X?) each answered with its evidence, plus the list of external dependencies and what each can and cannot affect |
 | `GET /audit/compliance` | absent mechanisms (`present: false`) read from the running protocol |
@@ -63,19 +63,18 @@ Node runners submit their registry statements as ordinary signed transactions of
 type `NODE_REGISTRY` (11) through `POST /tx/submit` — there is no privileged
 endpoint, no admin route and nothing that accepts a private key. The body is
 encoded with `POST /tx/encode` using `"type": "NODE_REGISTRY"`, and the
-operations are `REGISTER`, `CHANGE_WALLET`, `DEREGISTER`, `HEARTBEAT`, `ATTEST`
-and `REPORT_FAULT`. Each carries a signature made by the node identity key over
-a domain-separated message that names the network, the chain and the reward
-period; see [node-runner-rewards.md](node-runner-rewards.md).
+operations are `REGISTER`, `CHANGE_WALLET`, `CANCEL_WALLET_CHANGE`, `RECLAIM_WALLET`, `DEREGISTER`, `HEARTBEAT`, `ATTEST`,
+`REPORT_FAULT` and `REPORT_EQUIVOCATION`. Registration and node statements are signed by the node identity key over a
+domain-separated message that names the network, the chain and the reward period or uptime window, carry **no gas and no
+amount**, and `REGISTER` only *names* the reward wallet (no wallet signature); `RECLAIM_WALLET` is the one statement signed
+by the wallet. Equivocation evidence is the two conflicting signed block headers in `REPORT_EQUIVOCATION`; every node
+re-verifies both signatures and that the blocks are distinct siblings (`ERR_BAD_SIGNATURE`, `ERR_UNAUTHORIZED`,
+`NODE_NOT_REGISTERED`). See [node-binding-v1.9.0.md](node-binding-v1.9.0.md), [node-rewards-v1.9.0.md](node-rewards-v1.9.0.md)
+and [node-runner-rewards.md](node-runner-rewards.md).
 
-Equivocation evidence is submitted the same way, as a signed transaction of type
-`SLASH` (12) through `POST /tx/submit`, encoded with `POST /tx/encode` using
-`"type": "SLASH"`. Any account may submit one, it carries no value and pays no
-gas, and it is refused unless the evidence verifies against the chain's own
-identity on every node (`ERR_BAD_SIGNATURE`, `ERR_UNAUTHORIZED`,
-`ERR_WRONG_NETWORK`, `ERR_WRONG_CHAIN_ID`, `ERR_NOT_YET_VALID` for evidence about
-a height the chain has not reached, `ERR_REPLAY` for evidence already applied).
-See [consensus.md](consensus.md) §4.3.
+Name ownership operations (`TRANSFER`, `ACCEPT_TRANSFER`, `CANCEL_TRANSFER`, `SET_RECOVERY`, `START_RECOVERY`,
+`CANCEL_RECOVERY`, `FINALIZE_RECOVERY`, plus `UPDATE_ADDRESS` and `RENEW`) are ordinary signed `ONS` (2) transactions; see
+[ons.md](ons.md).
 
 Changes to the mining gate keys are submitted as a signed transaction of type `GATE_AUTHORITY` (13), encoded with
 `POST /tx/encode` using `"type": "GATE_AUTHORITY"` (and decoded with the same route and a `body`). It carries no value and

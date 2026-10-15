@@ -71,7 +71,6 @@ by tests:
 | User-to-user transfers | The sender owns the funds; the protocol is only the messenger |
 | Mining rewards | Issued by the protocol schedule, never paid in by a user |
 | Transaction gas | Gas funds the Mining Pool — see §3 |
-| Validator bonds | The bond stays the validator's own money and returns at unbonding |
 | Node registration | Moves no funds at all — there is no registration bond |
 | Treasury spending | It pays out credited revenue; it is not new income |
 | Escrowed balances | Held by the protocol for their owner, not the protocol's money |
@@ -100,7 +99,7 @@ Node Identity  (secp256k1 keypair, generated on the node, never leaves it)
       ↓
 Node Operator  (the human)
       ↓
-Reward Wallet  (an obs1… address the operator controls)
+Reward Wallet  (an obs1… address the operator names)
 ```
 
 - `nodeId` is the 20-byte hash of the node's public key. It **is** the identity.
@@ -113,55 +112,42 @@ Reward Wallet  (an obs1… address the operator controls)
 
 ---
 
-## 5. Registration, and proving you own the wallet
+## 5. Registration and the reward-wallet binding
 
-`NODE_REGISTRY / REGISTER` — `transactions/executors/node-registry.ts`
+`NODE_REGISTRY / REGISTER` — `transactions/executors/node-registry.ts`. The full design is
+[node-binding-v1.9.0.md](node-binding-v1.9.0.md); in short:
 
 ```
 Run Obsidian Core
       ↓  generates/loads the node identity key, prints the node id
-Sync and peer
+Operator pastes an OBS address:  obsidian register <address>      (writes node-binding.json; no key, no gas)
       ↓
-Node signs a registration statement with the NODE key
-      ↓  domain: OBSIDIAN:NODE_REGISTRATION:v1
-      ↓  contains: networkId, chainId, nodeId, rewardWallet, endpoint,
-      ↓            issuedAt, expiresAt
-Reward wallet signs and pays for the transaction (nothing is locked)
+The node, signing with its OWN key, sends REGISTER naming that address      (no gas, no wallet signature)
       ↓
-Protocol verifies BOTH signatures, binds nodeId → rewardWallet
+Protocol verifies the node signature and nodeId = hash(public key), checks the address is
+canonical for the network and not already backing another node, and binds nodeId → rewardWallet
       ↓
-Node is reward-eligible from the next full period
+Node is scored from the next full reward period, and schedulable after 64 blocks
 ```
 
-**Two keys, two jobs.** The node key proves the node consents; the wallet key
-(via the ordinary transaction signature) proves the operator controls the payout
-address. Neither alone is sufficient:
+**One key, one job.** The node key proves the node consents. The wallet signs **nothing** at registration, so, unlike earlier
+designs, **the binding does not prove that the operator owns the wallet.** A stranger can name an address they do not own:
+that pays the real owner, but blocks the owner from binding it to their own node until the owner sends `RECLAIM_WALLET` from
+that address (one transaction, one period of delay). This is documented as *squatting* in the binding document; the protocol
+makes it slow and reversible, not impossible.
 
-- someone who steals a node key cannot point rewards at their own wallet — the
-  current wallet must sign the change;
-- someone who knows your wallet address cannot attach it to their node — the
-  transaction must be signed by that wallet.
-
-The node's **private key is never transmitted and never requested**. Nothing in
-the registration path, the RPC surface or the interface accepts a private key.
-
-Registration proofs carry `issuedAt`/`expiresAt`, validated against protocol
-time and capped at one hour, so a captured statement is worthless by the time an
-attacker could get it mined.
+The node's **private key is never transmitted and never requested**, and **no screen or route asks for a wallet private key
+to bind**. Nothing in the registration path, the RPC surface or the interface accepts one.
 
 ### No registration deposit
 
-Registering a node runner **moves no funds**. There was once a 100 OBS
-registration bond, and it was removed as a mechanism rather than set to zero:
-two bonds with one name is exactly how an economic rule ends up enforced in one
-place and not another. The protocol has exactly one bond — the validator's
-20,000 OBS — and it is enforced in one place.
+Registering a node **moves no funds** and needs **no gas**. There is no bond of any kind in protocol 1.9.0: the earlier
+validator bond and the earlier registration bond were both removed as mechanisms rather than set to zero.
 
-What keeps the registry honest is what a node cannot fake: an identity bound to
-a reward wallet by signatures from both, one node per wallet, attestations that
-must come from *other* nodes, and a per-node cap on any period's payout. A Sybil
-fleet therefore needs ten distinct funded identities and cannot attest itself
-into an uptime it does not have.
+What keeps the registry honest is what a node cannot fake: an identity key, one node per wallet, attestations that must come
+from *other* nodes, a per-node cap on any period's payout, registration rate limits and a maturity delay. A Sybil fleet
+therefore needs ten distinct identities and machines and still cannot attest itself into an uptime it does not have. Admission
+is not priced, so the limits on a patient fleet are in [consensus-v1.9.0.md](consensus-v1.9.0.md) section 8.
 
 ---
 
@@ -172,19 +158,19 @@ its efficiency or its hash rate. The only statements a node may make are:
 
 | Statement | Signed by | What it proves |
 |---|---|---|
-| `HEARTBEAT` | The node key | "I am alive in this reward period, at this height" |
+| `HEARTBEAT` | The node key | "I am alive in this hourly uptime window, at this height" |
 | `ATTEST` | An observing node's key | "I observed *another* node alive in this period" |
 | `REPORT_FAULT` | An observing node's key | "*Another* node misbehaved, for this reason" |
+| `REPORT_EQUIVOCATION` | An observing node's key | "*Another* node signed two blocks on one parent" (two signatures; bans the node) |
 
 Constraints that make those statements meaningful:
 
-- one heartbeat per node per period (a replay is `ERR_NODE_HEARTBEAT_TOO_SOON`);
-- a node **cannot attest itself** (`ERR_NODE_BAD_SUBJECT`);
-- a node cannot report itself;
-- statements must name the period the including block belongs to;
-- statements are paid for by the node's reward wallet, so each carries a nonce
-  and costs gas — spam is not free and duplicates cannot both land;
-- a heartbeat cannot claim a height the network has not reached.
+- one heartbeat per node per **uptime window** (24 per period); a replay is `NODE_HEARTBEAT_TOO_SOON`;
+- a node **cannot attest itself** and cannot report itself;
+- statements must name the window or period the including block belongs to (`NODE_PROOF_EXPIRED` otherwise);
+- statements carry no gas and no amount, are sent with the node key as sender, and are rate limited per block and per period,
+  so spam is bounded and duplicates cannot both land;
+- a heartbeat reporting a height more than 12 blocks behind is *stale* and earns no uptime window.
 
 Everything else is read directly from the chain: **blocks produced** are counted
 by the settlement routine from the block producer, not from any claim.
@@ -197,7 +183,7 @@ by the settlement routine from the block producer, not from any claim.
 all basis points, all deterministic.
 
 ```
-uptimeBps         = min(10_000, heartbeats / heartbeatsPerPeriod × 10_000)
+uptimeBps         = min(10_000, liveWindows / 24 × 10_000)      (heartbeat or produced block per hourly window)
                     scaled by distinctAttesters / requiredAttesters
                     (capped at bootstrapUptimeBps in a peerless network)
 
@@ -215,10 +201,10 @@ scoreBps = uptimeBps         × 40%
          + reliabilityBps    × 20%
          + responsivenessBps × 15%
 
-weight   = scoreBps − minScoreBps,  when registered
-                                    and uptimeBps ≥ minUptimeBps (50%)
-                                    and scoreBps  ≥ minScoreBps  (10%)
-           otherwise 0
+weight   = scoreBps,  when registered with a bound wallet
+                      and uptimeBps ≥ minUptimeBps (50%)
+                      and scoreBps  ≥ minScoreBps  (10%)
+           otherwise 0                      (the floors are gates; they are not subtracted)
 ```
 
 Design decisions worth stating plainly:
@@ -253,14 +239,13 @@ timestamp falls in a new period settles the period that just closed:
 2. every node registered **before the period opened** is scored (a node that
    appeared mid-period has partial evidence and waits for the next period
    rather than being judged against a full one);
-3. `weight = scoreBps − minScoreBps`;
-4. `shareBps = floor(weight × 10_000 / Σweight)`, then capped at
-   `maxNodeShareBps` (5%);
-5. `amount = floor(pool × shareBps / 10_000)`;
-6. the remainder is **carried into the next period** — never burned, never
-   improvised;
-7. `Σ paid + pool remaining == pool before` is asserted before anything is
-   written, and the supply invariant is re-verified for the whole block.
+3. `weight = scoreBps` for eligible nodes, 0 otherwise;
+4. the pool is split by **exact largest remainder** over integer weights (ties by `nodeId`), with each node capped at
+   `max(maxNodeShareBps, ceil(100% / n))` and the overflow redistributed to the others;
+5. an allocation below `minPayoutSeals` (1e-6 OBS) is not paid and stays in the pool;
+6. the remainder is **carried into the next period** — never burned, never improvised;
+7. `Σ paid + pool remaining == pool before` is asserted before anything is written, and the supply invariant is re-verified for
+   the whole block.
 
 Properties:
 
@@ -276,32 +261,29 @@ Properties:
 
 ---
 
-## 9. Changing a reward wallet
+## 9. Changing or reclaiming a reward wallet
 
 `NODE_REGISTRY / CHANGE_WALLET`
 
-- must be signed by the node identity key (domain
-  `OBSIDIAN:NODE_WALLET_CHANGE:v1`);
-- must be **submitted by the current reward wallet** — a stranger cannot start
-  the process;
-- takes effect `walletChangeDelayPeriods` (1) periods later, not instantly;
-- the target wallet must not already back another node;
-- only one change may be pending at a time.
+- is signed by the node identity key and sent with it as sender (no gas);
+- takes effect `walletChangeDelayPeriods` (2) periods later, not instantly;
+- reserves the target wallet at once, and the target must not already back another node;
+- only one change may be pending at a time; `CANCEL_WALLET_CHANGE` (node key or the current wallet) cancels it.
 
-**Rewards already accrued are never redirected.** Settlements for earlier
-periods have already credited the wallet that earned them, and the delay means a
-stolen node key cannot sweep a period that is in flight.
+`NODE_REGISTRY / RECLAIM_WALLET` is sent **from the bound wallet** and releases the binding after `reclaimDelayPeriods` (1).
+It is the owner's remedy against a squatter ([node-binding-v1.9.0.md](node-binding-v1.9.0.md)). A stolen node key can therefore
+*start* a wallet change, but the current wallet can cancel it within two periods; a stolen node key with a wallet that is also
+lost can redirect future rewards. **Rewards already accrued are never redirected.**
 
-`POST /change-wallet`-style instant redirection does not exist in this protocol.
+Instant redirection does not exist in this protocol.
 
 ---
 
 ## 10. Deregistration
 
-`NODE_REGISTRY / DEREGISTER`, signed by the node key and submitted by the reward
-wallet. Nothing is returned because nothing was locked, the node stops being
-scored immediately, and every already-settled payout stays where it was paid. The period in progress is
-forfeited, because a node that has left cannot be attested for it.
+`NODE_REGISTRY / DEREGISTER`, signed by the node key. Nothing is returned because nothing was locked, the node stops being
+scored immediately, the wallet binding is freed, and every already-settled payout stays where it was paid. The period in
+progress is forfeited, because a node that has left cannot be attested for it.
 
 ---
 
@@ -310,14 +292,14 @@ forfeited, because a node that has left cannot be attested for it.
 | Attack | What stops it |
 |---|---|
 | One machine, ten node identities, one wallet | One wallet may back only one node (`ERR_NODE_WALLET_IN_USE`) |
-| One machine, ten identities, ten wallets | Each needs its own identity and reward wallet, proven by both signatures, and the fleet still cannot attest itself into uptime |
+| One machine, ten identities, ten wallets | Each needs its own identity key and reward wallet, registration is rate limited and a node waits 64 blocks, and the fleet still cannot attest itself into uptime. **A patient fleet of real machines is not stopped**; see the Sybil section of the consensus specification |
 | A fleet attesting itself | A node cannot attest itself; a fleet that is one point of failure earns like one node's worth of corroboration |
 | One operator taking a whole period | `maxNodeShareBps` caps any single node at 5% of a period |
 | Fabricated uptime | There is no field for it; uptime requires peers' signed attestations |
 | Fabricated participation | Blocks produced are read from the chain |
-| Replayed uptime proofs | One heartbeat per node per period, bound to the period |
+| Replayed uptime proofs | One heartbeat per node per hourly window, bound to the window |
 | Smearing a competitor | A fault counts only when independent reporters corroborate it |
-| Registering someone else's wallet | The wallet itself must sign the transaction |
+| Registering someone else's wallet | **Not prevented** (no wallet signature is required): it only pays that owner, and the owner can reclaim it |
 
 No step above requires an administrator to approve a node, and none of it can be
 overridden by one.
@@ -354,19 +336,20 @@ Compile-time constants of the protocol version, part of `PARAMS_HASH`:
 |---|---|
 | `nodePoolShareBps` / `treasuryShareBps` | 9 000 / 1 000 (90% / 10%) |
 | `periodSeconds` | 86 400 |
-| `equivocationSlashBps` (validator slashing) | 5 000 (half the validator bond) |
 | `minUptimeBps` | 5 000 |
 | `minScoreBps` | 1 000 |
 | `maxNodeShareBps` | 500 |
 | `minAttesters` | 2 |
 | `bootstrapUptimeBps` | 5 000 |
-| `heartbeatsPerPeriod` | 1 |
+| `uptimeWindowSeconds` / `uptimeWindowsPerPeriod` | 3 600 / 24 |
+| `minPayoutSeals` | 1 000 000 000 000 (1e-6 OBS) |
+| `reclaimDelayPeriods` | 1 |
 | `maxAttestationsPerAttester` | 64 |
 | `faultPenaltyBps` | 2 000 |
 | `responsiveHeightLag` | 12 |
 | `scoreWeights` | uptime 4 000, participation 2 500, reliability 2 000, responsiveness 1 500 |
 | `participationWeights` | blocks 6 000, coverage 4 000 |
-| `walletChangeDelayPeriods` | 1 |
+| `walletChangeDelayPeriods` | 2 |
 | `evidenceWindowPeriods` | 3 |
 | `proofMaxValiditySeconds` | 3 600 |
 
@@ -381,8 +364,7 @@ npx vitest run tests/integration/node-runners.test.ts # the chain behaviour
 ```
 
 The integration suite registers real nodes with real signatures and asserts,
-among other things: a forged proof is rejected, a foreign wallet cannot be
-registered, a duplicate wallet is refused, a heartbeat cannot be replayed, a
+among other things: a forged proof is rejected, a duplicate wallet is refused, a binding needs no gas and no wallet signature, a heartbeat cannot be replayed, a
 node cannot attest itself, nothing is locked at registration, a period cannot settle
 twice, and two independent nodes replaying the same blocks reach the identical
 state root — which is what proves the reward state is consensus, not bookkeeping.

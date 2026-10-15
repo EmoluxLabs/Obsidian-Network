@@ -77,6 +77,36 @@ the recovery phrase. Treat it as cash:
 * if you lose both, the OBS is unrecoverable. Nobody — including Obsidian — can
   reverse that. It is not a policy; there is no key escrow to break into.
 
+### Creating a wallet (1.9.0)
+
+Creation shows **both** secrets on one screen, with backup instructions: the recovery phrase (the 24 words) **and** the private
+key. The wallet is not saved until the person ticks an explicit confirmation that both were written down. The two are two
+ways to hold the **same** wallet: the key shown is the secp256k1 key that the phrase derives at account 0, index 0, and its
+address comes from the same `keyPairFromPrivateKey` the node uses. Both secrets stay in the device: they are never sent to a
+backend, put in a URL, logged or sent to telemetry (guarded by tests in each package).
+
+### Recovering a wallet (1.9.0)
+
+Two separate flows, never mixed:
+
+1. **Recovery phrase** — unchanged: the phrase is validated locally and re-derives the key.
+2. **Private key** — new. `parsePrivateKeyInput` (`obsidian-core/src/crypto/private-key.ts`) validates **locally**: exactly
+   64 hexadecimal characters (32 bytes), either case, optional `0x`, surrounding whitespace ignored. It then derives the address
+   with the existing derivation and **shows the derived address for the person to confirm** before anything is saved. Nothing
+   is created silently.
+
+Refusals are specific and **never echo the input**: empty, "this is a recovery phrase", "this is a public key (33/65 bytes)",
+wrong length, non-hex (WIF, base64 and bech32 are **not** supported), and zero or values at or above the curve order. An invalid
+key never creates a wallet.
+
+Where: the platform wallet (`obsidian-interface`), the web app, the web wallet and the desktop wallet. **No node screen, node
+registration or binding form ever asks for a private key** — a node is bound by an address alone
+([node-binding-v1.9.0.md](node-binding-v1.9.0.md)).
+
+A private key recovers *that one address* (account 0/0): wallets made here hold a single account. Tests:
+`obsidian-core/tests/unit/private-key-recovery.test.ts` (valid keys, lengths, encodings, equivalence with the phrase) and the
+per-package wallet tests.
+
 ## 5. One phrase, one key, four networks
 
 The derivation does not depend on the network: the same recovery phrase produces

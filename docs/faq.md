@@ -61,7 +61,7 @@ interface yourself, or read the RPC directly — the format is documented in
 
 **What happens if the dollar price feed dies?**
 Nothing in the protocol depends on it. ONS registration and renewal (0.05 OBS)
-and the validator bond (exactly 20,000 OBS) are priced in OBS by consensus
+are priced in OBS by consensus
 parameters, so no fee and no state transition reads a dollar price, and an
 unavailable feed cannot close a feature. A node may still publish
 an OBS/USD observation for reporting (`GET /oracle`), and a consumer that asks

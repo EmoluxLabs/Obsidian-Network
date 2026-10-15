@@ -1,19 +1,16 @@
 # Consensus
 
-This is the reference for **how Obsidian Network decides what happened**. It
-covers block validity, fork choice, reorganisation, the validator set and
-jailing. The temporal mechanism itself — why this is Proof of Time and not
-proof-of-work — is in [proof-of-time.md](proof-of-time.md); the constants quoted
-here are defined in `obsidian-core/src/protocol/params.ts` and checked by
-`scripts/check-invariants.mjs`.
+This is the reference for **how Obsidian Network decides what happened**: block validity, who may produce a block, fork
+choice, reorganisation and finality, as implemented by protocol 1.9.0. The full specification, with the assumptions and
+limits, is [consensus-v1.9.0.md](consensus-v1.9.0.md); finality is [finality-v1.9.0.md](finality-v1.9.0.md). The temporal
+mechanism itself, and why this is Proof of Time and not proof-of-work, is in [proof-of-time.md](proof-of-time.md). The
+constants quoted here are defined in `obsidian-core/src/protocol/params.ts` and checked by `scripts/check-invariants.mjs`.
 
-Everything in this document is a **protocol rule**, not an operator setting.
-Changing any of it requires a protocol version bump and a coordinated upgrade:
-nodes that disagree about a rule compute a different params hash and refuse each
-other during the handshake.
+Everything in this document is a **protocol rule**, not an operator setting. Changing any of it requires a protocol version
+bump and a coordinated upgrade: nodes that disagree about a rule compute a different params hash and refuse each other
+during the handshake. **There are no validators, no bonds and no votes in this protocol.**
 
 ---
-
 ## 1. Blocks
 
 | Rule | Value |
@@ -72,359 +69,92 @@ explorer shows where a PoW chain shows hashrate.
 `protocolTime = max(local wall clock, head.timestamp + 1)`. A node never
 believes it is earlier than the chain it holds, so mining claims, ONS terms
 and transaction expiry cannot be back-dated to bypass a cooldown. Cooldowns are
-enforced by validators against block timestamps, never by an interface
+enforced by every node against block timestamps, never by an interface
 countdown.
 
 ---
 
-## 2. Fork choice and finality
+## 2. Who produces a block
 
-A candidate is considered only if it is protocol-valid and descends from the
-node's locally verified finalized checkpoint. Eligible tips are compared in this
-order:
+Any **registered, mature, live, unsuspended node** may produce blocks; there is no validator set, no stake and no vote. The
+producer for a block is a pure function of the parent state and two header timestamps:
 
-1. **greatest accumulated fixed PoT Weight** — every valid block contributes one
-   unit; transactions and fees do not add authority;
+```
+set                      = TIER1 (mature, live, not suspended), else TIER2 (every non-banned node), else OPEN (any key)
+set                      sorted by producer address
+round(parent, block)     = max(0, floor((block.timestamp - parent.timestamp) / 5 s) - 1)
+producer(height, round)  = set[(height + round) mod |set|]
+```
+
+A block signed by anyone else fails with `NOT_PRODUCER_TURN`. If the scheduled producer is silent, the turn passes to the
+next node once its slot has elapsed (a skipped slot costs one slot, not the chain); three consecutive misses suspend a node for
+10 minutes, doubling to 24 hours, and producing a block clears the counters. Registering is free (no gas, no bond) and
+rate-limited; a new node is schedulable after 64 blocks. Details, Sybil limits and the tests:
+[consensus-v1.9.0.md](consensus-v1.9.0.md) sections 3, 4 and 8.
+
+## 3. Fork choice and finality
+
+A candidate is considered only if it is protocol-valid and **contains the finalized prefix** the node derived from its own
+state. Eligible tips are compared in this order:
+
+1. **greatest accumulated fixed PoT Weight** — every valid block contributes one unit; transactions and fees add no authority;
 2. **greatest height**;
-3. **lowest header hash** — a total order over otherwise equal candidates, so the
-   same two branches resolve the same way on every node, every time.
+3. **lowest header hash** — a total order over otherwise equal candidates, so the same two branches resolve the same way on
+   every node, every time.
 
-There is no arrival-order component and no validator-support weighting: equal
-weight and equal height are broken by the block hash the producer signed. The
-published rule is
-`FINALIZED_ANCHOR_THEN_FIXED_POT_WEIGHT_THEN_HEIGHT_THEN_LOWEST_HASH`.
+There is no arrival-order component and no support weighting. A node holds at most 8 candidates per height.
 
-### Native PoT checkpoint finality
+**Finality** is derived from the chain itself, with no votes and no timer: a block is final once, within a window of
+`clamp(3n, 32, 1024)` blocks above it, at least `floor(2n/3)+1` distinct established producers have built on it (with `n ≥ 3`).
+The checkpoint is in the state root, never moves backwards and survives a restart. It is **checkpoint (economic) finality, not
+Byzantine finality**: it holds only while fewer than a third of the established producers are faulty
+([finality-v1.9.0.md](finality-v1.9.0.md)). With fewer than three established producers `/finality` says `available: false`
+and nothing is called final.
 
-Finality supplements Proof of Time; it does not replace block production with
-proof of stake. For a target block, every `ACTIVE`, positively bonded validator
-in the target's **parent state** has one membership vote. Bond size is admission
-collateral only and does not multiply voting weight. Addresses and validator
-keys come from the existing on-chain registry and are sorted canonically.
+## 4. Equivocation
 
-A checkpoint requires `floor(2N/3) + 1` distinct valid signatures. A vote commits
-to protocol and network identities, the previous finalized checkpoint, target
-height/hash/parent, proposer round and validator-set hash. A certificate is
-accepted only after the target block and state transition pass normal validation
-and the committee is reconstructed from the target parent. Duplicates, unknown
-validators, wrong-network votes, invalid signatures and mismatched committees do
-not count.
+A producer that signs **two different blocks on one parent** is banned permanently. Any registered node submits the two signed
+headers in a `REPORT_EQUIVOCATION` transaction; every node re-verifies both signatures and that the blocks are distinct
+siblings. Nothing is confiscated: the ban removes the identity from the producer set and releases its reward wallet. Building
+on two different branches is not equivocation and is not punished (see the limits in the finality document).
 
-Two conflicting certificates require more than one third of the relevant
-committee to violate the one-vote rule (or a cryptographic failure). This is a
-narrow checkpoint-finality claim, **not** a claim that the whole protocol is
-generally BFT, immutable, or free of all reorgs.
+## 5. Reorganisation and recovery
 
-Open genesis has no committee. Its first certificate is allowed only after a
-non-empty validator set remains identical for 64 parent states. After bootstrap,
-certificates advance one block at a time. A membership transition is finalized
-by the committee from its parent; the following target uses the updated set.
-
-**Where the first committee comes from.** The bootstrap set is a *public,
-genesis-committed* list of validator public keys. Every key is hashed into the
-`genesisId` (with the network, chain id, protocol version, genesis timestamp and
-address prefix), so two nodes compute the same genesis id only if they carry the
-same list. The set is therefore not a local opinion, not a secret, and not
-something a peer can talk a node into accepting.
-
-The list is a protocol constant in `obsidian-core/src/genesis/bootstrap-keys.ts`:
-
-| Network | Committed keys | Quorum `floor(2N/3)+1` | Notes |
-| --- | --- | --- | --- |
-| mainnet | 4 | 3 | one validator may be offline. Four is the largest committee the genesis allocation can fund: each operator needs one exact 20,000 OBS bond **plus** the registration gas, and 5 × 20,000.01 = 100,000.05 OBS exceeds the 100,000 OBS allocation while 4 × 20,000.01 = 80,000.04 OBS fits |
-| testnet | 3 | 3 | a smaller public test committee |
-| staging, devnet | none | — | each operator supplies its own set |
-
-On a network with a committed set, the set is authoritative and cannot be
-replaced: passing a different list (config file, `OBSIDIAN_BOOTSTRAP_VALIDATOR_PUBLIC_KEYS`
-or a hand-built genesis document) is a hard startup refusal, because it would
-produce a different genesis id while looking like the same network. On staging,
-devnet and private chains, operators configure their own list with
-`OBSIDIAN_BOOTSTRAP_VALIDATOR_PUBLIC_KEYS` (comma-separated lowercase compressed
-secp256k1 keys) or the matching config field; malformed, duplicated or over-long
-lists are refused, not trimmed.
-
-Before the first certificate, only the committed keys may vote, and only if each
-one has registered through the ordinary `VALIDATOR` transaction with exactly the
-20,000 OBS bond. Extra registrations are excluded until that first checkpoint, so
-the bootstrap committee cannot be joined by simply registering.
-
-A network with an **empty** set has no bootstrap committee at all: the node will
-not finalize anything until an on-chain validator set has been stable for the
-64-parent-state window. It never derives an initial trusted committee from the
-fork it happens to hold locally — an empty set means no finality, not
-self-appointed finality.
-
-### Equivocation
-
-Nodes retain and gossip bounded cryptographic evidence for one proposer signing
-different headers at the same height and round, or one validator signing
-incompatible finality targets for the same finalized anchor. Evidence carries both
-signed messages and is revalidated before storage or relay; the penalty it
-triggers is in §4.3.
-
-**One predicate, every path.** Whether a finality vote is valid is answered by a
-single function, `validateCanonicalFinalityVote` in
-`obsidian-core/src/consensus/finality-vote.ts`. Vote admission, vote restoration
-after a restart, certificate construction and verification, equivocation
-detection, slash-evidence verification and block execution all call it, each
-supplying the same historical lookups (the committee in force at the anchor, the
-block by hash, the proposer schedule). Its rules, cheapest first: shape; protocol
-identity (version, network, chain, genesis, parameter hash); the caller's local
-anchor, when the caller asks for it; the parent's existence and height; the
-committee and the signer's membership **at the historical anchor**, which is a
-state lookup and so runs before any signature arithmetic; the signature over the
-finality domain with its key/address binding; the target's existence, height,
-parent, round and producer; and ordinary-or-bootstrap extension.
-
-Both halves of an accusation must satisfy it independently. Where a rule cannot be
-answered — the equivocated block was never received, the anchor state is not
-available — the verdict says so instead of guessing: consensus paths fail closed,
-and evidence verification is the one path that may proceed on an unverifiable
-target, because a node that never received the block must still recognise the
-offence rather than let an attacker escape slashing by withholding it.
-
-**Bounded cost.** A `SLASH` transaction is free to submit and expensive to verify,
-so the amount of evidence is limited in three places: a block may carry at most
-`consensus.slashing.maxEvidencePerBlock` (8) reports and
-`maxEvidenceBytesPerBlock` (65,536) bytes of evidence — a consensus limit, counted
-before any report is verified and refused as `ERR_EVIDENCE_LIMIT`; a producer
-verifies at most 32 reports and 1 MiB per attempt, leaving the rest pooled; and
-the mempool holds at most 256 pending reports, 8 per sender, in 4 MiB, checked
-before generic eviction so a flood cannot displace honest transactions. A report
-that does not fit is not rejected — it waits for a later block. Submitting stays
-permissionless.
+* A reorganisation deeper than `maxReorgDepth` (256) is refused, and a branch that omits the finalized block is refused even if
+  it is longer.
+* A reorganisation rebuilds state from the common ancestor, and each block's committed state root is re-checked.
+* **Restart:** state and the finalized checkpoint are read back from the database and re-verified; interrupted writes are
+  covered by the safety record, and `obsidian validate` re-checks the stored chain.
+* **Partition:** each side keeps producing; a side without two thirds of the established producers cannot finalize anything,
+  and on healing the heavier branch wins by the rule above, provided it contains the finalized prefix.
+* A node that is behind syncs from peers, verifying every block (signature, schedule, timestamp, state root) as it goes.
 
 ---
 
-## 3. Reorganisation and recovery
+## 6. Transactions in consensus
 
-Ordinary reorganisation finds the common ancestor, replays the winning branch,
-recomputes state roots, persists the canonical tail and revalidates the mempool.
-It is capped at 256 blocks. A valid certificate may adopt its certified branch
-beyond that ordinary cap after signatures, committee, ancestry and block
-validity checks pass; abandoned-transaction recovery remains bounded.
-
-No reorganisation may fork below the locally finalized height, and no candidate
-whose ancestry omits the finalized hash is admitted. A finality certificate may
-move the chain onto its certified branch — that is the recovery path for a
-partition deeper than the ordinary bound — but only after signatures, committee,
-ancestry and full block validation pass, and never below the anchor the
-certificate itself extends. Finality state is stored in
-a checksummed, atomically replaced file bound to network, chain, genesis,
-protocol version and params hash. Startup fails closed if the lock is corrupt,
-incompatible, lacks its block, is noncanonical, or has an invalid certificate.
-Automated tests simulate process restart and corrupted/missing files; they are
-not claims of physical power-loss testing.
-
-The 12/64 confirmation depths remain interface guidance. They are not aliases
-for finality: inspect `GET /finality`, status fields and Prometheus metrics for
-the locally verified checkpoint.
-
----
-
-## 4. Validators
-
-Any account may become a validator. Registration is a `VALIDATOR` transaction
-carrying:
-
-| Field | Rule |
-| --- | --- |
-| bond | exactly **20,000 OBS**, locked from the sender's balance |
-| validatorKey | a 33-byte compressed public key |
-| commissionBps | 0–10,000 (basis points; purely declarative) |
-
-Bonded OBS leaves the spendable balance and is counted by the supply invariant
-while bonded — it is still the validator's property, not protocol revenue. A
-validator that is *proven* to have equivocated forfeits half of it; everything
-else about the bond is returned in full after unbonding (see §4.3).
-
-**Proposer selection.** The proposer of a height is deterministic:
-
-```
-round(parent, block)    = max(0, floor((block.timestamp - parent.timestamp) / targetBlockSeconds) - 1)
-proposer(height, round) = activeValidators[(height + round) mod activeValidatorCount]
-```
-
-where the set is sorted by address and jailed validators are excluded. Round 0
-is the ordinary case: the validator whose turn it is has the first ten seconds
-after its parent. Each further whole slot (five seconds) hands the turn to the
-next validator, cycling through the active set for every later round. Production
-never opens to an unregistered key. If every active validator is offline the
-chain stops; this intentionally chooses validator-set safety over permissionless
-fallback liveness. The round is derived
-from two timestamps already committed to the headers, so every node computes it
-from the block alone: no extra header field, no round negotiation.
-
-**Two modes, one committed indicator.** Whether production is open to any node is
-not inferred from how many validators a node can see — a count is exactly what a
-jail, an unbonding or a slash can empty, and it cannot say whether the set was
-ever non-empty. It is a consensus value, `validatorModeEstablished`, committed in
-the state root *ahead of* the validator list it qualifies (so two chains with the
-same empty list have different roots), restored on restart, and set only by the
-state transition of the first successful `VALIDATOR_REGISTER`:
-
-| mode | indicator | who may propose |
-| --- | --- | --- |
-| bootstrap | `false` | any node — this is how the first validator arrives at all |
-| established | `true`, for ever | the active set only; an empty active set **halts** the chain |
-
-Nothing in the protocol clears the indicator, so a chain can never re-derive
-bootstrap mode from a later state. An established chain with no active validator
-refuses every producer in every round — including the validator that just left —
-and resumes only by consensus: a jail term lapsing in time, or a fresh
-registration carrying a full 20,000 OBS bond. There is no operator action, no
-admin call and no permissionless fallback. A state snapshot that does not carry
-the indicator (format 2, from 1.6.0) is refused rather than read as "not
-established", which would hand an established chain back to open production.
-
-There is no auction or random leader election. Active validators also form the equal-membership PoT finality committee; that role does not grant power to mint or move balances, and bond size does not buy extra votes.
-
-**What the schedule is, and is not.** It is a rule about *when* a block may
-carry a given validator's name, enforced through timestamps. The proposer schedule itself is not a vote and does not by itself finalize a block. A block may be dated up to `maxFutureDriftSeconds` (60)
-ahead of a node's clock, so a validator can claim a later round than real
-elapsed time supports — at most `drift / targetBlockSeconds` rounds ahead. A later-round block is still only a candidate: finalized-anchor checks, ordinary validity, authenticated support and certificates decide whether it can become or remain canonical. Obsidian does not claim general Byzantine fault tolerance.
-
-### Unbonding
-
-`UNREGISTER` marks the validator `UNBONDING` and records the height. The bond
-returns only after **20,160 blocks** (about 28 hours at the target spacing) via
-`CLAIM_UNBONDED`. Until then the stake cannot be spent, which is what makes a
-validator's commitment meaningful without locking funds forever.
-
-### Jailing
-
-Per block, the protocol tracks missed scheduled slots per validator:
-
-- when the block that was finally produced belongs to a **later round** than 0,
-  the **round-0 proposer** of that height is recorded as having missed its
-  slot. Only that one validator is named per block — timestamps can be nudged
-  inside the drift window, and blaming every validator the round skipped would
-  let a single future-dated block frame several of them;
-- a recorded miss adds 1 to the validator's running counter;
-- a block the validator **itself produces** subtracts 1 (floor 0). Decay has to
-  be earned by producing: an earlier rule, "any block it was not named in",
-  could never jail an absent validator in a set of three or more, because an
-  absent validator is the round-0 proposer of only one block in *n*;
-- crossing **40** net misses jails the validator for **10,080 slots**
-  (`jailSlots × targetBlockSeconds` = **50,400 seconds**, about 14 hours) and
-  emits `VALIDATOR_JAILED`;
-- when the term lapses the validator returns to `ACTIVE` with a reset counter
-  and emits `VALIDATOR_UNJAILED`.
-
-The term is a duration of **protocol time**, committed as `jailedUntilTime` in the
-state root, and not a number of blocks. A height-denominated term cannot expire
-on a chain that has stopped producing — and stopping is precisely what a jail can
-cause, once it empties the active set: the blocks that would count the jail down
-are the blocks nobody is allowed to produce. Measured in time, the term lapses
-whether or not anyone is producing, and the validator returns in the first block
-whose timestamp reaches it. That block may be produced by the validator the jail
-ended for, because the schedule is evaluated against the same committed term. A
-`JAILED` record with no term is treated as jailed for ever rather than as free.
-
-With a single validator that has died, the survivors wait out a round for each
-block until it is jailed after 41 blocks. If that leaves the active set empty the
-chain **halts** — production does not open to everyone (see the two modes above).
-The chain restarts when the term lapses or when a new validator registers.
-
-Jailing is automatic: no dashboard action, no administrator and no vote. A jailed
-validator simply produces no blocks — and earns nothing from the node runner
-reward pool for the periods it was offline.
-
-### Equivocation slashing
-
-A validator loses **half its bond** — `equivocationSlashBps = 5,000` applied to
-its own recorded bond, so 10,000 of the 20,000 OBS — if, and only if, it is
-proven with signatures every node can check to have made two **conflicting**
-claims in the same protocol context:
-
-| Offence | What must be proven |
-| --- | --- |
-| Proposer equivocation | one validator signed two *different* block headers for the same height **and the same round**, both descending from their committed parent headers |
-| Finality-vote equivocation | one validator signed two conflicting `POT_FINALITY` votes for the same finalized anchor — the exact conflict rule the node's own finality admission already uses |
-
-Everything else is explicitly **not** slashable: being offline, missing a slot,
-failing to vote, restarting, losing connectivity, or voting twice for the *same*
-block. Liveness costs time (the jail), never capital.
-
-The rule is enforced in the state transition, in a `SLASH` transaction
-(id 12) that **any** account may submit and that pays no gas:
-
-- the evidence is self-contained: both signatures, both the network/chain/genesis
-  identity and the parameters hash are recomputed and compared by every node, and
-  the offender, the amount and the destination are all derived — a submitter
-  names nothing and gains nothing;
-- a block header does not carry its parent's timestamp, and the round is a
-  function of those timestamps, so proposer evidence also carries both parent
-  headers. They are bound to the children by `child.prevHash === blockHash(parent)`,
-  so a parent cannot be invented to manufacture a round;
-- the slashed seals move to the **Mining Pool** in the same transition. They are
-  not revenue, not burned and not paid to the submitter; the treasury's share is
-  exactly zero and total supply is unchanged to the seal;
-- the validator becomes `SLASHED`: it leaves the proposer rotation and the
-  finality committee in the block that applied the evidence, with no restart and
-  no administrator.
-- nothing a node does by itself can produce a slashable pair: a proposer signs at
-  most one proposal per slot (the slot is written to a crash-safe local safety
-  lock **before** the signature exists, so a rejected block, a crash or a restart
-  leaves the slot closed and the node waits for the next round), and a validator
-  never signs a second vote for an anchor it has already voted on. The remaining half stays its own money, claimable through
-  `CLAIM_UNBONDED` after the ordinary unbonding delay;
-- one registration is slashed **once**. The canonical evidence id and the
-  `SLASHED` record are consensus state, committed in the state root, so a replay
-  in another block, from another peer or after a restart finds the ledger and is
-  refused;
-- the offence is charged to the **registration**, not to the address: it must fall
-  inside `[registeredAtHeight, unbondingStartHeight]` of the record that holds the
-  bond now. An `UNBONDING` or `JAILED` validator is still liable — unregistering
-  starts the clock on how long the evidence has to arrive, it does not close the
-  record — so a validator cannot buy immunity by leaving (or by stopping
-  producing) after it equivocated;
-- for the same reason a **fresh registration is never charged for an earlier
-  tenure**. Claiming the remainder and registering again with a full bond creates
-  a new liability, so a reused key cannot drag an old offence into a new bond;
-- the window ends when the remainder is claimed: the record is gone, and evidence
-  about it is refused deterministically on every node. The unbonding delay is
-  therefore the protocol's evidence window — 20,160 blocks, about 28 hours at
-  5-second blocks — and it is stated, not implied;
-- re-registering means claiming the remainder and registering again with a fresh
-  full 20,000 OBS bond: the surviving half is never a discounted seat.
-
-Slashing is not a vote-weighting change and does not alter the finality quorum,
-which stays equal-membership (`floor(2n/3) + 1`). See
-[security-model.md](security-model.md) for what this does — and does not — do
-about a Sybil fleet.
-
----
-
-## 5. Transactions in consensus
-
-The state machine dispatches exactly one executor per transaction type, and an
-unknown type is a hard rejection — never a silent no-op:
+The state machine dispatches exactly one executor per transaction type, and an unknown type is a hard rejection — never a
+silent no-op:
 
 | Id | Type | Id | Type |
 | --- | --- | --- | --- |
-| 1 | `PAYMENT` | 7 | `MINING_CLAIM` |
-| 2 | `ONS` | 8 | `VALIDATOR` |
-| 6 | `ORACLE` | 9 | `TREASURY` |
-|   |   | 10 | `GOVERNANCE` |
-|   |   | 11 | `NODE_REGISTRY` |
-|   |   | 12 | `SLASH` |
+| 1 | `PAYMENT` | 9 | `TREASURY` |
+| 2 | `ONS` | 10 | `GOVERNANCE` |
+| 6 | `ORACLE` | 11 | `NODE_REGISTRY` |
+| 7 | `MINING_CLAIM` | | |
 
-Ids 3, 4 and 5 belonged to the discontinued Circle (land), Social and Time
-Capsule transactions. They are retired: no executor exists for them, and the
-state machine rejects them as unknown types.
+Ids 3, 4 and 5 belonged to the discontinued Circle, Social and Time Capsule transactions, and ids 8 (`VALIDATOR`) and 12
+(`SLASH`) were removed in 1.9.0 with the validator model. All of them are retired and never reused: no executor exists, and
+the state machine rejects them as unknown types.
 
-Rules that apply to every type — canonical encoding, nonce ordering, replay
-rejection, size and memo limits, gas — are enforced in the state machine before
-the executor runs (`obsidian-core/src/blockchain/state-machine.ts`). The
-transaction envelope, signing digest and encoding are in
-[transaction-format.md](transaction-format.md); the economic parameters those
+Rules that apply to every type — canonical encoding, nonce ordering, replay rejection, size and memo limits, gas — are
+enforced in the state machine before the executor runs (`obsidian-core/src/blockchain/state-machine.ts`). The transaction
+envelope, signing digest and encoding are in [transaction-format.md](transaction-format.md); the economic parameters the
 executors enforce are in [economics.md](economics.md).
 
 ---
 
-## 6. Networks and genesis
+## 7. Networks and genesis
 
 Four networks ship in the repository, each with its own genesis document,
 genesis id, ports, address prefix and chain id:
@@ -443,13 +173,13 @@ deterministically from the genesis document and the consensus parameters;
 every machine. A peer that reports a different network id, genesis id, protocol
 version or params hash is refused during the handshake.
 
-## 7. Verifying these rules on a running node
+## 8. Verifying these rules on a running node
 
 ```bash
 curl -s localhost:8630/params | jq .proofOfTime     # consensus identity, fork choice, difficulty
 curl -s localhost:8630/pot                          # PoT Difficulty and Time-Rate
-curl -s localhost:8630/validators                   # bonds, status, missed slots
-curl -s localhost:8630/finality                     # checkpoint, certificate, evidence
+curl -s localhost:8630/producers                    # the producer set, tier, suspensions, bans
+curl -s localhost:8630/finality                     # the derived checkpoint and why it is (un)available
 curl -s localhost:8630/audit/compliance             # removed mechanisms, all present:false
 node scripts/check-invariants.mjs                   # the invariants; exits non-zero on drift
 ```

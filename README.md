@@ -127,7 +127,7 @@ node --test tests/e2e/ecosystem.test.mjs                            # the interf
 node scripts/check-invariants.mjs                                   # the protocol and economic invariants
 ./scripts/package-releases.sh                                       # runs all of the above, then builds the archives + SHA256SUMS
 cd releases && sha256sum -c SHA256SUMS
-../scripts/verify-release.sh obsidian-core-1.8.2.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.9.0.tar.gz --with-tests
 ```
 
 The suites, the invariant check and the packaging gate fail loudly if anything drifts, including
@@ -146,12 +146,12 @@ curl -s localhost:$RPC/status | jq '{height, genesisId, paramsHash}'
 ## Consensus: Proof of Time
 
 Obsidian is a **Proof of Time (PoT)** chain. Block production is scheduled by
-the validator rotation and gated by protocol time — there is no hash puzzle, no
+the deterministic producer schedule over registered nodes and gated by protocol time — there is no hash puzzle, no
 nonce search and no advantage to computing faster. Hashing and signatures secure
 identity and integrity; they are not the competition.
 
 * Fork choice: finalized anchor → fixed one-unit-per-valid-block **PoT Weight** → height → lowest block hash. Equal-height ties resolve by hash, so transaction volume, peer arrival order and header-hash grinding buy no authority.
-* Native PoT finality: `floor(2N/3)+1` active-validator signatures finalize sequential checkpoints after a 64-block stable-set bootstrap. It complements PoT and is not a blanket BFT or immutability claim.
+* Derived checkpoint finality: a block is final once `floor(2n/3)+1` distinct established producers (at least three) have built on it. There are no validators, bonds or votes; it is computed from the chain, is committed in the state root, and is not a BFT or immutability claim.
 * **PoT Difficulty** reports how block spacing tracks the 5-second target. It is
   a published measurement, not an extra acceptance rule — `/pot` says so in the
   payload.
@@ -175,9 +175,9 @@ ONS revenue ──┬── 90% → Node Runner Reward Pool
 
 A node earns from uptime, participation, reliability and responsiveness that
 **other nodes attested** — there is no field in which a node can report its own
-performance. Registration binds a node identity to a reward wallet with
-signatures from both, and moves no funds: the protocol has exactly one bond, the
-20,000 OBS validator bond, so nobody can be priced out of running a node.
+performance. Registration binds a node identity to a reward wallet you paste as an address, with
+no gas, no deposit and no wallet signature (so nobody is priced out of running a node, and the binding does not prove
+ownership of the wallet — see [`docs/node-binding-v1.9.0.md`](docs/node-binding-v1.9.0.md)).
 Settlement runs inside a block, so payouts happen with nobody online.
 Gas still goes to the Mining Pool and is never counted as revenue.
 

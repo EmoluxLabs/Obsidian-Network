@@ -16,7 +16,7 @@ the data-directory lock, trusted domains) and the existing surfaces they depend 
 
 | # | Threat | Control | Evidence |
 |---|---|---|---|
-| T1 | A malicious peer or join source supplies its own gate or validator keys to a new node | `join` recomputes the genesis id from the peer's document and accepts it only if it equals an id the operator pinned out of band; the pin is mandatory (no trust on first use) | `tests/unit/network-manifest.test.ts` (wrong pin, swapped key, extra key, tampered list, wrong chain, wrong protocol, malformed keys, bad pin syntax); `tests/e2e/operations.test.mjs` (a live process serving different keys) |
+| T1 | A malicious peer or join source supplies its own gate keys to a new node | `join` recomputes the genesis id from the peer's document and accepts it only if it equals an id the operator pinned out of band; the pin is mandatory (no trust on first use) | `tests/unit/network-manifest.test.ts` (wrong pin, swapped key, extra key, tampered list, wrong chain, wrong protocol, malformed keys, bad pin syntax); `tests/e2e/operations.test.mjs` (a live process serving different keys) |
 | T2 | Two processes start on one data directory and corrupt the chain | the data-directory lock; stale-lock takeover was racy (finding 1) and is now serialised | `tests/unit/storage-safety.test.ts` (fails on the old code); live duplicate start in the e2e |
 | T3 | An operator starts a "mainnet" node with a different key list or the wrong directory and silently creates or joins another chain | `network.json` records the identity; start adopts it, refuses a conflict naming both sides, refuses another network's directory, refuses a manifest whose keys no longer derive its id; `--require-init` forbids creating a chain | unit + e2e as above |
 | T4 | A corrupt or hand-edited manifest is "fixed" by guessing | a corrupt manifest is a hard error and is never rewritten | unit + e2e |
@@ -61,9 +61,9 @@ the data-directory lock, trusted domains) and the existing surfaces they depend 
 | T23 | A planted or stale session cookie survives sign-in | fresh secret on every sign-in, the presented session is ended, only server-issued tokens are accepted | `server.test.ts` "planted session cookie" |
 | T24 | A release archive or manifest is swapped, or a release is signed by an unknown party | Ed25519 signature over SHA256SUMS + MANIFEST.json + version + commit; the verifier trusts only a fingerprint **it** pinned; integrity, version, tag, changelog and embedded-binary agreement checked | `release-tool.test.mjs` (12) |
 | T25 | A credential is committed | `scripts/scan-secrets.mjs` over every tracked file, current tree and (once, by hand) history; findings print rule and line only | `scan-secrets.test.mjs` |
-| T26 | A known-vulnerable dependency ships | `npm audit` on every package with a lockfile (0 vulnerabilities at 1.8.1); wallet-web and the extension have no dependencies | audit evidence in `docs/remediation-1.8.1.md` |
+| T26 | A known-vulnerable dependency ships | `npm audit` on every package with a lockfile (0 vulnerabilities when last run; re-run before a release); wallet-web and the extension have no dependencies | output of `npm audit` at release time |
 
-## Residual-risk register (1.8.1)
+## Residual-risk register (1.9.0)
 
 Severity is the authors' judgement. "Owner" is who has to act. Nothing here is closed by code in this repository.
 
@@ -74,12 +74,14 @@ Severity is the authors' judgement. "Owner" is who has to act. Nothing here is c
 | R3 | Every primary-capable host holds the gate keystore | Medium | Needed so any of them can lead | Operator: keep the set small, use a 3-of-5 gate set |
 | R4 | Majority of gate keys stolen or lost | High | By design: the chain cannot tell a thief from the owners | Operator: separate holders, tested backups (runbook) |
 | R5 | Consensus is reviewed only by its authors; no formal model; no hostile-network test | High | Needs independent reviewers | Commission an external review of `src/consensus` and `src/blockchain` |
-| R6 | Testnet's 3-validator committee has quorum 3: one offline validator halts finality | Medium | Parameter choice | Operator: run a 4th validator or accept it |
+| R6 | Finality needs at least three established producers and, for three, all three: with fewer, or with one offline, nothing new is called final | Medium | Parameter choice (`minProducers` 3, quorum 2/3+1) | Operator: run more nodes, or accept that a small network does not finalize |
+| R13 | Registration is free: a patient actor with many machines can capture a third of the producers (stalling finality) or more | High | No deposit by design (no VPS, no bond) | Rate limits and maturity only; see consensus-v1.9.0.md section 8 |
+| R14 | An unsigned node-wallet binding can be squatted by a stranger | Medium | Binding needs no wallet signature by design | The wallet owner reclaims it (node-binding-v1.9.0.md section 4) |
 | R7 | The vault header is not authenticated data (a locked page can be made to *display* another address) | Low | Needs a new vault version across four products | Future change, versioned and migrated |
 | R8 | Script on the wallet origin can read an unlocked wallet | Medium | Inherent to a browser wallet | Never add third-party script to the wallet origin; use a clean browser profile for large balances |
 | R9 | Domain takeover; wrong pinned genesis id; eclipse by hostile seeds | Medium | Trust roots outside the code | Operator: pin ids from two channels, use several independent seeds |
 | R10 | A crash inside the ~2 s session flush window can undo a login or a logout | Low | Performance trade-off | Accepted, documented |
 | R11 | Full-disk and torn-write behaviour, and real power loss, are untested | Medium | No filesystem fault injection | Operator: monitor disk, keep backups |
-| R12 | Reproducible builds are not demonstrated for every artifact (see remediation-1.8.1.md for what was compared) | Medium | Independent build environments were not available | Third party: rebuild with `reproduce-release.sh` on another machine |
+| R12 | Reproducible builds are not demonstrated for every artifact (no independent build comparison is recorded for this release) | Medium | Independent build environments were not available | Third party: rebuild with `reproduce-release.sh` on another machine |
 | R13 | AWS testnet nodes still run code without the 1.8.x fixes | Medium | Outside the repository and the sandbox | Operator: deploy the fixed build, restart Node 2 with mining disabled, without resetting data |
 | R14 | Desktop installers are not built or signed here | Medium | Per-platform build, signing identities | Operator: build and sign per platform |

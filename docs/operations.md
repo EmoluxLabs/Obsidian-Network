@@ -52,7 +52,7 @@ published announcement, a signed release note). That id is the root of trust (se
 
 What `init` guarantees, and what is tested (`tests/unit/network-manifest.test.ts`, `tests/e2e/operations.test.mjs`):
 
-* **Deterministic.** The genesis id is derived from the network definition, the bootstrap validator keys and the gate
+* **Deterministic.** The genesis id is derived from the network definition, the gate
   keys. The same inputs give the same id on any machine.
 * **Idempotent.** Run it again: it reports `existing`, writes nothing, does not regenerate the gate key, and exits 0.
 * **No replacement.** A different gate key list, a different network, or a directory with an unreadable manifest is
@@ -85,7 +85,7 @@ obsidian mainnet start --require-init --data-dir ~/obsidian-data/mainnet --seeds
 `join` fetches `/genesis` from the peer, **recomputes** the genesis id from the document the peer sent, and writes the
 manifest only if it equals the id you pinned. Consequences, all covered by tests:
 
-* A peer that serves a different gate key (or committee, chain id, network id, protocol version, an extra key, a
+* A peer that serves a different gate key (or chain id, network id, protocol version, an extra key, a
   tampered list, malformed keys) is refused, and nothing is written.
 * The pin is mandatory and must be 40 lowercase hex characters. There is no trust-on-first-use mode.
 * Only **public** keys are ever learned. No private key is requested, sent or accepted.
@@ -239,7 +239,7 @@ and `--require-init` turns a wrong or empty data directory into an error.
 | Item | Where | Why |
 |---|---|---|
 | Node data directory | `<data-dir>` (chain, `network.json`, finality checkpoint, peers) | Fast restore. Replaceable by re-syncing from peers against your pinned genesis id. |
-| Node identity keystore + passphrase | per `OBSIDIAN_KEYSTORE_*` | Your node's identity and, if you run a validator, your validator key. **Not replaceable.** |
+| Node identity keystore + passphrase | per `OBSIDIAN_KEYSTORE_*` | Your node's identity key (producer and reward-evidence identity). **Not replaceable.** It never leaves your machine. |
 | Gate keystores + passphrases | `<data-dir>/../gate-authority/*.keystore.json` | Not replaceable; one per holder. |
 | Interface account store | `interface-accounts.json` under the interface data dir | Accounts, wallet links, sessions. Back it up while the interface is stopped or from a consistent snapshot. |
 | Genesis id and the public key list | wherever you published them | The root of trust for any rebuild. |
@@ -247,9 +247,8 @@ and `--require-init` turns a wrong or empty data directory into an error.
 A user's wallet vault is in **their** browser, and their recovery phrase is theirs; the platform keeps neither
 (see [wallet-custody.md](wallet-custody.md)).
 
-**Upgrading in place (1.8.0 to 1.8.1).** The protocol, params hash and genesis ids do not change, so data directories,
-keystores and wallets carry over untouched: stop the node, replace the binaries, start it (`--require-init`), and check
-`obsidian status` and `/readyz`. See [upgrading-1.8.1.md](upgrading-1.8.1.md) for the checklist and how to roll back.
+**Moving to 1.9.0 is not an in-place upgrade.** The protocol, params hash and genesis ids change (a fresh start), so use a
+new data directory; keystores and wallets carry over untouched. See [upgrading-1.9.0.md](upgrading-1.9.0.md) for the checklist.
 
 **Not tested here:** a full disk and torn writes at the filesystem level (the code writes finality state and keystores
 by atomic replace and the tests simulate a crash between steps, but nobody has filled a disk or pulled a plug),

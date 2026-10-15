@@ -2,13 +2,13 @@
 
 Obsidian is a Proof of Time (PoT) blockchain with a fixed maximum supply of
 **21,000,000 OBS** and a state machine that carries application data — names,
-balances, mining claims, oracle prices, validator bonds and the node-runner
+balances, mining claims, oracle prices and the node-runner
 registry — as first-class chain state rather than as rows in a company database.
 
 * Chain id / network id: `7777` / `obsidian-mainnet-1` (plus testnet `7778`,
   staging `7779`, devnet `7780`)
 * Address prefix: `obs` (testnet `tobs`, staging `sobs`, devnet `dobs`)
-* Protocol version: `1.8.0`
+* Protocol version: `1.9.0`
 * Consensus: **Proof of Time (PoT)** — see [proof-of-time.md](proof-of-time.md)
 
 ## 1. Blocks
@@ -30,16 +30,14 @@ A block header commits to height, parent hash, timestamp, cumulative PoT
 Weight, transactions root, events root, state root, params hash, protocol
 version, producer and the producer's signature. There is no nonce field and no
 difficulty target in the header: the right to produce a block comes from the
-validator schedule and from protocol time having advanced, never from a
+producer schedule and from protocol time having advanced, never from a
 computational race (see [proof-of-time.md](proof-of-time.md)). A block whose header does not validate is discarded; a
 block whose **transactions** do not validate is rejected as a whole.
 
-The producer is selected by the deterministic PoT validator schedule. Ordinary
-reorgs are capped at 256 blocks and may never cross the locally verified
-finalized checkpoint. A valid greater-than-two-thirds equal-membership
-certificate can resolve a deeper partition after the target branch is fully
-validated. Finality votes use the active validator registry from the target's
-parent state; bond size does not add vote weight.
+The producer is selected by the deterministic PoT producer schedule over the registered nodes
+([consensus-v1.9.0.md](consensus-v1.9.0.md)). Ordinary reorgs are capped at 256 blocks and may never drop the finalized
+checkpoint. Finality is derived from the chain, with no votes: a block is final once enough distinct established producers
+have built on it ([finality-v1.9.0.md](finality-v1.9.0.md)).
 
 ## 2. Transactions
 
@@ -69,11 +67,10 @@ protocolVersion | chainId | sender | nonce | type | gas | body | validUntil | me
 | --- | --- |
 | `PAYMENT` | Transfer OBS; pays gas to the Mining Pool |
 | `MINING_CLAIM` | Claim the protocol mining reward |
-| `ONS` | Register, transfer, update or renew a `.obs` name (the protocol's only revenue source) |
+| `ONS` | Register, renew, offer and accept a transfer, update, or recover a `.obs` name (the protocol's only revenue source) |
 | `ORACLE` | Publish an OBS price observation from an independent source |
-| `VALIDATOR` | Register with exactly the 20,000 OBS bond, unbond, claim |
 | `TREASURY` | Spend from the treasury (treasury wallet only) |
-| `NODE_REGISTRY` | Node runner registration, heartbeats, attestations and fault reports |
+| `NODE_REGISTRY` | Node registration (node-key signed, reward wallet named), wallet change and reclaim, heartbeats, attestations, fault and equivocation reports |
 
 `decode*Body` functions live beside each executor in
 `obsidian-core/src/transactions/executors/<type>.ts`; they are what the indexer
@@ -83,7 +80,7 @@ uses to describe a transaction to the explorer.
 
 State is a Merkleised map: accounts (balance, nonce, flags), the mining pool,
 treasury, ONS records, the Node Runner Reward Pool and registry, oracle
-submissions and prices, and validator records.
+submissions and prices, and the finalized checkpoint.
 
 Every block commits to a **state root** and an **events root**. Nodes verify both
 after applying a block, so a node that computes a different result from the same
@@ -101,7 +98,7 @@ gas quotes without touching its committed state.
 ### Supply invariant
 
 ```
-Σ(balances) + mining pool + locked validator and node bonds = metrics.totalSupply
+Σ(balances) + mining pool + node reward pool = metrics.totalSupply
 metrics.totalSupply ≤ 21,000,000 OBS
 ```
 

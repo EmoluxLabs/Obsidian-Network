@@ -16,7 +16,6 @@ less than you might hope, which are called out explicitly rather than buried.
 | [mining.md](mining.md) | How OBS is issued, how a claim works, why your device clock is irrelevant |
 | [wallet.md](wallet.md) | Where keys live, what a backup actually is, what "non-custodial" costs you |
 | [security-model.md](security-model.md) | What is trusted, what is not, and the honest limitations |
-| [remediation-1.6.1.md](remediation-1.6.1.md) | The 1.6.0 → 1.6.1 consensus and slashing remediation (superseded by 1.7.0, kept as the record of those fixes): what changed, what was verified, and what remains open |
 | [faq.md](faq.md) | The questions people ask first, answered without marketing |
 | [removal-report.md](removal-report.md) | The mechanisms that were removed, and how to verify their absence yourself |
 
@@ -41,9 +40,11 @@ less than you might hope, which are called out explicitly rather than buried.
 | [web-separation.md](web-separation.md) | The main platform, the Web App and the Wallet web app as three services on three ports (8789 / 8790 / 8791) behind three nginx vhosts: install, port check, verification, rollback |
 | [numeric-display.md](numeric-display.md) | How amounts, counts and long addresses or ids are shown on every interface: the one formatter, the shortening policy, copy and accessibility rules, and the layout rules that keep long values inside their card |
 | [trusted-domains.md](trusted-domains.md) | Which browser origins a node or interface answers: the project's own domain by default, how to add yours (exact origins and wildcards), what is refused |
-| [upgrading-1.8.0.md](upgrading-1.8.0.md) | Moving from 1.7.0 to 1.8.0: a new chain, what operators do, what does not migrate |
-| [upgrading-1.8.1.md](upgrading-1.8.1.md) | Moving from 1.8.0 to 1.8.1: a software release with no protocol change, what operators do, how to roll back |
-| [remediation-1.8.1.md](remediation-1.8.1.md) | The 1.8.1 security remediation: every finding, its fix, its test, what was verified, what is partial, what is blocked on someone else |
+| [upgrading-1.9.0.md](upgrading-1.9.0.md) | Moving to 1.9.0: a fresh start with no migration, what changed for each reader, a fresh devnet step by step, how to check that nodes agree |
+| [consensus-v1.9.0.md](consensus-v1.9.0.md) | The consensus specification: slots, producer schedule, eligibility, timestamps, skipped slots, duplicate blocks, fork choice, equivocation, recovery, Sybil limits, and what the tests establish |
+| [finality-v1.9.0.md](finality-v1.9.0.md) | Producer-diversity checkpoint finality: the rule, the state, restart and partitions, and exactly what it does not guarantee |
+| [node-binding-v1.9.0.md](node-binding-v1.9.0.md) | Binding a node to a reward wallet with no gas and no signature: uniqueness, atomicity, change and reclaim, and why squatting is possible |
+| [node-rewards-v1.9.0.md](node-rewards-v1.9.0.md) | The 90 % reward formula: pool source, periods, uptime evidence, weights, rounding, caps, remainder and safeguards |
 | [consensus-assumptions.md](consensus-assumptions.md) | What consensus and finality assume, what the tests establish and where safety cannot be justified (no independent verification is claimed) |
 | [gate-recovery-runbook.md](gate-recovery-runbook.md) | Gate key theft, loss, lost majority, lost node, lost platform host: the steps |
 | [wallet-custody.md](wallet-custody.md) | Who holds wallet keys, the vault format, what was reviewed and what was not |

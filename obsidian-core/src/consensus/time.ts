@@ -13,7 +13,7 @@
  *
  * WHAT IS STILL CRYPTOGRAPHIC
  *   SHA-256 (block ids, Merkle roots and state roots), secp256k1 ECDSA
- *   (signatures, node identity and reward-wallet proof of ownership), PBKDF2 and
+ *   (signatures, and node identity), PBKDF2 and
  *   AES-GCM (the browser vault). Hashing and signing are transport and
  *   integrity tools here. They are not the consensus competition, and their
  *   speed buys nobody authority — which is exactly what separates PoT from PoW.

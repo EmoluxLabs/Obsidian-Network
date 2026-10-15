@@ -62,34 +62,16 @@ exchange rate.
 | Gas on any value-bearing transaction | min(0.02% of the amount, 0.01 OBS) | Mining Pool |
 | `.obs` name registration | 0.05 OBS | ONS revenue, split 90/10 |
 | `.obs` name renewal | 0.05 OBS | ONS revenue, split 90/10 |
-| Validator bond | exactly 20,000 OBS (returned in full at unbonding) | locked, not spent |
-| Node runner registration | nothing | no transfer exists |
+| Node registration and wallet binding | nothing | no transfer exists: no gas, no bond, no deposit |
+| `.obs` name transfer, acceptance, recovery | nothing | no value moves; no fee |
 
-Gas is **never** ONS revenue: it goes to the Mining Pool. The validator bond is
-not revenue either — it stays attributable to its owner and is returned in full,
-so the supply invariant counts it as locked value rather than income.
+Gas is **never** ONS revenue: it goes to the Mining Pool.
 
-### The equivocation penalty
+### Penalties: nothing is confiscated
 
-A validator that is proven, with signatures every node can check, to have signed
-two conflicting block proposals for one height and round, or two conflicting
-finality votes for one anchor, forfeits **half its bond** —
-`consensus.equivocationSlashBps = 5000` applied to the validator's own recorded
-bond, which is 10,000 of the 20,000 OBS. The penalty is not a number in the
-code: it is a consensus parameter applied to a bond, so `slashed + remaining`
-always equals the bond exactly, in integers, with nothing rounded and nothing
-created.
-
-The slashed seals are credited to the **Mining Pool** in the same state
-transition. They are not revenue, they are not burned, they do not go to the
-treasury (its share of a slash is exactly zero) and they do not go to the
-submitter — total supply is unchanged by a slash, to the seal. The remaining
-half stays the validator's own money and is claimable after the ordinary
-unbonding delay.
-
-Being offline is **not** slashable. Missing a slot, failing to vote, restarting
-or losing the network costs a validator its turns (the missed-slot jail), never
-its capital.
+Protocol 1.9.0 has **no bond and no slashing of funds** — validators, bonds and slashing were removed. A producer proven, with
+two signatures every node can check, to have signed two different blocks on one parent is **banned permanently** and its
+reward wallet is released; no OBS moves. Being offline costs turns and reward weight (suspension, lower uptime), never capital.
 
 Other enforceable limits: maximum 16 KiB per signed transaction, 256-byte memo,
 64 out-events per transaction, 240-block expiry window, and a minimum transfer of
@@ -121,8 +103,7 @@ lost — it lands in the treasury — and the split is checked by
 `assertSplitInvariant` on every credit.
 
 Nothing else enters this pool: gas funds the Mining Pool, issuance follows the
-mining schedule, the genesis allocation is a one-time grant, and bonds are
-returned to their owners. `GET /revenue` publishes the classification.
+mining schedule, and the genesis allocation is a one-time grant. `GET /revenue` publishes the classification.
 
 Before the genesis allocation designates a treasury wallet, its 10% is recorded
 as `UNCLAIMED_REVENUE`: it is held as an explicit protocol obligation in the
@@ -149,8 +130,7 @@ Two things commonly mistaken for a missing payment:
 
 ### What is not ONS revenue
 
-User-to-user transfers, mining rewards, gas, validator bonds, node runner bonds,
-escrowed balances and treasury spending. The list is enumerated in
+User-to-user transfers, mining rewards, gas, escrowed balances and treasury spending. The list is enumerated in
 `NOT_ONS_REVENUE` and asserted by tests, so a misclassification is a failing
 build rather than a slow leak.
 
@@ -161,17 +141,17 @@ the one-time allocation. No administrator can change it, no key the project
 holds can spend it, and the only outflow the protocol performs from it is a
 `TREASURY GRANT` signed by that wallet, paid out of revenue it was credited.
 Once the winning claim is sufficiently buried, operators treat the treasury as
-fixed policy, and native finality (see [consensus.md](consensus.md)) makes the
-allocation final rather than merely deep.
+fixed policy, and derived finality (see [finality-v1.9.0.md](finality-v1.9.0.md)) makes the
+allocation final once enough producers exist, rather than merely deep.
 
 ---
 
 ## 4. Node runner rewards
 
-90% of ONS revenue funds the node runner pool, settled once per
-closed reward period (24 hours of protocol time). A node's share is computed by
-every node from chain data — registration, heartbeats, peer attestations,
-produced blocks — and **no operator ever reports a number**:
+90% of ONS revenue funds the node runner pool, settled once per closed reward period (24 hours of protocol time). A node's
+share is computed by every node from chain data — registration, heartbeats, peer attestations, produced blocks — and **no
+operator ever reports a number**. The formula and safeguards are specified in
+[node-rewards-v1.9.0.md](node-rewards-v1.9.0.md); the numbers:
 
 | Gate or weight | Value |
 | --- | --- |
@@ -180,27 +160,24 @@ produced blocks — and **no operator ever reports a number**:
 | Uptime / participation / reliability / responsiveness | 40% / 25% / 20% / 15% |
 | Within participation: blocks / peer coverage | 60% / 40% |
 | Attestations required (when peers exist) | `min(2, n − 1)` distinct attesters |
-| Its own uptime contribution when it has no peers | 50% (bootstrap) |
-| Maximum one node may take from a period's pool | 5% |
-| Heartbeats accepted per node per period | 1 |
+| Its own uptime contribution when it has no peers | capped at 50% (bootstrap) |
+| Maximum one node may take from a period's pool | 5% (more when fewer than 20 nodes share it, so the pool is always paid) |
+| Heartbeats accepted per node | 1 per hourly uptime window, 24 per period |
 | Fault reports per reporter per period | 8, each corroborated report costing 20% of score |
-| Evidence kept | 3 periods; reward-wallet changes take effect after 1 period |
-| Minimum time between registration and earning | 1 block |
+| Minimum single payout | 1e-6 OBS; smaller amounts stay in the pool and carry over |
+| Evidence kept | 3 periods; a reward-wallet change takes effect after 2 periods, a reclaim after 1 |
+| Registered mid-period | not scored until the next period |
 
-A node that misses its slots is jailed by consensus (see
-[consensus.md](consensus.md) §4) and earns nothing for the periods it was
-offline. The detailed mechanism, including how attestations are corroborated
-and how payouts are settled exactly once per period, is in
-[node-runner-rewards.md](node-runner-rewards.md).
+A node that is offline earns nothing for the periods it was offline; one that misses three turns in a row is suspended from
+the schedule for a while (see [consensus-v1.9.0.md](consensus-v1.9.0.md) section 4). The detailed mechanism is in
+[node-rewards-v1.9.0.md](node-rewards-v1.9.0.md) and [node-runner-rewards.md](node-runner-rewards.md).
 
 ---
 
 ## 5. Supply invariant
 
-Locked value counts toward supply while it is locked: validator bonds and node
-registration bonds are recorded by the supply invariant even though they are not
-spendable. The invariants every node checks
-are:
+Nothing is locked in 1.9.0 (there are no bonds), so supply is the sum of balances, the Mining Pool and the node
+reward pool. The invariants every node checks are:
 
 - total issued never exceeds **21,000,000 OBS**;
 - total supply equals the sum of all category balances — nothing is created or

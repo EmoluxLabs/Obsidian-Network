@@ -24,24 +24,48 @@ Until 1.2.0 this fee was a dollar amount converted at an oracle median, and an
 empty feed closed registration. That is gone: a dead feed can no longer close a
 feature it does not price.
 
-## 2. Transferring
+## 2. Ownership: transfer, acceptance, linked-wallet edit and recovery (1.9.0)
 
-A transfer is one signed transaction:
+A name never changes hands because its owner said so. Every ownership operation is a signed ONS transaction, applied in
+consensus state, atomic, replay-safe (nonce and expiry like every transaction) and **gas-free** (no value moves); each needs an
+**unexpired** name. Pricing, term and grace are unchanged ([§1](#1-registering)).
 
-```bash
-# via any interface: ONS → transfer, or directly
-curl -s -X POST http://127.0.0.1:8630/tx/submit -d '{"tx":"<signed hex>"}'
-```
+| Operation | Who signs | Effect |
+| --- | --- | --- |
+| `TRANSFER` (offer) | the current owner | Offers the name to one recipient (`to`, a lowercase address). Nothing changes yet. One open offer at a time; it lapses after `transferOfferSeconds` (7 days). |
+| `ACCEPT_TRANSFER` | the offered recipient | Atomically moves `owner`, the resolved `address`, the transfer count **and the remaining term** to the recipient. Any other sender is refused. |
+| `CANCEL_TRANSFER` | the owner | Withdraws an open offer. |
+| `UPDATE_ADDRESS` | the owner (the "linked wallet" edit) | Changes only the address the name resolves to. It touches nothing else and is **independent of any node reward wallet**. |
+| `RENEW` | the current owner | Extends the term. After a transfer, **the new owner pays all future renewals**; the old owner can no longer renew. |
+| `SET_RECOVERY` | the owner | Names a **recovery address** (empty clears it). Refused while a recovery is in flight. |
+| `START_RECOVERY` | the recovery address | Proposes a new owner address; takes effect only after `recoveryDelaySeconds` (7 days). |
+| `CANCEL_RECOVERY` | the owner | Stops a recovery in flight. |
+| `FINALIZE_RECOVERY` | the recovery address or the new owner | After the delay, if the owner has not cancelled, ownership moves. |
 
 Rules the protocol enforces:
 
-* only the current owner may transfer (`ERR_UNAUTHORIZED` otherwise);
-* the record's `owner` and `address` both move to the recipient — a transfer that
-  updated only one of them would leave the name pointing at an address the
-  recipient does not control (`ons.test` in the core suite asserts both);
-* transfers cost no ONS fee, only the standard payment gas on any value attached;
-* a name cannot be in two places: the mapping is a single state entry, and the
-  state root commits to it.
+* only the current owner may offer, cancel, renew, edit or set a recovery address (`ERR_UNAUTHORIZED` otherwise); only the
+  named recipient may accept;
+* a transfer to a mistyped address costs nothing: it is an offer nobody accepts, and it lapses;
+* **any ownership change wipes the previous owner's open offer, pending recovery and recovery address**, so a new owner never
+  inherits the previous owner's recovery path;
+* the recipient, recovery address and new owner address must be canonical lowercase; the `UPDATE_ADDRESS` pointer stays as
+  permissive as payments are;
+* a name cannot be in two places: the mapping is a single state entry and the state root commits to it.
+
+`GET /names/<name>` additionally shows `transferCount`, `pendingTransfer {to, offeredAt, offerExpiresAt}`, `recoveryAddress`
+and `pendingRecovery {by, newAddress, startedAt, effectiveAt}` when they exist.
+
+### What recovery cannot do — stated plainly
+
+* The recovery address is a **credential-based, delayed and cancellable** path, not a back door. It cannot transfer, renew or
+  edit; it can only start a recovery that the owner can cancel for seven days.
+* **If the owner key is stolen, the thief is the owner:** they can cancel a recovery, clear the recovery address and keep the
+  name. Recovery protects against *loss*, not against *theft of the owner key*.
+* **If the owner key is lost and no recovery address was set (or its key is lost too), the name cannot be recovered by
+  anyone.** There is no administrator and no override.
+* `RENEW` needs an unexpired name; a name that has lapsed past grace is registrable by anyone and cannot be recovered.
+* The 10 % treasury share of every fee goes to the treasury wallet, as before.
 
 ## 3. Resolution
 
@@ -68,13 +92,13 @@ implement search without an index of its own.
 A name expires at `registeredAt + term + grace`. Past that point the mapping is
 no longer valid and the name becomes registrable again; the node's response
 reflects the height at which validity ended. Renewal is a normal ONS transaction
-signed by the current owner.
+signed by the **current** owner: after a transfer the new owner is the one who renews.
 
 ## 5. Updating the target address
 
 An owner may point a name at a different address they control without transferring
 ownership (`ONS → UPDATE_ADDRESS`). This is how a name becomes a stable identity
-while the underlying wallet rotates. Only the owner can do it, and the change is
+while the underlying wallet rotates. Only the owner can do it (a recovery address cannot), and the change is
 a normal chain transaction—visible and timestamped, with the same reorg risk and advisory confirmation depths as every other transaction.
 
 ## 6. Paying a name

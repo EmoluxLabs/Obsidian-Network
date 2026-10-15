@@ -12,10 +12,10 @@ before it has users than after.
 |---|---|
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
-| Genesis id | `3722ae03f8e74d1ebd5f0dc70addc5122d7d7c70` |
-| Genesis hash | `e7f470233adc821ac55820b8749455e35f766e6691d760f0ff8a027e2513aeac` |
-| Protocol version | `1.8.0` |
-| Params hash | `1d6cba55f0975f8b0d6345658f1c1cb1` — published at `/params`; must be identical on every node |
+| Genesis id | `a8f3020df9b83e9929a3c0ac14fc9ceff9a28fa0` |
+| Genesis hash | `24d078ca7c14056a796909a6d1572bcfcc36971bec720045a274b23c31802f93` |
+| Protocol version | `1.9.0` |
+| Params hash | `97aed9670c701b4bd4f64271413e05a6` — published at `/params`; must be identical on every node |
 | Default RPC port | 8630 |
 | Default p2p port | 8631 |
 | Address prefix | `obs1` |
@@ -33,10 +33,10 @@ derived deterministically from the genesis document and the consensus
 parameters; if they differ, the two machines are not running the same protocol
 and must not be peered.
 
-**Protocol 1.8.0 activation is genesis-bound.** It rejects 1.6.x and older peers and data
+**Protocol 1.9.0 activation is genesis-bound.** It rejects 1.8.x and older peers and data
 directories; there is no rolling upgrade or automatic state migration. Use this
 runbook only for an unstarted network. If a value-bearing older mainnet exists,
-stop: a separately reviewed migration design is required before 1.8.0 is used.
+stop: a separately reviewed migration design is required before 1.9.0 is used.
 
 **Before genesis you must create the mining gate key.** Mining claims are valid only with a certificate signed by an
 issuer key committed in genesis (see [mining.md](mining.md)). No mainnet key is committed in this repository, and a
@@ -87,10 +87,10 @@ Never launch from a working copy. Launch from a signed release archive.
 sha256sum -c SHA256SUMS
 
 # the artifact you will actually run
-../scripts/verify-release.sh obsidian-node-operator-1.8.2.tar.gz
+../scripts/verify-release.sh obsidian-node-operator-1.9.0.tar.gz
 
 # the same code with its test suite attached, which the operator package omits
-../scripts/verify-release.sh obsidian-core-1.8.2.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-1.9.0.tar.gz --with-tests
 ```
 
 Expected: every archive reports `OK`, and the verifier prints the package
@@ -109,11 +109,11 @@ who produced them, because anyone who can edit the archive can edit
 `SHA256SUMS` beside it. The signed path is:
 
 ```bash
-../scripts/verify-release.sh obsidian-node-operator-1.8.2.tar.gz --signature-only
+../scripts/verify-release.sh obsidian-node-operator-1.9.0.tar.gz --signature-only
 ```
 
 That checks the detached signature against the publisher key in
-`keys/release-key.pub` and stops there. **The 1.8.0 archives in this repository
+`keys/release-key.pub` and stops there. **The 1.9.0 archives in this repository
 are unsigned**: no publisher key exists in the workspace that built them, so the
 command above reports that there is no signature to check rather than a success.
 Do not announce a launch on unsigned archives — generate the publisher key
@@ -133,44 +133,26 @@ are better still.
 For each bootstrap node record: operator, hostname, region, provider, RPC URL
 (if public), and p2p `host:port`.
 
-### 1.2b The finality bootstrap committee
+### 1.2b Producers and finality at launch
 
-Finality does not self-assemble from whatever nodes happen to be online. v1.6
-commits a **public bootstrap committee** into the genesis document, and those
-keys are hashed into the genesis id — so every node that joins mainnet computes
-the same id only because it carries the same four keys. The published set, the
-arithmetic behind its size and the quorum are in
-[consensus.md §2](consensus.md) and `obsidian-core/src/genesis/bootstrap-keys.ts`.
+There is **no validator committee, no bond and no vote** in 1.9.0 (see [consensus-v1.9.0.md](consensus-v1.9.0.md)), and
+nothing about producers is committed in the genesis document or hashed into the genesis id: every node derives the same id
+from the network definition and the gate keys. A fresh chain starts with nobody registered, so the first node alone may
+produce until the first registration lands (the `OPEN` state); from then on only registered nodes produce.
 
-What an operator of a committed key must do, in order:
+What an operator of a bootstrap node does, in order:
 
-1. derive the address of their committed key (bech32 `obs1…`, from the compressed
-   public key) and **own that address** — the protocol accepts a validator
-   registration only from the account its key controls
-   (`ERR_UNAUTHORIZED` otherwise);
-2. receive exactly **20,000 OBS** (a plain payment; the claimer of the genesis
-   allocation funds the other three operators);
-3. send `VALIDATOR REGISTER` with `bond = 20,000 OBS` and `validatorKey =` the
-   committed key. A different amount is refused with
-   `ERR_VALIDATOR_BOND_MISMATCH`; the fee is 0.01 OBS of gas, so each operator
-   needs 20,000.01 OBS in total;
-4. keep the node online. Once all four are `ACTIVE` and have been for the 64-block
-   stability window, any three of the four can finalize the first checkpoint —
-   one operator may be offline, which is the point of a quorum of three.
+1. `init` (first node) or `join` with the pinned genesis id (every other node);
+2. bind a reward wallet by address: `obsidian register <obs1… address>` (no gas, no signature, **never a private key**);
+3. start the node with block production on. It registers itself with its own identity key and heartbeats on its own;
+4. keep it online. A new node becomes schedulable after **64 blocks**.
 
-**Why four and not five.** The genesis allocation is exactly 100,000 OBS and the
-bond is exactly 20,000 OBS, so the arithmetic — not a preference — sets the
-ceiling: `5 × (20,000 + 0.01) = 100,000.05 > 100,000`, while
-`4 × (20,000 + 0.01) = 80,000.04 ≤ 100,000`. A fifth validator is welcome after
-the first checkpoint: once finality has bootstrapped, every `ACTIVE`,
-exactly-bonded validator is a finality validator, so a later operator joins by
-registering normally as soon as the network has mined enough to fund another bond.
-
-**If fewer than three committed keys are ever registered**, mainnet still
-produces blocks and serves every API — Proof of Time does not depend on finality
-— but checkpoints do not advance. `/finality` and `/status` say so
-(`bootstrapConfigured: true`, `validatorCount` below quorum), and nothing
-pretends otherwise.
+**Finality needs at least three established producers.** With fewer, mainnet still produces blocks and serves every API —
+Proof of Time does not depend on finality — but `/finality` says `available: false` with the reason, and nothing is called
+final. With three or more, a block becomes final once two thirds (for three, all three) of the established producers have
+built on it ([finality-v1.9.0.md](finality-v1.9.0.md)). Plan **at least three independent operators, ideally more**, and
+confirm with `scripts/verify-agreement.mjs` that they agree ([upgrading-1.9.0.md](upgrading-1.9.0.md)). Admission is
+not priced, so more independent operators matter more here than they would under a bond.
 
 ### 1.3 Provision each node
 
@@ -251,7 +233,7 @@ Expect, in the log:
 
 ```
 chain ready   network=mainnet chainId=7777 height=0
-              genesisId=3722ae03f8e74d1ebd5f0dc70addc5122d7d7c70
+              genesisId=a8f3020df9b83e9929a3c0ac14fc9ceff9a28fa0
 obsidian core ready   maxSupplyObs=21000000000000000000000000
 ```
 

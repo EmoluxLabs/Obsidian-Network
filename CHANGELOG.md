@@ -6,510 +6,75 @@ specific to a blockchain: **any release that changes the params hash is
 consensus-breaking and every node must upgrade together.** Such releases say so
 in their first line.
 
-The authoritative params hash for a release is whatever `GET /params` reports on
-a node running it. For 1.8.0, 1.8.1 and 1.8.2 that is `1d6cba55f0975f8b0d6345658f1c1cb1` (1.7.0 was `bffeacb35532ba3df70cda8c27ed6c96`).
+This repository is a **fresh start**: it carries one release, one protocol line and one chain. The history of earlier
+lines (their changelog entries, upgrade notes, remediation reports and archives) is in the git history of this repository
+and is deliberately not repeated here, so that nothing in the tree can be mistaken for the build you are running.
+
+The authoritative params hash for a release is whatever `GET /params` reports on a node running it. For this release it is
+`97aed9670c701b4bd4f64271413e05a6` on every network.
 
 ---
 
-## [Unreleased]
+## [1.9.0]
 
-Deployment and display only; **no protocol, consensus, genesis or data change**, and no node restart is needed to ship it (the web processes are rebuilt and restarted).
+**Consensus-breaking fresh start: a new protocol, a new genesis for every network, no migration.** Chain state, balances,
+validators, bonds, finality checkpoints, node registries and names of any earlier line do not carry over, and an earlier node
+cannot join (the handshake carries the protocol version, genesis id and params hash). See
+[docs/upgrading-1.9.0.md](docs/upgrading-1.9.0.md).
 
-### Changed
-- **Token amounts show at most 6 decimals, rounded to nearest** (`99999.820626666666666664` reads `99,999.820627`,
-  `0.000166666666666666` reads `0.000167`, `12.340000` reads `12.34`). This replaces the earlier
-  show-every-digit rule. Ties round away from zero in exact integer arithmetic; a real amount below the shown precision
-  reads `<0.000001`, never `0`. The exact 18-digit value is kept in a tooltip, and is the display wherever a person
-  authorises an exact movement (send form, fee, review, transaction detail). Raw amounts in calculations, payloads, API
-  responses and storage are unchanged.
-- The interface's `/api/auth/config` also returns `chainId` (additive), so the pages can refuse figures from a node on
-  another chain.
-
-### Fixed
-- **Paying a `.obs` name.** Typing a registered name such as `obsidian.obs` as the recipient was refused as an invalid
-  OBS address (Wallet Web rejected `.obs` outright; the platform, the Web App and the extension passed the text into the
-  payment, where the node's address check refuses it; the desktop app's address check refused it). Every interface that
-  sends now resolves the name from the node's own ONS record (`GET /names/<name>`) with one shared resolver
-  (`obsidian-core/src/protocol/recipient.ts`), shows the name, the whole resolved address, the network and the status,
-  asks for confirmation, resolves again immediately before signing, and signs a payment to the resolved address. The
-  name must meet the ONS naming rules, the node must be on this app's chain, the record must be for that name and not
-  expired, and the address must pass the native-address validator for this network. Not found, lookup failure,
-  malformed answer, wrong network, expired name and invalid address each have their own message; nothing is guessed and
-  nothing is sent on failure. The platform's `operations.send` also refuses a name outright. The Web App's unused,
-  weaker `resolveRecipient` was removed, and its QR note no longer claims "the node resolves it when you send". No
-  protocol, consensus, node RPC, transaction-format or signing change.
-- **Mining Pool.** The explorer's Mining Pool row is now decided by one function that shows the node's own
-  `poolBalanceObs`, a genuine `0 OBS` with the reason, or an em dash and the reason when the figure is missing,
-  malformed, from a node whose supply check fails, or from a node on another chain. It is never computed from supply or
-  mined supply, and a claim with no reward in the node's answer is no longer shown as `0`. The pool is a recycling pool
-  (fees in, paid to the next claim first), so `0` is a normal reading; a new end-to-end core test pins that accounting.
-- **Amounts on screen.** The platform's page formatter floored every amount to 8 decimal places, so a real amount below
-  0.00000001 OBS (down to a single seal) was shown as `0`, and the 0.000166666666666666 OBS claim reward as `0.00016666`;
-  the Web App printed some node values raw (`0.050000000000000000 OBS`, `21000000.000000000000000000 OBS`) and others
-  through a six-place formatter; the wallet printed ungrouped digits. All of them now go through one formatter
-  (`obsidian-core/src/protocol/display.ts`, mirrored in `obsidian-app-web/public/data.mjs`): at most 6 decimals, trailing
-  zeros removed, thousands grouped, zero is `0 OBS`, one seal is `<0.000001 OBS`, nothing is scientific notation, and a
-  missing value is an em dash rather than zero. ONS fee `0.05 OBS`, supply cap `21,000,000 OBS`, genesis allocation
-  `100,000 OBS`. The platform's mining-schedule table used floating-point arithmetic and now uses the protocol's own
-  integer schedule.
-- **Long values overflowing on phones.** Flex and grid children could not shrink below one unbroken address or hash, and
-  the page hid the overflow instead of fixing it. Values now wrap inside their card, and the big balance steps its size
-  down only for long text without dropping a digit.
-- A fragment of the private key was shown in a toast when it was copied; the toast no longer shows any of it.
+### Removed
+- **The validator model, entirely**: the validator registration transaction (type 8) and the slashing transaction (type 12),
+  the 20,000 OBS bond, unbonding, jailing and slashing of funds, validator-only proposer selection, finality votes and
+  certificates, the committed bootstrap committee and `obsidian-core/bootstrap-keys/`, the "No Validator" halt, the
+  validator-mode and bootstrap locks, `OBSIDIAN_BOOTSTRAP_VALIDATOR_PUBLIC_KEYS`, the `/validators` route and every staking
+  screen. There is no compatibility switch.
+- The earlier release archives, release notes and dated reports, and the upgrade and remediation documents of earlier lines.
 
 ### Added
-- One address and identifier policy for every interface: `obs1ijdn...slvgsi` (first 8, last 6) on narrow screens and a
-  longer form on wide ones, the whole value on tap, a Copy button that copies the original, a tooltip and a screen-reader
-  label with the full value. The same for transaction ids, block ids and other long ids. Display only: stored,
-  transmitted, validated, signed and copied values are never touched. See `docs/numeric-display.md`.
-- Tests: `obsidian-core/tests/unit/display.test.ts`, shared vectors `tests/vectors/display.json` run by the core, the
-  platform, the Web App and the wallet, and source guards that fail on hand-formatted amounts or hand-shortened ids.
-- `deployment/web-separation/` and `docs/web-separation.md`: the main platform (`obsmainnet.us.ci`, 8789), the Web App
-  (`app.obsmainnet.us.ci`, 8790) and the Wallet web app (`wallet.obsmainnet.us.ci`, 8791) as three services behind three
-  nginx vhosts, each with its own `server_name`, certificate and upstream. Port check, local and public verification,
-  an installer that backs up first, refuses when an old vhost still claims a name and restores itself if `nginx -t`
-  fails, and a rollback.
+- **Producer schedule** (`consensus/schedule.ts`, `producers.ts`): every registered, mature, live, unsuspended node takes a
+  turn, chosen deterministically from chain state; skipped slots pass the turn on; three misses suspend a node; two blocks on
+  one parent ban it permanently. No vote, administrator or central scheduler. Specification:
+  [docs/consensus-v1.9.0.md](docs/consensus-v1.9.0.md).
+- **Derived checkpoint finality** (`consensus/finality.ts`): final once two thirds of at least three established producers have
+  built on a block; committed in the state root; monotonic; restart-safe. It is checkpoint (economic) finality, not BFT:
+  [docs/finality-v1.9.0.md](docs/finality-v1.9.0.md). New routes `GET /producers`; `GET /finality` reports the derived model.
+- **Node ↔ reward-wallet binding with no gas and no wallet signature**, stored in consensus state, one node per wallet, atomic
+  and concurrency-safe, with delayed wallet change and owner reclaim: [docs/node-binding-v1.9.0.md](docs/node-binding-v1.9.0.md).
+  CLI: `obsidian register <address>`, `obsidian binding`. The node agent registers, heartbeats, attests and reports
+  equivocation with the node's own key.
+- **Node rewards**: 90 % of the ONS revenue pool split by eligible weight, hourly uptime windows from chain-recorded evidence,
+  exact largest-remainder rounding, per-node cap, minimum payout and carried remainder, settled exactly once per period:
+  [docs/node-rewards-v1.9.0.md](docs/node-rewards-v1.9.0.md).
+- **ONS ownership**: transfer by offer and explicit acceptance (the remaining term travels, the new owner renews), cancel,
+  linked-address update, and delayed, cancellable recovery by a recovery address. `GET /names/<name>` shows pending offers and
+  recoveries: [docs/ons.md](docs/ons.md).
+- **Wallet**: creation shows the recovery phrase and the private key and requires confirmation that both were written down; a
+  separate private-key recovery flow validates locally (64 hexadecimal characters, no echo of the input), shows the derived
+  address for confirmation, and creates nothing on invalid input. Platform wallet, web app, web wallet and desktop wallet:
+  [docs/wallet.md](docs/wallet.md).
+- `scripts/verify-agreement.mjs`: a read-only check that several nodes agree on genesis, parameters, block, state root and
+  finality.
+- Explorer, extension and desktop show the producer set, finality and node participation instead of validators.
 
 ### Changed
-- The Web App server (and so the Wallet web app, which runs it) binds `127.0.0.1` by default instead of `0.0.0.0`, so an
-  internal port is never public unless `APP_HOST` says so. Containers that relied on the old default set
-  `APP_HOST=0.0.0.0`.
-
----
-
-## [1.8.2] — 2026-10-12
-
-Software release; **protocol still 1.8.0**, no genesis change, `MIN_CORE_VERSION` 1.8.0 (a 1.8.2 node peers with 1.8.0 and 1.8.1 nodes).
-**Use 1.8.2 rather than 1.8.1.**
+- Protocol and core version `1.9.0`; minimum peer core version `1.9.0`; state snapshot format 6. Every genesis id and the params
+  hash change.
+- **Unchanged on purpose:** the mining gate keys and mechanism (`genesis/gate-keys.ts` is byte-identical), the supply constants and
+  genesis-allocation rule, fees, ONS prices and periods, transaction formats, network ids and address prefixes.
+- **Token amounts show at most 6 decimals, rounded to nearest** (`99999.820626666666666664` reads `99,999.820627`); a real amount
+  below the shown precision reads `<0.000001`, never `0`. The exact 18-digit value is kept in a tooltip and wherever a person
+  authorises an exact movement. Raw amounts in calculations, payloads, API responses and storage are unchanged.
+- The interface's `/api/auth/config` also returns `chainId` (additive).
 
 ### Fixed
-- **Data-directory lock: a second takeover race.** When two or more processes started at once on a data directory holding a
-  stale `LOCK`, one could delete the lock another process had just created, and both then ran on the same chain directory
-  (2 of 40 trials with 16 simultaneous starters under CPU load; found because the unit test failed once in CI on the 1.8.1
-  commit). The takeover now re-checks, once it holds the guard, that the lock still exists and is not a half-written file;
-  0 of 80 trials failed after the fix. Regression: the multi-process test in `tests/unit/storage-safety.test.ts` now runs
-  more trials with more starters. Present since the lock was introduced; unrelated to 1.8.1's other changes.
+- **Paying a `.obs` name.** Typing a registered name as the recipient was refused as an invalid OBS address in some
+  interfaces. Every sender now resolves the name through one resolver, shows the whole resolved address and network for
+  confirmation, re-resolves just before signing, and never guesses when the lookup fails. No consensus change.
 
-## [1.8.1] — 2026-10-12
-
-**Remediation release. No consensus change:** the protocol is still `1.8.0`, the params hash is still
-`1d6cba55f0975f8b0d6345658f1c1cb1`, every genesis id is unchanged, `MIN_CORE_VERSION` stays `1.8.0`, and 1.8.0 and 1.8.1
-nodes peer with each other. Data directories, keystores and wallets carry over unchanged ([upgrading-1.8.1.md](docs/upgrading-1.8.1.md)).
-Per-finding detail, evidence and residual risk: [docs/remediation-1.8.1.md](docs/remediation-1.8.1.md).
-
-### Interface: automatic primary failover (new)
-- Several primary-capable interface hosts can share one account store and elect exactly one leader through a lease with a
-  fencing token (`OBSIDIAN_INTERFACE_LEASE_DIR`, `..._LEASE_TTL_MS`, `..._MAX_CLOCK_SKEW_MS`, `..._ADVERTISE_URL`,
-  `..._PRIMARY_URLS`). A deposed leader cannot write the store or issue a gate certificate; a standby answers 503
-  `ERR_NOT_LEADER`; `/api/ready` reports the leader. Sessions survive a failover (about a 2 s flush window).
-  **Not safe on NFS**; use a local disk or build an etcd/Postgres elector. Without the variables nothing changes.
-
-### Gate authority governance
-- `init --generate-gate-key` on **mainnet refuses fewer than 3 gate keys** unless `--allow-single-gate-key` is passed.
-  `/gate` carries `warnings`; `/readyz` carries `advisories` (`gate-closed`, `gate-single-key`, `gate-below-three-keys`).
-- New disaster-recovery runbook and recovery tests (restart, offline catch-up, lost/replaced key, quorum loss, conflicting
-  updates, cross-network approvals).
-
-### Health
-- `/readyz` reports identity, finality, gate authority and last-block age as separate checks, plus `advisories[]`.
-  The HTTP status is still decided only by chain, sync and P2P.
-
-### Wallet and sessions
-- The wallet vault envelope is validated before any key derivation (version, KDF, iteration range 100k-10M, field sizes,
-  encoding) in the platform wallet and the web-app/extension vault: a modified vault can no longer freeze the page or
-  surface a raw parser error.
-- Signing in ends the session presented with the request; a planted cookie is never accepted.
-
-### Release engineering
-- `scripts/release-tool.mjs`: Ed25519 `keygen | sign | verify | fingerprint`. `verify` checks integrity, signature, a
-  **caller-pinned** publisher fingerprint, and that version, tag, changelog, manifest, archives and the embedded binary
-  agree. **No publisher key exists yet, so the 1.8.1 release is unsigned and authenticated publication is incomplete.**
-- `scripts/package-releases.sh`: deterministic archives and SBOM, `--no-tests`, a self-check, optional signing with a key
-  supplied at run time. `scripts/reproduce-release.sh` rebuilds from the manifest's commit in a clean clone and compares.
-- `scripts/scan-secrets.mjs`: tripwire for committed credentials (prints rule and line, never the match).
-
-### Documentation
-- New: `consensus-assumptions.md`, `gate-recovery-runbook.md`, `wallet-custody.md`, `release-signing.md`,
-  `remediation-1.8.1.md`, `upgrading-1.8.1.md`. Updated: threat model and residual-risk register, operations (health
-  dimensions, restart and backup), failover, gate authority, security model (stale iteration count), the mainnet `init` example.
-
-### Tests
-- Core +20 (gate recovery 9, consensus properties 8, policy and readiness 3), interface HA and wallet/session tests,
-  release-tool 12, secret scanner 3. Consensus properties are seeded samples, not a proof; see `docs/consensus-assumptions.md`.
-
-## [1.8.0] — 2026-10-12
-
-**Consensus-breaking, new-genesis release for a pre-launch network.** Protocol and core version are `1.8.0`,
-the params hash is `1d6cba55f0975f8b0d6345658f1c1cb1`, `MIN_CORE_VERSION` is `1.8.0` and the state snapshot format is 5.
-A 1.8.0 node rejects 1.7.x and older peers at the handshake and refuses an older data directory; there is no
-migration, so this is for an unstarted network (or a disposable one reset on purpose). `v1.7.0` is untouched.
-Genesis ids of the built-in configurations at 1.8.0 (a real network commits its own gate keys and so has its own id;
-read it from `GET /health`): devnet `9e56e977b443aec428f3b59ce4880062250e7236`, testnet
-`7a5b20e504d6c0a278bf23799a7394d17470856f`, staging `3c4461cff67c0306d97ff8de150dcb8937eb2a5a`, mainnet
-`3722ae03f8e74d1ebd5f0dc70addc5122d7d7c70`.
-
-### Consensus: the mining gate keys can be rotated, revoked and recovered
-- New transaction type `GATE_AUTHORITY` (13), gas 0: adds and/or revokes gate issuer keys with approvals from a
-  strict majority of the current keys, for exactly the next epoch, bound to the network and chain
-  (domain `OBSIDIAN:GATE_AUTHORITY:v1`). At most 8 changes per direction, 1-8 active keys, revoked keys are permanent.
-- New state: `gateKeysActive`, `gateKeysRevoked`, `gateEpoch` (in the state root; `miningGateKeys` stays the immutable
-  genesis record). Certificates are checked against the ACTIVE set at the including block.
-- A lost majority cannot be recovered except by a new genesis (stated in `docs/gate-authority.md`).
-- Operator flow: `init --generate-gate-key --gate-key-count N`, `gate status|propose|sign|submit`; `/gate` publishes the live
-  set; `/tx/encode|decode` support the new type; the interface refuses to issue certificates (503
-  `ERR_GATE_KEY_INACTIVE`) when its own key is no longer active. See `docs/gate-authority.md`.
-
-### The node hosts the interface
-- `obsidian start` supervises the interface (found beside the core, or `OBSIDIAN_INTERFACE_DIR`) with restart backoff;
-  it never affects the node. Opt out: `--no-interface` or `OBSIDIAN_NODE_ONLY=1`. The helper script, the systemd units
-  and the test harnesses opt out because they manage their own interface.
-
-### Interface roles (the safe multi-host story)
-- `OBSIDIAN_INTERFACE_ROLE=primary|edge`. One `primary` holds accounts, wallet links and the gate key; an `edge` is
-  read-only and refuses account, wallet-link, certificate and mining-claim routes (503 `ERR_EDGE_READ_ONLY`).
-  Account state is deliberately **not** replicated. `/api/ready` reports the role.
-
-### Security
-- `/peers` (audit finding 6): full detail only to a local caller; the public gets counts. `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL`
-  restores the old behaviour. The interface proxy marks its requests so it never leaks the detail.
-- `health` and `finality` CLI commands are time-bounded (audit finding 7).
-
-### Release
-- The archives gain the web wallet, the web app, the extension and the desktop sources.
-
-### Operations (the work that followed 1.7.0)
-- `init`, `join`, `status`, `peers`, `sync [status]`, `doctor`, the `<network> <command>` and `node <command>` forms,
-  `--require-init`, and an `obsidian` binary name next to `obsidian-core`. `init` records the network identity in
-  `<data-dir>/network.json` and is idempotent; `join` adopts a network from a peer only if its keys reproduce a genesis
-  id the operator pinned. See `docs/operations.md`.
-- Node `GET /livez` and `GET /readyz`; interface `GET /api/ready`.
-- `start` resumes the network a directory was created as, and refuses a conflicting key list or network by name.
-
-### Security (the same work)
-- **High:** the data-directory lock's stale-takeover was racy and could leave two processes holding it. Fixed and
-  tested (`docs/security-audit-master.md`, finding 1).
-- **Medium:** `peers` counted sockets that had not finished the handshake. Only verified links are peers now; the rest
-  are reported as `pendingHandshakes`.
-- `mineobs.network` (exact hosts: root, `www`, `app`, `wallet`, `api`, `node`, `status`; plus `testnet.`, `staging.`,
-  `devnet.`) is a trusted origin for public reads, HTTPS only, no wildcard. See `docs/trusted-domains.md`. The
-  `/network` `domains` list now includes these hosts.
-
-### Documentation
-- `docs/operations.md`, `docs/failover-and-gateways.md`, `docs/threat-model.md`, `docs/security-audit-master.md`.
-
----
-
-## Background: what 1.7.0 introduced (carried forward; this entry is the record of the gate rule)
-
-**Consensus-breaking, new-genesis release for a pre-launch network.** Protocol and core version are `1.7.0`,
-the params hash is `bffeacb35532ba3df70cda8c27ed6c96`, and the genesis snapshot format is 4. A 1.7.0 node rejects
-1.6.x peers at the handshake and refuses a 1.6.x data directory; there is no migration, so this is for an
-unstarted network (or a disposable one that is reset on purpose).
-
-The mainnet genesis of a document that commits **no** gate keys has id `2dc198e4e57cb482df4e0f89e3a28daaf427ccff`
-and block hash `8ffcf7c18a5ba07b6a67fee4a373a62c62e9da612e7b66dcd9437597695b0475`. **A real network commits its
-issuer keys in genesis, so its id is different from these**; read the id from `GET /health` on your own node.
-
-### The sign-up gate is now a consensus rule
-
-Before, the account system (sign-up, invitation, MFA, one wallet per account) was enforced only by the platform,
-so anyone could post a `MINING_CLAIM` straight to a node's `/tx/submit`. That door is closed.
-
-- A `MINING_CLAIM` must carry a **certificate** signed by an issuer key committed in genesis
-  (`miningGateKeys`). The signature covers `GATE|networkId|chainId|address|claimId|issuedAt` under the new domain
-  `OBSIDIAN:MINING_GATE:v1`, so it is bound to one network, one wallet and one claim id (which is replay-protected,
-  so a certificate cannot be reused or moved). It is valid from 60 s before to 15 min after `issuedAt`, measured
-  against the including block's protocol time, so a leaked certificate is nearly worthless and an account that is
-  disabled stops mining within minutes.
-- The check runs in the mempool, block production, block validation and sync replay, before every other claim
-  check. A block with an ungated claim is invalid. Eligibility and timing are unchanged and remain a pure function
-  of the wallet's own history; the issuer decides **who may be certified**, never **when** a wallet may claim.
-- The issuer public keys are part of the genesis id and of every state root, so nodes with different lists do not
-  peer, and a node cannot be quietly pointed at another list. A chain that commits no key **fails closed**: no claim
-  is accepted.
-- The platform issues certificates with `POST /api/mining/certificate {address, claimId}` only to a signed-in,
-  MFA-confirmed account whose single linked wallet is that address. Its private key lives in an encrypted keystore
-  (`OBSIDIAN_GATE_KEYSTORE`, `OBSIDIAN_GATE_KEYSTORE_PASSPHRASE[_FILE]`), never in the repository.
-- Browser, extension, desktop app and `scripts/obsidian-network.sh` request a certificate before signing a claim.
-  The script generates a devnet/staging issuer key on first start.
-- **Mainnet and testnet keys are deliberately not committed.** Generate them with
-  `node scripts/generate-mining-gate-key.mjs` on a machine you trust and set the same
-  `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` on every node of that network (or commit them in
-  `obsidian-core/src/genesis/gate-keys.ts` and rebuild). Without keys a mainnet node accepts no claim.
-- Not solved, stated plainly: the issuer key is a trust root. Whoever holds it can certify any wallet, so the
-  one-account and one-wallet rules are as strong as that key's custody. The key list is in genesis, so rotating it
-  needs a new genesis. The platform clock must be NTP-synced (window −60 s/+900 s), and while the platform is down
-  nobody can start a claim.
-
-### Name registry reads are bounded
-
-`GET /names` and JSON-RPC `getnames` took no limit and returned the whole registry. They now accept `limit`
-(1–500, default 200), `offset` and `prefix`; the REST reply adds `matched`, `offset`, `limit` and `hasMore` and keeps
-`count` as the registry size.
-
-### Block sync no longer stalls when a peer serves fewer blocks than the requester's overlap
-A node that connected to an established peer could stop part-way (a fresh testnet node stopped at height 8, with no
-peers, "peer address refused for a while", reason "claimed a better chain but did not deliver it"). The sync loop asked
-for blocks starting 16 below its own head on every round and ignored the reply's `more` flag. When the peer served
-a batch no larger than that overlap, the next request fell below the head, returned only blocks the node already had,
-was counted as "no progress", and the honest peer was penalised until it was refused. The loop now pages with a cursor
-(`from + returned` while `more`), uses the overlap only to find the common ancestor, counts duplicates as range already
-covered, and penalises a peer only when a whole attempt delivered nothing new. Each request carries an optional `id`
-that the reply echoes, so a late or repeated answer is dropped rather than punished as "unsolicited" (an unrequested one
-still is); a link that closes mid-request ends the sync at once and is not blamed on the peer; a peer's score recovers
-one point per accepted block (never above zero). `getblocks` rejects a non-integer `limit`. Sync now logs the remote and
-local height and head, the requested range, how many blocks came back, whether more follow, the first and last
-height and hash, the accepted/duplicate/stale/orphan counts and the first rejection code and message. Consensus
-validation is unchanged and so is the params hash. `P2PServiceOptions.syncBatch` and `syncTimeoutMs` exist for tests;
-the defaults (128 blocks, 15 s) are unchanged. Regression tests: `obsidian-core/tests/integration/p2p-sync.test.ts`.
-
-### Other changes in this release
-
-- `obsidian-node-desktop`: the supervisor passes `OBSIDIAN_MINING_GATE_PUBLIC_KEYS` (public configuration, and only
-  from the app's own environment) to the node it supervises.
-- New tests: `rpc-hardening` and `mining-gate` (core), gate issuance in `obsidian-interface`, and gated flows in
-  `tests/e2e`, `tests/scripts`, the app-web, desktop and extension end-to-end suites.
-
-### Security audit of the app server, web app, extension, desktop app and node RPC
-
-- **obsidian-app-web: unauthenticated remote crash fixed.** `GET /%E0%A4%A` threw inside the
-  request handler and stopped the process. Malformed URLs now answer 400 and the server survives.
-- **obsidian-app-web / extension: stored-XSS in inline handlers fixed.** Screens put chain-supplied
-  strings (block height, transaction id, name, claim ids) into `onclick="…('${esc(value)}')"`.
-  The browser decodes the attribute before parsing it as JavaScript, so `esc()`'s `&#39;` turned
-  back into a quote and let a hostile or compromised node break out of the string. Handler
-  arguments now go through `arg()`, which `\uXXXX`-escapes everything outside `[A-Za-z0-9._:@-]`.
-  Regression tests execute the decoded attributes.
-- **obsidian-app-web server:** same-origin policy for state-changing `/api` calls (foreign `Origin`,
-  `Origin: null` and cross-site `Sec-Fetch-Site` get 403; `APP_ALLOWED_ORIGINS` for a separate
-  front end), security headers and a CSP, a 1 MB body cap (413), and `APP_TRUST_PROXY` so the
-  platform rate-limits each visitor instead of treating the whole web app as one client.
-- **obsidian-core RPC:** `POST /rpc` with `null`, an array or a scalar answered 500 and an oversize
-  body answered 400; they are now 400 and 413. `getblocks` clamps its limit to 1..500. An oversize body is now read and discarded (up to 8 MB) instead of the request being destroyed, so the client receives its 413 instead of a connection reset.
-- **obsidian-node-desktop:** the external-link allowlist no longer accepts dot segments that
-  GitHub resolves to another repository, and the `app://` handler answers 400 on a malformed
-  percent sequence instead of throwing.
-- New tests: `tests/e2e-adversarial.mjs` (app-web), `tests/server-hardening.test.mjs`,
-  `rpc-hardening` additions, and the extension's `tests/ui/hostile.e2e.mjs`.
-
----
-
-### Carried forward unchanged from 1.6.1
-
-This repository keeps one changelog entry: the release it ships. 1.7.0 carries every rule of 1.6.1 unchanged and adds
-the two changes above; the 1.6.1 identity values (params hash, genesis ids) were superseded and are not repeated.
-1.6.1 itself was a consensus-breaking new-genesis release: it rejected 1.6.0 peers and data directories, and it
-existed because a slashing-liability rule had been fixed *without moving the protocol identity*, which would have let
-two nodes compute different state roots under one version string. The full account is in
-[docs/remediation-1.6.1.md](docs/remediation-1.6.1.md).
-
-### 1.6.1 consensus and slashing remediation
-
-* **The protocol identity moved with the rules it describes** (`1.6.0` →
-  `1.6.1`, params hash `4a2883b2…` → `2dd76ca2…`, and with it all four genesis
-  ids). Identity is derived, not transcribed: `CONSENSUS_PARAMS` feeds
-  `computeParamsHash`, the document feeds `genesisId`, and both feed the state
-  root, the handshake, the finality signature domain and every signed message.
-  A node on 1.6.0 and a node on 1.6.1 cannot agree on a block, a certificate, a
-  vote or a handshake, and the two cannot be confused for one another.
-* **Whether production is open is consensus state, not an inference from a
-  count.** `validatorModeEstablished` is committed in the state root *ahead of*
-  the validator list, set only by the first successful registration, never
-  cleared, and refused if absent from a snapshot (snapshot format 2 → 3). An
-  established chain with no active validator halts for every round instead of
-  reopening to any node — the old rule read "no validators" as "bootstrap", so a
-  jail that emptied the set handed the chain to whoever could produce a block.
-* **A jail term is a duration, not a block count.** `jailedUntilTime`
-  (`jailSlots × targetBlockSeconds` = 50,400 s) is committed state; the term
-  lapses in the first block whose timestamp reaches it, and may lapse in a block
-  the jailed validator itself produces. A height-denominated term could never
-  expire on a chain that had stopped producing — and stopping is what a jail can
-  cause.
-* **One predicate decides whether a finality vote is valid.**
-  `validateCanonicalFinalityVote` (`src/consensus/finality-vote.ts`) is the only
-  implementation; vote admission, restoration, certificate verification,
-  equivocation detection, evidence verification and block execution all call it,
-  against the historical committee and the historical schedule. Both halves of an
-  accusation must satisfy it, so a node cannot be made to slash on a vote it
-  would have rejected.
-* **Slash evidence is bounded before it is verified.** A block carries at most 8
-  reports and 65,536 bytes of evidence (`ERR_EVIDENCE_LIMIT`), counted in a
-  pre-pass before any signature is checked; a producer verifies at most 32
-  reports and 1 MiB per attempt; the mempool holds 256 pending reports, 8 per
-  sender, in 4 MiB, checked before generic eviction. Submission stays
-  permissionless and a report that does not fit waits rather than being dropped.
-* **Verification is separated from application.** `verifyEvidence` is pure —
-  safe in P2P admission, mempool, simulation and certificate paths — while
-  `applyEquivocationSlash` alone mutates state. There is one implementation of
-  each, so the paths cannot drift.
-
-### Consensus and security (carried from the 1.6.0 ruleset)
-
-* **Finality bootstraps only from a public, genesis-committed set.** The
-  bootstrap validator keys are a protocol constant
-  (`obsidian-core/src/genesis/bootstrap-keys.ts`) hashed into the genesis id:
-  mainnet commits **4 keys, quorum 3**; testnet commits 3 keys, quorum 3;
-  staging and devnet commit none and take their committee from
-  `OBSIDIAN_BOOTSTRAP_VALIDATOR_PUBLIC_KEYS`. A network with a committed set
-  refuses to start with any other list — an empty one included — because that
-  would be a different chain wearing the same network name. Where no set is
-  committed, an empty list means no finality bootstrap at all: a node never
-  derives an initial trusted committee from its own local fork. Both are
-  fail-closed defaults, asserted by tests.
-* **The committed set is bounded by the protocol's own arithmetic.** Every
-  validator needs one exact 20,000 OBS bond *plus* the registration gas, so
-  `5 × 20,000.01 = 100,000.05` exceeds the 100,000 OBS genesis allocation while
-  `4 × 20,000.01 = 80,000.04` fits. Mainnet therefore commits four keys and
-  finality needs three of them; a fifth validator joins through the ordinary
-  registry after the first checkpoint. This was found by the launch rehearsal —
-  the earlier five-key plan could not have bonded, and finality would have
-  stalled for a reason no unit test would have shown.
-* **Fork choice is deterministic and ordered**: finalized anchor → fixed
-  one-unit-per-valid-block PoT weight → height → lowest header hash. Ties are
-  resolved by hash rather than left to arrival order.
-* **Missing finality state fails closed.** A chain whose stored head is above
-  genesis refuses to start when its finality journal is missing, instead of
-  silently re-deriving a safety lock from whatever it can see locally.
-* Certificate anchor semantics are strict: a certificate must extend the local
-  anchor, its votes must be from the committee for the target parent state, and
-  a certified branch may repoint the chain only through the validated
-  certificate path. Finality fixture rounds are derived from block timestamps,
-  so the adversarial suites are deterministic rather than order-dependent.
-
-### Economics
-
-* **ONS is the protocol's only revenue source.** The registration and renewal
-  fees are split exactly **90% to the Node Runner Reward Pool and 10% to the
-  treasury**, inside the state transition, with exact integer arithmetic
-  (`nodePool = floor(amount × 9000 / 10000)`, `treasury = amount − nodePool`,
-  remainder to the treasury) and an invariant check on every credit.
-  `GET /revenue` reports the whole obligation, what has been credited and what
-  is still unclaimed, and re-adds the split (`sumsBack`).
-* **The validator bond is exactly 20,000 OBS.** A registration offering any
-  other amount is refused with `ERR_VALIDATOR_BOND_MISMATCH`; the parameter is
-  published on `/params`.
-* **Equivocation is slashable, in the state transition, for every node to
-  check.** A validator proven to have signed two conflicting block proposals for
-  one height and round, or two conflicting finality votes for one anchor,
-  forfeits `consensus.equivocationSlashBps = 5000` of its own recorded bond —
-  10,000 of the 20,000 OBS — credited to the Mining Pool in the same transition.
-  The penalty is a parameter applied to a bond (`slashed + remaining == bond`,
-  integers only), never a hard-coded amount; the treasury's share is exactly
-  zero and total supply is unchanged to the seal. Submitting evidence is an
-  ordinary permissionless `SLASH` transaction (type 12) that costs no gas and
-  that any account may send; the evidence, the offender, the round and the
-  destination are all recomputed by every node, so no submitter names anything.
-  A slashed validator leaves the rotation and the finality committee in the
-  block that applied the evidence, the surviving half stays claimable after the
-  ordinary unbonding delay, and re-registering needs a fresh full bond. Being
-  offline is **not** slashable: missing slots is still a jail, not a penalty.
-  The applied-slash ledger and the validator's status are consensus state, so a
-  replay — another block, another peer, a restart — finds it and is refused.
-  Liability follows the **registration**, not the address: an offence is charged
-  to the bond that was held when it happened, so an `UNBONDING` or `JAILED`
-  validator is still liable for its whole tenure (unregistering starts the clock
-  on the evidence window instead of escaping the penalty — 20,160 blocks, the
-  unbonding delay, and the record closes when the remainder is claimed), while a
-  fresh registration answers only for its own tenure. Equivocation evidence is
-  refused at gossip unless its body decodes, so relaying undecodable evidence is
-  a peer fault instead of free work for every node, and `/validators` returns a
-  bounded page of the ledger (`slashing.count` / `slashing.shown`) rather than a
-  response that grows with every slash the chain ever applied.
-* **The 100 OBS node-runner registration bond is removed as a mechanism, not
-  set to zero.** The protocol now has exactly one registration bond — the
-  validator's 20,000 OBS — enforced in one place, with `registrationBond`
-  deleted from `nodeRewards`, from the node registry executor, from the state
-  root, from the RPC surface and from the documents. Registering a node runner
-  moves no funds at all.
-* Gas still funds the Mining Pool and is never counted as revenue. The genesis
-  allocation is still exactly 100,000 OBS to the first protocol-valid mining
-  claim, which also designates the treasury — no address is hard-coded and
-  nothing is minted by an administrator.
-
-### Removed products
-
-* **Circle (land), Social and Time Capsules are removed from the protocol, not
-  hidden.** Their transaction types have no executor, their state is not written
-  or read, their RPC routes are gone from the node and from the interface's
-  proxy allowlist, their pages and bundles are deleted, and their documents are
-  no longer shipped. Existing property-holding code paths were deleted rather
-  than left dormant.
-* The indexer no longer decodes or describes the removed products.
-
-### Interface
-
-* **Light, mobile-first redesign.** One stylesheet, phone-first: the base rules
-  are the narrow-screen layout and `min-width` queries only add room. It is a
-  light theme (`color-scheme: light`), inputs are 16px so a phone browser does
-  not zoom on focus, touch targets are at least 44px, and nothing may be wider
-  than the viewport. Tested from 320px to 1440px.
-* Nine pages ship: landing, mine, wallet, explorer, ONS, node runners,
-  developer, account, audit. The navigation is a drawer behind one button at
-  every width, and the landing page keeps exactly three calls to action.
-
-### Fixed
-
-* **The compliance audit keeps its published row names.** `GET /audit/compliance`
-  reports `gasCountedAsPlatformRevenue: false` — gas is remitted to the mining
-  pool and is never routed through the ONS split — the name the CI check, the
-  deployment guide and the removal report already use. A core test now
-  reads the CI workflow's forbidden list and asserts the running node answers
-  every row, so a row renamed on one side only cannot pass as green again.
-
-* **The current guides say what the code says.** A consistency pass found and
-  corrected claims the tree had outgrown: build examples quoting a retired site
-  count (the build writes nine), a checklist line hard-coding a test count, an
-  evidence block quoting stale test, invariant, alert-rule and dashboard-panel
-  counts, release-tag and `RELEASE-NOTES` examples naming a tag that does not
-  exist, a retired front-end count, headings left from the old revenue split, a
-  "what replaced them" paragraph still promising revenue streams the protocol
-  does not have, a compliance-audit example missing three of the rows the node
-  serves, and one route the node has always served and the reference never named
-  (`GET /wallet/<address>/next-nonce`). Re-introducing any of the stale counts,
-  tag versions, the shortened key list or an undocumented route makes
-  `tests/scripts/repo-consistency.test.mjs` fail.
-
-* **The node's RPC enforces the HTTP verb.** Reads answer `GET`/`HEAD`; the seven
-  body-carrying endpoints (`/tx/submit`, `/tx/simulate`, `/tx/encode`, `/tx/gas`,
-  `/wallet/balance`, `/wallet/quote`, `/rpc`) answer `POST` only; every other verb,
-  and a verb on the wrong kind of route, is `405` with an `Allow` header. Before,
-  a read endpoint answered `PUT`, `DELETE`, `PATCH` and `POST` exactly like `GET`.
-  This is an HTTP-layer change only: the params hash, genesis ids and every
-  consensus rule are untouched. A black-box probe of a live node (malformed and
-  oversized bodies, path abuse, header abuse, 300 idle sockets, a 400-request
-  burst, a 200-socket flood and a 16 MB frame at the P2P port) found nothing else.
-  The deployment guide's "submit transactions" examples, which called `POST`
-  routes with `GET` and named a route that does not exist, now show the real
-  calls, and its network table no longer labels a purpose column "Block time".
-
-### Verification in this release
-
-* Core typecheck and build, interface typecheck and build, and the full core,
-  interface, script, cloudflare and end-to-end suites were run against this
-  candidate. `.github/workflows/ci.yml` is the running record of what is checked
-  and prints the counts itself, so they are not hard-coded here.
-* `scripts/check-invariants.mjs` asserts the 90/10 split (including the
-  remainder), the ONS-only revenue classification, the single 20,000 OBS bond,
-  the absence of any node registration bond, the 5,000 bps equivocation penalty
-  and the fork-choice order.
-
-### Not in this release
-
-* No claim of general BFT, universal immutability, production readiness,
-  independent cryptographic review, or physical power-loss testing.
-* **No independent security audit.** The 1.6.1 remediation was written and
-  reviewed by the same people who wrote the code, with adversarial tests as the
-  check. `docs/security-model.md` §3 says this in the same words.
-* **No power-loss or hardware crash testing.** Durability follows a fixed write
-  order and the suites simulate a process dying between steps by rebuilding from
-  storage; nobody has pulled the plug on a machine running this node.
-* **No hostile-peer testing.** The bounds are implemented and unit-tested, but no
-  fuzzed handshake, eclipse attempt, partition soak or sybil flood has been run
-  against a live node.
-* **No signed release.** `releases/` carries no `SHA256SUMS.asc`;
-  `scripts/verify-release.sh` prints `UNSIGNED RELEASE` rather than passing
-  quietly, and `docs/release-process.md` §5 states the operational requirement.
-* No automatic migration from 1.6.x, and no mainnet value transfer: a 1.7
-  network starts from its own genesis.
-* **No mainnet or testnet mining-gate key.** Operators generate their own; until one is configured a node of that
-  network accepts no mining claim.
+### Known limits
+- Admission of nodes is rate-limited, not priced: a patient actor with many machines can capture a third of the producers.
+- Finality needs at least three established producers and fewer than a third faulty; it is not Byzantine finality.
+- An unsigned wallet binding can be squatted until the wallet owner reclaims it.
+- ONS recovery protects against loss, not theft, of the owner key.
+- Reward weight is a composite score (uptime 40 %), not uptime alone.
+- No independent review; no hostile-network, eclipse or real-partition test.

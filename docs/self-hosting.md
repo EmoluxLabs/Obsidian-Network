@@ -103,7 +103,7 @@ docker build -f obsidian-interface/deployment/docker/Dockerfile -t obsidian/inte
 docker run -d --rm -p 127.0.0.1:18788:8788 \
   -e OBSIDIAN_INTERFACE_NETWORK=testnet \
   -e OBSIDIAN_NODE_URLS=http://host.docker.internal:18630 --add-host host.docker.internal:host-gateway \
-  obsidian/interface:1.8.0
+  obsidian/interface:1.9.0
 
 # nginx in front (TLS + cache), see deployment/nginx/obsidian-interface.conf
 ```

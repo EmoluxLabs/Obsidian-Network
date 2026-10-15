@@ -58,34 +58,20 @@ The arrow never points backwards. Concretely:
 9. **One chain, one history: reorgs deeper than 256 blocks are refused.** Above
    that depth the node stops rather than pretending; this is a deliberate
    conservative bound, not an oversight.
-10. **One validator is one vote, and the bond is the admission barrier — not vote
-    weight.** Every active validator holds exactly 20,000 OBS, casts exactly one
-    finality vote, and counts exactly once in the committee hash and the 2/3+1
-    quorum. Nothing is weighted by stake, and bond size cannot buy influence:
-    a second seat costs a second full bond. That makes the honest cost of
-    controlling a quorum *n/2 × 20,000 OBS plus the ability to lose half of it on
-    a provable offence*, but it also means the barrier to entry is a fixed amount
-    of capital rather than a share of a pool. **This is a deliberate design
-    choice, not an oversight, and it is not being changed here.** A
-    stake-weighted upgrade would be a separate, larger change: the quorum rule,
-    the committee hash, the certificate format, the evidence rules, the P2P
-    messages and every test would have to move together, because a committee hash
-    computed one way and a quorum counted another way is a consensus split. It is
-    documented as future work in `docs/consensus.md`, not implemented.
-11. **Sybil resistance comes from the bond, and only from the bond.** There is no
-    identity check, no proof of personhood and no anti-collusion mechanism: anyone
-    who can fund *k* separate 20,000 OBS bonds controls *k* seats and *k* votes,
-    and no amount of code in this repository can tell the difference between one
-    operator with ten seats and ten operators. The protocol's answer is economic
-    — each seat costs a full bond and each offence forfeits half of it — and the
-    honest statement of the residual risk is that a well-funded single actor can
-    hold a majority. Mitigations that exist: the exact bond (no discount, no
-    partial seat), duplicate-identity prevention (a registration binds one key to
-    one sender, and a slashed registration cannot re-register without claiming
-    the remainder and bonding a fresh 20,000), and equal voting weight so that
-    splitting a large holding across seats buys no extra influence.
+10. **One node is one producer slot, and registration is free.** There are no validators, bonds or votes in 1.9.0. Every
+    registered, mature, live node takes a turn in the deterministic schedule and counts once towards finality. Admission is
+    rate-limited and delayed, not priced: that is the deliberate cost of "no deposit and no VPS". It means the barrier to
+    entry is time and a machine, not capital. **This is a design choice, documented in
+    [consensus-v1.9.0.md](consensus-v1.9.0.md), not an oversight.**
+11. **Sybil resistance is weak, and the protocol says so.** There is no identity check, no proof of personhood and no
+    anti-collusion mechanism: anyone who can run *k* machines and wait for maturity controls *k* producer slots, and no amount
+    of code in this repository can tell one operator with ten nodes from ten operators. The mitigations are speed limits
+    (registrations per block and per period, a 64-block maturity, rate-limited reports), the reward cap per node, and the
+    requirement of independent attestation. The honest residual risk: a patient actor with enough machines can reach a third
+    of the producers (stalling finality) or more. Finality
+    ([finality-v1.9.0.md](finality-v1.9.0.md)) is checkpoint finality that assumes fewer than a third are faulty.
 12. **No independent security audit has been performed.** The analysis in this
-    repository — including the 1.6.1 consensus and slashing remediation — was
+    repository — including the consensus redesign of 1.9.0 — was
     written and reviewed by the same people who wrote the code, with adversarial
     tests as the check. That is not a substitute for an external review, and no
     claim of independent verification is made anywhere in these documents.
@@ -102,6 +88,11 @@ The arrow never points backwards. Concretely:
     campaign: no fuzzed handshake, no eclipse attempt, no partition-and-rejoin
     soak, no measurement of a node's behaviour under a real sybil flood. The
     bounds are there; the confidence that they are sufficient is not.
+15. **An unsigned wallet binding does not prove ownership.** A node is bound to a reward wallet by pasting an address, with no
+    gas and no wallet signature, so a stranger can bind an address they do not own: that pays the owner, but blocks the owner
+    from binding it to their own node until they reclaim it. See [node-binding-v1.9.0.md](node-binding-v1.9.0.md).
+16. **ONS recovery protects against loss, not theft, of the owner key.** A thief who holds the owner key can cancel a recovery;
+    a name whose owner key is lost with no recovery address cannot be recovered by anyone. See [ons.md](ons.md).
 
 ## 4. Threats and mitigations
 
@@ -112,7 +103,7 @@ The arrow never points backwards. Concretely:
 | Replayed TOTP code | the consumed step is recorded; the same code is refused afterwards | `obsidian-interface/tests/identity.test.ts` |
 | Reused recovery code | codes are stored only as scrypt hashes and removed the moment one matches | `obsidian-interface/tests/server.test.ts` |
 | Invite farming | 5 invites per account enforced in the store, not the page | `tests/server.test.ts` |
-| Mining claim posted straight to a node, skipping the account system | consensus (1.7.0): a `MINING_CLAIM` needs a certificate from a genesis-committed issuer key, bound to one network, wallet and claim id, valid ~15 min; checked in the mempool, producer, validator and replay; no committed key means no claim | `obsidian-core/tests/security/mining-gate.test.ts`, `tests/e2e/ecosystem.test.mjs` |
+| Mining claim posted straight to a node, skipping the account system | consensus (1.7.0): a `MINING_CLAIM` needs a certificate from a genesis-committed issuer key, bound to one network, wallet and claim id, valid ~15 min; checked in the mempool, producer, state machine and replay; no committed key means no claim | `obsidian-core/tests/security/mining-gate.test.ts`, `tests/e2e/ecosystem.test.mjs` |
 | Unbounded name-registry read | `/names` and `getnames` page at most 500 records | `obsidian-core/tests/security/rpc-hardening.test.ts` |
 | Replayed mining claim | unique `claimId` + per-wallet sequence + nonce + one claim per wallet per block | `obsidian-core/tests/security/protocol-security.test.ts` |
 | Mined transaction re-mined | spent transaction id and advanced sequence | same |
@@ -132,9 +123,9 @@ The arrow never points backwards. Concretely:
 | Node claiming uptime it did not have | there is no field for it: uptime is counted from heartbeats that **other** registered nodes attested, and unattested heartbeats score zero | `obsidian-core/tests/unit/node-rewards.test.ts` |
 | Operator registering someone else's wallet to steal rewards | the reward wallet itself must sign the registration transaction, and the node key must sign the statement | `tests/integration/node-runners.test.ts` |
 | Sybil node farm | one reward identity per node per wallet, binding proven by signatures from both; uptime needs attestations from other nodes; any single node is capped at 5% of a period; a fleet cannot attest itself | same |
-| Validator equivocation | two conflicting signed proposals or two conflicting finality votes for one slot forfeit half the validator bond to the Mining Pool, enforced in the state transition on every node; being offline is never slashable | `obsidian-core/tests/security/slashing.test.ts` |
-| Own bond escaping after equivocating | the offence is charged to the registration that held the bond, and an `UNBONDING` or `JAILED` registration is still liable for its whole tenure — leaving the committee does not close the record, it only starts the clock (20,160 blocks). Claiming the remainder closes it, and a re-registered key answers for its new tenure only | `obsidian-core/tests/security/slashing.test.ts` |
-| An honest validator double-signing by accident | the node signs at most **one** proposal per (height, round), and the slot is written to the crash-safe safety lock *before* the signature exists — so a retry after a locally rejected block, a crash or a restart cannot produce the second header of an equivocation pair. A later round of the same height is a different slot and stays available, so the liveness backstop is unaffected | `obsidian-core/tests/security/slashing.test.ts` |
+| Producer equivocation | two different signed blocks on one parent are proven with both signatures; any registered node reports it and every node re-verifies it; the identity is banned permanently and its wallet released (no funds move; being offline is never punished like this) | `obsidian-core/tests/security/equivocation-ban.test.ts` |
+| A forged equivocation report against an honest producer | the report must carry two valid signatures from that very key on two distinct blocks with one parent; anything else is rejected and the reporter's block fails | `obsidian-core/tests/security/equivocation-ban.test.ts` |
+| An honest node double-signing by accident | the node signs at most one block per parent and writes it to the crash-safe safety record *before* the signature exists, so a retry after a crash or restart cannot produce the second header of an equivocation pair | `obsidian-core/tests/security/safety-record.test.ts` |
 | Stolen node key redirecting rewards | a wallet change must be submitted by the **current** reward wallet and takes effect a period later; accrued rewards are never redirected | same |
 | Replayed node registration proof | proofs carry `issuedAt`/`expiresAt` checked against protocol time, capped at one hour | same |
 | Reward period settled twice | `lastSettledPeriod` is consensus state, and settlement is a block routine rather than a callable endpoint | same |

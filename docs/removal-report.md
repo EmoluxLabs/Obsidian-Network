@@ -106,3 +106,35 @@ miner is not funded by it, that a supply invariant violation is refused
 transaction cannot be replayed. `tests/security/rpc-hardening.test.ts` asserts
 that the explorer surfaces never return balances and that no response contains
 private key material.
+
+## 6. Removed in 1.9.0: the validator model
+
+Protocol 1.9.0 is a fresh start. These mechanisms no longer exist, and nothing replaces them one-for-one. Each row names what
+was deleted and what took over its job (or says that nothing did).
+
+| Removed | What it did | Replacement |
+| --- | --- | --- |
+| `transactions/executors/validator.ts`, transaction type 8 | registration with an exact 20,000 OBS bond, unbonding, claim | none: nothing is bonded. Nodes register with `NODE_REGISTRY / REGISTER` (no gas, no bond) |
+| `transactions/executors/slash.ts`, transaction type 12, `consensus/slash-evidence.ts` | slashing half of a bond for equivocation | `REPORT_EQUIVOCATION` in `NODE_REGISTRY`: a permanent ban and a released wallet; no funds move |
+| `consensus/proposer.ts` | validator-only proposer rotation, "genesis open" mode and the "No Validator" halt | `consensus/schedule.ts`: a schedule over every registered, mature, live node, with fallbacks so the chain does not halt |
+| `consensus/finality-vote.ts`, `storage/finality-store.ts` | finality votes, certificates and the checkpoint file | `consensus/finality.ts`: finality derived from chain history, committed in the state root |
+| `genesis/bootstrap-keys.ts`, `bootstrap-keys/`, the bootstrap-key generator script and the bootstrap-committee environment variable | a committed bootstrap committee hashed into the genesis id | none. The genesis id depends on the network definition and the gate keys only |
+| Validator mode, bootstrap locks, jailing, commission | operating-mode locks and validator penalties | the 3-miss suspension of the schedule (no funds involved) |
+| `GET /validators` and every staking screen (platform, web app, extension, desktop) | validator records and bond management | `GET /producers`, `GET /finality`, node participation screens |
+| `obsidian-node-desktop` validator service, screen and types | validator controls in the desktop app | `participation-service.ts` and the participation screen: bind an address, see status; no key input |
+| Tests: `bootstrap-committee`, `evidence-resources`, `finality-vote-predicate`, `slashing`, `validator-mode`, `finality-primitives` | assertions about the removed behaviour | `producer-schedule`, `finality`, `equivocation-ban`, `genesis-fresh-start`, `safety-record`, `node-agent`, `rpc-v190` and the node-runner and ONS suites |
+| Earlier reward logic that required a registration signature from the reward wallet, a one-period wallet change and a heartbeat per period | the old binding and the old uptime unit | address-only binding; 2-period delayed change; owner reclaim; hourly uptime windows ([node-rewards-v1.9.0.md](node-rewards-v1.9.0.md)) |
+| Single-step ONS transfer and passphrase-only wallet recovery | a transfer happened without the recipient's consent | offer and acceptance; a separate private-key recovery flow ([ons.md](ons.md), [wallet.md](wallet.md)) |
+| Release archives, release notes and upgrade/remediation documents of earlier lines | records of builds that no longer ship | git history; `releases/` is rebuilt from this tree with `scripts/package-releases.sh` |
+
+**Verify the absence yourself:**
+
+```bash
+curl -s http://127.0.0.1:8630/validators                        # 404: the route does not exist
+curl -s http://127.0.0.1:8630/producers | jq '{tier, eligible}'   # the producer set that replaced it
+grep -rn "VALIDATOR\b\|SLASH\b" obsidian-core/src/protocol/types.ts   # only the retirement comment
+git ls-files obsidian-core/src obsidian-core/bootstrap-keys | grep -i "validator\|slash\|bootstrap"   # nothing
+```
+
+**Not removed:** the mining gate (its keys and mechanism are byte-identical), supply and fee rules, ONS prices and periods,
+and generic block, transaction and signature verification.

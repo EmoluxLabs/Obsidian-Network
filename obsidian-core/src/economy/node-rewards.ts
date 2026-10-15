@@ -40,7 +40,7 @@
  * WHAT THIS DOES NOT SOLVE
  *   Several nodes run by one operator earn several shares; the protocol cannot tell. The per-node cap and the
  *   independent-attester requirement limit what one fleet can take from honest nodes, nothing more. A node that
- *   lies about being in sync is only caught by other nodes' attestations. See docs/rewards-v1.9.0.md.
+ *   lies about being in sync is only caught by other nodes' attestations. See docs/node-rewards-v1.9.0.md.
  */
 
 import { CONSENSUS_PARAMS } from '../protocol/params.js';

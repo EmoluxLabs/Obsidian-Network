@@ -157,8 +157,8 @@ function settlePeriod(
   // scoring it against a full period's expectations would punish it for time it
   // did not exist. It becomes eligible at the next settlement instead. Nodes that
   // deregistered inside the period are excluded for the same reason: leaving
-  // mid-period forfeits that period's share, while the bond and every already
-  // settled payout are untouched.
+  // mid-period forfeits that period's share, while every already
+  // settled payout is untouched (there is no bond to return).
   const periodOpenedAt = rewardPeriodStart(period);
   const candidates = nodes.filter((node) => node.registeredAt < periodOpenedAt);
   const skippedNewRegistrations = nodes.length - candidates.length;
