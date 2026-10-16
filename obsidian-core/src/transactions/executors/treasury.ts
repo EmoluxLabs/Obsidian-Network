@@ -9,7 +9,8 @@
 import { Reader, Writer } from '../../protocol/encoding.js';
 import { ErrCode, reject } from '../../protocol/errors.js';
 import { TreasuryOp, type TreasuryBody, type TxEnvelope } from '../../protocol/types.js';
-import { assertAddress, assertAmount, assertGas } from '../helpers.js';
+import { assertAmount, assertCanonicalAddress, assertGas } from '../helpers.js';
+import { canonicalAddressText } from '../../crypto/keys.js';
 import { treasuryWallet } from '../../genesis/rules.js';
 import type { ExecutorContext } from '../types.js';
 
@@ -28,7 +29,7 @@ export function encodeTreasuryBody(body: TreasuryBody): Uint8Array {
   w.u8(body.op);
   w.u128(body.amount);
   w.string(body.purpose);
-  w.string(body.to ?? '');
+  w.string(canonicalAddressText(body.to ?? ''));
   return w.finish();
 }
 
@@ -56,7 +57,7 @@ export function executeTreasury(
         reject(ErrCode.UNAUTHORIZED, 'only the designated treasury wallet may issue a grant');
       }
       if (!body.to) reject(ErrCode.MALFORMED, 'a recipient address is required');
-      assertAddress(body.to, net, 'grant recipient');
+      assertCanonicalAddress(body.to, net, 'grant recipient');
       const gas = assertGas(tx.gas, body.amount);
       state.debit(tx.sender, body.amount + gas, apply, 'treasury grant + gas');
       state.credit(body.to, body.amount, apply, 'treasury grant received');

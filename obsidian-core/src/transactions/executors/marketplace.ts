@@ -35,6 +35,7 @@ import { ErrCode, reject } from '../../protocol/errors.js';
 import { MarketOp, type MarketBody, type MarketOffer, type OnsRecord, type TxEnvelope } from '../../protocol/types.js';
 import { MAX_SUPPLY_SEALS } from '../../protocol/amount.js';
 import { assertAmount, assertCanonicalAddress, assertGas } from '../helpers.js';
+import { canonicalAddressText } from '../../crypto/keys.js';
 import { closeOffer, voidPendingOffers } from '../../economy/market.js';
 import { assertNotListed, changeOwner, normalizeName } from './ons.js';
 import type { ExecutorContext } from '../types.js';
@@ -64,7 +65,7 @@ export function encodeMarketBody(body: MarketBody): Uint8Array {
   w.u8(body.op);
   w.string(body.name);
   w.u128(body.amount);
-  w.string(body.counterparty);
+  w.string(canonicalAddressText(body.counterparty));
   w.string(body.offerId);
   return w.finish();
 }

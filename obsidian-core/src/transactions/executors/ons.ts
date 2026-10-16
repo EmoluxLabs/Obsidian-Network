@@ -45,7 +45,8 @@ import {
   type OnsRecord,
   type TxEnvelope,
 } from '../../protocol/types.js';
-import { assertAddress, assertAmount, assertCanonicalAddress, assertGas } from '../helpers.js';
+import { assertAmount, assertCanonicalAddress, assertGas } from '../helpers.js';
+import { canonicalAddressText } from '../../crypto/keys.js';
 import { RevenueSource } from '../../economy/accounting.js';
 import { voidPendingOffers } from '../../economy/market.js';
 import type { WorldState, ApplyContext } from '../../blockchain/state.js';
@@ -74,8 +75,8 @@ export function encodeOnsBody(body: OnsBody): Uint8Array {
   const w = new Writer();
   w.u8(body.op);
   w.string(body.name);
-  w.string(body.address ?? '');
-  w.string(body.to ?? '');
+  w.string(canonicalAddressText(body.address ?? ''));
+  w.string(canonicalAddressText(body.to ?? ''));
   w.u128(body.fee);
   return w.finish();
 }
@@ -163,6 +164,14 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       if (existing && existing.expiresAt > protocolTime) {
         reject(ErrCode.NAME_TAKEN, `"${name}.obs" is already registered until ${existing.expiresAt}`);
       }
+      // The grace period is the owner's alone: a lapsed name stays theirs to renew until the registry drops it
+      // (`processNameExpiry`, which uses this same bound). Without this a stranger could take it the second it lapsed.
+      if (existing && existing.expiresAt + CONSENSUS_PARAMS.ons.graceSeconds >= protocolTime) {
+        reject(
+          ErrCode.NAME_TAKEN,
+          `"${name}.obs" has lapsed but is in its grace period: only its owner can renew it, until ${existing.expiresAt + CONSENSUS_PARAMS.ons.graceSeconds}`,
+        );
+      }
       const fee = requiredFeeSeals(state, protocolTime, CONSENSUS_PARAMS.ons.registrationFee);
       assertAmount(body.fee, { label: 'fee' });
       if (body.fee < fee) {
@@ -208,7 +217,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       if (record.owner !== tx.sender) reject(ErrCode.NAME_NOT_OWNED, 'only the owner may update a name');
       assertNotListed(record, 'be edited');
       if (!body.address) reject(ErrCode.MALFORMED, 'a target address is required');
-      assertAddress(body.address, net, 'target address');
+      assertCanonicalAddress(body.address, net, 'target address');
       assertGas(tx.gas, 0n);
       record.address = body.address;
       state.emit('ONS_ADDRESS_UPDATED', { name, owner: tx.sender, address: body.address }, apply);

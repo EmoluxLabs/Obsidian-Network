@@ -14,6 +14,7 @@ import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { ErrCode } from '../../src/protocol/errors.js';
 import { OnsOp, TxType, type OnsRecord } from '../../src/protocol/types.js';
 import { expectedGas } from '../../src/transactions/helpers.js';
+import { Writer } from '../../src/protocol/encoding.js';
 import { createHarness, makeWallet, onsBody, paymentBody, paymentGas, signedClaim, type Harness, type TestWallet } from '../helpers/harness.js';
 
 const ONS = CONSENSUS_PARAMS.ons;
@@ -50,6 +51,19 @@ async function scene(): Promise<Scene> {
 
 function sign(s: Scene, wallet: TestWallet, op: OnsOp, name: string, extra: { address?: string; to?: string; fee?: bigint } = {}, gas = 0n) {
   return s.h.sign(wallet, TxType.ONS, onsBody(op, name, extra), { gas, protocolTime: s.clock.now });
+}
+
+/** An ONS body written WITHOUT the shared encoder's address canonicalisation, as a hostile client would send it. */
+function sendRaw(s: Scene, wallet: TestWallet, op: OnsOp, extra: { address?: string; to?: string }) {
+  const w = new Writer();
+  w.u8(op);
+  w.string(NAME);
+  w.string(extra.address ?? '');
+  w.string(extra.to ?? '');
+  w.u128(0n);
+  s.clock.now += 5;
+  const tx = s.h.sign(wallet, TxType.ONS, w.finish(), { gas: 0n, protocolTime: s.clock.now });
+  return s.h.tryBlock([tx], { timestamp: s.clock.now });
 }
 
 /** Send one ONS operation in its own block `after` seconds later and return the verdict. */
@@ -144,7 +158,7 @@ describe('transfer needs the owner and the recipient', () => {
     const s = await scene();
     expect(send(s, s.alice, OnsOp.TRANSFER, { to: 'not-an-address' }).accepted).toBe(false);
     expect(send(s, s.alice, OnsOp.TRANSFER, { to: s.alice.address }).accepted).toBe(false);
-    expect(send(s, s.alice, OnsOp.TRANSFER, { to: s.bob.address.toUpperCase() }).accepted).toBe(false);
+    expect(sendRaw(s, s.alice, OnsOp.TRANSFER, { to: s.bob.address.toUpperCase() }).accepted).toBe(false);
     expect(record(s).pendingTransfer).toBeUndefined();
   });
 
@@ -315,7 +329,7 @@ describe('recovery cannot be hijacked', () => {
   it('refuses a recovery address equal to the owner or not canonical', async () => {
     const s = await scene();
     expect(send(s, s.alice, OnsOp.SET_RECOVERY, { address: s.alice.address }).accepted).toBe(false);
-    expect(send(s, s.alice, OnsOp.SET_RECOVERY, { address: s.carol.address.toUpperCase() }).accepted).toBe(false);
+    expect(sendRaw(s, s.alice, OnsOp.SET_RECOVERY, { address: s.carol.address.toUpperCase() }).accepted).toBe(false);
     expect(send(s, s.alice, OnsOp.SET_RECOVERY, { address: 'garbage' }).accepted).toBe(false);
     expect(record(s).recoveryAddress).toBeUndefined();
   });

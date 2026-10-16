@@ -763,3 +763,35 @@ describe('economic reconciliation', () => {
     expect(world(s).verifySupplyInvariant().ok).toBe(false);
   });
 });
+
+// ── grace period (found in the 2.0.1 audit: registration used to ignore it) ───────────────────────────────────
+
+describe('a lapsed name is protected by its grace period', () => {
+  const register = (s: Scene, w: TestWallet, name: string) =>
+    ons(s, w, OnsOp.REGISTER, name, { fee: ONS.registrationFee }, expectedGas(ONS.registrationFee));
+
+  it('nobody but the owner can take a name that has lapsed but is still inside grace; after grace anyone can', async () => {
+    const s = await scene();
+    ok(s, list(s, s.alice, 'alpha', PRICE));
+    const o = offer(s, s.bob, 'beta', 40n * OBS, s.alice);
+    ok(s, o);
+    world(s).s.names.get('alpha')!.expiresAt = s.clock.now - 10;
+    world(s).s.names.get('beta')!.expiresAt = s.clock.now - 10;
+    // inside grace: a stranger cannot register over the lapsed name (and so cannot steal its listing or offers)
+    bad(s, ErrCode.NAME_TAKEN, register(s, s.bob, 'alpha'));
+    bad(s, ErrCode.NAME_TAKEN, register(s, s.bob, 'beta'));
+    expect(rec(s).owner).toBe(s.alice.address);
+    // the owner can still renew a lapsed name that is not listed
+    ok(s, ons(s, s.alice, OnsOp.RENEW, 'beta', { fee: ONS.renewalFee }, expectedGas(ONS.renewalFee)));
+    expect(world(s).s.names.get('beta')!.expiresAt).toBeGreaterThan(s.clock.now);
+    // past grace the registry drops the name and anyone may register it again
+    world(s).s.names.get('alpha')!.expiresAt = s.clock.now - ONS.graceSeconds - 10;
+    ok(s, register(s, s.bob, 'alpha'));
+    expect(rec(s).owner).toBe(s.bob.address);
+    expect(rec(s).listing).toBeUndefined();
+    // beta's offer (made before the test moved its expiry) is still pending and still held; alpha had none
+    expect(world(s).s.market.escrowBalance).toBe(40n * OBS);
+    expect(offerOf(s, o.id).status).toBe('PENDING');
+    expect(world(s).verifySupplyInvariant().ok).toBe(true);
+  });
+});

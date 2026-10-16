@@ -31,7 +31,7 @@ import { blockHash, summarizeBlock } from '../blockchain/block.js';
 import { paramsHashUtf8, PARAMS_HASH } from '../blockchain/state-root.js';
 import { genesisDocumentFor } from '../genesis/initialize.js';
 import { CORE_VERSION, MIN_CORE_VERSION, PROTOCOL_VERSION, versionInfo } from '../version.js';
-import { isValidAddress } from '../crypto/keys.js';
+import { canonicalAddressText, isValidAddress } from '../crypto/keys.js';
 import { encodeOnsBody, decodeOnsBody } from '../transactions/executors/ons.js';
 import { encodeMiningBody, decodeMiningBody, computeClaimId } from '../transactions/executors/mining.js';
 import { encodePaymentBody, decodePaymentBody, paymentBaseAmount } from '../transactions/executors/payment.js';
@@ -943,7 +943,8 @@ export class RpcServer {
    * is ever exposed here — balances are only available through /wallet/balance,
    * which the wallet calls for the user's own account.
    */
-  private addressHistory(response: ServerResponse, address: string, url: URL): void {
+  private addressHistory(response: ServerResponse, rawAddress: string, url: URL): void {
+    const address = canonicalAddressText(rawAddress);
     if (!address) {
       this.json(response, 400, { error: 'an address is required', code: 'ERR_BAD_ADDRESS' });
       return;
@@ -1284,7 +1285,7 @@ export class RpcServer {
   }
 
   private miningStatus(response: ServerResponse, url: URL): void {
-    const address = url.searchParams.get('address');
+    const address = canonicalAddressText(url.searchParams.get('address') ?? '');
     if (!address || !isValidAddress(address, this.options.net.addressHrp)) {
       this.json(response, 400, { error: 'a valid wallet address is required', code: 'ERR_BAD_ADDRESS' });
       return;
@@ -1361,7 +1362,8 @@ export class RpcServer {
 
   private miningClaims(response: ServerResponse, url: URL): void {
     const limit = clampInt(url.searchParams.get('limit'), 25, 1, 200);
-    const miner = url.searchParams.get('miner') ?? undefined;
+    const minerRaw = url.searchParams.get('miner');
+    const miner = minerRaw ? canonicalAddressText(minerRaw) : undefined;
     if (miner && !isValidAddress(miner, this.options.net.addressHrp)) {
       this.json(response, 400, { error: 'invalid miner address', code: 'ERR_BAD_ADDRESS' });
       return;
@@ -1421,7 +1423,8 @@ export class RpcServer {
       this.json(response, 400, { error: `sort must be one of ${allowed.join(', ')}`, code: 'ERR_MALFORMED' });
       return;
     }
-    const seller = url.searchParams.get('seller') ?? undefined;
+    const sellerRaw = url.searchParams.get('seller');
+    const seller = sellerRaw ? canonicalAddressText(sellerRaw) : undefined;
     if (seller && !isValidAddress(seller, this.options.net.addressHrp)) {
       this.json(response, 400, { error: 'invalid seller address', code: 'ERR_BAD_ADDRESS' });
       return;
@@ -1464,7 +1467,8 @@ export class RpcServer {
     });
   }
 
-  private marketOffersFor(response: ServerResponse, scope: 'name' | 'incoming' | 'outgoing', subject: string, url: URL): void {
+  private marketOffersFor(response: ServerResponse, scope: 'name' | 'incoming' | 'outgoing', rawSubject: string, url: URL): void {
+    const subject = scope === 'name' ? rawSubject : canonicalAddressText(rawSubject);
     const state = this.options.chain.world;
     const statusParam = url.searchParams.get('status')?.toUpperCase();
     const statuses = ['PENDING', 'ACCEPTED', 'DECLINED', 'CANCELLED', 'EXPIRED', 'INVALIDATED'];
@@ -1521,7 +1525,7 @@ export class RpcServer {
   private marketEvents(response: ServerResponse, url: URL): void {
     const limit = clampNumber(url.searchParams.get('limit'), 50, 1, 200);
     const name = (url.searchParams.get('name') ?? '').toLowerCase().replace(/\.obs$/, '');
-    const address = url.searchParams.get('address') ?? '';
+    const address = canonicalAddressText(url.searchParams.get('address') ?? '');
     const marketTypes = new Set([
       'ONS_LISTED', 'ONS_LISTING_UPDATED', 'ONS_DELISTED', 'ONS_SOLD', 'ONS_TRANSFERRED', 'ONS_OFFER_MADE',
       'ONS_OFFER_ACCEPTED', 'ONS_OFFER_DECLINED', 'ONS_OFFER_CANCELLED', 'ONS_OFFER_EXPIRED', 'ONS_OFFER_INVALIDATED',
@@ -1580,7 +1584,7 @@ export class RpcServer {
   private async walletBalance(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const payload = await this.jsonBody<{ address?: string }>(request, response);
     if (payload === undefined) return;
-    const address = payload.address ?? '';
+    const address = canonicalAddressText(payload.address ?? '');
     if (!isValidAddress(address, this.options.net.addressHrp)) {
       this.json(response, 400, { error: 'invalid wallet address', code: 'ERR_BAD_ADDRESS' });
       return;
@@ -1622,7 +1626,7 @@ export class RpcServer {
   }
 
   private walletNonce(response: ServerResponse, addressEncoded: string): void {
-    const address = addressEncoded.replace(/\/$/, '');
+    const address = canonicalAddressText(addressEncoded.replace(/\/$/, ''));
     if (!isValidAddress(address, this.options.net.addressHrp)) {
       this.json(response, 400, { error: 'invalid wallet address', code: 'ERR_BAD_ADDRESS' });
       return;
@@ -1639,7 +1643,7 @@ export class RpcServer {
       usd?: string;
     }>(request, response);
     if (body === undefined) return;
-    const address = body.address ?? '';
+    const address = canonicalAddressText(body.address ?? '');
     if (!isValidAddress(address, this.options.net.addressHrp)) {
       this.json(response, 400, { error: 'invalid wallet address', code: 'ERR_BAD_ADDRESS' });
       return;
@@ -1954,7 +1958,7 @@ export class RpcServer {
       case 'gettransaction':
         return this.options.indexer.getTransaction(String(params.txId ?? '')) ?? null;
       case 'getbalance': {
-        const address = String(params.address ?? '');
+        const address = canonicalAddressText(String(params.address ?? ''));
         if (!isValidAddress(address, this.options.net.addressHrp)) throw new Error('invalid address');
         const account = state.getAccount(address);
         return { address, balanceObs: formatObs(account?.balance ?? 0n), nonce: account?.nonce ?? 0 };

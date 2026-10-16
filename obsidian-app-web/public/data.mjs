@@ -336,10 +336,18 @@ export const nameStatus = async (rawName) => {
   }
 };
 
-/** `onsq()`'s own rule: 3–24 letters, numbers or hyphens, plus the .obs suffix. */
+/**
+ * The protocol's name rule (`validateNameFormat` in obsidian-core): 3 to 63 characters, a-z 0-9 and interior hyphens,
+ * no consecutive hyphens, and not one of the reserved names. A parity test pins this to the core function.
+ */
+export const RESERVED_NAMES = Object.freeze([
+  'obs', 'www', 'admin', 'root', 'treasury', 'foundation', 'blackseal', 'core', 'node', 'genesis', 'support', 'api',
+  'wallet', 'explorer', 'developer',
+]);
 export function normaliseName(raw) {
   const base = String(raw ?? '').trim().toLowerCase().replace(/\.obs$/, '');
-  if (!/^[a-z0-9-]{3,24}$/.test(base)) return null;
+  if (!/^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$/.test(base)) return null;
+  if (base.includes('--') || RESERVED_NAMES.includes(base)) return null;
   return `${base}.obs`;
 }
 

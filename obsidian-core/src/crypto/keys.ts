@@ -64,6 +64,17 @@ export function isValidAddress(address: string, hrp: string = ADDRESS_HRP): bool
   }
 }
 
+/**
+ * The canonical spelling of an address as typed: Bech32 also accepts an ALL-UPPERCASE address (QR alphanumeric mode
+ * produces one), which is a valid address but a different string — and every account is keyed by the lowercase form.
+ * An all-uppercase input is therefore lower-cased; anything else (including mixed case, which Bech32 forbids) is
+ * returned untouched so it fails validation exactly as before.
+ */
+export function canonicalAddressText(address: string): string {
+  const text = typeof address === 'string' ? address.trim() : '';
+  return text !== '' && text === text.toUpperCase() ? text.toLowerCase() : text;
+}
+
 /** Decode an address to its 20-byte hash160 payload, or throw. */
 export function addressPayload(address: string, hrp: string = ADDRESS_HRP): Uint8Array {
   const payload = decodePayload(hrp, address);

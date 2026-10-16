@@ -13,7 +13,8 @@ import { Reader, Writer } from '../../protocol/encoding.js';
 import { ErrCode, reject } from '../../protocol/errors.js';
 import type { TxEnvelope } from '../../protocol/types.js';
 import { CONSENSUS_PARAMS } from '../../protocol/params.js';
-import { assertAddress, assertAmount, assertGas } from '../helpers.js';
+import { assertAmount, assertCanonicalAddress, assertGas } from '../helpers.js';
+import { canonicalAddressText } from '../../crypto/keys.js';
 import type { ExecutorContext } from '../types.js';
 
 export interface PaymentDecoded {
@@ -33,7 +34,7 @@ export function decodePaymentBody(body: Uint8Array): PaymentDecoded {
 
 export function encodePaymentBody(body: PaymentDecoded): Uint8Array {
   const w = new Writer();
-  w.string(body.to);
+  w.string(canonicalAddressText(body.to));
   w.u128(body.amount);
   w.string(body.memo ?? '');
   return w.finish();
@@ -46,7 +47,8 @@ export function paymentBaseAmount(decoded: PaymentDecoded): bigint {
 export function executePayment(ctx: ExecutorContext, tx: TxEnvelope): void {
   const { state, apply, net } = ctx;
   const decoded = decodePaymentBody(tx.body);
-  assertAddress(decoded.to, net, 'recipient');
+  // The recipient string becomes an account key: only the lowercase spelling is one an owner's key can ever spend.
+  assertCanonicalAddress(decoded.to, net, 'recipient');
   assertAmount(decoded.amount, { label: 'amount' });
   if (decoded.amount < CONSENSUS_PARAMS.tx.minTransfer) {
     reject(ErrCode.AMOUNT_ZERO, `amount is below the protocol minimum of ${CONSENSUS_PARAMS.tx.minTransfer} seal(s)`);

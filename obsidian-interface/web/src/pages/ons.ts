@@ -16,6 +16,7 @@ import { awaitConfirmation, gasFor, operations } from '../lib/operations.js';
 import { el, spinner, toast, kv, badge, table, obsUnit, obsExact, shortId, button, when, clear } from '../lib/ui.js';
 import { identifier } from '../lib/identifier.js';
 import { parseObs } from '../../core/protocol/amount.js';
+import { validateNameFormat } from '../../core/transactions/executors/ons.js';
 
 const client = new ObsidianClient();
 const lookup = el('input', { id: 'ons-lookup', placeholder: 'name.obs', autocomplete: 'off' });
@@ -389,7 +390,7 @@ async function drawMine(): Promise<void> {
     ]);
     const statuses = await Promise.all(balance.names.map((full) => client.marketName(bare(full)).then((status) => ({ full, status }))));
     const rows = statuses.map(({ full, status }) => {
-      const input = el('input', { placeholder: 'Price in OBS', inputmode: 'decimal', autocomplete: 'off', value: status.listing ? '' : '' });
+      const input = el('input', { placeholder: 'Price in OBS', inputmode: 'decimal', autocomplete: 'off', value: '' });
       const actions: HTMLElement[] = [];
       if (status.status === 'LISTED') {
         actions.push(
@@ -460,7 +461,12 @@ async function drawRegister(): Promise<void> {
   if (priceObs === undefined) create.disabled = true;
   create.addEventListener('click', async () => {
     const value = name.value.trim().toLowerCase().replace(/\.obs$/, '');
-    if (!/^[a-z0-9-]{3,32}$/.test(value)) return toast('Names are 3–32 characters: lowercase letters, digits and hyphens.', 'error');
+    // The protocol's own rule (length, characters, hyphens, reserved names), not a copy of it.
+    try {
+      validateNameFormat(value);
+    } catch (error) {
+      return toast((error as Error).message, 'error');
+    }
     const passphrase = window.prompt('Unlock your wallet passphrase to sign the registration');
     if (!passphrase) return;
     try {

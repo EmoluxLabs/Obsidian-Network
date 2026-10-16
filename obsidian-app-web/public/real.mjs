@@ -1004,7 +1004,7 @@ function install() {
     const raw = field('nm');
     const name = normaliseName(raw);
     state.ons = { query: raw, result: null };
-    if (!name) return setError('Use 3–24 letters, numbers or hyphens.');
+    if (!name) return setError('Use 3–63 letters, numbers or hyphens (no leading, trailing or double hyphens, and not a reserved name).');
     setError('');
     render();
     try {
