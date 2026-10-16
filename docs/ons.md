@@ -49,8 +49,11 @@ Rules the protocol enforces:
 * a transfer to a mistyped address costs nothing: it is an offer nobody accepts, and it lapses;
 * **any ownership change wipes the previous owner's open offer, pending recovery and recovery address**, so a new owner never
   inherits the previous owner's recovery path;
-* the recipient, recovery address and new owner address must be canonical lowercase; the `UPDATE_ADDRESS` pointer stays as
-  permissive as payments are;
+* every address a transaction carries as a recipient or pointer — the transfer recipient, the recovery address, the new owner,
+  the `UPDATE_ADDRESS` pointer, a payment recipient and a treasury grant recipient — must be in its canonical lowercase spelling
+  (an all-uppercase Bech32 spelling, such as a QR code produces, is a valid address but a different ledger key that no key could
+  spend). The shared encoders lower-case an all-uppercase address before signing, so clients are unaffected; a hand-built
+  transaction with the uppercase spelling is refused with `ERR_BAD_ADDRESS`;
 * a name cannot be in two places: the mapping is a single state entry and the state root commits to it.
 
 `GET /names/<name>` additionally shows `transferCount`, `pendingTransfer {to, offeredAt, offerExpiresAt}`, `recoveryAddress`
@@ -64,7 +67,7 @@ and `pendingRecovery {by, newAddress, startedAt, effectiveAt}` when they exist.
   name. Recovery protects against *loss*, not against *theft of the owner key*.
 * **If the owner key is lost and no recovery address was set (or its key is lost too), the name cannot be recovered by
   anyone.** There is no administrator and no override.
-* `RENEW` needs an unexpired name; a name that has lapsed past grace is registrable by anyone and cannot be recovered.
+* `RENEW` works for the owner until the registry drops the name, which includes the 30-day grace after the term ends (the new term is counted from the old expiry, or from now if that has passed). A lapsed name inside its grace cannot be registered by anyone else (`ERR_NAME_TAKEN`) and cannot trade, be transferred or be recovered; once grace has also passed it is dropped, is registrable by anyone, and cannot be recovered.
 * The 10 % treasury share of every fee goes to the treasury wallet, as before.
 
 ### Selling a name: the ONS Marketplace (2.0.0)
@@ -107,8 +110,8 @@ implement search without an index of its own.
 
 ## 4. Renewal and expiry
 
-A name expires at `registeredAt + term + grace`. Past that point the mapping is
-no longer valid and the name becomes registrable again; the node's response
+A name's term ends at `expiresAt`; from then on it no longer resolves and cannot be traded, but only its owner can
+renew it for `grace` (30 days, `graceSeconds`). At `expiresAt + grace` the registry drops it and the name becomes registrable again; the node's response
 reflects the height at which validity ended. Renewal is a normal ONS transaction
 signed by the **current** owner: after a transfer the new owner is the one who renews.
 

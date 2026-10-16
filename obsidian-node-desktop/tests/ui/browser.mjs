@@ -9,7 +9,7 @@ export async function launch() {
   process.env.AWS_EXECUTION_ENV ||= 'AWS_Lambda_nodejs22.x';
   const chromium = (await import(require.resolve('@sparticuz/chromium'))).default;
   const puppeteer = (await import(require.resolve('puppeteer-core'))).default;
-  return puppeteer.launch({ args: [...chromium.args, '--window-size=1400,900'], executablePath: await chromium.executablePath(), headless: 'shell', defaultViewport: { width: 1400, height: 900 } });
+  return puppeteer.launch({ args: [...chromium.args, '--no-sandbox', '--window-size=1400,900'], executablePath: await chromium.executablePath(), headless: 'shell', defaultViewport: { width: 1400, height: 900 } });
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

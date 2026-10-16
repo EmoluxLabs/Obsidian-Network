@@ -472,7 +472,7 @@ export class InterfaceServer {
         return;
       }
       if (request.method === 'OPTIONS') {
-        response.writeHead(204);
+        response.writeHead(204, { 'X-Content-Type-Options': 'nosniff' });
         response.end();
         return;
       }
@@ -1805,6 +1805,7 @@ export class InterfaceServer {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Length': Buffer.byteLength(payload),
       'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
       ...headers,
     });
     response.end(payload);

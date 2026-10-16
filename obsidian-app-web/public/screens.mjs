@@ -1032,7 +1032,7 @@ function marketScreen(s) {
     : '';
   return (
     `<div class="lb">ONS MARKETPLACE</div>` +
-    `<div style="display:flex;gap:6px;margin-bottom:8px">${sortButtons}</div>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${sortButtons}</div>` +
     feedHtml +
     `<div class="lb">YOUR NAMES</div>` +
     pass +

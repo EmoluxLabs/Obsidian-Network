@@ -124,7 +124,7 @@ async function doLookup(raw: string): Promise<void> {
   try {
     const status = await client.marketName(name);
     const record = status.status === 'AVAILABLE' ? undefined : await client.name(`${name}.obs`).catch(() => undefined);
-    drawStatus(name, status, record?.registeredAtHeight, record?.transferCount);
+    drawStatus(name, status, record?.registeredAtHeight, record?.transferCount, record?.expiresAt);
   } catch (error) {
     lookupPanel.replaceChildren(
       el('h2', {}, `${name}.obs`),
@@ -135,7 +135,7 @@ async function doLookup(raw: string): Promise<void> {
   }
 }
 
-function drawStatus(name: string, status: MarketNameStatus, registeredAtHeight?: number, transferCount?: number): void {
+function drawStatus(name: string, status: MarketNameStatus, registeredAtHeight?: number, transferCount?: number, expiresAt?: number): void {
   const full = `${name}.obs`;
   const me = mine();
   const isOwner = Boolean(me) && status.owner === me;
@@ -162,7 +162,7 @@ function drawStatus(name: string, status: MarketNameStatus, registeredAtHeight?:
     parts.push(
       kv([
         ['Owner', status.owner ? sellerLink(status.owner) : '—'],
-        ['Expires', status.listing ? when(status.listing.expiresAt) : '—'],
+        ['Expires', status.listing ? when(status.listing.expiresAt) : expiresAt === undefined ? '—' : when(expiresAt)],
         ['Registered at height', registeredAtHeight === undefined ? '—' : String(registeredAtHeight)],
         ['Transfers', transferCount === undefined ? '—' : transferCount === 0 ? 'never transferred' : String(transferCount)],
         ['Pending offers', String(status.pendingOffers)],

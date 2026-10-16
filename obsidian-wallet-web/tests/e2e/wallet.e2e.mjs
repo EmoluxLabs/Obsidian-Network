@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { startDevnet } from './stack.mjs';
 import { claimDirect, waitBalance } from './fund.mjs';
 import { launch, sleep, qrVideo, pngFile } from './browser.mjs';
-import { exactObs } from '../../public/lib/pure.mjs';
+import { exactObs, shownObs } from '../../public/lib/pure.mjs';
 import * as bundle from '../../../obsidian-app-web/web/index.mjs';
 import { rasterise, modulesFromSvg } from '../../../obsidian-app-web/tests/helpers/qr-raster.mjs';
 
@@ -373,10 +373,11 @@ try {
     await waitText(second, 'OBS COIN BALANCE');
     assert.equal(await shownAddress(second), funder.address);
     const onChain = await balanceOf(funder.address);
-    await second.waitForFunction((v) => document.getElementById('bal')?.innerText.startsWith(v), { timeout: 20000 }, (onChain / OBS).toString());
-    const shown = await balanceText(second);
-    const [whole, frac = ''] = shown.replace(' OBS', '').split('.');
-    assert.equal(BigInt(whole) * OBS + BigInt(frac.padEnd(18, '0')), onChain, `the screen shows the node's exact balance (${shown})`);
+    // The screen shows at most six decimals (shared display rule); the tooltip carries the node's exact balance.
+    const wantShown = `${shownObs(onChain)} OBS`;
+    await second.waitForFunction((v) => document.getElementById('bal')?.innerText.replace(/\s+/g, ' ').trim() === v, { timeout: 20000 }, wantShown);
+    const exactTitle = await second.evaluate(() => document.getElementById('bal')?.getAttribute('title') ?? '');
+    assert.equal(exactTitle, `Exact: ${exactObs(onChain)} OBS`, "the tooltip holds the node's exact balance");
     await waitText(second, 'Mining reward');
   });
 

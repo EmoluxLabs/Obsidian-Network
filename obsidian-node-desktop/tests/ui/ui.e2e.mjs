@@ -286,7 +286,7 @@ try {
     await go('help');
     await waitText(page, 'Obsidian Core');
     const t = await text();
-    assert.match(t, /Core version\s*1\.\d+\.\d+/);
+    assert.match(t, /Core version\s*\d+\.\d+\.\d+/);
     assert.match(t, /Parameters hash/);
   });
 

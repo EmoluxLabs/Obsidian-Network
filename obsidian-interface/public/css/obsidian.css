@@ -325,7 +325,7 @@ label { display: block; font-size: 0.76rem; text-transform: uppercase; letter-sp
 .kv dt { color: var(--text-faint); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 10px; }
 .kv dd { margin: 0; font-size: 0.94rem; overflow-wrap: anywhere; }
 
-.table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface); }
+.table-wrap { position: relative; overflow-x: auto; margin-top: 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--surface); }
 table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
 th { text-align: left; padding: 10px 12px; color: var(--text-faint); font-size: 0.7rem; letter-spacing: 0.09em; text-transform: uppercase; background: var(--surface-2); }
 td { padding: 10px 12px; border-top: 1px solid var(--line-soft); font-family: var(--mono); font-size: 0.83rem; }
