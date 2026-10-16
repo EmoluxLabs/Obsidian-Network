@@ -139,6 +139,14 @@ need_core() {
 need_interface() {
   [ -n "$INTERFACE_DIR" ] && [ -f "$INTERFACE_DIR/dist/server/main.js" ] ||
     die "cannot find a built obsidian-interface (dist/server/main.js). Set OBSIDIAN_INTERFACE_DIR, or build it: npm --prefix obsidian-interface ci && npm --prefix obsidian-interface run build"
+  # With a mining gate key configured the interface loads the core's own signing code, which needs the same libraries
+  # the node installed. An interface unpacked beside the node has none of its own, so let it read the node's: a link
+  # inside the install tree (never in a data directory), made only when the interface has no node_modules of its own.
+  if [ ! -e "$INTERFACE_DIR/node_modules" ] && [ -n "$CORE_DIR" ] && [ -d "$CORE_DIR/node_modules/@noble" ]; then
+    ln -s "$CORE_DIR/node_modules" "$INTERFACE_DIR/node_modules" 2>/dev/null &&
+      say "the interface shares the node's installed libraries ($INTERFACE_DIR/node_modules -> $CORE_DIR/node_modules)" ||
+      say "warning: could not link the node's libraries into $INTERFACE_DIR; run  npm ci --omit=dev  there if the interface cannot start"
+  fi
 }
 
 # ── small helpers ────────────────────────────────────────────────────────────

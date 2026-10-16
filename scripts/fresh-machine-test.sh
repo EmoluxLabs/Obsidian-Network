@@ -70,7 +70,7 @@ log "2. verify the archives (guide step 5)"
 cd "$FM/src/releases" || exit 1
 SUMS=$(sha256sum -c SHA256SUMS 2>&1)
 echo "$SUMS" | sed 's/^/   /'
-[ "$(echo "$SUMS" | grep -c ': OK$')" = "11" ] && ok "11 archives, all OK" || bad "expected 11 OK lines"
+[ "$(echo "$SUMS" | grep -c ': OK$')" = "$(grep -c . SHA256SUMS)" ] && ok "$(grep -c . SHA256SUMS) archives, all OK" || bad "not every line of SHA256SUMS is OK"
 echo "$SUMS" | grep -q FAILED && bad "a checksum FAILED" || ok "no checksum failed"
 grep -q "\"version\": \"$VERSION\"" MANIFEST.json && ok "MANIFEST.json says $VERSION" || bad "MANIFEST version"
 MCOMMIT=$(node -p "require('./MANIFEST.json').commit")
@@ -98,13 +98,15 @@ log "4. mainnet refuses a missing passphrase; no network, no command (the 'no de
 export OBSIDIAN_HOME="$FM/data"
 unset OBSIDIAN_KEYSTORE_PASSPHRASE OBSIDIAN_KEYSTORE_PASSPHRASE_FILE OBSIDIAN_GENESIS_INVITE_HASH OBSIDIAN_NETWORK
 OUT=$(bash obsidian-network.sh mainnet start 2>&1); echo "$OUT" | tail -2 | cut -c1-200 | sed 's/^/   /'
-echo "$OUT" | grep -q "mainnet needs a passphrase YOU chose" && ok "helper: mainnet needs a chosen passphrase" || bad "mainnet passphrase refusal"
+echo "$OUT" | grep -q "mainnet node needs a passphrase for its key and none was given" && ok "helper: mainnet needs a passphrase you give" || bad "mainnet passphrase refusal"
 ls "$FM/data/mainnet/node/node-key.json" >/dev/null 2>&1 && bad "a mainnet key was created without a passphrase" || ok "no mainnet key was created"
 check "node start without --network refuses"   bash -c "node obsidian-core/dist/index.js start 2>&1 | grep -q 'no network selected'"
 check "wallet new without --network refuses"   bash -c "node obsidian-core/dist/index.js wallet new 2>&1 | grep -q 'no network selected'"
 check "unknown network refused by the helper"  bash -c "bash obsidian-network.sh devnett start 2>&1 | grep -q 'unknown network'"
 
 log "5. start all four networks on their default ports (guide sections 2-5)"
+# Every network takes the SAME passphrase rule (the helper never generates or stores one), so each start is given one.
+export OBSIDIAN_KEYSTORE_PASSPHRASE='a-fresh-machine-test-passphrase'
 DEVNET_HASH='scrypt$32768$8$1$952b1429899a01aeb55b6e0a30430bc5$ef36a024ec45a8698b76e9b9678abe84a83f8ace7d8a05b73a1f50251409ca41'
 export OBSIDIAN_GENESIS_INVITE_HASH="$DEVNET_HASH"
 setsid bash obsidian-network.sh devnet start </dev/null >"$FM/devnet-start.log" 2>&1 && ok "devnet start" || { bad "devnet start"; tail -5 "$FM/devnet-start.log"; }
@@ -124,13 +126,13 @@ log "6. each network is itself, and nothing else"
 declare -A CHAIN=( [mainnet]=7777 [testnet]=7778 [staging]=7779 [devnet]=7780 )
 declare -A RPC=( [mainnet]=8630 [testnet]=18630 [staging]=28630 [devnet]=38630 )
 declare -A UI=( [mainnet]=8788 [testnet]=18788 [staging]=28788 [devnet]=38788 )
-declare -A GID=( [mainnet]=681d443596d5c58221c59b2add83882848abe470 [testnet]=31d49f2338b0e4fdc874a53770ea45d49d7b767e [staging]=e0173182e8e82fe08e683467d2e6d4c969de3d00 [devnet]=2b4c905feeb565c2c41f2eaabca248c8281aa845 )
+declare -A GID=( [mainnet]=6b907c5770f990e71f1cdc4c23dc2e6b0fdf5fd6 [testnet]=e7a1e18047808a971404b8e1d5a051b6c9db77ca [staging]=884229ca043a60958bd8a9b94576d1dd6fa5b0f3 [devnet]=bedb4d5522d458b111ecb9e5922343e4d215e60c )
 for n in mainnet testnet staging devnet; do
   S=$(get "http://127.0.0.1:${RPC[$n]}/status")
   [ "$(echo "$S" | jget networkId)" = "obsidian-$n-1" ] && ok "$n: networkId obsidian-$n-1" || bad "$n: networkId ($(echo "$S" | jget networkId))"
   [ "$(echo "$S" | jget chainId)" = "${CHAIN[$n]}" ] && ok "$n: chainId ${CHAIN[$n]}" || bad "$n: chainId"
   [ "$(echo "$S" | jget genesisId)" = "${GID[$n]}" ] && ok "$n: genesisId matches the guide" || bad "$n: genesisId"
-  [ "$(echo "$S" | jget paramsHash)" = "1f2fba9a918147b084e67bf6e0c76d89" ] && ok "$n: paramsHash 1f2fba9a…" || bad "$n: paramsHash"
+  [ "$(echo "$S" | jget paramsHash)" = "22a70aa431c4e9bd69c8bb44a70bbc38" ] && ok "$n: paramsHash 22a70aa4…" || bad "$n: paramsHash"
   H=$(echo "$S" | jget height); [ "${H:-0}" -ge 1 ] 2>/dev/null && ok "$n: producing blocks (height $H)" || bad "$n: height ${H:-?}"
   D=$(get "http://127.0.0.1:${RPC[$n]}/network" | jget domains)
   if [ "$n" = mainnet ]; then

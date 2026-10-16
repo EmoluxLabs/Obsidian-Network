@@ -184,8 +184,8 @@ npm ci --omit=dev --fetch-retries=10
 ```
 
 `--omit=dev` is what keeps this light and compiler-free: the build tools (`esbuild`,
-TypeScript, the test runner) are not needed to *run* a node. The interface has no runtime
-packages at all. `--fetch-retries=10` makes npm try each download up to ten times, which a slow or
+TypeScript, the test runner) are not needed to *run* a node. The interface needs no packages of
+its own: when it sits beside the node, `obsidian-network.sh` lets it read the node's (a link to `obsidian-core/node_modules`). `--fetch-retries=10` makes npm try each download up to ten times, which a slow or
 unstable connection needs. If it still stops, run the same command again: npm keeps every package it has
 already downloaded. If `npm ci` fails on your mirror, install the five it needs by name (npm adds the one they share):
 
