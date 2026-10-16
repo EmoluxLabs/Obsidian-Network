@@ -107,14 +107,14 @@ describe('node registry routes', () => {
 });
 
 describe('status, params and metrics', () => {
-  it('report 2.0.0 everywhere and expose producer and finality parameters instead of a bond', async () => {
+  it('report 2.0.1 everywhere and expose producer and finality parameters instead of a bond', async () => {
     const { base } = await networkWithNodes(3);
     const status = (await get(base, '/status')).json;
     expect(status.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(status.nodes).toBe(3);
     expect(status.scheduleTier).toBe('TIER2');
     expect(status).toHaveProperty('finalizedHeight');
-    expect((await get(base, '/version')).json.coreVersion ?? CORE_VERSION).toBe('2.0.0');
+    expect((await get(base, '/version')).json.coreVersion ?? CORE_VERSION).toBe('2.0.1');
     const params = (await get(base, '/params')).json;
     expect(params.consensus.producers.maturityBlocks).toBe(CONSENSUS_PARAMS.consensus.producers.maturityBlocks);
     expect(params.consensus.finality.minProducers).toBe(2);

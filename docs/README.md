@@ -42,6 +42,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | [trusted-domains.md](trusted-domains.md) | Which browser origins a node or interface answers: the project's own domain by default, how to add yours (exact origins and wildcards), what is refused |
 | [marketplace-v2.0.0.md](marketplace-v2.0.0.md) | The ONS Marketplace: fixed-price listings, the listing lock, buying, offers and escrow, the state machines, fees, reads, and what is and is not supported |
 | [upgrading-2.0.0.md](upgrading-2.0.0.md) | Moving to 2.0.0: a new genesis with no migration, what changed for each reader, a fresh devnet and a Marketplace walk-through |
+| [upgrading-2.0.1.md](upgrading-2.0.1.md) | Moving to 2.0.1: the two consensus fixes (registration inside the grace period, canonical recipient addresses), a new genesis, what to check |
 | [upgrading-1.9.0.md](upgrading-1.9.0.md) | Moving to 1.9.0: a fresh start with no migration, what changed for each reader, a fresh devnet step by step, how to check that nodes agree |
 | [consensus-v1.9.0.md](consensus-v1.9.0.md) | The consensus specification: slots, producer schedule, eligibility, timestamps, skipped slots, duplicate blocks, fork choice, equivocation, recovery, Sybil limits, and what the tests establish |
 | [finality-v1.9.0.md](finality-v1.9.0.md) | Producer-diversity checkpoint finality: the rule, the state, restart and partitions, and exactly what it does not guarantee |

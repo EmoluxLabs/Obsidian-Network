@@ -1,4 +1,4 @@
-# Gate authority: rotating, revoking and recovering the mining gate keys (protocol 2.0.0)
+# Gate authority: rotating, revoking and recovering the mining gate keys (protocol 2.0.1)
 
 Since 1.7.0 a `MINING_CLAIM` is valid only with a short-lived certificate signed by a **mining gate issuer key**
 (the platform signs one for a signed-in account that has linked a wallet; see [mining.md](mining.md)). 1.7.0

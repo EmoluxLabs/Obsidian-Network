@@ -1,4 +1,4 @@
-# Launch guide — run Obsidian Network 2.0.0
+# Launch guide — run Obsidian Network 2.0.1
 
 This is the one document to follow to get a network running, on an Android phone (Termux) or
 on any Linux machine. It covers, in this order:
@@ -108,12 +108,12 @@ on a phone.
 rm -rf ~/obsidian/src; mkdir -p ~/obsidian; cd ~/obsidian
 G="git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60"
 for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
-cd src && for f in SHA256SUMS obsidian-node-operator-2.0.0.tar.gz obsidian-interface-selfhost-2.0.0.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
+cd src && for f in SHA256SUMS obsidian-node-operator-2.0.1.tar.gz obsidian-interface-selfhost-2.0.1.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
 ls -l releases
 ```
 
-The last line must list three files: `SHA256SUMS`, `obsidian-node-operator-2.0.0.tar.gz` (0.5 MB) and
-`obsidian-interface-selfhost-2.0.0.tar.gz` (2 MB). On a slow connection this takes a few minutes (at 15 KB/s,
+The last line must list three files: `SHA256SUMS`, `obsidian-node-operator-2.0.1.tar.gz` (0.5 MB) and
+`obsidian-interface-selfhost-2.0.1.tar.gz` (2 MB). On a slow connection this takes a few minutes (at 15 KB/s,
 about three): keep Termux open and the screen on while it runs. If it does not list all three, read the
 first line of the error and find it in the troubleshooting table at the end of this guide (§8), or use the
 browser route below. The first command removes any half-finished earlier attempt, so running this step
@@ -124,8 +124,8 @@ again is always safe. `--branch` names the branch you are installing from; this 
 again), download the two archives with your phone's browser instead. A browser resumes an interrupted
 download; `git` and `curl` in Termux cannot. Open both links and let them finish (they land in Downloads):
 
-* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-node-operator-2.0.0.tar.gz>
-* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-interface-selfhost-2.0.0.tar.gz>
+* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-node-operator-2.0.1.tar.gz>
+* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-interface-selfhost-2.0.1.tar.gz>
 
 Then copy them where Step 5 expects them. `termux-setup-storage` asks for permission once; tap Allow. The
 last command fetches the checksum file (1 KB), in case the commands above did not get that far:
@@ -133,7 +133,7 @@ last command fetches the checksum file (1 KB), in case the commands above did no
 ```bash
 termux-setup-storage
 mkdir -p ~/obsidian/src/releases
-cp ~/storage/downloads/obsidian-node-operator-2.0.0.tar.gz ~/storage/downloads/obsidian-interface-selfhost-2.0.0.tar.gz ~/obsidian/src/releases/
+cp ~/storage/downloads/obsidian-node-operator-2.0.1.tar.gz ~/storage/downloads/obsidian-interface-selfhost-2.0.1.tar.gz ~/obsidian/src/releases/
 cd ~/obsidian/src/releases && curl -fL --retry 8 -o SHA256SUMS https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/SHA256SUMS
 ls -l
 ```
@@ -158,8 +158,8 @@ cd ~/obsidian/src/releases
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
-You must see `OK` for the two archives Step 4 downloaded, `obsidian-interface-selfhost-2.0.0.tar.gz`
-and `obsidian-node-operator-2.0.0.tar.gz`, and nothing else (`--ignore-missing` skips the other archives
+You must see `OK` for the two archives Step 4 downloaded, `obsidian-interface-selfhost-2.0.1.tar.gz`
+and `obsidian-node-operator-2.0.1.tar.gz`, and nothing else (`--ignore-missing` skips the other archives
 that `SHA256SUMS` lists). If any line says `FAILED`, or the answer is `no file was verified`, stop, delete
 `~/obsidian` and start again — do not run the code. (`SHA256SUMS` proves the files were not damaged or altered in transit; it
 does not prove who published them. See [release-verification.md](release-verification.md).)
@@ -171,8 +171,8 @@ are designed to sit side by side.
 ```bash
 mkdir -p ~/obsidian/run
 cd ~/obsidian/src/releases
-tar xzf obsidian-node-operator-2.0.0.tar.gz      -C ~/obsidian/run
-tar xzf obsidian-interface-selfhost-2.0.0.tar.gz -C ~/obsidian/run
+tar xzf obsidian-node-operator-2.0.1.tar.gz      -C ~/obsidian/run
+tar xzf obsidian-interface-selfhost-2.0.1.tar.gz -C ~/obsidian/run
 ls ~/obsidian/run        # obsidian-core  obsidian-interface  obsidian-network.sh  landing  mine ...
 ```
 
@@ -201,7 +201,7 @@ node obsidian-core/dist/index.js version
 bash obsidian-network.sh help
 ```
 
-You should see core and protocol `2.0.0`, and the helper's usage. Now go to the section for
+You should see core and protocol `2.0.1`, and the helper's usage. Now go to the section for
 the one network you want. Devnet is the place to start.
 
 ### 1B. Any Linux or macOS machine
@@ -223,7 +223,7 @@ variables it understands are listed at the top of the script (`bash obsidian-net
 
 ## 2. Devnet
 
-Chain id **7780** · addresses start `dobs1` · node RPC **38630** · node P2P **38631** · interface **http://127.0.0.1:38788** · genesis id `86cddcc840fc755852aa9edbd500c079140843b9`
+Chain id **7780** · addresses start `dobs1` · node RPC **38630** · node P2P **38631** · interface **http://127.0.0.1:38788** · genesis id `bedb4d5522d458b111ecb9e5922343e4d215e60c`
 
 Devnet is the throwaway network: nothing on it has value, it is reset whenever you like,
 and it is the right place to learn the system. Everything in this section is about devnet
@@ -285,7 +285,7 @@ devnet is **38788**; all nine sites are paths on it (`/`, `/app/`, `/mine/`, `/w
 
 ```bash
 curl -s localhost:38630/status            # networkId obsidian-devnet-1, chainId 7780, height climbing
-curl -s localhost:38630/health            # paramsHash e147216a83f62936572c8d9855989a7d
+curl -s localhost:38630/health            # paramsHash 22a70aa431c4e9bd69c8bb44a70bbc38
 curl -s localhost:38788/api/health         # the interface answers
 curl -s localhost:38788/api/auth/config    # genesisInvite: configured true, redeemed false
 ```
@@ -317,7 +317,7 @@ interface's data directory.
 
 ## 3. Testnet
 
-Chain id **7778** · addresses start `tobs1` · node RPC **18630** · node P2P **18631** · interface **http://127.0.0.1:18788** · genesis id `b5e50858d02bac5b9e45200f7a03e2867947a2d9`
+Chain id **7778** · addresses start `tobs1` · node RPC **18630** · node P2P **18631** · interface **http://127.0.0.1:18788** · genesis id `e7a1e18047808a971404b8e1d5a051b6c9db77ca`
 
 Testnet is the public rehearsal: the same rules as mainnet with coins that have no value. Run it before anything else goes near mainnet. Everything in this section is about testnet and uses only testnet's ports.
 
@@ -360,7 +360,7 @@ Open **http://127.0.0.1:18788**. The interface port for testnet is **18788**.
 
 ```bash
 curl -s localhost:18630/status            # networkId obsidian-testnet-1, chainId 7778, height climbing
-curl -s localhost:18630/health            # paramsHash e147216a83f62936572c8d9855989a7d
+curl -s localhost:18630/health            # paramsHash 22a70aa431c4e9bd69c8bb44a70bbc38
 curl -s localhost:18788/api/health         # the interface answers
 curl -s localhost:18788/api/auth/config    # genesisInvite: configured true, redeemed false
 ```
@@ -387,7 +387,7 @@ bash obsidian-network.sh testnet reset --yes    # deletes testnet's chain, node 
 
 ## 4. Staging
 
-Chain id **7779** · addresses start `sobs1` · node RPC **28630** · node P2P **28631** · interface **http://127.0.0.1:28788** · genesis id `96ef559200db74ed76b800917b4c63c1603022b9`
+Chain id **7779** · addresses start `sobs1` · node RPC **28630** · node P2P **28631** · interface **http://127.0.0.1:28788** · genesis id `884229ca043a60958bd8a9b94576d1dd6fa5b0f3`
 
 Staging is the dress rehearsal for a release: run the exact build you intend to ship, against a chain nobody depends on, before it reaches testnet or mainnet. Everything in this section is about staging and uses only staging's ports.
 
@@ -430,7 +430,7 @@ Open **http://127.0.0.1:28788**. The interface port for staging is **28788**.
 
 ```bash
 curl -s localhost:28630/status            # networkId obsidian-staging-1, chainId 7779, height climbing
-curl -s localhost:28630/health            # paramsHash e147216a83f62936572c8d9855989a7d
+curl -s localhost:28630/health            # paramsHash 22a70aa431c4e9bd69c8bb44a70bbc38
 curl -s localhost:28788/api/health         # the interface answers
 curl -s localhost:28788/api/auth/config    # genesisInvite: configured true, redeemed false
 ```
@@ -457,7 +457,7 @@ bash obsidian-network.sh staging reset --yes    # deletes staging's chain, node 
 
 ## 5. Mainnet
 
-Chain id **7777** · addresses start `obs1` · node RPC **8630** · node P2P **8631** · interface **http://127.0.0.1:8788** · genesis id `ee5e9bdf3fa89a3b9969777e5fd44487c55d5402`
+Chain id **7777** · addresses start `obs1` · node RPC **8630** · node P2P **8631** · interface **http://127.0.0.1:8788** · genesis id `6b907c5770f990e71f1cdc4c23dc2e6b0fdf5fd6`
 
 **Mainnet is real.** Its data cannot be reset by the helper, its coins are the 21,000,000 OBS
 that exist, and a mistake here is not a throwaway. Before you start it, read
@@ -530,13 +530,13 @@ Open **http://127.0.0.1:8788**. The interface port for mainnet is **8788**.
 
 ```bash
 curl -s localhost:8630/status            # networkId obsidian-mainnet-1, chainId 7777, height climbing
-curl -s localhost:8630/health            # paramsHash e147216a83f62936572c8d9855989a7d
+curl -s localhost:8630/health            # paramsHash 22a70aa431c4e9bd69c8bb44a70bbc38
 curl -s localhost:8630/supply            # "invariantOk":true and maxSupplyObs 21000000
 curl -s localhost:8788/api/health         # the interface answers
 curl -s localhost:8788/api/auth/config    # genesisInvite: configured true, redeemed false
 ```
 
-The genesis id of a genuine mainnet node is `ee5e9bdf3fa89a3b9969777e5fd44487c55d5402`. If yours differs, you are not on
+The genesis id of a genuine mainnet node is `6b907c5770f990e71f1cdc4c23dc2e6b0fdf5fd6`. If yours differs, you are not on
 mainnet: stop and find out why before you trust anything it says.
 
 ### Add another mainnet node
@@ -667,11 +667,12 @@ cd ~/obsidian/run && bash obsidian-network.sh devnet start
 Peers compare core version, protocol version, network id and genesis id when they connect, so a
 mismatched binary is refused rather than silently forking your view of the chain.
 
-**2.0.0 is a fresh start, not an in-place upgrade.** The chain identity is derived from the genesis document and the
-consensus parameters, and 2.0.0 adds the ONS Marketplace transaction and state (see
-[marketplace-v2.0.0.md](marketplace-v2.0.0.md) and [upgrading-2.0.0.md](upgrading-2.0.0.md)), so a data directory written by
+**2.0.1 is a fresh start, not an in-place upgrade.** The chain identity is derived from the genesis document and the
+consensus parameters, and 2.0.1 tightens two consensus rules on top of the ONS Marketplace of 2.0.0 (see
+[upgrading-2.0.1.md](upgrading-2.0.1.md), [upgrading-2.0.0.md](upgrading-2.0.0.md) and
+[marketplace-v2.0.0.md](marketplace-v2.0.0.md)), so a data directory written by
 an older release is rejected at startup and cannot be loaded. Stop the old node, move its directory aside
-for reference, and start 2.0.0 on a fresh data directory — do not delete the old one until you have
+for reference, and start 2.0.1 on a fresh data directory — do not delete the old one until you have
 confirmed the new node is healthy. Because mainnet has not launched, nothing of value is lost; if a
 value-bearing older chain ever exists, stop and design a migration instead, because this release
 does not provide one.

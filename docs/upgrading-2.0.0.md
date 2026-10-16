@@ -28,7 +28,7 @@ prefixes. The Marketplace charges **no commission**.
 ## Version and identity
 
 * Protocol and core `2.0.0`; `MIN_CORE_VERSION` `2.0.0`; state snapshot format 7; wire version 1.
-* Params hash `e147216a83f62936572c8d9855989a7d` on every network (it commits to the new `ons.market` parameters).
+* The params hash of 2.0.0 committed to the new `ons.market` parameters (2.0.1 has its own: [upgrading-2.0.1.md](upgrading-2.0.1.md)).
 * New genesis ids on every network; read them from `obsidian genesis init --network <net>` or a running node's `GET /genesis`.
   They are listed in [LAUNCH-GUIDE.md](LAUNCH-GUIDE.md).
 

@@ -48,7 +48,7 @@ function node(world) {
       asked += 1;
       return PASSPHRASE;
     },
-    getContext: async () => ({ chainId: 7777, protocolVersion: '2.0.0', protocolTime: 1_700_000_000 }),
+    getContext: async () => ({ chainId: 7777, protocolVersion: '2.0.1', protocolTime: 1_700_000_000 }),
     getNonce: async () => 3,
     getBalance: async () => ({ balanceSeals: (world.spendable ?? 100n * OBS).toString(), spendableSeals: (world.spendable ?? 100n * OBS).toString() }),
     getMarketName: async (name) => world.names[name] ?? null,

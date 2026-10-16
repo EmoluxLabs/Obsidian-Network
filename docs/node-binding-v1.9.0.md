@@ -1,4 +1,4 @@
-# Node ↔ reward-wallet binding — protocol 2.0.0 (introduced in 1.9.0)
+# Node ↔ reward-wallet binding — protocol 2.0.1 (introduced in 1.9.0)
 
 The operator of a node **pastes an OBS address**. That is the whole binding step: no gas, no wallet signature, no wallet
 key, no deposit, no bond. The binding is stored in protocol state, persists across restarts and is synchronised to every

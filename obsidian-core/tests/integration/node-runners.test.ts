@@ -197,6 +197,27 @@ describe('node registration and the wallet binding', () => {
     h.produce(nodes.slice(0, limit).map((node) => registration(h, node)));
     expect(h.chain.world.registeredNodes()).toHaveLength(limit);
   });
+
+  it('a producer never assembles a block that breaks the admission limit (the chain must not stall on it)', async () => {
+    // Found by the cluster end-to-end test: three nodes registering at once put three registrations in one pooled batch;
+    // block assembly tried each on its own (a fresh tally per transaction), signed a block with three, and every
+    // validator, the producer included, rejected it. The double-sign lock then kept every node from building on that
+    // parent: a permanent halt.
+    const { h } = await nodeHarness();
+    const limit = CONSENSUS_PARAMS.consensus.producers.maxRegistrationsPerBlock;
+    const nodes = Array.from({ length: limit + 2 }, () => makeNode(makeWallet()));
+    const txs = nodes.map((node) => registration(h, node));
+    for (const tx of txs) expect(h.chain.mempool.add(tx).accepted).toBe(true);
+    const block = h.chain.buildNextBlock(h.producer);
+    expect(block).not.toBeNull();
+    expect(block!.transactions).toHaveLength(limit);
+    const result = h.chain.addBlock(block!);
+    expect(result.accepted, result.message).toBe(true);
+    expect(h.chain.world.registeredNodes()).toHaveLength(limit);
+    // The over-limit registrations were left pooled (not dropped) for a later block.
+    const included = new Set(block!.transactions.map((tx) => tx.id));
+    for (const tx of txs) expect(h.chain.mempool.has(tx.id), tx.id).toBe(!included.has(tx.id));
+    });
 });
 
 describe('evidence: nothing is self-reported', () => {

@@ -31,6 +31,8 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
   applyBlock,
   applyTransactions,
+  cloneBlockTally,
+  newBlockTally,
   finalizeBlock,
   runBlockRoutines,
   type BlockContext,
@@ -1138,11 +1140,15 @@ export class ChainManager extends EventEmitter {
       working.advanceBlock(height, timestamp);
       const events: ProtocolEvent[] = [];
       const accepted: TxEnvelope[] = [];
+      // One tally for the whole block: the per-block limits (node registrations, equivocation reports, claims per
+      // wallet) are rules about the block, and a validator applies the block in one pass with one tally.
+      let tally = newBlockTally();
       for (const tx of candidates) {
         const trial = working.clone();
         trial.advanceBlock(height, timestamp);
         try {
-          const outcome = applyTransactions(trial, [tx], ctx, this.options.net);
+          const trialTally = cloneBlockTally(tally);
+          const outcome = applyTransactions(trial, [tx], ctx, this.options.net, trialTally);
           if (checkEachTransaction) {
             // Slow path: find the transaction that breaks the supply invariant
             // and evict it, so it cannot stall assembly on every later attempt.
@@ -1153,6 +1159,7 @@ export class ChainManager extends EventEmitter {
               continue; // `working` is untouched: only the discarded trial saw this tx
             }
           }
+          tally = trialTally;
           working = outcome.state;
           events.push(...outcome.events);
           accepted.push(tx);
@@ -1161,6 +1168,15 @@ export class ChainManager extends EventEmitter {
           // retried forever. In particular, a peer could otherwise advertise a
           // large gas value without the balance/body to support it, win mempool
           // eviction priority, and make every producer re-execute it each slot.
+          //
+          // The exception is a transaction that is fine and merely does not fit THIS block: the block's own
+          // admission limit is already used up by transactions ahead of it. It stays pooled for a later block.
+          const P = CONSENSUS_PARAMS.consensus.producers;
+          const code = error instanceof ProtocolError ? error.code : undefined;
+          const deferred =
+            (code === ErrCode.NODE_REGISTRATION_LIMIT && tally.counters.registrations >= P.maxRegistrationsPerBlock) ||
+            (code === ErrCode.EVIDENCE_LIMIT && tally.counters.equivocationReports >= P.maxEquivocationReportsPerBlock);
+          if (deferred) continue;
           this.mempool.remove(tx.id);
           this.emit('rejected-transaction', { txId: tx.id, reason: (error as Error).message });
           continue;
@@ -1187,6 +1203,31 @@ export class ChainManager extends EventEmitter {
         // clean. (If even an empty block cannot finalise, the chain state itself
         // is broken and the throw below is the right answer.)
         for (const tx of candidates) this.mempool.remove(tx.id);
+        const working = this.state.clone();
+        working.advanceBlock(height, timestamp);
+        const events = runBlockRoutines(working, ctx, this.options.net, { missedProducers });
+        built = { accepted: [], finalized: finalizeBlock(working, events) };
+      }
+    }
+
+    // Defence in depth, before the irreversible act: replay the assembled list exactly as every validator will (one
+    // pass, one tally, the same routines) and require the same roots. The double-sign lock is already armed, so a block
+    // this node signs but its own validation then rejects would keep it, and with it every node that reached the same
+    // conclusion, from ever producing on this parent. If the replay disagrees, sign an empty block instead: the chain
+    // moves, the transactions stay pooled, and the disagreement is reported.
+    if (built.accepted.length > 0) {
+      try {
+        const replay = this.state.clone();
+        replay.advanceBlock(height, timestamp);
+        replay.clearDeltas();
+        const applied = applyTransactions(replay, built.accepted, ctx, this.options.net);
+        const replayEvents = [...applied.events, ...runBlockRoutines(replay, ctx, this.options.net, { missedProducers })];
+        const replayed = finalizeBlock(replay, replayEvents);
+        if (replayed.stateRoot !== built.finalized.stateRoot || replayed.eventsRoot !== built.finalized.eventsRoot) {
+          throw new Error('the replay of the assembled block produced different roots');
+        }
+      } catch (error) {
+        this.emit('block-assembly-failed', { height, transactions: built.accepted.length, error });
         const working = this.state.clone();
         working.advanceBlock(height, timestamp);
         const events = runBlockRoutines(working, ctx, this.options.net, { missedProducers });

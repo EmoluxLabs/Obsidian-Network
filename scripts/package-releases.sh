@@ -486,8 +486,11 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   address whose recovery completes only after a delay the owner can cancel (docs/ons.md)
 * **wallets:** creation shows both the passphrase and the private key; a separate private-key recovery flow shows the
   derived address for confirmation before anything is stored
-* protocol $VERSION is genesis-bound: it rejects 1.9.x and older peers, snapshots and data, and includes no live-chain
-  migration (docs/upgrading-2.0.0.md). Earlier tags are untouched
+* **2.0.1 consensus fixes:** a name is registrable only after its grace period (a stranger could take one inside it), and a
+  recipient or pointer address must be canonical lowercase (an all-uppercase address used to credit an account nobody can
+  sign for) (docs/upgrading-2.0.1.md)
+* protocol $VERSION is genesis-bound: it rejects 2.0.0 and older peers, snapshots and data, and includes no live-chain
+  migration (docs/upgrading-2.0.1.md). Earlier tags are untouched
 * the mining gate (\`MINING_CLAIM\` certificates, \`GATE_AUTHORITY\`) is unchanged
 * the archives now also carry the web app, the web wallet, the extension and the desktop sources
 * nothing is signed: no publisher key exists, so these archives prove integrity, not authorship

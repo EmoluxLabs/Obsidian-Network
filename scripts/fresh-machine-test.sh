@@ -67,7 +67,7 @@ else
 fi
 
 log "2. verify the archives (guide step 5)"
-cd "$FM/src/releases"
+cd "$FM/src/releases" || exit 1
 SUMS=$(sha256sum -c SHA256SUMS 2>&1)
 echo "$SUMS" | sed 's/^/   /'
 [ "$(echo "$SUMS" | grep -c ': OK$')" = "11" ] && ok "11 archives, all OK" || bad "expected 11 OK lines"
@@ -80,7 +80,7 @@ log "3. unpack both archives into one directory (guide step 6) and install five 
 mkdir -p "$FM/run"
 tar xzf "obsidian-node-operator-$VERSION.tar.gz"      -C "$FM/run" && ok "operator archive unpacked"
 tar xzf "obsidian-interface-selfhost-$VERSION.tar.gz" -C "$FM/run" && ok "self-host archive unpacked"
-cd "$FM/run"
+cd "$FM/run" || exit 1
 for f in obsidian-core/dist/index.js obsidian-interface/dist/server/main.js obsidian-network.sh new-genesis-invite.mjs landing/index.html wallet/index.html obsidian-core/deployment/systemd/obsidian-node@.service obsidian-interface/deployment/systemd/obsidian-interface@.service; do
   check "present: $f" test -f "$f"
 done
@@ -229,7 +229,7 @@ LEFT=$(ps -eo pid,args | grep -E "node (dist/index.js|dist/server/main.js)" | gr
 [ -z "$LEFT" ] && ok "no node or interface left running" || { bad "left running:"; echo "$LEFT"; }
 
 log "12. the verifier, on a real archive"
-cd "$FM/src"
+cd "$FM/src" || exit 1
 VOUT=$(./scripts/verify-release.sh "releases/obsidian-node-operator-$VERSION.tar.gz" 2>&1); echo "$VOUT" | tail -6 | sed 's/^/   /'
 echo "$VOUT" | grep -q "verified" && ok "verify-release.sh passes on the operator archive" || bad "verify-release.sh"
 echo "$VOUT" | grep -qi "UNSIGNED" && ok "…and says plainly that the release is unsigned" || bad "no UNSIGNED notice"

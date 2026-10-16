@@ -118,7 +118,8 @@ test('a name is normalised to the chain’s own form', () => {
   assert.equal(normaliseName('Obsidian.OBS'), 'obsidian.obs');
   assert.equal(normaliseName('  my-name '), 'my-name.obs');
   assert.equal(normaliseName('ab'), null, 'too short');
-  assert.equal(normaliseName('a'.repeat(25)), null, 'too long');
+  assert.equal(normaliseName('a'.repeat(64)), null, 'too long (consensus allows 3-63)');
+  assert.equal(normaliseName('a'.repeat(63)), `${'a'.repeat(63)}.obs`, 'the longest name consensus accepts');
   assert.equal(normaliseName('bad_name'), null);
 });
 

@@ -71,6 +71,34 @@ export function decodeBlockTransactions(payloads: Uint8Array[]): TxEnvelope[] {
 }
 
 /**
+ * What a block has used up so far across ALL its transactions: ids already seen, mining claims per wallet, and the
+ * admission counters (node registrations, equivocation reports). These are consensus limits on a whole block, so a
+ * caller that applies a block's transactions in several calls (block production and RPC simulation, which try one
+ * transaction at a time on a throw-away clone) must carry ONE tally across the calls. Starting a fresh tally per call
+ * made the limits invisible there: a producer assembled a block with three node registrations, every validator
+ * (including the producer) rejected it for exceeding the limit of two, and the producer's double-sign lock then kept the
+ * whole network from building on that parent.
+ */
+export interface BlockTally {
+  seenInBlock: Set<string>;
+  claimsPerWallet: Map<string, number>;
+  counters: { registrations: number; equivocationReports: number };
+}
+
+export function newBlockTally(): BlockTally {
+  return { seenInBlock: new Set(), claimsPerWallet: new Map(), counters: { registrations: 0, equivocationReports: 0 } };
+}
+
+/** A copy to try one more transaction on: kept only if that transaction applies, so a rejected one leaves no trace. */
+export function cloneBlockTally(tally: BlockTally): BlockTally {
+  return {
+    seenInBlock: new Set(tally.seenInBlock),
+    claimsPerWallet: new Map(tally.claimsPerWallet),
+    counters: { ...tally.counters },
+  };
+}
+
+/**
  * Apply an ordered transaction list to `state` (mutating it) and return the
  * events emitted. Used both by full block validation and by block production.
  */
@@ -79,12 +107,11 @@ export function applyTransactions(
   transactions: TxEnvelope[],
   ctx: BlockContext,
   net: NetworkDefinition,
+  tally: BlockTally = newBlockTally(),
 ): ApplyTransactionsResult {
-  const seenInBlock = new Set<string>();
-  const claimsPerWallet = new Map<string, number>();
+  const { seenInBlock, claimsPerWallet, counters } = tally;
   const events: ProtocolEvent[] = [];
   let gasBaseTotal = 0n;
-  const counters = { registrations: 0, equivocationReports: 0 };
 
   for (const tx of transactions) {
     const txId = tx.id;
@@ -312,11 +339,14 @@ export function simulateTransactions(
   const events: ProtocolEvent[] = [];
   const results: Array<{ txId: string; ok: boolean; error?: string }> = [];
 
+  let tally = newBlockTally();
   for (const tx of transactions) {
     const trial = state.clone();
     trial.advanceBlock(ctx.height, ctx.timestamp);
     try {
-      const outcome = applyTransactions(trial, [tx], ctx, net);
+      const trialTally = cloneBlockTally(tally);
+      const outcome = applyTransactions(trial, [tx], ctx, net, trialTally);
+      tally = trialTally;
       state = outcome.state;
       events.push(...outcome.events);
       results.push({ txId: tx.id, ok: true });

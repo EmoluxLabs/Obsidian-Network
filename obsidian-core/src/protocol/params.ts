@@ -18,6 +18,11 @@ export const CONSENSUS_PARAMS = {
   /**
    * Protocol version that owns these parameters.
    *
+   * 2.0.1 closes two gaps in the 2.0.0 rules, both consensus changes: a name inside its grace period can no longer be
+   * registered by someone else, and a payment, pointer or grant recipient must be a canonical (lowercase) address, so
+   * an all-uppercase bech32 string (which QR codes carry) can no longer credit an account nobody can sign for. A 2.0.0
+   * node would accept both and fork, so this is a new protocol identity and a new genesis id.
+   *
    * 2.0.0 adds the ONS Marketplace (fixed-price listings, purchases, owner-directed offers with consensus escrow) on top
    * of the 1.9.0 rules below and changes the state root, so it is a new protocol identity and a new genesis id; a 1.9.x
    * node cannot peer with a 2.0.0 node.
@@ -31,7 +36,7 @@ export const CONSENSUS_PARAMS = {
    * set and a different protocol identity: a 1.8.x node cannot peer with a 1.9.0 node. The history of the earlier
    * rules is in the git log and CHANGELOG, not here.
    */
-  protocolVersion: '2.0.0',
+  protocolVersion: '2.0.1',
 
   /**
    * MINING GATE (1.7.0). A MINING_CLAIM is valid only with a certificate from an issuer key committed in genesis

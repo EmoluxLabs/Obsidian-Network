@@ -6,7 +6,7 @@
  *
  *   node scripts/release-tool.mjs keygen  --out ~/obsidian-release-key.pem     # operator, offline machine, ONCE
  *   node scripts/release-tool.mjs sign    --key ~/obsidian-release-key.pem [--releases releases]
- *   node scripts/release-tool.mjs verify  --fingerprint <FPR> [--releases releases] [--repo .] [--tag v2.0.0]
+ *   node scripts/release-tool.mjs verify  --fingerprint <FPR> [--releases releases] [--repo .] [--tag v2.0.1]
  *
  * What is authenticated. `sign` writes RELEASE-SIGNATURE.json: an Ed25519 signature over a small statement that
  * names the version, the source commit, the SHA-256 of SHA256SUMS and the SHA-256 of MANIFEST.json. SHA256SUMS
