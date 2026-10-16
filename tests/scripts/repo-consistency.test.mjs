@@ -289,7 +289,8 @@ test('the release version a current doc tags or reads its notes from is the ship
     if (!exists(file)) continue;
     lines(read(file)).forEach((line, index) => {
       if (/\bv2\d\.\d+\.\d+/.test(line)) return;   // Node's runtime, e.g. v20.10.0
-      for (const match of line.matchAll(/\bv(\d+\.\d+\.\d+)\b/g)) {
+      // A document's own file name (`consensus-v1.9.0.md`, named for the release that introduced the design) is not a tag.
+      for (const match of line.matchAll(/(?<![A-Za-z]-)\bv(\d+\.\d+\.\d+)\b/g)) {
         // The shipping release and the tag that introduced its protocol (a patch release keeps its predecessor's tag).
         if (match[1] !== version && match[1] !== protocolVersion) stale.push(`${file}:${index + 1}: v${match[1]} (shipping v${version}, protocol v${protocolVersion})`);
       }

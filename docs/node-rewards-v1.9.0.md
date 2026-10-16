@@ -1,4 +1,4 @@
-# Node rewards — protocol 1.9.0
+# Node rewards — protocol 2.0.0 (introduced in 1.9.0)
 
 **Formula.** Per reward period,
 

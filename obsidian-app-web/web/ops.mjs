@@ -36,8 +36,10 @@ import {
   buildMiningBody,
   buildPaymentBody,
   buildOnsBody,
+  buildMarketBody,
   TxType,
   OnsOp,
+  MarketOp,
   PROTOCOL_VERSION,
   expectedGas,
 } from './signing.mjs';
@@ -476,6 +478,185 @@ async function ownershipOperation(deps, name, op, fields, check) {
       return { type: TxType.ONS, gas: 0n, body: buildOnsBody({ op, name: stripSuffix(name), fee: 0n, ...fields }) };
     },
   });
+}
+
+// ── ONS Marketplace (protocol 2.0.0) ─────────────────────────────────────────────────────────────────────────────
+//
+// Each operation reads the authoritative market record before the vault is opened and refuses plainly when it no longer
+// matches what the person reviewed. That is a courtesy: consensus makes every one of these checks again, and a stale
+// screen can never authorise anything. Only BUY and OFFER move an amount, so only they carry gas (never taken from
+// escrow); every other Marketplace operation is zero-gas.
+
+const lower = (name) => stripSuffix(name);
+
+function spendable(balance) {
+  return BigInt(balance?.spendableSeals ?? balance?.balanceSeals ?? 0n);
+}
+
+async function marketOperation(deps, check, build) {
+  return runOperation(deps, {
+    async prepare(address, ctx) {
+      return check(address, ctx);
+    },
+    build(wallet, ctx, prepared) {
+      return build(prepared);
+    },
+  });
+}
+
+function positiveSeals(amountObs, what) {
+  try {
+    const value = parseObs(amountObs);
+    if (value <= 0n) return refusal('BAD_AMOUNT', `${what} must be greater than zero`);
+    return { ok: true, value };
+  } catch (error) {
+    return refusal('BAD_AMOUNT', `${what} is not an OBS amount (${error?.message ?? 'invalid'})`);
+  }
+}
+
+/** List a name this wallet owns at a fixed price. The name is locked until the listing is removed or sold. */
+export async function submitMarketList(deps, { name, priceObs }) {
+  return marketOperation(
+    deps,
+    async (address) => {
+      const price = positiveSeals(priceObs, 'the price');
+      if (price.ok === false) return price;
+      const status = await deps.getMarketName(lower(name)).catch(() => null);
+      if (!status || status.owner !== address) return refusal('NAME_NOT_OWNED', `only the owner may list ${name}`);
+      if (status.status === 'LISTED') return refusal('ALREADY_LISTED', `${name} is already listed`);
+      if (status.status !== 'OWNED') return refusal('NOT_ACTIVE', `${name} is not active`);
+      return { ok: true, price: price.value };
+    },
+    ({ price }) => ({ type: TxType.ONS_MARKET, gas: 0n, body: buildMarketBody({ op: MarketOp.LIST, name: lower(name), amount: price }) }),
+  );
+}
+
+export async function submitMarketUpdate(deps, { name, priceObs }) {
+  return marketOperation(
+    deps,
+    async (address) => {
+      const price = positiveSeals(priceObs, 'the price');
+      if (price.ok === false) return price;
+      const status = await deps.getMarketName(lower(name)).catch(() => null);
+      if (!status || status.status !== 'LISTED' || status.owner !== address) return refusal('NOT_LISTED', `you have no active listing for ${name}`);
+      return { ok: true, price: price.value };
+    },
+    ({ price }) => ({ type: TxType.ONS_MARKET, gas: 0n, body: buildMarketBody({ op: MarketOp.UPDATE_PRICE, name: lower(name), amount: price }) }),
+  );
+}
+
+export async function submitMarketDelist(deps, { name }) {
+  return marketOperation(
+    deps,
+    async (address) => {
+      const status = await deps.getMarketName(lower(name)).catch(() => null);
+      if (!status || status.status !== 'LISTED' || status.owner !== address) return refusal('NOT_LISTED', `you have no active listing for ${name}`);
+      return { ok: true };
+    },
+    () => ({ type: TxType.ONS_MARKET, gas: 0n, body: buildMarketBody({ op: MarketOp.DELIST, name: lower(name) }) }),
+  );
+}
+
+/** Buy a listed name at the price and from the seller that were reviewed. A changed listing is refused here and by the chain. */
+export async function submitMarketBuy(deps, { name, reviewedPriceSeals, reviewedSeller }) {
+  return marketOperation(
+    deps,
+    async (address) => {
+      const status = await deps.getMarketName(lower(name)).catch(() => null);
+      const listing = status?.listing;
+      if (!status || status.status !== 'LISTED' || !listing) return refusal('NOT_LISTED', `${name} is no longer listed: it may have been sold or the listing removed`);
+      if (listing.seller === address) return refusal('OWN_LISTING', 'you cannot buy your own listing');
+      if (String(listing.priceSeals) !== String(reviewedPriceSeals) || listing.seller !== reviewedSeller) {
+        return refusal('LISTING_CHANGED', 'the listing changed since you reviewed it: review the new price and seller, then try again');
+      }
+      const price = BigInt(listing.priceSeals);
+      const gas = expectedGas(price);
+      const have = spendable(await deps.getBalance(address));
+      if (have < price + gas) {
+        return refusal('INSUFFICIENT_FUNDS', `insufficient spendable balance: this purchase needs ${formatObs(price + gas)} OBS including gas (funds locked in offers are not spendable)`);
+      }
+      return { ok: true, price, gas, seller: listing.seller };
+    },
+    ({ price, gas, seller }) => ({
+      type: TxType.ONS_MARKET,
+      gas,
+      body: buildMarketBody({ op: MarketOp.BUY, name: lower(name), amount: price, counterparty: seller }),
+    }),
+  );
+}
+
+/** Offer OBS for an owned, unlisted name: the amount is locked in escrow at once, gas is charged on top. */
+export async function submitMarketOffer(deps, { name, amountObs, reviewedOwner }) {
+  return marketOperation(
+    deps,
+    async (address) => {
+      const amount = positiveSeals(amountObs, 'the offer');
+      if (amount.ok === false) return amount;
+      const status = await deps.getMarketName(lower(name)).catch(() => null);
+      if (!status) return refusal('NAME_NOT_FOUND', `${name} could not be read from the node`);
+      if (status.status === 'LISTED') return refusal('LISTED', `${name} is listed for sale: buy it at the listed price instead`);
+      if (status.status !== 'OWNED' || !status.owner) return refusal('NOT_OWNED', `${name} has no active owner to receive an offer`);
+      if (status.owner === address) return refusal('OWN_NAME', 'you own this name');
+      if (reviewedOwner && status.owner !== reviewedOwner) return refusal('OWNER_CHANGED', 'the owner changed since you reviewed this: review again');
+      const gas = expectedGas(amount.value);
+      const have = spendable(await deps.getBalance(address));
+      if (have < amount.value + gas) {
+        return refusal('INSUFFICIENT_FUNDS', `insufficient spendable balance: this offer needs ${formatObs(amount.value + gas)} OBS including gas`);
+      }
+      return { ok: true, amount: amount.value, gas, owner: status.owner };
+    },
+    ({ amount, gas, owner }) => ({
+      type: TxType.ONS_MARKET,
+      gas,
+      body: buildMarketBody({ op: MarketOp.OFFER, name: lower(name), amount, counterparty: owner }),
+    }),
+  );
+}
+
+async function offerOperation(deps, offerId, op, check) {
+  return marketOperation(
+    deps,
+    async (address) => {
+      const found = await deps.getMarketOffer(offerId).catch(() => null);
+      const offer = found?.offer;
+      if (!offer) return refusal('OFFER_NOT_FOUND', 'that offer could not be read from the node');
+      if (offer.status !== 'PENDING') return refusal('OFFER_CLOSED', `this offer is already ${String(offer.status).toLowerCase()}`);
+      const problem = check(offer, address);
+      if (problem) return refusal(problem[0], problem[1]);
+      return { ok: true, offer };
+    },
+    ({ offer }) => ({
+      type: TxType.ONS_MARKET,
+      gas: 0n,
+      body: buildMarketBody({
+        op,
+        name: lower(offer.name),
+        offerId: offer.id,
+        amount: op === MarketOp.ACCEPT_OFFER ? BigInt(offer.amountSeals) : 0n,
+      }),
+    }),
+  );
+}
+
+/** Owner: accept a pending offer. The name moves to the maker and the escrow is paid to the owner in one step. */
+export async function submitMarketAccept(deps, { offerId }) {
+  return offerOperation(deps, offerId, MarketOp.ACCEPT_OFFER, (offer, address) =>
+    offer.currentOwner === address ? null : ['NOT_OWNER', 'only the current owner of the name may accept this offer'],
+  );
+}
+
+/** Owner: decline a pending offer. The escrow returns to the maker. */
+export async function submitMarketDecline(deps, { offerId }) {
+  return offerOperation(deps, offerId, MarketOp.DECLINE_OFFER, (offer, address) =>
+    offer.currentOwner === address ? null : ['NOT_OWNER', 'only the current owner of the name may decline this offer'],
+  );
+}
+
+/** Maker: cancel your own pending offer. The escrow returns to you. */
+export async function submitMarketCancel(deps, { offerId }) {
+  return offerOperation(deps, offerId, MarketOp.CANCEL_OFFER, (offer, address) =>
+    offer.maker === address ? null : ['NOT_MAKER', 'only the maker may cancel an offer'],
+  );
 }
 
 function requiredFee(feeObs, label) {

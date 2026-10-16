@@ -67,6 +67,21 @@ and `pendingRecovery {by, newAddress, startedAt, effectiveAt}` when they exist.
 * `RENEW` needs an unexpired name; a name that has lapsed past grace is registrable by anyone and cannot be recovered.
 * The 10 % treasury share of every fee goes to the treasury wallet, as before.
 
+### Selling a name: the ONS Marketplace (2.0.0)
+
+Ownership can also change by a **sale**: the owner lists the name at a fixed OBS price and anyone can buy it, or a buyer
+makes an offer on an unlisted name with the OBS locked in protocol escrow until the owner decides. Both are signed
+`ONS_MARKET` transactions applied in consensus state and are specified in [marketplace-v2.0.0.md](marketplace-v2.0.0.md).
+What matters for the rules above:
+
+* **A listed name is locked.** While it is listed the owner cannot `UPDATE_ADDRESS`, `TRANSFER`, `ACCEPT_TRANSFER`,
+  `SET_RECOVERY`, `START_RECOVERY`, `FINALIZE_RECOVERY` or `RENEW` it (`ERR_NAME_LISTED`), and it **does not resolve**: the
+  recipient resolver refuses it with `NAME_LISTED` and the interfaces will not pay it. `CANCEL_TRANSFER` and
+  `CANCEL_RECOVERY` stay allowed.
+* A name with an open ordinary transfer offer or a recovery in flight cannot be listed until the owner cancels it.
+* A sale and an accepted offer are ownership changes like any other: **the old owner's open offer, recovery and recovery
+  address are wiped**, and every other pending Marketplace offer on the name is refunded.
+
 ## 3. Resolution
 
 ```bash
@@ -83,6 +98,9 @@ curl -s http://127.0.0.1:8630/names/obsidian.obs | jq
   "expiresAt": 1822036020
 }
 ```
+
+A name that is listed on the Marketplace answers with `locked: true` and `resolved: false`, and a client must not pay it
+(`GET /market/name/<name>` gives the full Marketplace status).
 
 `GET /names` lists registered names with a `prefix` filter and `limit`/`offset` paging (at most 500 per page), so a client can
 implement search without an index of its own.

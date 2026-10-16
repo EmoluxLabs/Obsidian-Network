@@ -40,6 +40,8 @@ less than you might hope, which are called out explicitly rather than buried.
 | [web-separation.md](web-separation.md) | The main platform, the Web App and the Wallet web app as three services on three ports (8789 / 8790 / 8791) behind three nginx vhosts: install, port check, verification, rollback |
 | [numeric-display.md](numeric-display.md) | How amounts, counts and long addresses or ids are shown on every interface: the one formatter, the shortening policy, copy and accessibility rules, and the layout rules that keep long values inside their card |
 | [trusted-domains.md](trusted-domains.md) | Which browser origins a node or interface answers: the project's own domain by default, how to add yours (exact origins and wildcards), what is refused |
+| [marketplace-v2.0.0.md](marketplace-v2.0.0.md) | The ONS Marketplace: fixed-price listings, the listing lock, buying, offers and escrow, the state machines, fees, reads, and what is and is not supported |
+| [upgrading-2.0.0.md](upgrading-2.0.0.md) | Moving to 2.0.0: a new genesis with no migration, what changed for each reader, a fresh devnet and a Marketplace walk-through |
 | [upgrading-1.9.0.md](upgrading-1.9.0.md) | Moving to 1.9.0: a fresh start with no migration, what changed for each reader, a fresh devnet step by step, how to check that nodes agree |
 | [consensus-v1.9.0.md](consensus-v1.9.0.md) | The consensus specification: slots, producer schedule, eligibility, timestamps, skipped slots, duplicate blocks, fork choice, equivocation, recovery, Sybil limits, and what the tests establish |
 | [finality-v1.9.0.md](finality-v1.9.0.md) | Producer-diversity checkpoint finality: the rule, the state, restart and partitions, and exactly what it does not guarantee |

@@ -73,6 +73,11 @@ import {
   getMiningSchedule,
   getMiningClaims,
   getName,
+  getMarketName,
+  getMarketListings,
+  getMarketOffers,
+  getMarketOffer,
+  getMarketEvents,
   nameStatus,
   normaliseName,
   shortenIdentifier,
@@ -97,6 +102,14 @@ import {
   linkProven,
   send,
   registerName,
+  listName,
+  updateListing,
+  delistName,
+  buyName,
+  makeNameOffer,
+  acceptNameOffer,
+  declineNameOffer,
+  cancelNameOffer,
   recipientKind,
   resolveRecipientName,
   reconfirmRecipientName,
@@ -139,6 +152,9 @@ const state = {
   mfa: null,
   mfaRequired: false,
   ons: { query: '', result: null },
+  // The ONS Marketplace (protocol 2.0.0). Everything here is read from the node; `review` is a Buy or an Offer that is
+  // waiting for the person to confirm its terms, and nothing is signed until they do.
+  market: { feed: null, sort: 'newest', offset: 0, incoming: null, outgoing: null, mine: null, events: null, nameOffers: null, review: null },
   setup: { mode: 'create', draft: null, keyPreview: null },
   qr: null,
   // A `.obs` recipient that has been resolved and is waiting for the user to confirm it. Nothing is signed until then.
@@ -226,6 +242,10 @@ function go(target) {
   // 15-second poll left the explorer reading "the node has not returned any blocks"
   // for a visitor looking at a healthy chain.
   if (state.screen === 'explorer') loadExplorer().catch(() => {});
+  if (state.screen === 'ons') {
+    state.market.review = null;
+    loadMarket({ paint: true }).catch(() => {});
+  }
 }
 
 /**
@@ -346,6 +366,28 @@ async function refreshAccount() {
   }
 }
 
+/**
+ * Read the Marketplace from the node: the listings feed, this wallet's names with their listing state, and its
+ * incoming and outgoing offers. Each read fails on its own and leaves an honest gap (`null`) rather than a guess.
+ */
+async function loadMarket({ paint = false } = {}) {
+  const ask = (promise) => promise.then((value) => value, () => null);
+  const m = state.market;
+  const address = state.walletAddress;
+  const [feed, incoming, outgoing, events] = await Promise.all([
+    ask(getMarketListings({ sort: m.sort, offset: m.offset })),
+    address ? ask(getMarketOffers('incoming', address)) : null,
+    address ? ask(getMarketOffers('outgoing', address)) : null,
+    address ? ask(getMarketEvents(address, 12)) : null,
+  ]);
+  const mine = address && state.ownNames
+    ? Object.fromEntries(await Promise.all(state.ownNames.map(async (n) => [n, await ask(getMarketName(n))])))
+    : null;
+  Object.assign(m, { feed, incoming, outgoing, events, mine });
+  if (paint) render();
+  else repaint();
+}
+
 async function refresh() {
   const [status, network] = await Promise.all([
     getStatus().catch(() => null),
@@ -370,6 +412,7 @@ async function refresh() {
   // The explorer shows the chain, not this wallet, so it is refreshed on its own
   // schedule rather than as part of the wallet refresh.
   if (state.screen === 'explorer') await loadExplorer({ quiet: true });
+  if (state.screen === 'ons') await loadMarket();
 
   state.invites = state.account ? await invites().catch(() => null) : null;
   repaint();
@@ -965,12 +1008,130 @@ function install() {
     setError('');
     render();
     try {
-      state.ons = { query: raw, result: await nameStatus(name) };
+      await openName(name);
     } catch (error) {
       setError(explain(error));
     }
     render();
   };
+
+  // ── ONS Marketplace ───────────────────────────────────────────────────────
+
+  /** Look a name up on the Marketplace: the node says whether it is available, owned or listed. */
+  const openName = async (name) => {
+    const found = await nameStatus(name);
+    const market = found?.registered ? await getMarketName(name).catch(() => null) : null;
+    const offers = found?.registered && market?.pendingOffers ? await getMarketOffers('name', name, 'PENDING').catch(() => null) : null;
+    state.ons = { query: name, result: found ? { ...found, market } : null };
+    state.market.nameOffers = offers;
+    state.market.review = null;
+  };
+
+  /** After a signed action: poll the node until the chain shows the new state, then say so. Submitted is not confirmed. */
+  const confirmThen = async (label, txId, confirmed) => {
+    setNotice(`${label} submitted — ${shortenIdentifier(txId, 'hash', 'narrow')} — waiting for the chain to confirm…`);
+    render();
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (await confirmed().catch(() => false)) {
+        setNotice(`${label} confirmed on the chain.`);
+        await refreshWallet();
+        await loadMarket();
+        if (state.ons?.query) await openName(state.ons.query).catch(() => {});
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    setError(`${label} is not confirmed yet. It may still be pending, or the chain refused it: check the state below before trying again.`);
+  };
+
+  /** Run one Marketplace operation: refusals are shown plainly; success waits for the chain. */
+  const marketAction = (label, sign, confirmed, passphraseField = 'pp') => {
+    const passphrase = field(passphraseField);
+    return withBusy('ons', async () => {
+      const result = await sign(() => passphrase);
+      if (!result.ok) return setError(result.message);
+      await confirmThen(label, result.txId, confirmed);
+    });
+  };
+
+  g.ObsidianMarketSort = (sort) => {
+    state.market.sort = sort;
+    state.market.offset = 0;
+    loadMarket({ paint: true }).catch(() => {});
+  };
+
+  g.ObsidianMarketPage = (delta) => {
+    state.market.offset = Math.max(0, state.market.offset + delta);
+    loadMarket({ paint: true }).catch(() => {});
+  };
+
+  g.ObsidianMarketOpen = (name) => {
+    const input = document.getElementById('nm');
+    if (input) input.value = name;
+    return g.ObsidianNameSearch();
+  };
+
+  g.ObsidianMarketReviewBuy = () => {
+    const { market } = state.ons.result;
+    if (!market?.listing) return setError('This name is no longer listed.');
+    state.market.review = { kind: 'buy', name: state.ons.result.name, listing: market.listing };
+    setError('');
+    render();
+  };
+
+  g.ObsidianMarketReviewOffer = () => {
+    const { market } = state.ons.result;
+    const amountObs = field('oa').trim();
+    if (!/^\d+(\.\d{1,18})?$/.test(amountObs) || /^0+(\.0*)?$/.test(amountObs)) {
+      return setError('Enter the offer as an OBS amount greater than zero, such as 25 or 0.5.');
+    }
+    state.market.review = { kind: 'offer', name: state.ons.result.name, owner: market?.owner, amountObs };
+    setError('');
+    render();
+  };
+
+  g.ObsidianMarketCancelReview = () => {
+    state.market.review = null;
+    render();
+  };
+
+  g.ObsidianMarketBuy = () => {
+    const review = state.market.review;
+    const me = state.walletAddress;
+    return marketAction(
+      `Purchase of ${review.name}`,
+      (pass) => buyName({ name: review.name, reviewedPriceSeals: review.listing.priceSeals, reviewedSeller: review.listing.seller }, pass),
+      async () => (await getMarketName(review.name)).owner === me,
+    );
+  };
+
+  g.ObsidianMarketOffer = () => {
+    const review = state.market.review;
+    const me = state.walletAddress;
+    return marketAction(
+      `Offer on ${review.name}`,
+      (pass) => makeNameOffer({ name: review.name, amountObs: review.amountObs, reviewedOwner: review.owner }, pass),
+      async () => (await getMarketOffers('outgoing', me, 'PENDING')).offers.some((o) => o.name === review.name),
+    );
+  };
+
+  g.ObsidianMarketList = (name, inputId) => {
+    const priceObs = field(inputId).trim();
+    return marketAction(`Listing of ${name}`, (pass) => listName({ name, priceObs }, pass), async () => (await getMarketName(name)).status === 'LISTED', 'pp2');
+  };
+
+  g.ObsidianMarketUpdate = (name, previous, inputId) => {
+    const priceObs = field(inputId).trim();
+    return marketAction(`Re-pricing of ${name}`, (pass) => updateListing({ name, priceObs }, pass), async () => (await getMarketName(name)).listing?.priceSeals !== previous, 'pp2');
+  };
+
+  g.ObsidianMarketDelist = (name) =>
+    marketAction(`Removal of the listing of ${name}`, (pass) => delistName({ name }, pass), async () => !(await getMarketName(name)).locked, 'pp2');
+
+  const offerDone = (offerId) => async () => (await getMarketOffer(offerId)).offer.status !== 'PENDING';
+  g.ObsidianMarketAccept = (offerId) => marketAction('Acceptance of the offer', (pass) => acceptNameOffer({ offerId }, pass), offerDone(offerId), 'pp2');
+  g.ObsidianMarketDecline = (offerId) => marketAction('Decline of the offer', (pass) => declineNameOffer({ offerId }, pass), offerDone(offerId), 'pp2');
+  g.ObsidianMarketCancel = (offerId) => marketAction('Cancellation of the offer', (pass) => cancelNameOffer({ offerId }, pass), offerDone(offerId), 'pp2');
 
   g.ObsidianRegisterName = (name) => {
     const feeObs = state.params?.ons?.registrationFeeObs;

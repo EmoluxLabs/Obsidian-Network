@@ -22,12 +22,14 @@ import { parseObs, formatObs } from '../../core/protocol/amount.js';
 import { displaySeals, EXACT_OBS } from '../../core/protocol/display.js';
 import { expectedGas } from '../../core/transactions/helpers.js';
 import { TxType } from '../../core/protocol/types.js';
-import { OnsOp, TreasuryOp } from '../../core/protocol/types.js';
+import { MarketOp, OnsOp, TreasuryOp } from '../../core/protocol/types.js';
+import { encodeMarketBody } from '../../core/transactions/executors/marketplace.js';
 import { encodePaymentBody } from '../../core/transactions/executors/payment.js';
 import { encodeMiningBody } from '../../core/transactions/executors/mining.js';
 import { encodeOnsBody } from '../../core/transactions/executors/ons.js';
 import { PROTOCOL_VERSION } from '../../core/version.js';
 import { recipientKind, type ResolveDeps } from '../../core/protocol/recipient.js';
+import type { MarketOfferView } from './client.js';
 import { encodeOracleBody } from '../../core/transactions/executors/oracle.js';
 import { encodeTreasuryBody } from '../../core/transactions/executors/treasury.js';
 
@@ -84,6 +86,51 @@ async function nameOperation(
     validUntil: ctx.protocolTime + VALIDITY_SECONDS,
   });
   return submit(client, signed);
+}
+
+/**
+ * One Marketplace transaction. Every operation here re-reads the authoritative record from a node immediately before
+ * signing and refuses to sign when it no longer matches what the person reviewed. That is a courtesy, not the control:
+ * the chain re-checks every one of these conditions itself when the transaction is included, so a stale screen can
+ * never authorise anything.
+ */
+async function marketTransaction(
+  client: ObsidianClient,
+  wallet: Wallet,
+  input: { op: MarketOp; name: string; amount?: bigint; counterparty?: string; offerId?: string; gas?: bigint },
+): Promise<SubmitResult> {
+  const ctx = await context(client, wallet);
+  const signed = wallet.sign({
+    chainId: ctx.chainId,
+    protocolVersion: PROTOCOL_VERSION,
+    type: TxType.ONS_MARKET,
+    nonce: ctx.nonce,
+    gas: input.gas ?? 0n,
+    body: encodeMarketBody({
+      op: input.op,
+      name: input.name,
+      amount: input.amount ?? 0n,
+      counterparty: input.counterparty ?? '',
+      offerId: input.offerId ?? '',
+    }),
+    validUntil: ctx.protocolTime + VALIDITY_SECONDS,
+  });
+  return submit(client, signed);
+}
+
+const bareName = (name: string): string => name.trim().toLowerCase().replace(/\.obs$/, '');
+
+/** The wallet's spendable seals (escrow has already left it). Falls back to the balance on a pre-escrow node. */
+function spendableOf(balance: { balanceSeals: string; spendableSeals?: string }): bigint {
+  return BigInt(balance.spendableSeals ?? balance.balanceSeals);
+}
+
+function needFunds(have: bigint, need: bigint, what: string): void {
+  if (have < need) {
+    throw new Error(
+      `insufficient spendable balance: you have ${displaySeals(have, EXACT_OBS)} OBS and ${what} needs ${displaySeals(need, EXACT_OBS)} OBS (including gas). Funds locked in offers are not spendable.`,
+    );
+  }
 }
 
 export { expectedGas, formatObs, parseObs };
@@ -279,6 +326,102 @@ export const operations = {
     return submit(client, signed);
   },
 
+  // ── ONS Marketplace (protocol 2.0.0) ─────────────────────────────────────
+
+  /** List a name you own at a fixed price. The name is locked until the listing is removed or the name is sold. */
+  async listName(client: ObsidianClient, wallet: Wallet, input: { name: string; priceObs: string }): Promise<SubmitResult> {
+    const name = bareName(input.name);
+    const price = parseObs(input.priceObs);
+    if (price <= 0n) throw new Error('the price must be greater than zero');
+    const status = await client.marketName(name);
+    if (status.owner !== wallet.address) throw new Error('only the owner can list a name');
+    if (status.status === 'LISTED') throw new Error('this name is already listed: change its price or remove the listing first');
+    if (status.status !== 'OWNED') throw new Error('this name is not active');
+    return marketTransaction(client, wallet, { op: MarketOp.LIST, name, amount: price });
+  },
+
+  async updateListingPrice(client: ObsidianClient, wallet: Wallet, input: { name: string; priceObs: string }): Promise<SubmitResult> {
+    const name = bareName(input.name);
+    const price = parseObs(input.priceObs);
+    if (price <= 0n) throw new Error('the price must be greater than zero');
+    const status = await client.marketName(name);
+    if (status.owner !== wallet.address || status.status !== 'LISTED') throw new Error('you do not have an active listing for this name');
+    return marketTransaction(client, wallet, { op: MarketOp.UPDATE_PRICE, name, amount: price });
+  },
+
+  /** Remove your listing: the name is usable again. */
+  async removeListing(client: ObsidianClient, wallet: Wallet, input: { name: string }): Promise<SubmitResult> {
+    const name = bareName(input.name);
+    const status = await client.marketName(name);
+    if (status.owner !== wallet.address || !status.locked) throw new Error('you do not have an active listing for this name');
+    return marketTransaction(client, wallet, { op: MarketOp.DELIST, name });
+  },
+
+  /**
+   * Buy a listed name at the price and from the seller the person reviewed. The price and the seller are written into
+   * the transaction, so a listing that was re-priced or sold since the review makes the chain reject it.
+   */
+  async buyName(
+    client: ObsidianClient,
+    wallet: Wallet,
+    input: { name: string; reviewedPriceSeals: string; reviewedSeller: string },
+  ): Promise<SubmitResult> {
+    const name = bareName(input.name);
+    const status = await client.marketName(name);
+    const listing = status.listing;
+    if (status.status !== 'LISTED' || !listing) throw new Error('this name is no longer listed — it may have been sold or the listing removed');
+    if (listing.seller === wallet.address) throw new Error('you cannot buy your own listing');
+    if (listing.priceSeals !== input.reviewedPriceSeals || listing.seller !== input.reviewedSeller) {
+      throw new Error('the listing changed since you reviewed it. Review the new price and seller, then try again');
+    }
+    const price = BigInt(listing.priceSeals);
+    const gas = gasFor(price);
+    needFunds(spendableOf(await client.balance(wallet.address)), price + gas, 'this purchase');
+    return marketTransaction(client, wallet, { op: MarketOp.BUY, name, amount: price, counterparty: listing.seller, gas });
+  },
+
+  /** Offer OBS for an owned, unlisted name. The amount is locked in escrow immediately; gas is charged on top. */
+  async makeOffer(client: ObsidianClient, wallet: Wallet, input: { name: string; amountObs: string }): Promise<SubmitResult> {
+    const name = bareName(input.name);
+    const amount = parseObs(input.amountObs);
+    if (amount <= 0n) throw new Error('the offer must be greater than zero');
+    const status = await client.marketName(name);
+    if (status.status === 'LISTED') throw new Error('this name is listed for sale: buy it at the listed price instead');
+    if (status.status !== 'OWNED' || !status.owner) throw new Error('only an owned, active name can receive an offer');
+    if (status.owner === wallet.address) throw new Error('you own this name');
+    const gas = gasFor(amount);
+    needFunds(spendableOf(await client.balance(wallet.address)), amount + gas, 'this offer');
+    return marketTransaction(client, wallet, { op: MarketOp.OFFER, name, amount, counterparty: status.owner, gas });
+  },
+
+  /** Owner: accept a pending offer. The name moves to the maker and the escrow is paid to you, atomically. */
+  async acceptOffer(client: ObsidianClient, wallet: Wallet, input: { offer: Pick<MarketOfferView, 'id' | 'name' | 'amountSeals'> }): Promise<SubmitResult> {
+    const fresh = (await client.marketOffer(input.offer.id)).offer;
+    if (fresh.status !== 'PENDING') throw new Error(`this offer is already ${fresh.status.toLowerCase()}`);
+    if (fresh.currentOwner !== wallet.address) throw new Error('only the current owner can accept this offer');
+    return marketTransaction(client, wallet, {
+      op: MarketOp.ACCEPT_OFFER,
+      name: bareName(fresh.name),
+      amount: BigInt(fresh.amountSeals),
+      offerId: fresh.id,
+    });
+  },
+
+  /** Owner: decline a pending offer; the escrow returns to the maker. */
+  async declineOffer(client: ObsidianClient, wallet: Wallet, input: { offer: Pick<MarketOfferView, 'id' | 'name'> }): Promise<SubmitResult> {
+    const fresh = (await client.marketOffer(input.offer.id)).offer;
+    if (fresh.status !== 'PENDING') throw new Error(`this offer is already ${fresh.status.toLowerCase()}`);
+    return marketTransaction(client, wallet, { op: MarketOp.DECLINE_OFFER, name: bareName(fresh.name), offerId: fresh.id });
+  },
+
+  /** Maker: cancel your own pending offer; the escrow returns to you. */
+  async cancelOffer(client: ObsidianClient, wallet: Wallet, input: { offer: Pick<MarketOfferView, 'id' | 'name'> }): Promise<SubmitResult> {
+    const fresh = (await client.marketOffer(input.offer.id)).offer;
+    if (fresh.status !== 'PENDING') throw new Error(`this offer is already ${fresh.status.toLowerCase()}`);
+    if (fresh.maker !== wallet.address) throw new Error('only the maker can cancel an offer');
+    return marketTransaction(client, wallet, { op: MarketOp.CANCEL_OFFER, name: bareName(fresh.name), offerId: fresh.id });
+  },
+
   // ── Oracle ─────────────────────────────────────────────────
 
   async publishPrice(
@@ -330,6 +473,26 @@ export const operations = {
     return submit(client, signed);
   },
 };
+
+/**
+ * Wait for the chain to confirm a Marketplace action by reading authoritative state, not by trusting that a
+ * submission was accepted into a mempool. Resolves true when `confirmed()` holds, false after about a minute
+ * (the transaction may still be pending, or the chain refused it: the caller says which it can see).
+ */
+export async function awaitConfirmation(
+  client: ObsidianClient,
+  confirmed: () => Promise<boolean>,
+  options: { pollMs?: number; tries?: number } = {},
+): Promise<boolean> {
+  const pollMs = options.pollMs ?? 1_500;
+  const tries = options.tries ?? 40;
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    if (await confirmed().catch(() => false)) return true;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  void client;
+  return false;
+}
 
 export function randomHex(bytes: number): string {
   const value = crypto.getRandomValues(new Uint8Array(bytes));

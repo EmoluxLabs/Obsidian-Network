@@ -28,7 +28,7 @@ network ids and address prefixes.
 ## Version and identity
 
 * Protocol and core `1.9.0`; `MIN_CORE_VERSION` `1.9.0`; state snapshot format 6; wire version 1.
-* Params hash (every network): `38dd9243481cd35a68003648e2710001`.
+* Params hash: it changed again in 2.0.0 — see [upgrading-2.0.0.md](upgrading-2.0.0.md) for the current value.
 * Genesis ids are different from 1.8.x. Read them from `obsidian genesis init --network <net>` (reproducible: every node
   computes the same genesis hash and state root) or from a running node's `GET /genesis`; they are listed in
   [LAUNCH-GUIDE.md](LAUNCH-GUIDE.md).

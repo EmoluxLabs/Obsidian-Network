@@ -449,6 +449,59 @@ export interface NameRecord {
   expiresAt: number;
   transferCount: number;
   resolved: boolean;
+  /** ONS Marketplace state (protocol 2.0.0). Absent on a pre-2.0.0 node. */
+  marketStatus?: 'OWNED' | 'LISTED' | 'EXPIRED';
+  listing?: MarketListing | null;
+  /** True while a listing locks the name: its owner cannot use it and it does not resolve. */
+  locked?: boolean;
+  pendingOffers?: number;
+}
+
+export interface MarketListing {
+  name: string;
+  seller: string;
+  owner: string;
+  priceSeals: string;
+  priceObs: string;
+  listedAt: number;
+  listedAtHeight: number;
+  expiresAt: number;
+  pendingOffers: number;
+}
+
+export type MarketOfferStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED' | 'EXPIRED' | 'INVALIDATED';
+
+export interface MarketOfferView {
+  id: string;
+  name: string;
+  maker: string;
+  owner: string;
+  amountSeals: string;
+  amountObs: string;
+  status: MarketOfferStatus;
+  createdAt: number;
+  createdAtHeight: number;
+  expiresAt: number;
+  resolvedAt: number | null;
+  resolvedAtHeight: number | null;
+  resolvedBy: string | null;
+  resolvedTxId: string | null;
+  escrowHeld: boolean;
+  currentOwner: string | null;
+}
+
+/** What a search box needs: register, buy or make an offer. Computed by the node from consensus state. */
+export interface MarketNameStatus {
+  name: string;
+  status: 'AVAILABLE' | 'EXPIRED' | 'OWNED' | 'LISTED';
+  owner: string | null;
+  listing: MarketListing | null;
+  pendingOffers: number;
+  locked: boolean;
+  canRegister: boolean;
+  canBuy: boolean;
+  canOffer: boolean;
+  atHeight: number;
 }
 
 /**
@@ -474,6 +527,12 @@ export interface WalletBalance {
   balanceObs: string;
   balanceSeals: string;
   spendableObs: string;
+  /** Escrow (protocol 2.0.0): spendable now / locked by pending Marketplace offers / both. */
+  spendableSeals?: string;
+  lockedObs?: string;
+  lockedSeals?: string;
+  totalObs?: string;
+  totalSeals?: string;
   nonce: number;
   txCount: number;
   receivedObs: string;
@@ -649,6 +708,44 @@ export class ObsidianClient {
     if (page.limit !== undefined) q.push(`limit=${encodeURIComponent(String(page.limit))}`);
     if (page.offset !== undefined) q.push(`offset=${encodeURIComponent(String(page.offset))}`);
     return this.request(`/names${q.length ? `?${q.join('&')}` : ''}`);
+  }
+
+  // ── ONS Marketplace (protocol 2.0.0) ─────────────────────────────────────────
+
+  marketSummary(): Promise<Record<string, unknown>> {
+    return this.request('/market');
+  }
+
+  marketName(name: string): Promise<MarketNameStatus> {
+    return this.request(`/market/name/${encodeURIComponent(name)}`);
+  }
+
+  marketListings(
+    options: { seller?: string; prefix?: string; sort?: 'newest' | 'oldest' | 'price_asc' | 'price_desc' | 'name'; limit?: number; offset?: number } = {},
+  ): Promise<{ listings: MarketListing[]; total: number; offset: number; limit: number; hasMore: boolean; atHeight: number }> {
+    const q: string[] = [];
+    for (const [key, value] of Object.entries(options)) if (value !== undefined && value !== '') q.push(`${key}=${encodeURIComponent(String(value))}`);
+    return this.request(`/market/listings${q.length ? `?${q.join('&')}` : ''}`);
+  }
+
+  marketOffers(
+    scope: 'name' | 'incoming' | 'outgoing',
+    subject: string,
+    options: { status?: MarketOfferStatus; limit?: number; offset?: number } = {},
+  ): Promise<{ offers: MarketOfferView[]; total: number; offset: number; limit: number; hasMore: boolean; atHeight: number }> {
+    const q: string[] = [];
+    for (const [key, value] of Object.entries(options)) if (value !== undefined) q.push(`${key}=${encodeURIComponent(String(value))}`);
+    return this.request(`/market/offers/${scope}/${encodeURIComponent(subject)}${q.length ? `?${q.join('&')}` : ''}`);
+  }
+
+  marketOffer(id: string): Promise<{ offer: MarketOfferView; escrow: { held: boolean; amountSeals: string }; atHeight: number }> {
+    return this.request(`/market/offer/${encodeURIComponent(id)}`);
+  }
+
+  marketEvents(options: { name?: string; address?: string; limit?: number } = {}): Promise<{ events: Array<{ type: string; height: number; txId?: string; data: Record<string, string | number | boolean | null> }> }> {
+    const q: string[] = [];
+    for (const [key, value] of Object.entries(options)) if (value !== undefined && value !== '') q.push(`${key}=${encodeURIComponent(String(value))}`);
+    return this.request(`/market/events${q.length ? `?${q.join('&')}` : ''}`);
   }
 
   name(name: string): Promise<NameRecord> {

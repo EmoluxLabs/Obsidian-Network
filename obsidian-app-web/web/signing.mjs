@@ -32,11 +32,12 @@ import {
   signingDigest,
   txIdOf,
 } from '../../obsidian-interface/web/core/transactions/encode.js';
-import { TxType, OnsOp } from '../../obsidian-interface/web/core/protocol/types.js';
+import { TxType, OnsOp, MarketOp } from '../../obsidian-interface/web/core/protocol/types.js';
 import { PROTOCOL_VERSION } from '../../obsidian-interface/web/core/version.js';
 import { encodeMiningBody } from '../../obsidian-interface/web/core/transactions/executors/mining.js';
 import { encodePaymentBody } from '../../obsidian-interface/web/core/transactions/executors/payment.js';
 import { encodeOnsBody } from '../../obsidian-interface/web/core/transactions/executors/ons.js';
+import { encodeMarketBody } from '../../obsidian-interface/web/core/transactions/executors/marketplace.js';
 import { expectedGas } from '../../obsidian-interface/web/core/transactions/helpers.js';
 
 /**
@@ -279,10 +280,24 @@ export function buildOnsBody({ op, name, address, to, fee }) {
   });
 }
 
+/**
+ * An ONS Marketplace body (protocol 2.0.0): list, re-price, delist, buy, offer, accept, decline or cancel.
+ * `amount` is in seals. The chain re-validates every field; nothing here decides anything.
+ */
+export function buildMarketBody({ op, name, amount, counterparty, offerId }) {
+  return encodeMarketBody({
+    op,
+    name,
+    amount: typeof amount === 'bigint' ? amount : 0n,
+    counterparty: counterparty ?? '',
+    offerId: offerId ?? '',
+  });
+}
+
 function toHex(bytes) {
   let out = '';
   for (const byte of bytes) out += byte.toString(16).padStart(2, '0');
   return out;
 }
 
-export { TxType, OnsOp, PROTOCOL_VERSION, expectedGas };
+export { TxType, OnsOp, MarketOp, PROTOCOL_VERSION, expectedGas };

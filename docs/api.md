@@ -41,7 +41,16 @@ Error shape is stable:
 | `GET /mining/status?address=` | eligibility, seconds remaining, next claim id and sequence, reward |
 | `GET /mining/claims?address=&limit=` | claims with sequence, reward, block, timestamp |
 | `GET /names?prefix=&limit=&offset=` | registered names, paged: `limit` 1–500 (default 200), `offset`; reply has `matched`, `offset`, `limit`, `hasMore`, and `count` = registry size. JSON-RPC `getnames` takes the same fields |
-| `GET /names/<name>` | one ONS record: `owner`, `address`, `registeredAt`, `expiresAt`, `transferCount`, and when present `pendingTransfer` (offered recipient and expiry), `recoveryAddress` and `pendingRecovery` ([ons.md](ons.md)). It does not check expiry; compare `expiresAt` with the head time |
+| `GET /names/<name>` | one ONS record: `owner`, `address`, `registeredAt`, `expiresAt`, `transferCount`, and when present `pendingTransfer` (offered recipient and expiry), `recoveryAddress` and `pendingRecovery` ([ons.md](ons.md)). It does not check expiry; compare `expiresAt` with the head time. Since 2.0.0 it adds `marketStatus`, `listing`, `locked`, `pendingOffers` and `resolved` (false while the name is listed: it does not resolve) |
+| `GET /market` | Marketplace summary: active listings, pending offers, escrow held, sales and volume ([marketplace-v2.0.0.md](marketplace-v2.0.0.md)) |
+| `GET /market/listings?sort=&seller=&prefix=&limit=&offset=` | active listings, paged. `sort` is `newest`, `oldest`, `price_asc`, `price_desc` or `name`. Each has `name`, `seller`, `priceSeals`, `priceObs`, `listedAt`, `expiresAt`, `pendingOffers` |
+| `GET /market/listing/<name>` | one active listing, or 404 |
+| `GET /market/name/<name>` | the one answer a search needs: `status` (`AVAILABLE`, `EXPIRED`, `OWNED`, `LISTED`), `owner`, `listing`, `pendingOffers`, `locked`, `canRegister`, `canBuy`, `canOffer`, `atHeight`. Derived from state at the head |
+| `GET /market/offers/name/<name>?status=&limit=&offset=` | offers on a name |
+| `GET /market/offers/incoming/<address>?status=&limit=&offset=` | offers addressed to the address as owner |
+| `GET /market/offers/outgoing/<address>?status=&limit=&offset=` | offers the address made as maker |
+| `GET /market/offer/<id>` | one offer: name, owner at offer time, maker, amount, `status`, creation and resolution time and height, who resolved it, and `escrow` (`held`, `amountSeals`); `currentOwner` is the owner now |
+| `GET /market/events?name=&address=&limit=` | Marketplace history from the indexer (a convenience rebuilt from blocks, never authoritative) |
 | `GET /wallet/<address>/next-nonce` | the next nonce to sign with for that address, and the height it was read at. It reads no balance; use `POST /wallet/balance` for that |
 | `GET /audit/decentralization` | ten yes/no questions (can one server, one interface or one administrator do X?) each answered with its evidence, plus the list of external dependencies and what each can and cannot affect |
 | `GET /audit/compliance` | absent mechanisms (`present: false`) read from the running protocol |
@@ -53,9 +62,10 @@ Error shape is stable:
 | --- | --- | --- |
 | `POST /tx/submit` | `{ "tx": "<signed hex>" }` | validates and admits to the mempool; returns `txId`, `type`, `sender` |
 | `POST /tx/simulate` | `{ "tx": "<signed hex>" }` | runs the transaction against current state without committing |
+| `POST /tx/*` with `type: "ONS_MARKET"` | `{ "op": "LIST\|UPDATE_PRICE\|DELIST\|BUY\|OFFER\|ACCEPT_OFFER\|DECLINE_OFFER\|CANCEL_OFFER", "name", "amount?", "counterparty?", "offerId?" }` | the `payload` of `/tx/encode`; the same body the wallets sign |
 | `POST /tx/encode` | `{ "type": "PAYMENT", "payload": { … } }` to encode; `{ "type": "PAYMENT", "body": "<hex>" }` to decode | canonical body encoding (what a wallet signs) and the inverse |
 | `POST /tx/gas` | `{ "amountObs": "12.5" }`, optionally `{ "usd": "5" }` | deterministic gas quote: `gas = min(floor(amount × 2 / 10000), 0.01 OBS)` to the Mining Pool. The `usd` field is only a quote conversion through the protocol oracle price; the fee itself is charged in OBS and the protocol charges no dollar amount |
-| `POST /wallet/balance` | `{ "address": "obs1…" }` | balance of an address you already know |
+| `POST /wallet/balance` | `{ "address": "obs1…" }` | balance of an address you already know. `balance` is the **spendable** amount; since 2.0.0 the reply also has `lockedObs`/`lockedSeals` (OBS held in offer escrow) and `totalObs`/`totalSeals` (their sum) |
 | `POST /wallet/quote` | `{ "address": "obs1…" }` | balance, next nonce and gas estimate for planning |
 | `POST /rpc` | JSON-RPC envelope | for clients that prefer JSON-RPC |
 

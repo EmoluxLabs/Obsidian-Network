@@ -8,7 +8,7 @@ registry — as first-class chain state rather than as rows in a company databas
 * Chain id / network id: `7777` / `obsidian-mainnet-1` (plus testnet `7778`,
   staging `7779`, devnet `7780`)
 * Address prefix: `obs` (testnet `tobs`, staging `sobs`, devnet `dobs`)
-* Protocol version: `1.9.0`
+* Protocol version: `2.0.0`
 * Consensus: **Proof of Time (PoT)** — see [proof-of-time.md](proof-of-time.md)
 
 ## 1. Blocks
@@ -70,6 +70,7 @@ protocolVersion | chainId | sender | nonce | type | gas | body | validUntil | me
 | `ONS` | Register, renew, offer and accept a transfer, update, or recover a `.obs` name (the protocol's only revenue source) |
 | `ORACLE` | Publish an OBS price observation from an independent source |
 | `TREASURY` | Spend from the treasury (treasury wallet only) |
+| `ONS_MARKET` | ONS Marketplace: list, re-price and delist a name; buy a listed name; make, accept, decline and cancel an offer with protocol escrow ([marketplace-v2.0.0.md](marketplace-v2.0.0.md)) |
 | `NODE_REGISTRY` | Node registration (node-key signed, reward wallet named), wallet change and reclaim, heartbeats, attestations, fault and equivocation reports |
 
 `decode*Body` functions live beside each executor in

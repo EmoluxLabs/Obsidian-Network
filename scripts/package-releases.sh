@@ -478,12 +478,16 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   ownership; docs/node-binding-v1.9.0.md covers squatting and reclaim
 * **node rewards:** 90% of ONS revenue is settled each day, inside a block, over the nodes whose uptime the chain itself
   recorded (docs/node-rewards-v1.9.0.md)
+* **ONS Marketplace (2.0.0):** the owner lists a name at a fixed OBS price (the name is then locked: no edit, transfer,
+  renewal or recovery, and it does not resolve); anyone can buy it in one atomic transaction that pays the seller the full
+  price; anyone can offer on an unlisted name with the OBS locked in protocol escrow until the owner accepts or declines,
+  the maker cancels, or the offer lapses; no commission (docs/marketplace-v2.0.0.md, docs/upgrading-2.0.0.md)
 * **.obs names:** transfer is an offer the recipient must accept; the owner can re-point the name and set a recovery
   address whose recovery completes only after a delay the owner can cancel (docs/ons.md)
 * **wallets:** creation shows both the passphrase and the private key; a separate private-key recovery flow shows the
   derived address for confirmation before anything is stored
-* protocol $VERSION is genesis-bound: it rejects 1.8.x and older peers, snapshots and data, and includes no live-chain
-  migration (docs/upgrading-1.9.0.md). Earlier tags are untouched
+* protocol $VERSION is genesis-bound: it rejects 1.9.x and older peers, snapshots and data, and includes no live-chain
+  migration (docs/upgrading-2.0.0.md). Earlier tags are untouched
 * the mining gate (\`MINING_CLAIM\` certificates, \`GATE_AUTHORITY\`) is unchanged
 * the archives now also carry the web app, the web wallet, the extension and the desktop sources
 * nothing is signed: no publisher key exists, so these archives prove integrity, not authorship

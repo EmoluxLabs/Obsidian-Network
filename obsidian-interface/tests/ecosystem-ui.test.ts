@@ -137,8 +137,10 @@ describe('discontinued products', () => {
   it('exposes exactly the still-shipping protocol operations', () => {
     expect(Object.keys(operations).sort()).toEqual(
       [
-        'acceptNameTransfer', 'cancelNameRecovery', 'cancelNameTransfer', 'claim', 'finalizeNameRecovery', 'offerNameTransfer',
-        'payRevenue', 'publishPrice', 'registerName', 'renewName', 'send', 'setNameRecovery', 'startNameRecovery', 'updateNameAddress',
+        'acceptNameTransfer', 'acceptOffer', 'buyName', 'cancelNameRecovery', 'cancelNameTransfer', 'cancelOffer', 'claim',
+        'declineOffer', 'finalizeNameRecovery', 'listName', 'makeOffer', 'offerNameTransfer', 'payRevenue', 'publishPrice',
+        'registerName', 'removeListing', 'renewName', 'send', 'setNameRecovery', 'startNameRecovery', 'updateListingPrice',
+        'updateNameAddress',
       ],
     );
   });

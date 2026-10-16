@@ -144,7 +144,8 @@ before(async () => {
       `export { Wallet } from ${JSON.stringify(join(lib_, 'wallet.ts'))};`,
       `export { decodeOnsBody, encodeOnsBody } from ${JSON.stringify(join(IFACE, 'web', 'core', 'transactions', 'executors', 'ons.js'))};`,
       `export { decodeSignedTxFromBytes } from ${JSON.stringify(join(IFACE, 'web', 'core', 'transactions', 'encode.js'))};`,
-      `export { TxType, OnsOp } from ${JSON.stringify(join(IFACE, 'web', 'core', 'protocol', 'types.js'))};`,
+      `export { TxType, OnsOp, MarketOp } from ${JSON.stringify(join(IFACE, 'web', 'core', 'protocol', 'types.js'))};`,
+      `export { decodeMarketBody } from ${JSON.stringify(join(IFACE, 'web', 'core', 'transactions', 'executors', 'marketplace.js'))};`,
       `export { CONSENSUS_PARAMS } from ${JSON.stringify(join(IFACE, 'web', 'core', 'protocol', 'params.js'))};`,
       `export { PROTOCOL_VERSION } from ${JSON.stringify(join(IFACE, 'web', 'core', 'version.js'))};`,
       `export { parseObs } from ${JSON.stringify(join(IFACE, 'web', 'core', 'protocol', 'amount.js'))};`,
@@ -366,4 +367,106 @@ test('pages on the official domain can read this node and this interface, and no
   const network = (await get(`${NODE_URL}/network`)).body;
   assert.deepEqual(network.domains, ['devnet.obsmainnet.us.ci', 'devnet.mineobs.network']);
   assert.equal(network.trust.officialDomains, true);
+});
+
+test('the ONS Marketplace on a live node, driven by the browser code through the interface proxy', { skip, timeout: ms(600_000) }, async () => {
+  const { miner: seller, buyer } = wallets;
+  const OBS = 10n ** 18n;
+  const spendable = async (wallet) => BigInt((await client.balance(wallet.address)).balanceSeals);
+  const locked = async (wallet) => BigInt((await client.balance(wallet.address)).lockedSeals ?? '0');
+  const poll = async (what, condition) => waitFor(condition, ms(90_000), what);
+  const revenueBefore = (await client.revenue()).bySource.map((entry) => entry.source).sort();
+  const fee = (await get(`${NODE_URL}/params`)).body.ons.registrationFeeObs;
+
+  // Search outcome A, then registration through the existing flow.
+  assert.equal((await client.marketName('marketone')).status, 'AVAILABLE');
+  await done(seller, () => lib.operations.registerName(client, seller, { name: 'marketone.obs', feeObs: fee }));
+  assert.equal((await client.marketName('marketone')).status, 'OWNED', 'outcome C: owned and unlisted');
+
+  // LIST: listed, locked, not resolvable, and the lock holds against the owner's own management.
+  await done(seller, () => lib.operations.listName(client, seller, { name: 'marketone.obs', priceObs: '10' }));
+  const listed = await client.marketName('marketone');
+  assert.equal(listed.status, 'LISTED', 'outcome B: owned and listed');
+  assert.equal(listed.listing.seller, seller.address);
+  assert.equal(BigInt(listed.listing.priceSeals), 10n * OBS);
+  const record = await get(`${NODE_URL}/names/marketone.obs`);
+  assert.equal(record.body.locked, true);
+  assert.equal(record.body.resolved, false, 'a listed name does not resolve');
+  const feed = await client.marketListings({ limit: 10 });
+  assert.ok(feed.listings.some((entry) => entry.name === 'marketone.obs'), 'the listing is discoverable by every client');
+  await assert.rejects(
+    lib.operations.updateNameAddress(client, seller, { name: 'marketone.obs', address: buyer.address }),
+    /NAME_LISTED|listed/i,
+    'the node refuses to manage a listed name',
+  );
+  await assert.rejects(lib.operations.makeOffer(client, buyer, { name: 'marketone.obs', amountObs: '1' }), /listed/i, 'no offer on a listed name');
+
+  // A stale review cannot buy: the price the buyer saw is part of the transaction.
+  await assert.rejects(
+    lib.operations.buyName(client, buyer, { name: 'marketone.obs', reviewedPriceSeals: (9n * OBS).toString(), reviewedSeller: seller.address }),
+    /changed since you reviewed/,
+  );
+
+  // BUY: the seller is paid the full price, the buyer pays price + gas, the name moves, the listing is gone.
+  const sellerBefore = await spendable(seller);
+  const buyerBefore = await spendable(buyer);
+  const price = 10n * OBS;
+  await done(buyer, () => lib.operations.buyName(client, buyer, { name: 'marketone.obs', reviewedPriceSeals: price.toString(), reviewedSeller: seller.address }));
+  await poll('the sale to be visible', async () => (await client.marketName('marketone')).owner === buyer.address);
+  assert.equal((await client.marketName('marketone')).status, 'OWNED', 'the listing is removed and the lock released');
+  assert.equal((await spendable(seller)) - sellerBefore, price, 'the seller receives exactly the price: no commission');
+  assert.equal(buyerBefore - (await spendable(buyer)), price + lib.gasFor(price), 'the buyer pays the price plus the protocol gas, nothing else');
+  assert.equal((await get(`${NODE_URL}/names/marketone.obs`)).body.resolved, true);
+  await assert.rejects(
+    lib.operations.buyName(client, seller, { name: 'marketone.obs', reviewedPriceSeals: price.toString(), reviewedSeller: seller.address }),
+    /no longer listed/,
+    'a second buyer is told it is sold',
+  );
+
+  // OFFER: escrow is immediate, gas is on top and not from escrow.
+  const offer = 3n * OBS;
+  const makerBefore = await spendable(seller);
+  await done(seller, () => lib.operations.makeOffer(client, seller, { name: 'marketone.obs', amountObs: '3' }));
+  assert.equal(await locked(seller), offer, 'the offered OBS is locked at once');
+  assert.equal(makerBefore - (await spendable(seller)), offer + lib.gasFor(offer), 'spendable fell by the offer plus gas');
+  const incoming = await client.marketOffers('incoming', buyer.address, { status: 'PENDING' });
+  assert.equal(incoming.offers.length, 1);
+  assert.equal(incoming.offers[0].escrowHeld, true);
+  assert.equal((await get(`${NODE_URL}/supply`)).body.marketEscrowObs, '3.000000000000000000');
+  await assert.rejects(lib.operations.cancelOffer(client, buyer, { offer: incoming.offers[0] }), /only the maker/);
+
+  // DECLINE: exactly one refund, the name stays.
+  await done(buyer, () => lib.operations.declineOffer(client, buyer, { offer: incoming.offers[0] }));
+  assert.equal(await locked(seller), 0n);
+  assert.equal((await client.marketOffer(incoming.offers[0].id)).offer.status, 'DECLINED');
+  assert.equal((await client.marketName('marketone')).owner, buyer.address);
+  await assert.rejects(lib.operations.declineOffer(client, buyer, { offer: incoming.offers[0] }), /already declined/, 'one terminal state per offer');
+
+  // CANCEL: the maker withdraws.
+  await done(seller, () => lib.operations.makeOffer(client, seller, { name: 'marketone.obs', amountObs: '2' }));
+  const second = (await client.marketOffers('outgoing', seller.address, { status: 'PENDING' })).offers[0];
+  await done(seller, () => lib.operations.cancelOffer(client, seller, { offer: second }));
+  assert.equal(await locked(seller), 0n);
+  assert.equal((await client.marketOffer(second.id)).offer.status, 'CANCELLED');
+
+  // ACCEPT: the name goes to the maker and the owner receives the full amount.
+  await done(seller, () => lib.operations.makeOffer(client, seller, { name: 'marketone.obs', amountObs: '4' }));
+  const pending = (await client.marketOffers('incoming', buyer.address, { status: 'PENDING' })).offers[0];
+  const ownerBefore = await spendable(buyer);
+  await done(buyer, () => lib.operations.acceptOffer(client, buyer, { offer: pending }));
+  await poll('the accepted offer to be visible', async () => (await client.marketName('marketone')).owner === seller.address);
+  assert.equal((await spendable(buyer)) - ownerBefore, 4n * OBS, 'the owner receives the full offered amount');
+  assert.equal(await locked(seller), 0n, 'escrow is released');
+  assert.equal((await client.marketOffer(pending.id)).offer.status, 'ACCEPTED');
+
+  // Nothing was minted or burned, and the Marketplace is not ONS revenue.
+  const supply = (await get(`${NODE_URL}/supply`)).body;
+  assert.equal(supply.marketEscrowObs, '0.000000000000000000');
+  assert.equal(supply.invariantOk, true);
+  assert.deepEqual((await client.revenue()).bySource.map((entry) => entry.source).sort(), revenueBefore);
+  const history = await client.marketEvents({ name: 'marketone.obs', limit: 50 });
+  const types = history.events.map((event) => event.type);
+  for (const type of ['ONS_LISTED', 'ONS_SOLD', 'ONS_OFFER_MADE', 'ONS_OFFER_DECLINED', 'ONS_OFFER_CANCELLED', 'ONS_OFFER_ACCEPTED']) {
+    assert.ok(types.includes(type), `the history records ${type} (saw ${types.join(', ')})`);
+  }
 });

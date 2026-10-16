@@ -1,7 +1,7 @@
 # Consensus
 
 This is the reference for **how Obsidian Network decides what happened**: block validity, who may produce a block, fork
-choice, reorganisation and finality, as implemented by protocol 1.9.0. The full specification, with the assumptions and
+choice, reorganisation and finality, as implemented by protocol 2.0.0. The full specification, with the assumptions and
 limits, is [consensus-v1.9.0.md](consensus-v1.9.0.md); finality is [finality-v1.9.0.md](finality-v1.9.0.md). The temporal
 mechanism itself, and why this is Proof of Time and not proof-of-work, is in [proof-of-time.md](proof-of-time.md). The
 constants quoted here are defined in `obsidian-core/src/protocol/params.ts` and checked by `scripts/check-invariants.mjs`.

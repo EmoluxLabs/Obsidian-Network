@@ -69,7 +69,7 @@ Gas is **never** ONS revenue: it goes to the Mining Pool.
 
 ### Penalties: nothing is confiscated
 
-Protocol 1.9.0 has **no bond and no slashing of funds** — validators, bonds and slashing were removed. A producer proven, with
+Protocol 2.0.0 has **no bond and no slashing of funds** — validators, bonds and slashing were removed. A producer proven, with
 two signatures every node can check, to have signed two different blocks on one parent is **banned permanently** and its
 reward wallet is released; no OBS moves. Being offline costs turns and reward weight (suspension, lower uptime), never capital.
 
@@ -176,7 +176,7 @@ the schedule for a while (see [consensus-v1.9.0.md](consensus-v1.9.0.md) section
 
 ## 5. Supply invariant
 
-Nothing is locked in 1.9.0 (there are no bonds), so supply is the sum of balances, the Mining Pool and the node
+Nothing is locked in bonds (there are none) — the only locked OBS is Marketplace offer escrow — so supply is the sum of balances, the Marketplace escrow, the Mining Pool and the node
 reward pool. The invariants every node checks are:
 
 - total issued never exceeds **21,000,000 OBS**;

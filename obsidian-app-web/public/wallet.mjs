@@ -18,6 +18,8 @@ import {
   getBalance,
   getMiningStatus,
   getName,
+  getMarketName,
+  getMarketOffer,
   getAppConfig,
   MIN_PASSPHRASE_LENGTH,
   submitTransaction,
@@ -270,6 +272,8 @@ async function run(name, requestPassphrase, args) {
     getMiningStatus,
     getBalance,
     getName,
+    getMarketName,
+    getMarketOffer,
     submit: (hex) => submitTransaction(hex),
     linkChallenge: requestLinkChallenge,
     linkSubmit: submitLinkProof,
@@ -412,5 +416,16 @@ export const setNameRecovery = (input, requestPassphrase) => run('submitNameReco
 export const startNameRecovery = (input, requestPassphrase) => run('submitNameRecoveryStart', requestPassphrase, input);
 export const cancelNameRecovery = (input, requestPassphrase) => run('submitNameRecoveryCancel', requestPassphrase, input);
 export const finalizeNameRecovery = (input, requestPassphrase) => run('submitNameRecoveryFinalize', requestPassphrase, input);
+
+
+// ── ONS Marketplace (protocol 2.0.0) ────────────────────────────────────────────────────────────────────────────
+export const listName = (input, requestPassphrase) => run('submitMarketList', requestPassphrase, input);
+export const updateListing = (input, requestPassphrase) => run('submitMarketUpdate', requestPassphrase, input);
+export const delistName = (input, requestPassphrase) => run('submitMarketDelist', requestPassphrase, input);
+export const buyName = (input, requestPassphrase) => run('submitMarketBuy', requestPassphrase, input);
+export const makeNameOffer = (input, requestPassphrase) => run('submitMarketOffer', requestPassphrase, input);
+export const acceptNameOffer = (input, requestPassphrase) => run('submitMarketAccept', requestPassphrase, input);
+export const declineNameOffer = (input, requestPassphrase) => run('submitMarketDecline', requestPassphrase, input);
+export const cancelNameOffer = (input, requestPassphrase) => run('submitMarketCancel', requestPassphrase, input);
 
 export { BUNDLE_URL, ADDRESS_KEY };

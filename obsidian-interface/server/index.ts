@@ -1390,6 +1390,10 @@ export class InterfaceServer {
       target === '/blocks' ||
       target === '/mempool' ||
       target === '/names' ||
+      // ONS Marketplace reads (protocol 2.0.0): listings, offers and escrow are public chain state. Writes still go
+      // through POST /tx/submit and are validated by consensus, never by this proxy.
+      target === '/market' ||
+      target.startsWith('/market/') ||
       // The wallet API. These are the node's own balance routes: the caller
       // must already know the address it is asking about, and the node serves
       // them publicly on its RPC port. Leaving them out of this list is what

@@ -410,15 +410,7 @@ export const SCREENS = {
     errorLine(s) +
     noticeLine(s) +
     (s.ons?.result ? nameResult(s) : '') +
-    `<div class="lb">YOUR NAMES</div>` +
-    (s.ownNames?.length
-      ? `<div class="card">${s.ownNames
-          .map(
-            (n) =>
-              `<div class="row"><b class="m">${esc(n)}${/\.obs$/.test(n) ? '' : '.obs'}</b><span class="pill">ACTIVE</span></div>`,
-          )
-          .join('')}</div>`
-      : unavailable(s.walletAddress ? 'This wallet holds no names.' : 'Set up a wallet to see the names it holds.')) +
+    marketScreen(s) +
     (s.account ? designNav('menu') : ''),
 
   menu: (s) =>
@@ -837,13 +829,15 @@ function nameResult(s) {
   const r = s.ons.result;
   const fee = s.params?.ons?.registrationFeeObs;
   const owned = r.record?.owner && r.record.owner === s.walletAddress;
-  const status = r.registered ? (owned ? 'YOURS' : 'REGISTERED') : 'AVAILABLE';
+  const listed = r.market?.status === 'LISTED' && r.market.listing;
+  const status = listed ? 'LISTED ON ONS MARKETPLACE' : r.registered ? (owned ? 'YOURS' : 'REGISTERED') : 'AVAILABLE';
   const colour = r.registered ? (owned ? 'ok' : 'mu') : 'ok';
   return (
     `<div class="card" style="margin-top:12px;padding:16px">` +
     `<div style="display:flex;justify-content:space-between"><b class="m" style="font-size:17px">${esc(
       r.name,
     )}</b><span class="pill" style="${r.registered ? '' : 'background:#FBF6E8;color:var(--gd)'}">${status}</span></div>` +
+    (listed ? listedBlock(s, r) : '') +
     (r.record
       ? `<div class="card" style="margin-top:10px">` +
         `<div class="row"><span>RESOLVES TO</span><b class="m" style="font-size:12px">${identifierHtml(r.record.address, 'address', { label: 'Resolves to wallet address' })}</b></div>` +
@@ -864,10 +858,194 @@ function nameResult(s) {
     (!r.registered && !s.walletAddress
       ? `<p class="mu" style="font-size:12.5px;margin:10px 0 0">Set up a wallet on this device to register it. Registration is a signed ONS transaction.</p>`
       : '') +
+    (r.registered && !listed && !owned && r.market?.status === 'OWNED' ? offerBlock(s, r) : '') +
     (r.unverified
       ? `<p class="mu" style="font-size:12px;margin:10px 0 0">This node would not answer for a single name, so availability is unconfirmed. It does not serve /names/&lt;name&gt;.</p>`
       : '') +
     `</div>`
+  );
+}
+
+// ── ONS Marketplace (protocol 2.0.0) ─────────────────────────────────────────────────────────────────────────
+
+const obsExactText = (value) => displayObsWithUnit(value, EXACT_OBS);
+
+/** A listed name: price, seller and the Buy flow. The review shows every term before anything is signed. */
+function listedBlock(s, r) {
+  const listing = r.market.listing;
+  const own = listing.seller === s.walletAddress;
+  const review = s.market?.review?.kind === 'buy' && s.market.review.name === r.name ? s.market.review : null;
+  const price = BigInt(listing.priceSeals);
+  const gas = expectedGasSeals(price);
+  const spendable = s.balance ? BigInt(s.balance.spendableSeals ?? s.balance.balanceSeals ?? 0) : null;
+  const short = spendable !== null && spendable < price + gas;
+  return (
+    `<div class="card" style="margin-top:10px">` +
+    `<div class="row"><span>ASKING</span><b class="m">${esc(obsExactText(listing.priceSeals))}</b></div>` +
+    `<div class="row"><span>SELLER</span><b class="m" style="font-size:12px">${identifierHtml(listing.seller, 'address', { label: 'Seller wallet address' })}</b></div>` +
+    `</div>` +
+    `<p class="mu" style="font-size:12px;margin:8px 0 0">While listed, the owner cannot use or edit this name. A purchase pays the seller the full price and moves the name in one step. There is no Marketplace commission.</p>` +
+    (own
+      ? `<p class="mu" style="font-size:12.5px;margin:10px 0 0">This is your listing. Manage it under YOUR NAMES.</p>`
+      : !s.walletAddress
+        ? `<p class="mu" style="font-size:12.5px;margin:10px 0 0">Set up a wallet on this device to buy.</p>`
+        : review
+          ? `<div class="card" style="margin-top:10px"><div class="lb" style="margin:0 0 6px">REVIEW PURCHASE</div>` +
+            `<div class="row"><span>ASKING</span><b class="m">${esc(obsExactText(price))}</b></div>` +
+            `<div class="row"><span>NETWORK FEE (GAS)</span><b class="m">${esc(obsExactText(gas))}</b></div>` +
+            `<div class="row"><span>YOU PAY</span><b class="m">${esc(obsExactText(price + gas))}</b></div>` +
+            `<div class="row"><span>SPENDABLE</span><b class="m">${esc(spendable === null ? '—' : obsExactText(spendable))}</b></div></div>` +
+            (short ? `<p class="mu" style="font-size:12.5px;margin:8px 0 0;color:var(--er,#b3261e)">Your spendable balance does not cover the price and the fee.</p>` : '') +
+            designField('pp', 'VAULT PASSPHRASE', 'password', 'To sign the purchase') +
+            `<button class="btn p" style="margin-top:10px" onclick="ObsidianMarketBuy()">${busy('CONFIRM AND BUY', s, 'ons')}</button>` +
+            `<button class="btn" onclick="ObsidianMarketCancelReview()">CANCEL</button>`
+          : `<button class="btn p" style="margin-top:10px" onclick="ObsidianMarketReviewBuy()">BUY ${esc(r.name)}</button>`)
+  );
+}
+
+/** An owned, unlisted name that is not yours: make an offer. The OBS is locked by the chain until the owner decides. */
+function offerBlock(s, r) {
+  if (!s.walletAddress) return `<p class="mu" style="font-size:12.5px;margin:10px 0 0">Set up a wallet on this device to make an offer.</p>`;
+  const review = s.market?.review?.kind === 'offer' && s.market.review.name === r.name ? s.market.review : null;
+  if (!review) {
+    return (
+      `<p class="mu" style="font-size:12.5px;margin:10px 0 0">Not for sale. You can make an offer: your OBS is locked by the chain until the owner accepts or declines, or you cancel.</p>` +
+      designField('oa', 'YOUR OFFER (OBS)', 'text', 'e.g. 25') +
+      `<button class="btn p" style="margin-top:10px" onclick="ObsidianMarketReviewOffer()">REVIEW OFFER</button>`
+    );
+  }
+  const amount = parseSeals(review.amountObs);
+  const gas = expectedGasSeals(amount);
+  const spendable = s.balance ? BigInt(s.balance.spendableSeals ?? s.balance.balanceSeals ?? 0) : null;
+  const short = spendable !== null && spendable < amount + gas;
+  return (
+    `<div class="card" style="margin-top:10px"><div class="lb" style="margin:0 0 6px">REVIEW OFFER</div>` +
+    `<div class="row"><span>OWNER</span><b class="m" style="font-size:12px">${identifierHtml(review.owner, 'address', { label: 'Owner wallet address' })}</b></div>` +
+    `<div class="row"><span>LOCKED IN ESCROW NOW</span><b class="m">${esc(obsExactText(amount))}</b></div>` +
+    `<div class="row"><span>NETWORK FEE (GAS, NOT FROM ESCROW)</span><b class="m">${esc(obsExactText(gas))}</b></div>` +
+    `<div class="row"><span>LEAVES YOUR SPENDABLE</span><b class="m">${esc(obsExactText(amount + gas))}</b></div></div>` +
+    (short ? `<p class="mu" style="font-size:12.5px;margin:8px 0 0;color:var(--er,#b3261e)">Your spendable balance does not cover the offer and the fee.</p>` : '') +
+    `<p class="mu" style="font-size:12px;margin:8px 0 0">The offer returns to you in full if the owner declines, you cancel, it lapses after seven days, or the name is listed, transferred or expires. If the owner accepts, the name becomes yours and the owner receives the full amount.</p>` +
+    designField('pp', 'VAULT PASSPHRASE', 'password', 'To sign the offer') +
+    `<button class="btn p" style="margin-top:10px" onclick="ObsidianMarketOffer()">${busy('LOCK FUNDS AND SEND OFFER', s, 'ons')}</button>` +
+    `<button class="btn" onclick="ObsidianMarketCancelReview()">CANCEL</button>`
+  );
+}
+
+function parseSeals(obsText) {
+  const [whole, fraction = ''] = String(obsText).split('.');
+  return BigInt(whole || '0') * 10n ** 18n + BigInt(fraction.padEnd(18, '0').slice(0, 18) || '0');
+}
+
+/** The protocol's gas on an amount: 2 basis points, capped at 0.01 OBS (the same rule the signing bundle uses). */
+function expectedGasSeals(amount) {
+  const gas = (amount * 2n) / 10_000n;
+  const cap = 10n ** 16n;
+  return gas > cap ? cap : gas;
+}
+
+function offerRows(s, offers, scope) {
+  if (!offers?.offers?.length) return unavailable(offers ? 'No offers.' : 'Offers could not be read from the node.');
+  return `<div class="card">${offers.offers
+    .map((offer) => {
+      const pending = offer.status === 'PENDING';
+      const who = scope === 'incoming' ? offer.maker : offer.owner;
+      const actions = !pending
+        ? ''
+        : scope === 'incoming'
+          ? `<button class="btn p" onclick="ObsidianMarketAccept('${arg(offer.id)}')">ACCEPT</button><button class="btn" onclick="ObsidianMarketDecline('${arg(offer.id)}')">DECLINE</button>`
+          : `<button class="btn" onclick="ObsidianMarketCancel('${arg(offer.id)}')">CANCEL OFFER</button>`;
+      return (
+        `<div style="padding:10px 0;border-bottom:1px solid var(--ln,#eee)">` +
+        `<div class="row"><b class="m">${esc(offer.name)}</b><span class="pill">${esc(offer.status === 'INVALIDATED' ? 'REFUNDED' : offer.status)}</span></div>` +
+        `<div class="row"><span>${scope === 'incoming' ? 'FROM' : 'TO OWNER'}</span><b class="m" style="font-size:12px">${identifierHtml(who, 'address', { label: 'Wallet address' })}</b></div>` +
+        `<div class="row"><span>AMOUNT</span><b class="m">${esc(displayObsWithUnit(offer.amountSeals))}</b></div>` +
+        actions +
+        `</div>`
+      );
+    })
+    .join('')}</div>`;
+}
+
+/** The Marketplace feed, this wallet's names and offers, locked escrow and history. All of it is read from the node. */
+function marketScreen(s) {
+  const m = s.market ?? {};
+  const feed = m.feed;
+  const sortButtons = [['newest', 'NEWEST'], ['price_asc', 'LOWEST'], ['price_desc', 'HIGHEST'], ['name', 'NAME']]
+    .map(([k, t]) => `<button class="btn ${m.sort === k ? 'p' : ''}" style="flex:1" onclick="ObsidianMarketSort('${k}')">${t}</button>`)
+    .join('');
+  const feedHtml = feed
+    ? feed.listings.length
+      ? `<div class="card">${feed.listings
+          .map(
+            (l) =>
+              `<div class="row" onclick="ObsidianMarketOpen('${arg(l.name)}')" style="cursor:pointer"><b class="m">${esc(l.name)}</b><b class="m">${esc(displayObsWithUnit(l.priceSeals))}</b></div>`,
+          )
+          .join('')}</div>` +
+        `<div style="display:flex;gap:10px"><button class="btn" ${m.offset ? '' : 'disabled'} onclick="ObsidianMarketPage(-20)">PREVIOUS</button><button class="btn" ${feed.hasMore ? '' : 'disabled'} onclick="ObsidianMarketPage(20)">NEXT</button></div>`
+      : `<div class="card"><div class="mu">Nothing is listed yet.</div></div>`
+    : unavailable('Listings could not be read from the node.');
+
+  const names = s.ownNames ?? [];
+  const mine = names.length
+    ? `<div class="card">${names
+        .map((n, i) => {
+          const st = m.mine?.[n];
+          const listing = st?.listing;
+          const id = `pr${i}`;
+          const controls = !st
+            ? ''
+            : st.status === 'LISTED'
+              ? designField(id, 'NEW ASKING AMOUNT (OBS)', 'text', 'e.g. 30') +
+                `<button class="btn" onclick="ObsidianMarketUpdate('${arg(n)}','${arg(listing?.priceSeals)}','${id}')">UPDATE LISTING</button>` +
+                `<button class="btn" onclick="ObsidianMarketDelist('${arg(n)}')">REMOVE LISTING</button>`
+              : st.status === 'OWNED'
+                ? designField(id, 'LIST FOR SALE (OBS)', 'text', 'e.g. 25') +
+                  `<button class="btn p" onclick="ObsidianMarketList('${arg(n)}','${id}')">LIST ${esc(n)}</button>`
+                : '';
+          return (
+            `<div style="padding:10px 0;border-bottom:1px solid var(--ln,#eee)">` +
+            `<div class="row"><b class="m">${esc(n)}${/\.obs$/.test(n) ? '' : '.obs'}</b><span class="pill">${
+              st?.status === 'LISTED' ? `LISTED · ${esc(displayObsWithUnit(listing.priceSeals))}` : st ? 'ACTIVE' : '—'
+            }</span></div>${controls}</div>`
+          );
+        })
+        .join('')}</div>`
+    : unavailable(s.walletAddress ? 'This wallet holds no names.' : 'Set up a wallet to see the names it holds.');
+
+  const b = s.balance;
+  const escrow =
+    s.walletAddress && b
+      ? `<div class="card"><div class="row"><span>SPENDABLE</span><b class="m">${esc(displayObsWithUnit(b.spendableSeals ?? b.balanceSeals))}</b></div>` +
+        `<div class="row"><span>LOCKED IN OFFERS</span><b class="m">${esc(displayObsWithUnit(b.lockedSeals))}</b></div></div>` +
+        `<p class="mu" style="font-size:12px;margin:6px 0 0">Locked funds are yours: they return in full when an offer is declined, cancelled, lapses or becomes invalid. Gas for an offer is charged separately.</p>`
+      : '';
+
+  const events = m.events?.events?.length
+    ? `<div class="card">${m.events.events
+        .map((e) => `<div class="row"><span>${esc(String(e.type).replace(/^ONS_/, '').replace(/_/g, ' '))}</span><b class="m">${esc(e.data?.name ?? '—')}</b></div>`)
+        .join('')}</div>`
+    : unavailable(s.walletAddress ? 'No Marketplace activity indexed for this wallet.' : 'Set up a wallet to see its history.');
+
+  const pass = s.walletAddress
+    ? designField('pp2', 'VAULT PASSPHRASE (FOR THE ACTIONS BELOW)', 'password', 'To sign a listing or an offer decision')
+    : '';
+  return (
+    `<div class="lb">ONS MARKETPLACE</div>` +
+    `<div style="display:flex;gap:6px;margin-bottom:8px">${sortButtons}</div>` +
+    feedHtml +
+    `<div class="lb">YOUR NAMES</div>` +
+    pass +
+    mine +
+    `<p class="mu" style="font-size:12px;margin:6px 0 0">A listed name is locked: it cannot be edited, transferred, renewed or recovered until the listing is removed or sold. Listing refunds any offers already made on it.</p>` +
+    `<div class="lb">OFFERS MADE TO YOU</div>` +
+    (s.walletAddress ? offerRows(s, m.incoming, 'incoming') : unavailable('Set up a wallet to see offers.')) +
+    `<div class="lb">OFFERS YOU MADE</div>` +
+    (s.walletAddress ? offerRows(s, m.outgoing, 'outgoing') : unavailable('Set up a wallet to see offers.')) +
+    `<div class="lb">LOCKED FUNDS</div>` +
+    (escrow || unavailable('Set up a wallet to see locked funds.')) +
+    `<div class="lb">MARKETPLACE HISTORY</div>` +
+    events
   );
 }
 

@@ -247,8 +247,8 @@ and `--require-init` turns a wrong or empty data directory into an error.
 A user's wallet vault is in **their** browser, and their recovery phrase is theirs; the platform keeps neither
 (see [wallet-custody.md](wallet-custody.md)).
 
-**Moving to 1.9.0 is not an in-place upgrade.** The protocol, params hash and genesis ids change (a fresh start), so use a
-new data directory; keystores and wallets carry over untouched. See [upgrading-1.9.0.md](upgrading-1.9.0.md) for the checklist.
+**Moving to 2.0.0 is not an in-place upgrade.** The protocol, params hash and genesis ids change (a fresh start), so use a
+new data directory; keystores and wallets carry over untouched. See [upgrading-2.0.0.md](upgrading-2.0.0.md) for the checklist.
 
 **Not tested here:** a full disk and torn writes at the filesystem level (the code writes finality state and keystores
 by atomic replace and the tests simulate a crash between steps, but nobody has filled a disk or pulled a plug),

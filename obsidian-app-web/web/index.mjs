@@ -31,8 +31,10 @@ export {
   buildMiningBody,
   buildPaymentBody,
   buildOnsBody,
+  buildMarketBody,
   TxType,
   OnsOp,
+  MarketOp,
   PROTOCOL_VERSION,
   expectedGas,
 } from './signing.mjs';
@@ -51,6 +53,14 @@ export {
   submitNameRecoveryStart,
   submitNameRecoveryCancel,
   submitNameRecoveryFinalize,
+  submitMarketList,
+  submitMarketUpdate,
+  submitMarketDelist,
+  submitMarketBuy,
+  submitMarketOffer,
+  submitMarketAccept,
+  submitMarketDecline,
+  submitMarketCancel,
   VALIDITY_SECONDS,
 } from './ops.mjs';
 

@@ -1,6 +1,6 @@
-# Consensus specification — protocol 1.9.0
+# Consensus specification — protocol 2.0.0 (introduced in 1.9.0)
 
-This is the written specification of how blocks are produced, ordered and agreed on in protocol 1.9.0, and what is
+This is the written specification of how blocks are produced, ordered and agreed on in protocol 2.0.0 (the rules were introduced in 1.9.0 and are unchanged by the Marketplace), and what is
 **not** claimed. Every rule below is implemented in `obsidian-core` and named with the file that holds it. Where a goal
 cannot be met without trading away another requirement, the limit is stated in plain words in §10.
 

@@ -269,6 +269,19 @@ export const getNames = (prefix = '', limit = 20) =>
 
 export const getName = (name) => read(`/names/${encodeURIComponent(name)}`);
 
+// ── ONS Marketplace (protocol 2.0.0): every figure is the node's own chain state ──────────────────────────────
+
+const bareName = (name) => String(name ?? '').trim().toLowerCase().replace(/\.obs$/, '');
+/** One name's Marketplace status: AVAILABLE, EXPIRED, OWNED or LISTED, with the listing and the pending offers count. */
+export const getMarketName = (name) => read(`/market/name/${encodeURIComponent(bareName(name))}`);
+export const getMarketListings = ({ sort = 'newest', limit = 20, offset = 0 } = {}) =>
+  read('/market/listings', `sort=${encodeURIComponent(sort)}&limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`);
+/** `scope` is `name`, `incoming` (to an owner) or `outgoing` (from a maker). */
+export const getMarketOffers = (scope, subject, status) =>
+  read(`/market/offers/${scope}/${encodeURIComponent(scope === 'name' ? bareName(subject) : subject)}`, status ? `status=${encodeURIComponent(status)}` : '');
+export const getMarketOffer = (id) => read(`/market/offer/${encodeURIComponent(id)}`);
+export const getMarketEvents = (address, limit = 20) => read('/market/events', `address=${encodeURIComponent(address)}&limit=${encodeURIComponent(limit)}`);
+
 /**
  * Submit signed bytes.
  *
