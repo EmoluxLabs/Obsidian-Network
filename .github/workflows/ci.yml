@@ -15,6 +15,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The token a workflow run gets is read-only unless a job below asks for more.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -28,8 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -50,8 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -87,8 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
       - run: node --test cloudflare/test/worker.test.mjs
@@ -99,8 +103,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
       # These decide whether a release is trustworthy and whether a soak run
@@ -124,7 +128,7 @@ jobs:
       # parses the shipped files, and the per-network sites the Oracle guide generates from
       # them, against nginx's own directive grammar (it once shipped `http2 on;`, a startup
       # error on the nginx that Ubuntu 22.04 and 24.04 carry).
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
       - name: nginx files parse under nginx's own directive grammar
@@ -136,8 +140,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -156,8 +160,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -202,8 +206,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -278,7 +282,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # A Dockerfile in a repository is not evidence that anything is
       # deployable (§119). These steps build the images, start them, and talk
@@ -396,8 +400,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -440,14 +444,14 @@ jobs:
 
       - run: cd releases && sha256sum -c SHA256SUMS
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: release-gate-logs
           path: ${{ runner.temp }}/release-logs
           retention-days: 14
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: obsidian-release-archives
           path: |

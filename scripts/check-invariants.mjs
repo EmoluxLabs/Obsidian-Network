@@ -86,7 +86,7 @@ check('finality is derived from producers, never voted', 'PRODUCER_DIVERSITY_CHE
 check('finality needs at least 2 producers and a 2/3 quorum', '2,2,3', [P.consensus.finality.minProducers, P.consensus.finality.quorumNumerator, P.consensus.finality.quorumDenominator].join(','));
 check('a new node waits 64 blocks before it can produce', 64, P.consensus.producers.maturityBlocks);
 check('the block target is 5 seconds', 5, P.proofOfTime.difficultyTargetSeconds);
-check('the future-drift bound is 60 seconds', 60, P.block.maxFutureDriftSeconds);
+check('the future-drift bound is two slots (10 seconds)', 10, P.block.maxFutureDriftSeconds);
 check('median time past uses 11 blocks', 11, P.block.medianTimePastWindow);
 check('reorgs deeper than 256 blocks are refused', 256, P.consensus.maxReorgDepth);
 

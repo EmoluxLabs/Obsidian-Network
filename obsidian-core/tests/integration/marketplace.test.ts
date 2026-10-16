@@ -764,7 +764,7 @@ describe('economic reconciliation', () => {
   });
 });
 
-// ── grace period (found in the 2.0.1 audit: registration used to ignore it) ───────────────────────────────────
+// ── grace period (found in the 2.0.2 audit: registration used to ignore it) ───────────────────────────────────
 
 describe('a lapsed name is protected by its grace period', () => {
   const register = (s: Scene, w: TestWallet, name: string) =>

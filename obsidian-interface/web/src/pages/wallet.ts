@@ -455,7 +455,7 @@ function drawSend(wallet: Wallet): HTMLElement {
   const to = el('input', { id: 'send-to', placeholder: `Recipient address (${network?.addressHrp ?? 'obs'}1…) or .obs name` });
   const amount = el('input', { id: 'send-amount', placeholder: 'Amount in OBS' });
   const memo = el('input', { id: 'send-memo', placeholder: 'Memo (optional)' });
-  const quote = el('p', { class: 'fineprint' }, 'Gas: 0.02% of the amount, capped at 0.01 OBS.');
+  const quote = el('p', { class: 'fineprint' }, 'Gas: 0.02% of the amount, at least 0.000001 OBS, capped at 0.01 OBS.');
   const send = el('button', { class: 'primary', type: 'button', id: 'send-button' }, 'Sign and send');
   // The form and, when a `.obs` name has been resolved, the confirmation that replaces it. Nothing is signed from the form
   // when the recipient is a name: the person sees the address first and confirms THAT.
@@ -492,9 +492,9 @@ function drawSend(wallet: Wallet): HTMLElement {
     try {
       const value = amount.value.trim();
       if (!value || !/^\d*(\.\d*)?$/.test(value)) throw new Error('');
-      quote.textContent = `Gas: ${displaySeals(operationsGas(value), EXACT_OBS)} OBS (0.02%, capped at 0.01 OBS)`;
+      quote.textContent = `Gas: ${displaySeals(operationsGas(value), EXACT_OBS)} OBS (0.02%, at least 0.000001 OBS, capped at 0.01 OBS)`;
     } catch {
-      quote.textContent = 'Gas: 0.02% of the amount, capped at 0.01 OBS.';
+      quote.textContent = 'Gas: 0.02% of the amount, at least 0.000001 OBS, capped at 0.01 OBS.';
     }
   });
 
@@ -564,9 +564,12 @@ function operationsGas(amountObs: string): bigint {
   const digits = amountObs.includes('.') ? amountObs.split('.') : [amountObs, ''];
   const fraction = (digits[1] ?? '').padEnd(18, '0').slice(0, 18);
   const seals = BigInt(`${digits[0] || '0'}${fraction}`);
+  if (seals <= 0n) return 0n;
   const gas = (seals * 2n) / 10_000n;
   const cap = 10_000_000_000_000_000n;
-  return gas > cap ? cap : gas;
+  const floor = 1_000_000_000_000n; // minGas: 0.000001 OBS
+  const capped = gas > cap ? cap : gas;
+  return capped < floor ? floor : capped;
 }
 
 function exportRow(wallet: Wallet, passphrase: string): HTMLElement[] {

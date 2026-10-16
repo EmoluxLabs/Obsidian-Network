@@ -10,7 +10,7 @@
  *   - restarts are real: a second ChainManager is opened on the same directory.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { ChainManager } from '../../src/blockchain/chain.js';
@@ -45,6 +45,7 @@ async function harness(): Promise<Harness> {
   return h;
 }
 afterEach(() => {
+  vi.useRealTimers();
   while (open.length > 0) open.pop()!.close();
 });
 
@@ -337,6 +338,8 @@ describe('producers (registry-driven schedule)', () => {
     const { h, node } = await nodeHarness();
     const outsider = makeWallet();
     const timestamp = h.chain.tip!.timestamp + 12 * CONSENSUS_PARAMS.block.targetBlockSeconds; // a late round
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(timestamp * 1000); // a late round is only legitimate once the time has really passed
     const rejected = h.tryBlock([], { timestamp, producer: outsider });
     expect(rejected.accepted).toBe(false);
     expect(rejected.code).toBe(ErrCode.NOT_PRODUCER_TURN);
@@ -351,6 +354,8 @@ describe('producers (registry-driven schedule)', () => {
     const { h, node } = await nodeHarness();
     const outsider = makeWallet();
     const veryLate = h.chain.tip!.timestamp + 12 * CONSENSUS_PARAMS.block.targetBlockSeconds;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(veryLate * 1000); // a late round is only legitimate once the time has really passed
     for (const round of [1, 2, 5, 12]) {
       const ts = h.chain.tip!.timestamp + round * CONSENSUS_PARAMS.block.targetBlockSeconds;
       expect(h.tryBlock([], { timestamp: ts, producer: outsider }).code).toBe(ErrCode.NOT_PRODUCER_TURN);
@@ -467,8 +472,8 @@ describe('transactions a peer gossips are checked before they are pooled', () =>
     const alice = makeWallet();
     const now = h.chain.protocolTime;
 
-    const good = h.sign(alice, TxType.MINING_CLAIM, new Uint8Array(), { gas: 0n });
-    // Only the structural checks run here, so any well-formed body will do.
+    // A real claim: the pool also asks for the gate certificate, so a body that merely parses is not enough any more.
+    const good = signedClaim(h, alice);
     expect(h.chain.checkGossipedTransaction(good)).toEqual({ ok: true });
 
     const forged = { ...good, signature: { ...good.signature, signature: '00'.repeat(64) } };

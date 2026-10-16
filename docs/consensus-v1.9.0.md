@@ -1,6 +1,6 @@
-# Consensus specification — protocol 2.0.1 (introduced in 1.9.0)
+# Consensus specification — protocol 2.0.2 (introduced in 1.9.0)
 
-This is the written specification of how blocks are produced, ordered and agreed on in protocol 2.0.1 (the rules were introduced in 1.9.0 and are unchanged by the Marketplace), and what is
+This is the written specification of how blocks are produced, ordered and agreed on in protocol 2.0.2 (the rules were introduced in 1.9.0 and are unchanged by the Marketplace), and what is
 **not** claimed. Every rule below is implemented in `obsidian-core` and named with the file that holds it. Where a goal
 cannot be met without trading away another requirement, the limit is stated in plain words in §10.
 
@@ -92,7 +92,7 @@ is the scheduled one for `(height, round)` (`blockchain/block.ts`, `blockchain/c
 
 * `timestamp >` median time past of the last 11 blocks;
 * `timestamp ≥ parent.timestamp + 1 s`;
-* `timestamp ≤ localTime + maxFutureDriftSeconds` (60 s).
+* `timestamp ≤ localTime + maxFutureDriftSeconds` (10 s, two slots: 2.0.2 lowered it from 60 s, which let one scheduled producer date a block up to eleven slots ahead and take other nodes' turns; see threat model R29).
 
 The local clock is consulted only to **reject** a block that claims the future; it can never make an old block valid. A node
 with a wrong clock harms itself (its blocks are refused), not the chain. No external time server, central uptime API or

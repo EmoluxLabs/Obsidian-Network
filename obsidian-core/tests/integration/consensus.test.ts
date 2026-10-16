@@ -6,7 +6,7 @@
  * throwaway data directory — no mocking of consensus code.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ErrCode } from '../../src/protocol/errors.js';
 import { CONSENSUS_PARAMS } from '../../src/protocol/params.js';
 import { MAX_SUPPLY_SEALS, parseObs, formatObs } from '../../src/protocol/amount.js';
@@ -50,6 +50,7 @@ async function harness(): Promise<Harness> {
   return h;
 }
 afterEach(() => {
+  vi.useRealTimers();
   while (open.length > 0) open.pop()!.close();
 });
 
@@ -391,6 +392,7 @@ describe('payments and gas (spec §31, §32)', () => {
 
 describe('supply invariant (spec §73)', () => {
   it('holds after every one of 30 blocks of mixed activity', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] }); // blocks come far faster than real slots: the clock must keep up
     const h = await harness();
     const alice = makeWallet();
     const bob = makeWallet();

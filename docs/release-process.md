@@ -33,9 +33,9 @@ curl -s localhost:8630/version | jq .
 
 There are two numbers, and they move for different reasons:
 
-- **Software version** (`2.0.1`) increments for any shipped change — code,
+- **Software version** (`2.0.2`) increments for any shipped change — code,
   interface, tooling, documentation. Most releases do not change consensus.
-- **Protocol version** (`2.0.1`) increments only when a rule changes: block
+- **Protocol version** (`2.0.2`) increments only when a rule changes: block
   validity, state transitions, encoding, hashing, or an economic parameter.
   That is a hard fork. It changes the params hash, so **every node must upgrade
   together**; a node running a different protocol version is refused at the
@@ -84,8 +84,8 @@ started and probed by the `docker` CI job on every push.
 
 ```bash
 git status                                  # must be clean; the script refuses a dirty tree
-git tag -a v2.0.1 -m "Obsidian Network 2.0.1 - protocol 2.0.1"
-git push origin v2.0.1
+git tag -a v2.0.2 -m "Obsidian Network 2.0.2 - protocol 2.0.2"
+git push origin v2.0.2
 ./scripts/package-releases.sh               # the release gate; takes several minutes
 cd releases && sha256sum -c SHA256SUMS      # every line must print OK
 ```
@@ -119,8 +119,8 @@ release.
 ```bash
 cd releases
 sha256sum -c SHA256SUMS                                  # integrity
-../scripts/verify-release.sh obsidian-core-2.0.1.tar.gz --with-tests
-../scripts/verify-release.sh obsidian-node-operator-2.0.1.tar.gz
+../scripts/verify-release.sh obsidian-core-2.0.2.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-node-operator-2.0.2.tar.gz
 ```
 
 `verify-release.sh` refuses any archive not listed in `SHA256SUMS`, extracts into
@@ -175,14 +175,14 @@ the message telling the operator which side must upgrade.
 Consequences worth being explicit about:
 
 - Two software versions with the same protocol version **do** peer (for example
-  2.0.1 and a later 2.0.x patch that changes no consensus rule), provided the older one is not below
+  2.0.2 and a later 2.0.x patch that changes no consensus rule), provided the older one is not below
   `MIN_CORE_VERSION`.
-- Protocol 2.0.1 nodes reject 2.0.0 and older during the signed handshake. Their changed
+- Protocol 2.0.2 nodes reject 2.0.1 and older during the signed handshake. Their changed
   params hash and deterministic genesis identities also prevent data-directory
   sharing. There is no hidden activation height or automatic state migration.
-- Protocol 2.0.1 is therefore a **genesis-bound activation** (it tightens two consensus rules of the ONS Marketplace release, see
-  [upgrading-2.0.1.md](upgrading-2.0.1.md)): launch an
-  unstarted network from the published 2.0.1 genesis, or deliberately reset disposable
+- Protocol 2.0.2 is therefore a **genesis-bound activation** (it changes three consensus parameters of the 2.0.1 release, see
+  [upgrading-2.0.2.md](upgrading-2.0.2.md)): launch an
+  unstarted network from the published 2.0.2 genesis, or deliberately reset disposable
   dev/test/staging. Do not roll nodes over one at a time. If a value-bearing
   older chain exists, stop and design and review a separate explicit migration;
   this release does not provide one.

@@ -28,7 +28,10 @@ import { PrimaryDiscovery } from './primary-discovery.js';
 import { newInviteCode, newSecret } from './auth.js';
 import { NodePool } from './nodes.js';
 import type { GateIssuer } from './gate-issuer.js';
-import { KeyedLimiter } from './rate-limit.js';
+import { KeyedLimiter, clientBucket } from './rate-limit.js';
+
+/** Failed sign-ins, from any number of addresses, after which an account is locked for everyone for 15 minutes. */
+const ACCOUNT_LOCK_FAILURES = 100;
 import { interfaceNetwork, type NetworkName } from './networks.js';
 import { looksLikeGenesisCode } from './genesis-invite.js';
 import {
@@ -104,7 +107,11 @@ export interface InterfaceConfig {
    * Per-client request budgets as [burst, refill per second]. The defaults suit
    * production; tests shrink them.
    */
-  rateLimits?: { auth?: [number, number]; proxy?: [number, number]; refresh?: [number, number] };
+  /** Slow-client limits in milliseconds. The defaults are right for production; tests shorten them. */
+  headersTimeoutMs?: number;
+  requestTimeoutMs?: number;
+  maxConnections?: number;
+  rateLimits?: { auth?: [number, number]; proxy?: [number, number]; refresh?: [number, number]; loginFailures?: [number, number] };
 }
 
 export const DEFAULT_INTERFACE_CONFIG: InterfaceConfig = {
@@ -290,6 +297,7 @@ export class InterfaceServer {
    * threshold (10), so the account lock still answers first for a guesser.
    */
   private readonly authLimiter: KeyedLimiter;
+  private readonly loginFailureLimiter: KeyedLimiter;
   private readonly proxyLimiter: KeyedLimiter;
   private readonly refreshLimiter: KeyedLimiter;
 
@@ -299,6 +307,7 @@ export class InterfaceServer {
     this.authLimiter = new KeyedLimiter(...(limits.auth ?? [30, 1 / 3]));
     this.proxyLimiter = new KeyedLimiter(...(limits.proxy ?? [300, 10]));
     this.refreshLimiter = new KeyedLimiter(...(limits.refresh ?? [1, 0.5]));
+    this.loginFailureLimiter = new KeyedLimiter(...(limits.loginFailures ?? [10, 10 / (15 * 60)]));
     const thresholds: Record<InterfaceConfig['logLevel'], number> = { debug: 10, info: 20, warn: 30, error: 40 };
     const log = dependencies.log ?? ((level, message, fields) => {
       if (thresholds[level] < thresholds[this.config.logLevel]) return;
@@ -393,7 +402,7 @@ export class InterfaceServer {
   }
 
   async listen(): Promise<number> {
-    this.server = createServer((request, response) => {
+    this.server = createServer({ connectionsCheckingInterval: 1_000 }, (request, response) => {
       // `handle` is async; a floating promise here would crash the process on an
       // unhandled rejection instead of answering the client with an error.
       void this.handle(request, response).catch((error) => {
@@ -402,6 +411,13 @@ export class InterfaceServer {
         else response.end();
       });
     });
+    // Slow-client defences. Node's defaults (a minute for the headers, five for the body, no cap on connections)
+    // let a few thousand idle sockets that trickle a byte at a time hold every file descriptor the process has.
+    // Every real request here is a few hundred bytes and arrives in one round trip.
+    this.server.headersTimeout = this.config.headersTimeoutMs ?? 10_000;
+    this.server.requestTimeout = this.config.requestTimeoutMs ?? 20_000;
+    this.server.keepAliveTimeout = 5_000;
+    this.server.maxConnections = this.config.maxConnections ?? 2_048;
     await new Promise<void>((resolvePromise, reject) => {
       this.server!.once('error', reject);
       this.server!.listen(this.config.port, this.config.host, () => resolvePromise());
@@ -521,12 +537,13 @@ export class InterfaceServer {
    * earlier in the header is client-supplied.
    */
   private clientIp(request: IncomingMessage): string {
-    const socketIp = (request.socket.remoteAddress ?? 'unknown').replace(/^::ffff:/i, '');
+    const socketIp = clientBucket(request.socket.remoteAddress ?? 'unknown');
     if (!this.config.trustProxy) return socketIp;
     const header = request.headers['x-forwarded-for'];
     const value = Array.isArray(header) ? header[header.length - 1] : header;
     const last = value?.split(',').pop()?.trim() ?? '';
-    return /^[0-9a-fA-F:.]{3,45}$/.test(last) ? last.replace(/^::ffff:/i, '') : socketIp;
+    // IPv6 clients are budgeted by their /64 (see clientBucket): a rotating address inside one block buys nothing.
+    return /^[0-9a-fA-F:.]{3,45}$/.test(last) ? clientBucket(last) : socketIp;
   }
 
   /** Spend one token of `limiter` for this client, or answer 429 and return false. */
@@ -1165,6 +1182,20 @@ export class InterfaceServer {
       return;
     }
     const now = Date.now();
+    // Failures are counted against the pair (account, client) first. A stranger who guesses wrongly ten times is
+    // shut out of THAT account from THAT address block; the account's owner, signing in from anywhere else, is
+    // not. (The account used to lock for everybody after ten failures from anyone, which let any single client
+    // keep any named account out of mining for as long as it cared to repeat the ten guesses.)
+    const pairKey = `${identity.canonical}|${this.clientIp(request)}`;
+    if (!this.loginFailureLimiter.available(pairKey)) {
+      response.setHeader('Retry-After', String(this.loginFailureLimiter.retryAfterSeconds(pairKey)));
+      this.json(response, 429, {
+        error: 'too many failed attempts from this address; try again later',
+        code: 'ERR_TOO_MANY_ATTEMPTS',
+        retryAfterSeconds: this.loginFailureLimiter.retryAfterSeconds(pairKey),
+      });
+      return;
+    }
     if (account.lockedUntil && account.lockedUntil > now) {
       this.json(response, 429, {
         error: 'too many failed attempts; try again later',
@@ -1173,10 +1204,11 @@ export class InterfaceServer {
       });
       return;
     }
-    /** Count a failed attempt and lock the account after ten. */
+    /** Count a failed attempt; only a flood from MANY addresses locks the account for everybody. */
     const failed = (): void => {
+      this.loginFailureLimiter.allow(pairKey);
       account.failedLogins = (account.failedLogins ?? 0) + 1;
-      if (account.failedLogins >= 10) {
+      if (account.failedLogins >= ACCOUNT_LOCK_FAILURES) {
         account.lockedUntil = Date.now() + 15 * 60 * 1000;
         account.failedLogins = 0;
       }

@@ -13,7 +13,7 @@
  *  4. Supply conservation holds after every accepted block.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { finalityQuorum } from '../../src/consensus/finality.js';
 import { parseObs } from '../../src/protocol/amount.js';
 import { TxType, type Block } from '../../src/protocol/types.js';
@@ -69,6 +69,7 @@ describe('finality quorum arithmetic (n = 1 .. 3000)', () => {
 
 const open: Harness[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   while (open.length) open.pop()!.close();
 });
 const node = async (): Promise<Harness> => {
@@ -89,6 +90,10 @@ const snapshot = (h: Harness, wallets: TestWallet[]) => ({
 describe('state machine: determinism, rejection leaves no trace, supply is conserved (seeded)', () => {
   for (const seed of [20261012, 7, 424242]) {
     it(`seed ${seed}: 40 random steps, valid and invalid, on two independent nodes`, async () => {
+      // Blocks are produced as fast as the test can build them, a second apart on the chain's own clock, so the node's
+      // clock has to keep up: a block may not be dated more than two slots ahead of it. Five seconds per step does.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now());
       const random = rng(seed);
       const a = await node();
       const b = await node();
@@ -102,6 +107,7 @@ describe('state machine: determinism, rejection leaves no trace, supply is conse
 
       let rejected = 0;
       for (let step = 0; step < 40; step += 1) {
+        vi.setSystemTime(Date.now() + 5_000);
         const funded = wallets.filter((w) => (a.chain.world.getAccount(w.address)?.balance ?? 0n) > parseObs('20'));
         const from = random.pick(funded);
         const to = random.pick(wallets.filter((w) => w !== from));

@@ -38,6 +38,10 @@ import {
   type BlockContext,
 } from './state-machine.js';
 import { WorldState } from './state.js';
+import { decodeMiningBody } from '../transactions/executors/mining.js';
+import { assertNodeStatementAdmissible } from '../transactions/executors/node-registry.js';
+import { assertMiningGate } from '../mining/gate.js';
+import { assertMiningEligibility } from '../mining/rules.js';
 import { PARAMS_HASH, computeStateRoot } from './state-root.js';
 import {
   assertBlockSignature,
@@ -1129,7 +1133,8 @@ export class ChainManager extends EventEmitter {
 
     const candidates = this.mempool.selectForBlock(
       CONSENSUS_PARAMS.block.maxBlockTransactions,
-      Mempool.nonceMapFrom(this.state),
+      // Looked up per candidate: copying every account's nonce into a map made each block cost as much as the state is big.
+      (sender) => this.state.getAccount(sender)?.nonce ?? 0,
     );
 
     // Simulate candidate by candidate. A transaction that fails at this height
@@ -1264,6 +1269,72 @@ export class ChainManager extends EventEmitter {
    * Full type-specific state simulation stays on the RPC submit path, where the
    * caller is a wallet, not an unauthenticated peer.
    */
+  /**
+   * Is this transaction worth a place in the pool at all? Each node decides for itself, from its own state and with no
+   * coordinator (so it is a local policy, not a consensus rule: execution still decides what a block may contain).
+   *
+   * The pool is shared by everybody and anybody may fill it with keys made for free, so a transaction that can never
+   * apply must not take a place. Only three kinds may legitimately come from an account that does not exist yet:
+   * a mining claim (a first claim creates the account), a node statement (a node key holds no funds) and a gate
+   * authority update (signed by gate keys, not by its sender). Everything else needs an account, because it spends or
+   * owns something. A claim must carry a certificate the chain's gate keys really issued, and a node statement must be
+   * about a node that exists. Failures that depend only on how far this node has synced are reported with a code that
+   * is not held against the peer that relayed them.
+   */
+  private assertPoolAdmissible(tx: TxEnvelope): void {
+    const state = this.state;
+    const behind = (error: unknown): never => {
+      if (error instanceof ProtocolError) reject(ErrCode.NOT_YET_VALID, `${error.code}: ${error.message}`);
+      throw error;
+    };
+    switch (tx.type) {
+      case TxType.GATE_AUTHORITY:
+        return;
+      case TxType.MINING_CLAIM: {
+        const decoded = decodeMiningBody(tx.body);
+        assertMiningGate(
+          state.s.genesis.gateKeysActive,
+          decoded.gate,
+          {
+            networkId: this.options.net.networkId,
+            chainId: this.options.net.chainId,
+            address: tx.sender,
+            claimId: decoded.claimId,
+          },
+          this.protocolTime,
+        );
+        try {
+          assertMiningEligibility(
+            state.getAccount(tx.sender),
+            this.protocolTime,
+            state.s.metrics.activeMiners,
+            state.s.genesis.allocationClaimed,
+          );
+        } catch (error) {
+          behind(error);
+        }
+        return;
+      }
+      case TxType.NODE_REGISTRY:
+        try {
+          assertNodeStatementAdmissible(state, tx, this.options.net.addressHrp);
+        } catch (error) {
+          if (
+            error instanceof ProtocolError &&
+            [ErrCode.NODE_NOT_REGISTERED, ErrCode.NODE_ALREADY_REGISTERED, ErrCode.NODE_WALLET_IN_USE, ErrCode.NODE_BANNED].includes(error.code)
+          ) {
+            behind(error);
+          }
+          throw error;
+        }
+        return;
+      default:
+        if (!state.getAccount(tx.sender)) {
+          reject(ErrCode.NOT_YET_VALID, 'the sender has no account on this chain (yet)');
+        }
+    }
+  }
+
   checkGossipedTransaction(tx: TxEnvelope): { ok: true } | { ok: false; code: ErrCode; message: string } {
     try {
       const account = this.state.getAccount(tx.sender);
@@ -1292,6 +1363,7 @@ export class ChainManager extends EventEmitter {
       if ((account?.balance ?? 0n) < tx.gas) {
         reject(ErrCode.INSUFFICIENT_FUNDS, 'sender cannot fund the gas used for mempool priority');
       }
+      this.assertPoolAdmissible(tx);
       return { ok: true };
     } catch (error) {
       if (error instanceof ProtocolError) return { ok: false, code: error.code, message: error.message };

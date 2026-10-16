@@ -111,7 +111,7 @@ import { formatObs, parseObs } from './obsidian-core/dist/protocol/amount.js';
 import { expectedGas } from './obsidian-core/dist/transactions/helpers.js';
 const amount = parseObs('10');
 const tx = signTransaction({
-  protocolVersion: '2.0.1', chainId: 7780,
+  protocolVersion: '2.0.2', chainId: 7780,
   sender: 'dobs1…', nonce: 1, type: 1,
   gas: expectedGas(amount),
   body: encodePaymentBody({ to: 'dobs1…', amount }),

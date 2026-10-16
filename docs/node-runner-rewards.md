@@ -141,7 +141,7 @@ to bind**. Nothing in the registration path, the RPC surface or the interface ac
 
 ### No registration deposit
 
-Registering a node **moves no funds** and needs **no gas**. There is no bond of any kind in protocol 2.0.1: the earlier
+Registering a node **moves no funds** and needs **no gas**. There is no bond of any kind in protocol 2.0.2: the earlier
 validator bond and the earlier registration bond were both removed as mechanisms rather than set to zero.
 
 What keeps the registry honest is what a node cannot fake: an identity key, one node per wallet, attestations that must come

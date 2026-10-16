@@ -126,7 +126,7 @@ log "6. each network is itself, and nothing else"
 declare -A CHAIN=( [mainnet]=7777 [testnet]=7778 [staging]=7779 [devnet]=7780 )
 declare -A RPC=( [mainnet]=8630 [testnet]=18630 [staging]=28630 [devnet]=38630 )
 declare -A UI=( [mainnet]=8788 [testnet]=18788 [staging]=28788 [devnet]=38788 )
-declare -A GID=( [mainnet]=6b907c5770f990e71f1cdc4c23dc2e6b0fdf5fd6 [testnet]=e7a1e18047808a971404b8e1d5a051b6c9db77ca [staging]=884229ca043a60958bd8a9b94576d1dd6fa5b0f3 [devnet]=bedb4d5522d458b111ecb9e5922343e4d215e60c )
+declare -A GID=( [mainnet]=470a92366594851f6d22522fbc1232e8605cf9cc [testnet]=de626fc559b2fabeb44326fddb97a408bccaa7a5 [staging]=7b6f3aee772da735a00ad37735232d97cc652e6f [devnet]=1eec1cf5cc764459407d7b2a8c4c3be3b23dfa24 )
 for n in mainnet testnet staging devnet; do
   S=$(get "http://127.0.0.1:${RPC[$n]}/status")
   [ "$(echo "$S" | jget networkId)" = "obsidian-$n-1" ] && ok "$n: networkId obsidian-$n-1" || bad "$n: networkId ($(echo "$S" | jget networkId))"
@@ -138,7 +138,7 @@ for n in mainnet testnet staging devnet; do
     # a helper-made test network commits its own gate key, so its id is its own (and never the printed no-gate-key one)
     [[ "$G" =~ ^[0-9a-f]{40}$ ]] && [ "$G" != "${GID[$n]}" ] && ok "$n: genesisId is this network's own (it includes the gate key the helper made)" || bad "$n: genesisId ($G)"
   fi
-  [ "$(echo "$S" | jget paramsHash)" = "22a70aa431c4e9bd69c8bb44a70bbc38" ] && ok "$n: paramsHash 22a70aa4…" || bad "$n: paramsHash"
+  [ "$(echo "$S" | jget paramsHash)" = "12211595855ba405b3d70f6161ef9371" ] && ok "$n: paramsHash 22a70aa4…" || bad "$n: paramsHash"
   H=$(echo "$S" | jget height); [ "${H:-0}" -ge 1 ] 2>/dev/null && ok "$n: producing blocks (height $H)" || bad "$n: height ${H:-?}"
   D=$(get "http://127.0.0.1:${RPC[$n]}/network" | jget domains)
   if [ "$n" = mainnet ]; then

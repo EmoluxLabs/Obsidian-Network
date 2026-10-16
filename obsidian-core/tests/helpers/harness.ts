@@ -8,6 +8,7 @@
  */
 
 import { encodeMarketBody } from '../../src/transactions/executors/marketplace.js';
+import { vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -174,8 +175,18 @@ export async function createHarness(options: { network?: string; producer?: Test
     });
   };
 
+  /**
+   * A block may not be dated more than two slots ahead of the node's clock. Tests build blocks far faster than a
+   * node would, so a test that has switched on a fake clock (`vi.useFakeTimers({ toFake: ['Date'] })`) gets one that
+   * keeps up with the chain, as real time would; a test on the real clock is untouched.
+   */
+  const keepClockWithChain = (timestampSeconds: number): void => {
+    if (vi.isFakeTimers() && Date.now() < timestampSeconds * 1000) vi.setSystemTime(timestampSeconds * 1000);
+  };
+
   const makeBlock: Harness['makeBlock'] = (txs = [], options = {}) => {
     const head = chain.tip!;
+    if (options.timestamp === undefined) keepClockWithChain(head.timestamp);
     const height = head.height + 1;
     const timestamp = options.timestamp ?? Math.max(chain.protocolTime, head.timestamp + 1);
     const blockProducer = options.producer ?? dueProducer(chain.world, height, head.timestamp, timestamp);
@@ -226,6 +237,7 @@ export async function createHarness(options: { network?: string; producer?: Test
 
   const makeBlockOn: Harness['makeBlockOn'] = (parent, txs = [], options = {}) => {
     const height = parent.height + 1;
+    if (options.timestamp === undefined) keepClockWithChain(parent.state.s.timestamp);
     const timestamp = options.timestamp ?? Math.max(chain.protocolTime, parent.height + 1);
     const blockProducer = options.producer ?? dueProducer(parent.state, height, parent.state.s.timestamp, timestamp);
     const trial = applyBlock(

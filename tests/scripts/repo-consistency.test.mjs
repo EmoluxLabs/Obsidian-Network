@@ -926,3 +926,22 @@ test('the helper, the packaging gate and CI all run this test', () => {
   assert.match(read('.github/workflows/ci.yml'), /repo-consistency\.test\.mjs/, 'CI must run the consistency test');
   assert.match(read('.github/workflows/ci.yml'), /check-nginx-conf\.py/, 'CI must check the nginx files');
 });
+
+test('CI cannot be hijacked through a moved action tag or a write-by-default token', () => {
+  const dir = join(ROOT, '.github', 'workflows');
+  for (const name of readdirSync(dir).filter((file) => file.endsWith('.yml'))) {
+    const text = readFileSync(join(dir, name), 'utf8');
+    // A tag such as `@v7` can be re-pointed by whoever controls the action's repository: a pinned commit cannot.
+    for (const match of text.matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)) {
+      assert.match(match[1], /@[0-9a-f]{40}$/, `${name}: "${match[1]}" is not pinned to a full commit SHA`);
+    }
+    // The run's token is read-only unless the workflow says, at the top, that it needs more.
+    assert.match(text, /^permissions:\s*\n\s+contents:\s*(read|write)\s*$/m, `${name} has no top-level permissions block`);
+  }
+});
+
+test('the rate limiter shared by the node and the interface is one file in two places', () => {
+  const core = read('obsidian-core/src/networking/keyed-limiter.ts');
+  const iface = read('obsidian-interface/server/keyed-limiter.ts');
+  assert.equal(iface, core, 'obsidian-interface/server/keyed-limiter.ts must be an exact copy of obsidian-core/src/networking/keyed-limiter.ts');
+});

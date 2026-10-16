@@ -27,8 +27,8 @@ refused, which is the point.
 ## Version and identity
 
 * Protocol and core `2.0.1`; `MIN_CORE_VERSION` `2.0.1`; state snapshot format 7; wire version 1.
-* Params hash `22a70aa431c4e9bd69c8bb44a70bbc38` on every network; new genesis ids, listed in
-  [LAUNCH-GUIDE.md](LAUNCH-GUIDE.md) and readable from `obsidian genesis init --network <net>` or a running node's `GET /genesis`.
+* The params hash and the genesis ids of 2.0.1 were superseded by 2.0.2 (see [upgrading-2.0.2.md](upgrading-2.0.2.md)); a running
+  node's `GET /genesis` and `obsidian genesis init --network <net>` always print the values of the build you are running.
 
 ## Operators
 

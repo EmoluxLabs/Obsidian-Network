@@ -1,7 +1,7 @@
 /**
  * A recipient typed or scanned in capitals (a QR code usually carries one) must be signed as the lowercase address.
- * Consensus (2.0.1) refuses any other form with ERR_BAD_ADDRESS, so a client that signed the capitals would produce a
- * transaction the chain rejects, and before 2.0.1 one that credited an account nobody can sign for.
+ * Consensus (2.0.2) refuses any other form with ERR_BAD_ADDRESS, so a client that signed the capitals would produce a
+ * transaction the chain rejects, and before 2.0.2 one that credited an account nobody can sign for.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

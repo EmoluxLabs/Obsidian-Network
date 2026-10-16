@@ -63,11 +63,11 @@ const OLD_HASHES = [
 
 describe('A — the published identity moves as one thing', () => {
   it('names one version everywhere, and derives the parameter hash', () => {
-    expect(CORE_VERSION).toBe('2.0.1');
-    expect(PROTOCOL_VERSION).toBe('2.0.1');
+    expect(CORE_VERSION).toBe('2.0.2');
+    expect(PROTOCOL_VERSION).toBe('2.0.2');
     expect(compareVersions(CORE_VERSION, PROTOCOL_VERSION)).toBe(0);
-    // 2.0.1 is a hard boundary: the oldest software that speaks these rules is 2.0.1 itself (2.0.0 accepts a registration inside the grace period and non-canonical addresses).
-    expect(MIN_CORE_VERSION).toBe('2.0.1');
+    // 2.0.2 is a hard boundary: the oldest software that speaks these rules is 2.0.2 itself (2.0.1 accepts a one-seal payment for no gas and blocks dated a minute ahead; 2.0.0 also accepts a registration inside the grace period and non-canonical addresses).
+    expect(MIN_CORE_VERSION).toBe('2.0.2');
     expect(CONSENSUS_PARAMS.protocolVersion).toBe(PROTOCOL_VERSION);
     // The state shape changed (Marketplace listings, offers and escrow on top of the 1.9.0 node registry, finality and ONS transfer state), so the snapshot format changed.
     expect(STATE_SNAPSHOT_VERSION).toBe(7);
@@ -200,13 +200,13 @@ describe('F — a mixed-version network cannot form', () => {
     // The handshake (src/networking/p2p.ts) refuses a hello whose protocol version differs from this build's and whose
     // core version is below MIN_CORE_VERSION. These are the two comparisons it makes, so asserting them here asserts
     // the rule the handshake enforces: every validator-era peer is rejected.
-    for (const old of ['1.6.0', '1.6.1', '1.7.0', '1.8.0', '1.8.1', '1.8.2', '1.9.0', '1.9.9', '2.0.0']) {
+    for (const old of ['1.6.0', '1.6.1', '1.7.0', '1.8.0', '1.8.1', '1.8.2', '1.9.0', '1.9.9', '2.0.0', '2.0.1']) {
       expect(compareVersions(old, PROTOCOL_VERSION), old).toBeLessThan(0);
       expect(compareVersions(old, MIN_CORE_VERSION), old).toBeLessThan(0);
     }
-    expect(compareVersions('2.0.1', PROTOCOL_VERSION)).toBe(0);
-    expect(compareVersions('2.0.1', MIN_CORE_VERSION)).toBe(0);
-    expect(compareVersions('2.0.2', CORE_VERSION)).toBeGreaterThan(0);
+    expect(compareVersions('2.0.2', PROTOCOL_VERSION)).toBe(0);
+    expect(compareVersions('2.0.2', MIN_CORE_VERSION)).toBe(0);
+    expect(compareVersions('2.0.3', CORE_VERSION)).toBeGreaterThan(0);
   });
 
   it('registers a node on the new network without any of the removed machinery', async () => {

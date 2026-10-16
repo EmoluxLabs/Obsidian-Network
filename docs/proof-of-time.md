@@ -71,7 +71,7 @@ requires control of the producer schedule, which is the thing consensus already 
 ```
 timestamp >  median time past of the last 11 ancestors
 timestamp >  parent timestamp                       (strict monotonicity)
-timestamp <= this node's own clock + 60 seconds     (maxFutureDriftSeconds)
+timestamp <= this node's own clock + 10 seconds     (maxFutureDriftSeconds)
 ```
 
 The first two clauses are computed **entirely from chain data**, so every node
@@ -325,7 +325,7 @@ All of these are compile-time constants of the protocol version, included in
 | `proofOfTime.minBlockSpacingMs` | 200 | Floor for the reported spacing |
 | `proofOfTime.timeRateWindowSeconds` | 86 400 | Time-Rate window |
 | `block.medianTimePastWindow` | 11 | Blocks in the median clock |
-| `block.maxFutureDriftSeconds` | 60 | How far ahead a timestamp may claim to be |
+| `block.maxFutureDriftSeconds` | 10 | How far ahead a timestamp may claim to be |
 | `block.targetBlockSeconds` | 5 | Target spacing |
 
 ---

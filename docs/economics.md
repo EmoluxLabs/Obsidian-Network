@@ -69,7 +69,7 @@ Gas is **never** ONS revenue: it goes to the Mining Pool.
 
 ### Penalties: nothing is confiscated
 
-Protocol 2.0.1 has **no bond and no slashing of funds** — validators, bonds and slashing were removed. A producer proven, with
+Protocol 2.0.2 has **no bond and no slashing of funds** — validators, bonds and slashing were removed. A producer proven, with
 two signatures every node can check, to have signed two different blocks on one parent is **banned permanently** and its
 reward wallet is released; no OBS moves. Being offline costs turns and reward weight (suspension, lower uptime), never capital.
 

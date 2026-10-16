@@ -7,7 +7,7 @@
  * of hourly heartbeats can be driven in milliseconds instead of a day.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   advance,
   createHarness,
@@ -44,6 +44,7 @@ const PERIOD_START = GENESIS_TS + DAY;
 const harnesses: Harness[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   while (harnesses.length) harnesses.pop()!.close();
 });
 
@@ -310,6 +311,7 @@ describe('evidence: nothing is self-reported', () => {
   });
 
   it('counts a stale heartbeat as stale, not as uptime', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] }); // blocks come far faster than real slots: the clock must keep up
     const { h } = await nodeHarness();
     const node = makeNode(makeWallet());
     // Build height first with the founding (OPEN-mode) producer, so the node itself never produces in this window:

@@ -48,7 +48,7 @@ function node(world) {
       asked += 1;
       return PASSPHRASE;
     },
-    getContext: async () => ({ chainId: 7777, protocolVersion: '2.0.1', protocolTime: 1_700_000_000 }),
+    getContext: async () => ({ chainId: 7777, protocolVersion: '2.0.2', protocolTime: 1_700_000_000 }),
     getNonce: async () => 3,
     getBalance: async () => ({ balanceSeals: (world.spendable ?? 100n * OBS).toString(), spendableSeals: (world.spendable ?? 100n * OBS).toString() }),
     getMarketName: async (name) => world.names[name] ?? null,
@@ -198,7 +198,8 @@ test('the review shows price, gas, total and spendable, and the gas equals what 
   // the on-screen rule is the protocol rule for every amount, including both sides of the cap
   const screenGas = (amount) => {
     const gas = (amount * 2n) / 10_000n;
-    return gas > 10n ** 16n ? 10n ** 16n : gas;
+    const capped = gas > 10n ** 16n ? 10n ** 16n : gas;
+    return capped < 10n ** 12n ? 10n ** 12n : capped; // the 2.0.2 floor: no operation is free
   };
   for (const amount of [1n, 9_999n, 10n ** 15n, 10n ** 18n, 50n * OBS, 5_000n * OBS, 123_456_789_012_345_678_901n]) {
     assert.equal(screenGas(amount), expectedGas(amount), String(amount));

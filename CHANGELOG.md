@@ -11,71 +11,62 @@ This repository is a **fresh start**: it carries the current protocol line and i
 deliberately not repeated here, so that nothing in the tree can be mistaken for the build you are running.
 
 The authoritative params hash for a release is whatever `GET /params` reports on a node running it. For this release it is
-`22a70aa431c4e9bd69c8bb44a70bbc38` on every network.
+`12211595855ba405b3d70f6161ef9371` on every network.
 
 ---
 
-## [2.0.1]
+## [2.0.2]
 
-**Consensus-breaking: two rule fixes and a block-production fix found by a five-pass audit of 2.0.0, a new genesis for every network, no migration.** A
-2.0.0 node accepts transactions that a 2.0.1 node rejects, so the two cannot share a network (the handshake refuses the
-mismatch). Nothing was deployed on 2.0.0. See [docs/upgrading-2.0.1.md](docs/upgrading-2.0.1.md).
+**Consensus-breaking: three consensus parameters change after a five-round attack campaign against 2.0.1, a new genesis for every network, no migration.**
+A 2.0.1 node accepts transactions and blocks that a 2.0.2 node refuses, so the two cannot share a network (the handshake
+refuses the mismatch). Nothing was deployed on 2.0.1. See [docs/upgrading-2.0.2.md](docs/upgrading-2.0.2.md) and the full record
+of what worked and what was fixed in [docs/attack-campaign-2.0.2.md](docs/attack-campaign-2.0.2.md).
 
-### Fixed (consensus)
-- **A name in its grace period could be registered by a stranger.** `REGISTER` treated a name as free as soon as its term
-  ended, although renewal, transfer and the market all treat the 30-day grace as the owner's. A stranger could register a
-  lapsed name inside the grace period, which also wiped its listing and offers. A name is now registrable only when no
-  record exists or `expiresAt + grace` has passed (`ERR_NAME_TAKEN` otherwise).
-- **An all-uppercase recipient address credited an account nobody can sign for.** Bech32 accepts an all-uppercase string
-  (a QR code usually carries one), but account keys are the lowercase text, so a payment, `UPDATE_ADDRESS` pointer or
-  treasury grant to `OBS1…` created a phantom account and the funds were unspendable. Every recipient or pointer address
-  must now be canonical lowercase (`ERR_BAD_ADDRESS` otherwise); the client encoders lowercase an all-uppercase address
-  before signing, and the RPC lowercases addresses it reads or simulates.
+### Changed (consensus)
+- **Minimum gas and minimum transfer are 0.000001 OBS.** A 1-seal payment used to pay no gas, so accounts and state could be
+  created for nothing (R27).
+- **A block may be dated at most 10 seconds (two slots) ahead of a node's clock, down from 60.** With 60 seconds one scheduled
+  producer could date a block up to eleven slots ahead, take another node's turn and have that node recorded as having missed
+  it (R29). A producer can still win the next slot by a race any peer can run.
 
-### Fixed (block production: a chain halt)
-- **Three node registrations in one slot could stop a network for good.** The per-block limits (at most 2 node
-  registrations, a cap on equivocation reports, one claim per wallet per block) are counted per block by a validator, but
-  block assembly tried each pooled transaction on its own with a fresh count, so the limits never applied there. A producer
-  could sign a block with three registrations, every validator (the producer included) rejected it with
-  `ERR_NODE_REGISTRATION_LIMIT`, and the double-sign lock then stopped every node from building another block on that parent.
-  Found by the cluster end-to-end test (it stalled at height 6 when three operators registered in the same slot; it depends
-  on timing, so earlier runs passed by luck). Assembly now carries one tally for the whole block, a transaction that only
-  failed because the block was full stays pooled for the next block, and before signing the producer replays the
-  assembled list exactly as a validator will and signs an empty block if the roots differ. No validation rule changed.
+### Fixed (node)
+- **A free fresh-key transaction could be pooled** (a gas-0 claim or node statement from a brand-new key, signature valid, body
+  empty), so the pool could be filled for nothing. The pool now admits only what could be valid; registrations are a separate
+  small class; block selection is fair among free transactions (R26, R28).
+- **Per-address limits could be walked around with IPv6.** The RPC budget, the inbound-socket cap and the IP ban are now per /64
+  (R30). The RPC limiter's table is bounded (a flood of fresh addresses cost work proportional to the table on every
+  request, R31).
+- **`POST /tx/submit` copied the whole state before checking a signature.** The pool's cheap checks run first (R34).
 
-### Fixed (clients and gateway)
-- The interface gateway sent no `X-Content-Type-Options: nosniff` on origin rejections (403) and on the CORS preflight (204).
-- Mobile layout: the account page widened the whole page on a phone (a visually hidden live-region inside a scrolling table
-  escaped its clip); the web app's Marketplace sort buttons overflowed a 375 px screen.
-- An owned, unlisted name showed `Expires —` on the ONS page; it now shows the name's expiry.
-- Name validation in the web app (3–24) and the interface (3–32) disagreed with consensus (3–63, no edge hyphen, no `--`,
-  reserved names); both now apply the consensus rule, with a parity test.
-- Desktop and wallet-web browser end-to-end tests had gone stale (they expected a 1.x core version and unrounded balances) and
-  are repaired; a new opt-in browser test drives the Marketplace through the real pages
-  (`tests/e2e/browser-marketplace.test.mjs`).
-- `scripts/fresh-machine-test.sh`: `cd` failures now stop the script. The script itself had drifted from the product (it
-  expected the pre-1.9 passphrase behaviour, 11 archives and old genesis ids) and is brought up to date; its first full run
-  on 2.0.1 found two real gaps, both fixed: an interface unpacked beside the node could not start with a mining gate key
-  configured (it needs the node's installed libraries; `obsidian-network.sh` now links them), and the guide's second-devnet-node
-  command started a different chain (the helper-made gate key is part of a test network's genesis id; the guide now says so and
-  passes the key). The updated script passes 96/96 on 2.0.1.
+### Fixed (interface)
+- Rate limits are per IPv6 /64 and bounded (60,000 requests from fresh addresses took 24.8 s of CPU before), sign-in failures are
+  counted per account **and** address block (anyone could lock any account for 15 minutes with ten wrong passwords; the account
+  now locks for everyone only after 100 failures from many addresses), and slow clients are cut off (10 s for headers, 20 s for the
+  request, 2,048 connections) (R30–R33).
 
-### Added
-- Tests: `address-canonical`, `marketplace-property` (a model-based test of the Marketplace state machine against an
-  independent oracle), registration-in-grace cases, `name-rule-parity`, and the browser tests above.
-- A node-runners test that pools more registrations than a block may hold and requires a producer to build a block its own
-  chain accepts.
-- Threat-model entries R23, R24 and R25.
+- The fee preview in the web wallet and the Marketplace review screen of the web app repeated the old gas rule and would have
+  shown 0 gas for a small amount; both now show the 2.0.2 minimum (found by the web app's own test that compares the screen
+  with the protocol rule, once the minimum changed).
 
-### Changed
-- Protocol and core `2.0.1`, `MIN_CORE_VERSION` `2.0.1`; params hash and every genesis id change (see
-  [docs/LAUNCH-GUIDE.md](docs/LAUNCH-GUIDE.md)). The gate keys, supply, fees, gas and the Marketplace rules are unchanged.
+### Fixed (build)
+- CI actions are pinned to full commit SHAs and every workflow declares its token permission; `repo-consistency` fails if either
+  regresses (R35).
+
+### Not fixed (documented)
+- **Sybil nodes (R36).** Node registration is free and rate-limited, not priced, and slots, finality and node rewards are shared
+  by count of nodes. This needs a scarce resource and is an economic redesign, not a patch; see the attack-campaign document.
+
+### Tests
+- New attack tests: `attack-r1-pool`, `attack-r2-economy-chaos` (seeded; the supply invariant, snapshot round trips and
+  rejection-leaves-no-trace held on every step), `attack-r4-slot-frontrun`, `attack-r5-address-blocks`, the gateway "attack
+  round 3" group, and two `repo-consistency` checks. Tests that built many blocks in a second on the real clock now use a clock
+  that keeps up with the chain.
 
 ---
 
 ## Carried from 2.0.0: the ONS Marketplace
 
-The 2.0.0 line introduced the Marketplace below; 2.0.1 keeps every rule of it (and fixes the two gaps above). The release
+The 2.0.0 line introduced the Marketplace below; 2.0.1 and 2.0.2 keep every rule of it (2.0.1 fixed two gaps in it, the grace-period registration and non-canonical addresses, and a block-assembly halt: see [docs/upgrading-2.0.1.md](docs/upgrading-2.0.1.md)). The release
 heading is gone because the history of earlier releases lives in git.
 
 **Consensus-breaking: the ONS Marketplace, a new genesis for every network, no migration.** A new transaction type, new

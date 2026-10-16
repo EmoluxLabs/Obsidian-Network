@@ -1,5 +1,5 @@
 /**
- * Audit finding (2.0.1): Bech32 accepts an ALL-UPPERCASE address, and a PAYMENT to that spelling used to be credited to
+ * Audit finding (2.0.2): Bech32 accepts an ALL-UPPERCASE address, and a PAYMENT to that spelling used to be credited to
  * an account keyed by the uppercase string — one no key can ever sign for, so the funds were gone for good. QR codes
  * routinely produce uppercase text. Consensus now refuses any non-canonical spelling that would become a ledger key,
  * and the shared encoders lower-case an all-uppercase address before it is signed, so a pasted QR payload still works.

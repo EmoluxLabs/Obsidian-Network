@@ -168,6 +168,19 @@ describe('rate limiting tells clients apart behind a proxy', () => {
   });
 });
 
+describe('rate limiting cannot be walked around by rotating inside an IPv6 block', () => {
+  it('gives every address of one /64 the same budget, and a different /64 its own', async () => {
+    config.rpcRateLimitPerMinute = 3;
+    config.rpcTrustProxy = true;
+    const hit = (xff: string) => call('/version', { headers: { 'x-forwarded-for': xff } });
+    const statuses: number[] = [];
+    for (let i = 0; i < 8; i += 1) statuses.push((await hit(`2001:db8:5:9::${(i + 1).toString(16)}`)).status);
+    expect(statuses.filter((status) => status === 200)).toHaveLength(3);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(5);
+    expect((await hit('2001:db8:5:a::1')).status).toBe(200);
+  });
+});
+
 describe('one pending transaction per sender and nonce', () => {
   it('refuses a second transaction with the same nonce, and treats a re-send of the same one as success', async () => {
     const { generateKeyPair } = await import('../../src/crypto/keys.js');

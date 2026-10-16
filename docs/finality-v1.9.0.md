@@ -1,4 +1,4 @@
-# Finality — protocol 2.0.1 (introduced in 1.9.0)
+# Finality — protocol 2.0.2 (introduced in 1.9.0)
 
 **What this is:** a *producer-diversity checkpoint*. A block is declared final when enough **distinct, established
 producers** have since built on it. It is derived from the chain alone.

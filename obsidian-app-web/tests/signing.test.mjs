@@ -44,7 +44,7 @@ function wallet() {
 
 function unsignedFor(address, chainId, extra = {}) {
   return {
-    protocolVersion: '2.0.1',
+    protocolVersion: '2.0.2',
     chainId,
     sender: address,
     nonce: 0,
@@ -251,7 +251,7 @@ test('a key-recovered wallet has the same address and produces byte-identical si
   assert.equal(fromKey.publicKey, fromPhrase.publicKey);
   // The vault secret for a key wallet goes through the same entry point every operation uses.
   assert.equal(walletFromPhrase(secretFromPrivateKey(key), 'obs').address, PINNED_ADDRESS);
-  const args = { chainId: CHAIN_ID, protocolVersion: '2.0.1', nonce: 5, type: TxType.PAYMENT, gas: 0n, body: new Uint8Array([1, 2, 3]), validUntil: 1_900_000_000 };
+  const args = { chainId: CHAIN_ID, protocolVersion: '2.0.2', nonce: 5, type: TxType.PAYMENT, gas: 0n, body: new Uint8Array([1, 2, 3]), validUntil: 1_900_000_000 };
   const a = sign({ wallet: fromPhrase, ...args });
   const b = sign({ wallet: walletFromPhrase(secretFromPrivateKey(key), 'obs'), ...args });
   assert.equal(Buffer.from(a.bytes ?? a).toString('hex'), Buffer.from(b.bytes ?? b).toString('hex'));

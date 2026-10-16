@@ -274,7 +274,7 @@ describe('signing is domain-separated', () => {
     expect(verifyMessage('OBSIDIAN:WALLET_LINK:v1', new TextEncoder().encode('link me to account 8'), proof.signature, proof.publicKey)).toBe(false);
 
     const body = new Uint8Array([1, 2, 3]);
-    const input = { protocolVersion: '2.0.1', type: 1 as never, nonce: 0, gas: 0n, body, validUntil: 2_000_000_000 };
+    const input = { protocolVersion: '2.0.2', type: 1 as never, nonce: 0, gas: 0n, body, validUntil: 2_000_000_000 };
     const forDev = decodeSignedTxFromBytes(wallet.sign({ ...input, chainId: 7780 }));
     const forMain = decodeSignedTxFromBytes(wallet.sign({ ...input, chainId: 7777 }));
     expect(verifyDigest(signingDigest(forDev), forDev.signature.signature, forDev.signature.publicKey)).toBe(true);

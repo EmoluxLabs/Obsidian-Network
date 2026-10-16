@@ -41,6 +41,7 @@ import { CORE_VERSION, MIN_CORE_VERSION, PROTOCOL_VERSION, compareVersions } fro
 import type { NetworkDefinition } from '../protocol/networks.js';
 import { parsePeerAddress, PeerStore, type PeerRecord } from './peer-store.js';
 import { newLinkBudgets, type LinkBudgets } from './rate-limit.js';
+import { clientBucket } from './keyed-limiter.js';
 import { compareTips } from '../consensus/schedule.js';
 import type { Block, TxEnvelope } from '../protocol/types.js';
 
@@ -800,7 +801,10 @@ export class P2PService extends EventEmitter {
       };
       if (this.isIpBanned(ip)) return refuse('address temporarily refused');
       if (this.links.size >= this.maxInbound + this.maxOutbound) return refuse('connection limit reached');
-      if (!isLoopback(ip) && [...this.links.values()].filter((other) => other.inbound && other.remoteIp === ip).length >= MAX_INBOUND_PER_IP) {
+      // Counted per address BLOCK (an IPv6 /64 is one subscriber): 64 sockets from 64 addresses of one /64 would
+      // otherwise fill every inbound slot this node has.
+      const block = clientBucket(ip);
+      if (!isLoopback(ip) && [...this.links.values()].filter((other) => other.inbound && clientBucket(other.remoteIp) === block).length >= MAX_INBOUND_PER_IP) {
         return refuse('too many connections from this address');
       }
     }
@@ -844,10 +848,11 @@ export class P2PService extends EventEmitter {
   }
 
   private isIpBanned(ip: string): boolean {
-    const until = this.bannedIps.get(ip);
+    const key = clientBucket(ip);
+    const until = this.bannedIps.get(key);
     if (until === undefined) return false;
     if (until <= this.now()) {
-      this.bannedIps.delete(ip);
+      this.bannedIps.delete(key);
       return false;
     }
     return true;
@@ -855,9 +860,16 @@ export class P2PService extends EventEmitter {
 
   private banIp(ip: string, reason: string): void {
     if (!ip || isLoopback(ip)) return;
-    this.bannedIps.set(ip, this.now() + IP_BAN_MS);
+    // A ban covers the whole address block: banning one address of a /64 would leave 2^64 others one rotation away.
+    this.bannedIps.set(clientBucket(ip), this.now() + IP_BAN_MS);
     if (this.bannedIps.size > 2_000) {
       for (const [address, until] of this.bannedIps) if (until <= this.now()) this.bannedIps.delete(address);
+      // Still too many live bans: forget the oldest, so the table is bounded however many blocks misbehave.
+      while (this.bannedIps.size > 4_000) {
+        const oldest = this.bannedIps.keys().next().value;
+        if (oldest === undefined) break;
+        this.bannedIps.delete(oldest);
+      }
     }
     this.log.info('peer address refused for a while', { ip, reason, minutes: IP_BAN_MS / 60_000 });
   }

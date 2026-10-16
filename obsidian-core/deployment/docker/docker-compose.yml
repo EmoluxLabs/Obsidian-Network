@@ -13,7 +13,7 @@ services:
     build:
       context: ../..
       dockerfile: deployment/docker/Dockerfile
-    image: obsidian/core:2.0.1
+    image: obsidian/core:2.0.2
     restart: unless-stopped
     environment:
       OBSIDIAN_NETWORK: ${OBSIDIAN_NETWORK:?set OBSIDIAN_NETWORK to devnet, testnet, staging or mainnet - there is no default}
@@ -53,7 +53,7 @@ services:
       # browser bundle and the node share the same modules.
       context: ../../..
       dockerfile: obsidian-interface/deployment/docker/Dockerfile
-    image: obsidian/interface:2.0.1
+    image: obsidian/interface:2.0.2
     restart: unless-stopped
     depends_on:
       node:

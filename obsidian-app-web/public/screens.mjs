@@ -665,7 +665,7 @@ function sendPanel(s) {
     return unavailable('Set up a wallet on this device to send. Sending is a signed payment; nothing here can sign for you.');
   }
   if (s.sendReview) return sendReviewPanel(s);
-  const gasNote = s.params?.gas ? `Gas is ${esc(s.params.gas.basisPoints / 100)}% of the amount, capped at ${esc(displayObsWithUnit(s.params.gas.maxGasObs))}.` : '';
+  const gasNote = s.params?.gas ? `Gas is ${esc(s.params.gas.basisPoints / 100)}% of the amount, at least 0.000001 OBS, capped at ${esc(displayObsWithUnit(s.params.gas.maxGasObs))}.` : '';
   return (
     designField('to', 'RECIPIENT', 'text', `${s.appConfig?.addressHrp ?? s.network?.network?.addressHrp ?? ''}1… or name.obs`) +
     `<button class="btn" id="scan-wallet" style="margin-top:8px" onclick="ObsidianScan()">SCAN WALLET QR</button>` +
@@ -937,11 +937,14 @@ function parseSeals(obsText) {
   return BigInt(whole || '0') * 10n ** 18n + BigInt(fraction.padEnd(18, '0').slice(0, 18) || '0');
 }
 
-/** The protocol's gas on an amount: 2 basis points, capped at 0.01 OBS (the same rule the signing bundle uses). */
+/** The protocol's gas on an amount: 2 basis points, at least 0.000001 OBS, capped at 0.01 OBS (the rule the signing bundle uses). */
 function expectedGasSeals(amount) {
+  if (amount <= 0n) return 0n;
   const gas = (amount * 2n) / 10_000n;
   const cap = 10n ** 16n;
-  return gas > cap ? cap : gas;
+  const floor = 10n ** 12n;
+  const capped = gas > cap ? cap : gas;
+  return capped < floor ? floor : capped;
 }
 
 function offerRows(s, offers, scope) {

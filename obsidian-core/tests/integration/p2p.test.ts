@@ -11,7 +11,7 @@
  *     and gossiped transactions were pooled without a signature check.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -26,7 +26,8 @@ import { genesisDocumentFor } from '../../src/genesis/initialize.js';
 import { P2PService, helloDigest, type HelloPayload } from '../../src/networking/p2p.js';
 import { PeerStore } from '../../src/networking/peer-store.js';
 import { getNetwork } from '../../src/protocol/networks.js';
-import { TxType } from '../../src/protocol/types.js';
+import { NodeRegistryOp, TxType } from '../../src/protocol/types.js';
+import { encodeNodeRegistryBody } from '../../src/transactions/executors/node-registry.js';
 import { signTransaction } from '../../src/transactions/encode.js';
 import { CORE_VERSION, MIN_CORE_VERSION, PROTOCOL_VERSION } from '../../src/version.js';
 import { randomBytes } from 'node:crypto';
@@ -93,6 +94,9 @@ async function startNode(options: { network?: ReturnType<typeof getNetwork>; log
     port,
     dir,
     mine(gossip = true) {
+      // Blocks mined back to back are a second apart on the chain's clock; with a fake clock (see the one test that
+      // mines dozens in a row) the node's clock keeps up, as real time would.
+      if (vi.isFakeTimers() && chain.tip) vi.setSystemTime(Math.max(Date.now(), chain.tip.timestamp * 1000));
       const block = chain.buildNextBlock({ address: keys.address, privateKey: keys.privateKey, publicKey: keys.publicKey });
       if (!block) throw new Error('node was not allowed to produce');
       const result = chain.addBlock(block);
@@ -106,6 +110,7 @@ async function startNode(options: { network?: ReturnType<typeof getNetwork>; log
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const socket of sockets.splice(0)) {
     try {
       socket.terminate();
@@ -221,6 +226,7 @@ describe('connecting and following', () => {
   });
 
   it('rejoins the chain after living on its own fork for more than 16 blocks', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
     const a = await startNode();
     const b = await startNode();
     // Each node mines in isolation: a genuine long fork from genesis.
@@ -477,9 +483,18 @@ describe('after the handshake', () => {
         chainId: net.chainId,
         protocolVersion: PROTOCOL_VERSION,
         nonce: 0,
-        type: TxType.MINING_CLAIM,
+        // A node registering itself: free to make, and the one kind of transaction a pool accepts from a key that has
+        // no account (a claim would need a gate certificate this test chain does not commit).
+        type: TxType.NODE_REGISTRY,
         gas: 0n,
-        body: new Uint8Array(),
+        body: encodeNodeRegistryBody({
+          op: NodeRegistryOp.REGISTER,
+          nodeId: nodeIdFromPublicKey(keys.publicKey),
+          rewardWallet: generateKeyPair(net.addressHrp).address,
+          nodePublicKey: keys.publicKey,
+          proof: '',
+          endpoint: '203.0.113.5:8631',
+        }),
         validUntil: Math.floor(Date.now() / 1000) + 600,
       });
     // Two different senders, so the sender-side relay de-duplication cannot hide either message.

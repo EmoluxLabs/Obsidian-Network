@@ -56,6 +56,7 @@ import { PARAMS_HASH } from '../../blockchain/state-root.js';
 import { blockHash, decodeSignedHeader, verifyBlockSignature } from '../../blockchain/block.js';
 import { rewardPeriodAt, uptimeWindowInPeriod, uptimeWindowIndex } from '../../economy/node-rewards.js';
 import type { ExecutorContext } from '../types.js';
+import type { WorldState } from '../../blockchain/state.js';
 
 const NR = CONSENSUS_PARAMS.nodeRewards;
 const P = CONSENSUS_PARAMS.consensus.producers;
@@ -535,6 +536,54 @@ function assertSignedByNodeKey(tx: TxEnvelope, body: NodeRegistryBody, hrp: stri
     reject(ErrCode.UNAUTHORIZED, 'the sender of a node statement is the address of the node key');
   }
   return producer;
+}
+
+/**
+ * Pool admission for a node statement: the read-only half of what the executor will insist on, so a statement that can
+ * never apply is neither pooled nor relayed. NODE_REGISTRY transactions cost nothing to make, so without this a stranger
+ * with unlimited fresh keys could fill the pool's whole node-statement class with registrations and heartbeats of
+ * nodes that do not exist, and honest heartbeats (which node rewards are scored from) would find no room.
+ *
+ * It reads state and nothing else, never mutates, and is deliberately weaker than execution (limits that depend on the
+ * block, such as the registrations a block may carry, are still the executor's). Throws a ProtocolError.
+ */
+export function assertNodeStatementAdmissible(state: WorldState, tx: TxEnvelope, hrp: string): void {
+  const body = decodeNodeRegistryBody(tx.body);
+  if (tx.gas !== 0n) reject(ErrCode.BAD_GAS, 'node statements carry no gas');
+  if (body.proof !== '') reject(ErrCode.MALFORMED, 'node statements carry no separate proof');
+  switch (body.op) {
+    case NodeRegistryOp.REGISTER: {
+      assertNodeKey(body);
+      assertSignedByNodeKey(tx, body, hrp);
+      if (nodeIdFromPublicKey(body.nodePublicKey) !== body.nodeId) {
+        reject(ErrCode.BAD_SIGNATURE, 'nodeId is not the hash of the supplied node public key');
+      }
+      const existing = state.node(body.nodeId);
+      if (existing && existing.bannedAtHeight !== undefined) reject(ErrCode.NODE_BANNED, 'this node is banned');
+      if (existing && existing.deregisteredAtHeight === undefined) {
+        reject(ErrCode.NODE_ALREADY_REGISTERED, 'this node is already registered');
+      }
+      const walletOwner = state.nodeByRewardWallet(body.rewardWallet);
+      if (walletOwner && walletOwner !== body.nodeId) reject(ErrCode.NODE_WALLET_IN_USE, 'that wallet already backs a node');
+      validateEndpoint(body.endpoint);
+      return;
+    }
+    // Sent FROM the reward wallet that a node is bound to, not by a node key.
+    case NodeRegistryOp.RECLAIM_WALLET:
+    case NodeRegistryOp.CANCEL_WALLET_CHANGE: {
+      if (!state.nodeByRewardWallet(tx.sender)) {
+        reject(ErrCode.NODE_NOT_REGISTERED, 'this wallet is not the reward wallet of any node');
+      }
+      return;
+    }
+    default: {
+      const node = state.nodeByProducer(tx.sender);
+      if (!node || node.deregisteredAtHeight !== undefined) {
+        reject(ErrCode.NODE_NOT_REGISTERED, `no registered node is signing as ${tx.sender}`);
+      }
+      if (node.bannedAtHeight !== undefined) reject(ErrCode.NODE_BANNED, 'this node is banned');
+    }
+  }
 }
 
 /** A registered, unbanned node whose key signed this transaction. */

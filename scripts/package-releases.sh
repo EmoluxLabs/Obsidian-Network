@@ -486,11 +486,15 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   address whose recovery completes only after a delay the owner can cancel (docs/ons.md)
 * **wallets:** creation shows both the passphrase and the private key; a separate private-key recovery flow shows the
   derived address for confirmation before anything is stored
+* **2.0.2 attack-campaign fixes:** a pool that admits only what could be valid, a minimum gas and transfer of 0.000001 OBS,
+  a two-slot future-date allowance for blocks, address-block (IPv6 /64) rate limits, per-account sign-in failure counting,
+  slow-client limits on the interface, pinned CI actions; one attack class (Sybil nodes) is documented as open
+  (docs/attack-campaign-2.0.2.md, docs/upgrading-2.0.2.md)
 * **2.0.1 consensus fixes:** a name is registrable only after its grace period (a stranger could take one inside it), and a
   recipient or pointer address must be canonical lowercase (an all-uppercase address used to credit an account nobody can
   sign for) (docs/upgrading-2.0.1.md)
-* protocol $VERSION is genesis-bound: it rejects 2.0.0 and older peers, snapshots and data, and includes no live-chain
-  migration (docs/upgrading-2.0.1.md). Earlier tags are untouched
+* protocol $VERSION is genesis-bound: it rejects 2.0.1 and older peers, snapshots and data, and includes no live-chain
+  migration (docs/upgrading-2.0.2.md). Earlier tags are untouched
 * the mining gate (\`MINING_CLAIM\` certificates, \`GATE_AUTHORITY\`) is unchanged
 * the archives now also carry the web app, the web wallet, the extension and the desktop sources
 * nothing is signed: no publisher key exists, so these archives prove integrity, not authorship

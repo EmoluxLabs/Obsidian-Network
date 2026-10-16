@@ -14,7 +14,7 @@
  *     the block builder.
  */
 
-import { TxType, type TxEnvelope } from '../protocol/types.js';
+import { NodeRegistryOp, TxType, type TxEnvelope } from '../protocol/types.js';
 import { encodeSignedTx } from '../transactions/encode.js';
 
 export interface MempoolEntry {
@@ -54,6 +54,12 @@ export interface MempoolOptions {
    */
   maxPendingGateUpdates: number;
   maxGateUpdatesPerSender: number;
+  /**
+   * Node REGISTRATIONS pending at once. A registration is free to make from a fresh key, and the chain admits only a
+   * couple per block, so a small pool class is plenty; keeping it apart from the other node statements is what stops a
+   * flood of registrations from taking the places honest heartbeats and reports need.
+   */
+  maxPendingRegistrations: number;
 }
 
 export const DEFAULT_MEMPOOL_OPTIONS: MempoolOptions = {
@@ -62,10 +68,16 @@ export const DEFAULT_MEMPOOL_OPTIONS: MempoolOptions = {
   maxEvidenceBytes: 4 * 1024 * 1024,
   maxPendingGateUpdates: 16,
   maxGateUpdatesPerSender: 2,
+  maxPendingRegistrations: 16,
   maxTransactions: 10_000,
   maxBytes: 32 * 1024 * 1024,
   maxPerSender: 64,
 };
+
+/** A node REGISTRATION: the first byte of a NODE_REGISTRY body is its operation. */
+function isRegistration(tx: TxEnvelope): boolean {
+  return tx.type === TxType.NODE_REGISTRY && tx.body.length > 0 && tx.body[0] === NodeRegistryOp.REGISTER;
+}
 
 export class Mempool {
   private readonly byId = new Map<string, MempoolEntry>();
@@ -76,6 +88,7 @@ export class Mempool {
   private evidenceCount = 0;
   private evidenceBytes = 0;
   private readonly evidencePerSender = new Map<string, number>();
+  private registrationCount = 0;
   private gateCount = 0;
   private readonly gatePerSender = new Map<string, number>();
 
@@ -99,7 +112,11 @@ export class Mempool {
     if (bytes > this.options.maxBytes) return { accepted: false, reason: 'transaction exceeds mempool byte budget' };
     // Evidence first, and ahead of eviction: a report may not displace an honest
     // transaction to get in, and a flood may not fill the pool with reports.
-    const evidenceSize = tx.type === TxType.NODE_REGISTRY ? tx.body.length : null;
+    const registration = isRegistration(tx);
+    if (registration && this.registrationCount >= this.options.maxPendingRegistrations) {
+      return { accepted: false, reason: `pending node registration quota (${this.options.maxPendingRegistrations}) reached` };
+    }
+    const evidenceSize = tx.type === TxType.NODE_REGISTRY && !registration ? tx.body.length : null;
     if (evidenceSize !== null) {
       const perSender = this.evidencePerSender.get(tx.sender) ?? 0;
       if (this.evidenceCount >= this.options.maxPendingEvidence) {
@@ -139,6 +156,7 @@ export class Mempool {
       this.gateCount += 1;
       this.gatePerSender.set(tx.sender, (this.gatePerSender.get(tx.sender) ?? 0) + 1);
     }
+    if (registration) this.registrationCount += 1;
     senderSet.add(tx.id);
     this.bySender.set(tx.sender, senderSet);
     this.bytes += bytes;
@@ -174,7 +192,9 @@ export class Mempool {
     this.bytes -= entry.bytes;
     // Release the evidence reservation with the transaction, or the class would
     // slowly fill up with reports that are no longer here.
-    const released = entry.tx.type === TxType.NODE_REGISTRY ? entry.tx.body.length : null;
+    const wasRegistration = isRegistration(entry.tx);
+    if (wasRegistration) this.registrationCount = Math.max(0, this.registrationCount - 1);
+    const released = entry.tx.type === TxType.NODE_REGISTRY && !wasRegistration ? entry.tx.body.length : null;
     if (released !== null) {
       this.evidenceCount = Math.max(0, this.evidenceCount - 1);
       this.evidenceBytes = Math.max(0, this.evidenceBytes - released);
@@ -211,24 +231,57 @@ export class Mempool {
   }
 
   /**
-   * Deterministic candidate ordering for block building. Transactions are
-   * selected in (gas desc, tx id asc) order, filtered by nonce sequencing so a
-   * block never contains a gap in a sender's nonce chain.
+   * Candidate ordering for block building. This is the PRODUCER'S policy, not a consensus rule (a block is valid in any
+   * order), so it is free to be fair rather than merely deterministic:
+   *
+   *   1. transactions that pay gas go first, highest gas first;
+   *   2. the free ones (mining claims, node statements, the owner-only market and name operations) share what is left
+   *      by taking turns between transaction types, and inside a type in the order they ARRIVED.
+   *
+   * The old tie-break was the transaction id, which anybody can grind: an attacker making transactions whose ids sort
+   * first would fill every block's free places with their own and keep honest claims out indefinitely. Arrival order
+   * cannot be ground, and turn-taking means no single type, however many it floods, can take the whole free share.
+   *
+   * Nonce sequencing is kept: a block never holds a gap in one sender's nonce chain.
    */
-  selectForBlock(limit: number, startingNonces: Map<string, number>): TxEnvelope[] {
-    const ordered = [...this.byId.values()].sort((a, b) => {
-      if (a.tx.gas !== b.tx.gas) return a.tx.gas > b.tx.gas ? -1 : 1;
-      if (a.tx.id === b.tx.id) return 0;
-      return a.tx.id < b.tx.id ? -1 : 1;
-    });
-    const nextNonce = new Map(startingNonces);
+  selectForBlock(limit: number, startingNonces: Map<string, number> | ((sender: string) => number)): TxEnvelope[] {
+    const startNonce = typeof startingNonces === 'function' ? startingNonces : (sender: string) => startingNonces.get(sender) ?? 0;
+    const entries = [...this.byId.values()];
+    const paid = entries
+      .filter((entry) => entry.tx.gas > 0n)
+      .sort((a, b) => {
+        if (a.tx.gas !== b.tx.gas) return a.tx.gas > b.tx.gas ? -1 : 1;
+        return a.seq - b.seq;
+      });
+    const free = new Map<number, MempoolEntry[]>();
+    for (const entry of entries.filter((entry) => entry.tx.gas === 0n).sort((a, b) => a.seq - b.seq)) {
+      const queue = free.get(entry.tx.type) ?? [];
+      queue.push(entry);
+      free.set(entry.tx.type, queue);
+    }
+    const nextNonce = new Map<string, number>();
     const out: TxEnvelope[] = [];
-    for (const entry of ordered) {
-      if (out.length >= limit) break;
-      const expected = nextNonce.get(entry.tx.sender) ?? 0;
-      if (entry.tx.nonce !== expected) continue;
+    const take = (entry: MempoolEntry): void => {
+      const expected = nextNonce.get(entry.tx.sender) ?? startNonce(entry.tx.sender);
+      if (entry.tx.nonce !== expected) return;
       out.push(entry.tx);
       nextNonce.set(entry.tx.sender, expected + 1);
+    };
+    for (const entry of paid) {
+      if (out.length >= limit) return out;
+      take(entry);
+    }
+    const queues = [...free.entries()].sort((a, b) => a[0] - b[0]).map(([, queue]) => queue);
+    let progressed = true;
+    while (out.length < limit && progressed) {
+      progressed = false;
+      for (const queue of queues) {
+        if (out.length >= limit) break;
+        const entry = queue.shift();
+        if (!entry) continue;
+        progressed = true;
+        take(entry);
+      }
     }
     return out;
   }

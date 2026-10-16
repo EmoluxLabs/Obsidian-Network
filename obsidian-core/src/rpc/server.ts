@@ -47,6 +47,7 @@ import { decodeMarketBody, encodeMarketBody } from '../transactions/executors/ma
 import { activeListings, incomingOffers, listingView, marketSummary, nameMarketStatus, offerView, outgoingOffers, type ListingSort } from './market-views.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
 import type { NodeConfig } from '../config/config.js';
+import { KeyedLimiter, clientBucket } from '../networking/keyed-limiter.js';
 import { OFFICIAL_HOSTS, OFFICIAL_PATTERNS, compileOrigins, originMatches, type NetworkKey } from '../config/trusted-origins.js';
 
 export interface RpcOptions {
@@ -57,11 +58,6 @@ export interface RpcOptions {
   config: NodeConfig;
   genesisId: string;
   log: (level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Record<string, unknown>) => void;
-}
-
-interface RateBucket {
-  tokens: number;
-  updatedAt: number;
 }
 
 const MAX_BODY_BYTES = 512 * 1024;
@@ -87,7 +83,8 @@ const READY_MAX_FINALITY_LAG = 64;
 
 export class RpcServer {
   private server?: Server;
-  private readonly buckets = new Map<string, RateBucket>();
+  private limiter?: KeyedLimiter;
+  private limiterLimit = 0;
 
   constructor(private readonly options: RpcOptions) {}
 
@@ -195,12 +192,13 @@ export class RpcServer {
    * appended, whereas anything earlier in the header is client-supplied.
    */
   private clientIp(request: IncomingMessage): string {
-    const socketIp = (request.socket.remoteAddress ?? 'unknown').replace(/^::ffff:/i, '');
+    const socketIp = clientBucket(request.socket.remoteAddress ?? 'unknown');
     if (!this.options.config.rpcTrustProxy) return socketIp;
     const header = request.headers['x-forwarded-for'];
     const value = Array.isArray(header) ? header[header.length - 1] : header;
     const last = value?.split(',').pop()?.trim() ?? '';
-    return /^[0-9a-fA-F:.]{3,45}$/.test(last) ? last.replace(/^::ffff:/i, '') : socketIp;
+    // An IPv6 client is budgeted by its /64 (see clientBucket): rotating inside the block buys no new budget.
+    return /^[0-9a-fA-F:.]{3,45}$/.test(last) ? clientBucket(last) : socketIp;
   }
 
   /** A browser always sends Origin on a POST, even to the site it was loaded from. */
@@ -219,24 +217,13 @@ export class RpcServer {
   private allowRequest(ip: string): boolean {
     const limit = this.options.config.rpcRateLimitPerMinute;
     if (limit <= 0) return true;
-    const now = Date.now();
-    const bucket = this.buckets.get(ip) ?? { tokens: limit, updatedAt: now };
-    const elapsedMinutes = (now - bucket.updatedAt) / 60_000;
-    bucket.tokens = Math.min(limit, bucket.tokens + elapsedMinutes * limit);
-    bucket.updatedAt = now;
-    if (bucket.tokens < 1) {
-      this.buckets.set(ip, bucket);
-      return false;
+    // One budget per client, refilled continuously. The limiter's table is bounded, so a flood of fresh addresses
+    // costs this node constant memory and constant work per request.
+    if (!this.limiter || this.limiterLimit !== limit) {
+      this.limiter = new KeyedLimiter(limit, limit / 60);
+      this.limiterLimit = limit;
     }
-    bucket.tokens -= 1;
-    this.buckets.set(ip, bucket);
-    if (this.buckets.size > 10_000) {
-      // Opportunistic cleanup so a scan cannot grow this map without bound.
-      for (const [key, value] of this.buckets) {
-        if (now - value.updatedAt > 10 * 60_000) this.buckets.delete(key);
-      }
-    }
-    return true;
+    return this.limiter.allow(ip);
   }
 
   /**
@@ -1721,6 +1708,15 @@ export class RpcServer {
         pendingTxId: clash.tx.id,
         txId: tx.id,
       });
+      return;
+    }
+    // The cheap checks first, the same ones a gossiped transaction gets: signature, structure, a sender that can
+    // pay for what it asks, and a body that could ever be valid. The simulation below copies the whole world
+    // state, so it must only ever run for a request that has already shown it is worth it: an unauthenticated
+    // caller must not be able to make this node copy a large state for transactions nobody signed or funded.
+    const screened = this.options.chain.checkGossipedTransaction(tx);
+    if (!screened.ok) {
+      this.json(response, 400, { error: `${screened.code}: ${screened.message}`, code: 'ERR_REJECTED', txId: tx.id });
       return;
     }
     // Provisional simulation against current state: this is what the interface

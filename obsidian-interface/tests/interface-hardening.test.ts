@@ -24,7 +24,7 @@ import { newGenesisInvitation } from '../server/genesis-invite.js';
 import { NodePool } from '../server/nodes.js';
 import { loadInterfaceConfig, validateInterfaceConfig } from '../server/config.js';
 import { INTERFACE_NETWORKS } from '../server/networks.js';
-import { KeyedLimiter } from '../server/rate-limit.js';
+import { KeyedLimiter, clientBucket } from '../server/rate-limit.js';
 import { NETWORKS } from '../web/core/protocol/networks.js';
 
 const dirs: string[] = [];
@@ -541,4 +541,89 @@ describe('behind a gateway on another hostname', () => {
     const spoofed = await signIn(h, { origin: 'https://app.example', 'x-forwarded-host': 'app.example', 'x-forwarded-proto': 'https' });
     expect(spoofed.status).toBe(403);
   });
+});
+
+// ── attack round 3: the gateway's own throttles ─────────────────────────────
+
+describe('attack round 3: rate limits that cannot be walked around, flooded or turned into a lock-out', () => {
+  it('buckets IPv6 by /64, so rotating addresses inside one block buys no new budget', () => {
+    expect(clientBucket('2001:db8:1:2::1')).toBe(clientBucket('2001:db8:1:2:ffff:eeee:dddd:cccc'));
+    expect(clientBucket('2001:DB8:1:2:0:0:0:7')).toBe(clientBucket('2001:db8:1:2::7'));
+    expect(clientBucket('2001:db8:1:3::1')).not.toBe(clientBucket('2001:db8:1:2::1'));
+    expect(clientBucket('::ffff:203.0.113.9')).toBe('203.0.113.9');
+    expect(clientBucket('203.0.113.9')).toBe('203.0.113.9');
+    expect(clientBucket('fe80::1%eth0')).toBe(clientBucket('fe80::2'));
+  });
+
+  it('keeps memory and per-request work bounded when every request comes from a new client', () => {
+    const clock = { now: 0 };
+    const limiter = new KeyedLimiter(2, 0.0001, () => clock.now, 5_000);
+    const started = process.hrtime.bigint();
+    for (let i = 0; i < 60_000; i += 1) {
+      limiter.allow(`198.51.100.${i}`);
+      if (i % 1000 === 0) clock.now += 1;
+    }
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    expect(limiter.size).toBeLessThanOrEqual(5_000);
+    // A scan of the whole table on every request would be 55,000 x 5,000 steps; this is linear.
+    expect(elapsedMs).toBeLessThan(1_500);
+  });
+
+  it('a client that keeps coming is not forgotten by the eviction that makes room for strangers', () => {
+    const clock = { now: 0 };
+    const limiter = new KeyedLimiter(1, 0.0001, () => clock.now, 100);
+    expect(limiter.allow('victim')).toBe(true);
+    for (let i = 0; i < 90; i += 1) limiter.allow(`other-${i}`);
+    expect(limiter.allow('victim')).toBe(false); // touched again: now the most recent
+    for (let i = 0; i < 90; i += 1) limiter.allow(`more-${i}`);
+    expect(limiter.allow('victim')).toBe(false);
+  });
+
+  it('shuts a guesser out of one account from one address block without locking the owner out', async () => {
+    const h = await start({ trustProxy: true, rateLimits: { auth: [1000, 1000] } });
+    await h.register('founder', { inviteCode: h.genesisCode });
+    const attempt = (password: string, xff: string) => h.json('/api/auth/login', { email: mailbox('founder'), password }, { 'x-forwarded-for': xff });
+    for (let i = 0; i < 10; i += 1) expect((await attempt('wrong-password-' + i, '198.51.100.66')).status).toBe(401);
+    const shut = await attempt('wrong-password-again', '198.51.100.66');
+    expect(shut.status).toBe(429);
+    expect(((await shut.json()) as { code: string }).code).toBe('ERR_TOO_MANY_ATTEMPTS');
+    // Even the right password is refused to the guesser's address while it is shut out...
+    expect((await attempt(PASSWORD, '198.51.100.66')).status).toBe(429);
+    // ...and the owner, anywhere else, signs in.
+    const owner = await attempt(PASSWORD, '203.0.113.9');
+    expect(owner.status).toBe(200);
+  }, 120_000);
+
+  it('still locks the account for everyone when the guessing comes from very many addresses', async () => {
+    const h = await start({ trustProxy: true, rateLimits: { auth: [10_000, 10_000] } });
+    await h.register('founder', { inviteCode: h.genesisCode });
+    const attempt = (password: string, xff: string) => h.json('/api/auth/login', { email: mailbox('founder'), password }, { 'x-forwarded-for': xff });
+    for (let i = 0; i < 100; i += 1) await attempt('wrong-password-' + i, `192.0.2.${(i % 250) + 1}, 198.51.${Math.floor(i / 250)}.${(i % 250) + 1}`);
+    const owner = await attempt(PASSWORD, '203.0.113.77');
+    expect(owner.status).toBe(429);
+  }, 170_000);
+
+  it('closes a connection that trickles its headers or its body instead of holding it open', async () => {
+    const h = await start({ headersTimeoutMs: 1_000, requestTimeoutMs: 2_000 });
+    const { connect } = await import('node:net');
+    const port = Number(new URL(h.origin).port);
+    const closedWithin = (payload: string, ms: number) =>
+      new Promise<boolean>((resolve) => {
+        const socket = connect(port, '127.0.0.1', () => socket.write(payload));
+        const timer = setTimeout(() => {
+          socket.destroy();
+          resolve(false);
+        }, ms);
+        socket.on('close', () => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+        socket.resume();
+        socket.on('error', () => undefined);
+      });
+    // Headers that never finish.
+    expect(await closedWithin('POST /api/auth/login HTTP/1.1\r\nHost: x\r\nX-Slow: a', 6_000)).toBe(true);
+    // A body that promises 100 bytes and delivers none.
+    expect(await closedWithin('POST /api/auth/login HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{', 8_000)).toBe(true);
+  }, 30_000);
 });

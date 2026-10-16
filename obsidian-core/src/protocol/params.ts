@@ -18,6 +18,12 @@ export const CONSENSUS_PARAMS = {
   /**
    * Protocol version that owns these parameters.
    *
+   * 2.0.2 is the result of a five-round attack campaign (docs/attack-campaign-2.0.2.md). Three consensus parameters
+   * change: the minimum gas and the minimum transfer are 0.000001 OBS (so creating an account is never free), and the
+   * future-date allowance of a block is two slots, 10 seconds (so one producer cannot date a block into another node's
+   * slot). A 2.0.1 node would accept transactions and blocks a 2.0.2 node refuses, so this is a new protocol identity
+   * and a new genesis id.
+   *
    * 2.0.1 closes two gaps in the 2.0.0 rules, both consensus changes: a name inside its grace period can no longer be
    * registered by someone else, and a payment, pointer or grant recipient must be a canonical (lowercase) address, so
    * an all-uppercase bech32 string (which QR codes carry) can no longer credit an account nobody can sign for. A 2.0.0
@@ -36,7 +42,7 @@ export const CONSENSUS_PARAMS = {
    * set and a different protocol identity: a 1.8.x node cannot peer with a 1.9.0 node. The history of the earlier
    * rules is in the git log and CHANGELOG, not here.
    */
-  protocolVersion: '2.0.1',
+  protocolVersion: '2.0.2',
 
   /**
    * MINING GATE (1.7.0). A MINING_CLAIM is valid only with a certificate from an issuer key committed in genesis
@@ -264,8 +270,13 @@ export const CONSENSUS_PARAMS = {
     basisPoints: 2,
     /** Absolute ceiling on gas per transaction: 0.01 OBS. */
     maxGas: parseObs('0.01'),
-    /** Minimum gas charged on any value-bearing transaction (anti-spam dust). */
-    minGas: 0n,
+    /**
+     * Minimum gas charged on any value-bearing transaction (0.000001 OBS). With a floor of zero the 0.02% rule rounded to
+     * nothing for any amount under 5 000 seals, so a stranger could send one-seal payments to fresh addresses for free:
+     * every one creates an account that stays in state for ever, and a block's worth of them costs nothing. The floor
+     * makes every such transaction pay the Mining Pool, so spam funds miners instead of burdening them.
+     */
+    minGas: parseObs('0.000001'),
     /**
      * Gas destination. Protocol rule: gas is remitted to the Mining Pool.
      * The Mining Pool is protocol state, not a wallet; see treasury/pool.ts.
@@ -282,7 +293,7 @@ export const CONSENSUS_PARAMS = {
     /** Maximum number of transactions in one block including the reward claim batch. */
     maxBlockTransactions: 2_000,
     /** Allowed future drift for a block timestamp relative to local node time. */
-    maxFutureDriftSeconds: 60,
+    maxFutureDriftSeconds: 10,
     /** Minimum number of parents considered when computing median time past. */
     medianTimePastWindow: 11,
     /** Blocks after which a transaction is considered buried (soft finality hint). */
@@ -372,8 +383,8 @@ export const CONSENSUS_PARAMS = {
     maxTxBytes: 16 * 1024,
     /** Maximum number of out-messages a transaction executor may enqueue. */
     maxEventsPerTx: 64,
-    /** Minimum transfer amount enforced by the protocol (anti-dust). */
-    minTransfer: 1n, // one seal = 1e-18 OBS
+    /** Minimum transfer amount enforced by the protocol (anti-dust): 0.000001 OBS, the smallest amount any client displays. */
+    minTransfer: parseObs('0.000001'),
   },
 
   // ── ONS (Obsidian Name Service) ───────────────────────────────────────────

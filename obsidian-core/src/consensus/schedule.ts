@@ -46,8 +46,10 @@
  *
  * HONEST LIMITS
  *   - A block may be dated up to `maxFutureDriftSeconds` ahead of a node's clock, so a producer can claim a later
- *     round than real elapsed time supports: at most drift / targetBlockSeconds rounds ahead. It still cannot
- *     leave the producer set.
+ *     round than real elapsed time supports. The allowance is two slots (10 s), so that is the NEXT slot and no
+ *     further: with the earlier 60 s a single scheduled producer could take any of eleven future slots, front-run
+ *     the honest producer and have it recorded as having missed its turn (tests/security/attack-r4-slot-frontrun).
+ *     It still cannot leave the producer set.
  *   - Admission is not free: it is rate-limited and delayed (maturity), not priced. A patient attacker with many
  *     machines can register many nodes. Finality needs two thirds of the mature producers, so a fleet over one
  *     third of them can stall finality and a fleet over two thirds can control the chain. See docs/consensus-v1.9.0.md.

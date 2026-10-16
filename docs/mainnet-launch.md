@@ -12,10 +12,10 @@ before it has users than after.
 |---|---|
 | Network id | `obsidian-mainnet-1` |
 | Chain id | `7777` |
-| Genesis id | `6b907c5770f990e71f1cdc4c23dc2e6b0fdf5fd6` |
-| Genesis hash | `fe755999039e9405c3e61b65b9ffb90a36909bf9f9469fc5cfecdb5dbaa7a585` |
-| Protocol version | `2.0.1` |
-| Params hash | `22a70aa431c4e9bd69c8bb44a70bbc38` — published at `/params`; must be identical on every node |
+| Genesis id | `470a92366594851f6d22522fbc1232e8605cf9cc` |
+| Genesis hash | `e50e046778de21c0125872702c4691fd20af0277babca36afb668fa2dd17d012` |
+| Protocol version | `2.0.2` |
+| Params hash | `12211595855ba405b3d70f6161ef9371` — published at `/params`; must be identical on every node |
 | Default RPC port | 8630 |
 | Default p2p port | 8631 |
 | Address prefix | `obs1` |
@@ -33,10 +33,10 @@ derived deterministically from the genesis document and the consensus
 parameters; if they differ, the two machines are not running the same protocol
 and must not be peered.
 
-**Protocol 2.0.1 activation is genesis-bound.** It rejects 2.0.0 and older peers and data
+**Protocol 2.0.2 activation is genesis-bound.** It rejects 2.0.0 and older peers and data
 directories; there is no rolling upgrade or automatic state migration. Use this
 runbook only for an unstarted network. If a value-bearing older mainnet exists,
-stop: a separately reviewed migration design is required before 2.0.1 is used.
+stop: a separately reviewed migration design is required before 2.0.2 is used.
 
 **Before genesis you must create the mining gate key.** Mining claims are valid only with a certificate signed by an
 issuer key committed in genesis (see [mining.md](mining.md)). No mainnet key is committed in this repository, and a
@@ -87,10 +87,10 @@ Never launch from a working copy. Launch from a signed release archive.
 sha256sum -c SHA256SUMS
 
 # the artifact you will actually run
-../scripts/verify-release.sh obsidian-node-operator-2.0.1.tar.gz
+../scripts/verify-release.sh obsidian-node-operator-2.0.2.tar.gz
 
 # the same code with its test suite attached, which the operator package omits
-../scripts/verify-release.sh obsidian-core-2.0.1.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-2.0.2.tar.gz --with-tests
 ```
 
 Expected: every archive reports `OK`, and the verifier prints the package
@@ -109,11 +109,11 @@ who produced them, because anyone who can edit the archive can edit
 `SHA256SUMS` beside it. The signed path is:
 
 ```bash
-../scripts/verify-release.sh obsidian-node-operator-2.0.1.tar.gz --signature-only
+../scripts/verify-release.sh obsidian-node-operator-2.0.2.tar.gz --signature-only
 ```
 
 That checks the detached signature against the publisher key in
-`keys/release-key.pub` and stops there. **The 2.0.1 archives in this repository
+`keys/release-key.pub` and stops there. **The 2.0.2 archives in this repository
 are unsigned**: no publisher key exists in the workspace that built them, so the
 command above reports that there is no signature to check rather than a success.
 Do not announce a launch on unsigned archives — generate the publisher key
@@ -233,7 +233,7 @@ Expect, in the log:
 
 ```
 chain ready   network=mainnet chainId=7777 height=0
-              genesisId=6b907c5770f990e71f1cdc4c23dc2e6b0fdf5fd6
+              genesisId=470a92366594851f6d22522fbc1232e8605cf9cc
 obsidian core ready   maxSupplyObs=21000000000000000000000000
 ```
 

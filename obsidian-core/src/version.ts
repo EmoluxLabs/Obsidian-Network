@@ -9,14 +9,14 @@
 import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
-export const CORE_VERSION = '2.0.1';
+export const CORE_VERSION = '2.0.2';
 
 /**
  * Consensus protocol version implemented by this build. It is part of the genesis id and of every block header, so it
  * changes only with a consensus change. A software release that changes no consensus rule leaves it alone: two
  * builds with the same protocol version are the same network and peer with each other.
  */
-export const PROTOCOL_VERSION = '2.0.1';
+export const PROTOCOL_VERSION = '2.0.2';
 
 /**
  * Current lossless consensus-state snapshot format.
@@ -65,7 +65,7 @@ export const WIRE_PROTOCOL_VERSION = 1;
  * slash liability window, evidence budgets), so a 1.6.0 peer is rejected: two
  * nodes that share a protocol id but not a rule set cannot agree on a chain.
  */
-export const MIN_CORE_VERSION = '2.0.1';
+export const MIN_CORE_VERSION = '2.0.2';
 
 /**
  * Build identifier — deterministic hash of the release identity triple.
