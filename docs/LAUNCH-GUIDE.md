@@ -295,13 +295,21 @@ curl -s localhost:38788/api/auth/config    # genesisInvite: configured true, red
 Every node needs its own data directory. `--seeds` takes the **P2P** port of a node that is
 already running, never an RPC port.
 
+A test network has no mining gate key committed in its genesis, so the helper makes one for the network it starts, and the
+key's public half is part of that chain's genesis id. That is why the genesis id a helper-made devnet, testnet or staging
+reports differs from the id printed at the top of its section (the printed id is the chain with no gate key; mainnet's
+gate keys are committed in the code, so mainnet's id is always the printed one). A second node must be given the same
+public key or it starts a different chain and the two refuse each other:
+
 ```bash
 cd ~/obsidian/run/obsidian-core
-OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network devnet --data-dir ~/obsidian-data/devnet/node2 --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631
+GATE_PUB="$(node -p "require(process.env.HOME + '/obsidian-data/devnet/gate/mining-gate.keystore.json').publicKey")"
+OBSIDIAN_MINING_GATE_PUBLIC_KEYS="$GATE_PUB" OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters' node dist/index.js start --network devnet --data-dir ~/obsidian-data/devnet/node2 --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631
 ```
 
 On another machine, replace `127.0.0.1` with the first node's address and open TCP **38631**
-there. Both nodes should report the same `headHash` once they have synced.
+there, and give that machine the same public key (the helper prints it when it makes the key). Both nodes should report
+the same `headHash` once they have synced.
 
 ### Reset devnet (start again from height 0)
 

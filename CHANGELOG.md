@@ -53,7 +53,12 @@ mismatch). Nothing was deployed on 2.0.0. See [docs/upgrading-2.0.1.md](docs/upg
 - Desktop and wallet-web browser end-to-end tests had gone stale (they expected a 1.x core version and unrounded balances) and
   are repaired; a new opt-in browser test drives the Marketplace through the real pages
   (`tests/e2e/browser-marketplace.test.mjs`).
-- `scripts/fresh-machine-test.sh`: `cd` failures now stop the script.
+- `scripts/fresh-machine-test.sh`: `cd` failures now stop the script. The script itself had drifted from the product (it
+  expected the pre-1.9 passphrase behaviour, 11 archives and old genesis ids) and is brought up to date; its first full run
+  on 2.0.1 found two real gaps, both fixed: an interface unpacked beside the node could not start with a mining gate key
+  configured (it needs the node's installed libraries; `obsidian-network.sh` now links them), and the guide's second-devnet-node
+  command started a different chain (the helper-made gate key is part of a test network's genesis id; the guide now says so and
+  passes the key). The updated script passes 96/96 on 2.0.1.
 
 ### Added
 - Tests: `address-canonical`, `marketplace-property` (a model-based test of the Marketplace state machine against an

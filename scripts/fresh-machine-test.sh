@@ -131,7 +131,13 @@ for n in mainnet testnet staging devnet; do
   S=$(get "http://127.0.0.1:${RPC[$n]}/status")
   [ "$(echo "$S" | jget networkId)" = "obsidian-$n-1" ] && ok "$n: networkId obsidian-$n-1" || bad "$n: networkId ($(echo "$S" | jget networkId))"
   [ "$(echo "$S" | jget chainId)" = "${CHAIN[$n]}" ] && ok "$n: chainId ${CHAIN[$n]}" || bad "$n: chainId"
-  [ "$(echo "$S" | jget genesisId)" = "${GID[$n]}" ] && ok "$n: genesisId matches the guide" || bad "$n: genesisId"
+  G=$(echo "$S" | jget genesisId)
+  if [ "$n" = mainnet ]; then
+    [ "$G" = "${GID[$n]}" ] && ok "$n: genesisId matches the guide" || bad "$n: genesisId ($G)"
+  else
+    # a helper-made test network commits its own gate key, so its id is its own (and never the printed no-gate-key one)
+    [[ "$G" =~ ^[0-9a-f]{40}$ ]] && [ "$G" != "${GID[$n]}" ] && ok "$n: genesisId is this network's own (it includes the gate key the helper made)" || bad "$n: genesisId ($G)"
+  fi
   [ "$(echo "$S" | jget paramsHash)" = "22a70aa431c4e9bd69c8bb44a70bbc38" ] && ok "$n: paramsHash 22a70aa4…" || bad "$n: paramsHash"
   H=$(echo "$S" | jget height); [ "${H:-0}" -ge 1 ] 2>/dev/null && ok "$n: producing blocks (height $H)" || bad "$n: height ${H:-?}"
   D=$(get "http://127.0.0.1:${RPC[$n]}/network" | jget domains)
@@ -183,7 +189,8 @@ done
 
 log "8. a second devnet node, from the guide's own command"
 export OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-passphrase-of-12-or-more-characters'
-( cd obsidian-core && OBSIDIAN_NODE_ONLY=1 exec setsid nohup node dist/index.js start --network devnet --data-dir "$FM/data/devnet/node2" --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631 </dev/null >"$FM/node2.log" 2>&1 ) &
+GATE_PUB="$(node -p "require('$FM/data/devnet/gate/mining-gate.keystore.json').publicKey")"
+( cd obsidian-core && OBSIDIAN_MINING_GATE_PUBLIC_KEYS="$GATE_PUB" OBSIDIAN_NODE_ONLY=1 exec setsid nohup node dist/index.js start --network devnet --data-dir "$FM/data/devnet/node2" --rpc-port 38640 --p2p-port 38641 --seeds 127.0.0.1:38631 </dev/null >"$FM/node2.log" 2>&1 ) &
 echo $! > "$FM/node2.pid"
 unset OBSIDIAN_KEYSTORE_PASSPHRASE
 sleep 24
