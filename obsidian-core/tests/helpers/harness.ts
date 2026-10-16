@@ -7,6 +7,7 @@
  * anything about consensus behaviour.
  */
 
+import { encodeMarketBody } from '../../src/transactions/executors/marketplace.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -420,6 +421,20 @@ export function oracleBody(source: string, priceUsdMicro: bigint, observedAt: nu
 
 export function onsBody(op: number, name: string, extra: { address?: string; to?: string; fee?: bigint } = {}): Uint8Array {
   return encodeOnsBody({ op: op as never, name, fee: extra.fee ?? 0n, address: extra.address, to: extra.to });
+}
+
+export function marketBody(
+  op: number,
+  name: string,
+  extra: { amount?: bigint; counterparty?: string; offerId?: string } = {},
+): Uint8Array {
+  return encodeMarketBody({
+    op: op as never,
+    name,
+    amount: extra.amount ?? 0n,
+    counterparty: extra.counterparty ?? '',
+    offerId: extra.offerId ?? '',
+  });
 }
 
 export function treasuryBody(op: number, amount: bigint, purpose: string, to?: string): Uint8Array {

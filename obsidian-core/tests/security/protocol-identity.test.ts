@@ -1,5 +1,5 @@
 /**
- * C-01 — the consensus rules moved, so the identity moved with them (protocol 1.9.0).
+ * C-01 — the consensus rules moved, so the identity moved with them (protocol 2.0.0).
  *
  * The bug this closes is not a missing version bump. It is that a build can change what a valid block IS while
  * continuing to announce the same protocol version, the same parameter hash and the same genesis id: two nodes then
@@ -58,18 +58,19 @@ async function harness(): Promise<Harness> {
 const OLD_HASHES = [
   '4a2883b210c4a7aeb873f9d669e2476f', // 1.6.0
   'bffeacb35532ba3df70cda8c27ed6c96', // 1.7.0: gate authority moved it
+  '38dd9243481cd35a68003648e2710001', // 1.9.0: the Marketplace parameters moved it
 ];
 
 describe('A — the published identity moves as one thing', () => {
   it('names one version everywhere, and derives the parameter hash', () => {
-    expect(CORE_VERSION).toBe('1.9.0');
-    expect(PROTOCOL_VERSION).toBe('1.9.0');
+    expect(CORE_VERSION).toBe('2.0.0');
+    expect(PROTOCOL_VERSION).toBe('2.0.0');
     expect(compareVersions(CORE_VERSION, PROTOCOL_VERSION)).toBe(0);
-    // 1.9.0 is a hard boundary: the oldest software that speaks these rules is 1.9.0 itself.
-    expect(MIN_CORE_VERSION).toBe('1.9.0');
+    // 2.0.0 is a hard boundary: the oldest software that speaks these rules is 2.0.0 itself.
+    expect(MIN_CORE_VERSION).toBe('2.0.0');
     expect(CONSENSUS_PARAMS.protocolVersion).toBe(PROTOCOL_VERSION);
-    // The state shape changed (node registry, finality state, ONS transfer state), so the snapshot format changed.
-    expect(STATE_SNAPSHOT_VERSION).toBe(6);
+    // The state shape changed (Marketplace listings, offers and escrow on top of the 1.9.0 node registry, finality and ONS transfer state), so the snapshot format changed.
+    expect(STATE_SNAPSHOT_VERSION).toBe(7);
     // Computed, not declared. A hand-edited hash would let the rules change without the identity changing.
     expect(PARAMS_HASH).toBe(computeParamsHash(CONSENSUS_PARAMS));
     expect(PARAMS_HASH).toMatch(/^[0-9a-f]{32}$/);
@@ -106,7 +107,7 @@ describe('B — a block under other rules is not a block here', () => {
       return { ...built.block, header: { ...built.block.header, ...patch } };
     };
 
-    for (const old of ['1.8.2', '1.8.0', '1.6.0']) {
+    for (const old of ['1.9.0', '1.8.2', '1.8.0', '1.6.0']) {
       const verdict = h.chain.addBlock(rewrite({ protocolVersion: old }));
       expect(verdict.accepted, `protocol ${old}`).toBe(false);
       expect(verdict.code).toBe(ErrCode.VERSION_MISMATCH);
@@ -169,10 +170,10 @@ describe('E — genesis and snapshot identity follow the version', () => {
     expect(document.protocolVersion).toBe(PROTOCOL_VERSION);
     const id = genesisId(document, mainnet);
     expect(id).toMatch(/^[0-9a-f]{40}$/);
-    for (const old of ['1.8.2', '1.8.0', '1.6.0']) {
+    for (const old of ['1.9.0', '1.8.2', '1.8.0', '1.6.0']) {
       expect(genesisId({ ...document, protocolVersion: old }, mainnet)).not.toBe(id);
     }
-    // The genesis BLOCK commits the parameter hash in its state, so a node cannot restore older state and call it 1.9.0.
+    // The genesis BLOCK commits the parameter hash in its state, so a node cannot restore older state and call it 2.0.0.
     const hash = blockHash(buildGenesisBlock(document, mainnet).header);
     const staleHash = blockHash(buildGenesisBlock({ ...document, protocolVersion: '1.8.2' }, mainnet).header);
     expect(hash).not.toBe(staleHash);
@@ -199,13 +200,13 @@ describe('F — a mixed-version network cannot form', () => {
     // The handshake (src/networking/p2p.ts) refuses a hello whose protocol version differs from this build's and whose
     // core version is below MIN_CORE_VERSION. These are the two comparisons it makes, so asserting them here asserts
     // the rule the handshake enforces: every validator-era peer is rejected.
-    for (const old of ['1.6.0', '1.6.1', '1.7.0', '1.8.0', '1.8.1', '1.8.2']) {
+    for (const old of ['1.6.0', '1.6.1', '1.7.0', '1.8.0', '1.8.1', '1.8.2', '1.9.0', '1.9.9']) {
       expect(compareVersions(old, PROTOCOL_VERSION), old).toBeLessThan(0);
       expect(compareVersions(old, MIN_CORE_VERSION), old).toBeLessThan(0);
     }
-    expect(compareVersions('1.9.0', PROTOCOL_VERSION)).toBe(0);
-    expect(compareVersions('1.9.0', MIN_CORE_VERSION)).toBe(0);
-    expect(compareVersions('1.9.1', CORE_VERSION)).toBeGreaterThan(0);
+    expect(compareVersions('2.0.0', PROTOCOL_VERSION)).toBe(0);
+    expect(compareVersions('2.0.0', MIN_CORE_VERSION)).toBe(0);
+    expect(compareVersions('2.0.1', CORE_VERSION)).toBeGreaterThan(0);
   });
 
   it('registers a node on the new network without any of the removed machinery', async () => {

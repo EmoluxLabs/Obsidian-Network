@@ -247,6 +247,18 @@ describe('resolveOnsName', () => {
     expect(await resolveOnsName('obsidian.obs', deps({ answer: record({ expiresAt: NOW + 1 }) }))).toMatchObject({ ok: true });
   });
 
+  it('refuses a name locked by an ONS Marketplace listing (protocol 2.0.0): its owner cannot use it, so nothing is sent to it', async () => {
+    for (const listed of [{ locked: true, resolved: false, marketStatus: 'LISTED' }, { locked: true }, { marketStatus: 'LISTED' }]) {
+      expect(await resolveOnsName('obsidian.obs', deps({ answer: record(listed) }))).toMatchObject({ ok: false, code: 'NAME_LISTED' });
+    }
+    // an unlisted name from a 2.0.0 node still resolves
+    expect(await resolveOnsName('obsidian.obs', deps({ answer: record({ locked: false, marketStatus: 'OWNED' }) }))).toMatchObject({ ok: true });
+    // a name listed between the confirmation screen and signing is caught by the re-resolution
+    const first = await resolveOnsName('obsidian.obs', deps());
+    if (!first.ok) throw new Error('setup');
+    expect(await reconfirmOnsName(first, deps({ answer: record({ locked: true, marketStatus: 'LISTED' }) }))).toMatchObject({ ok: false, code: 'NAME_LISTED' });
+  });
+
   it('will not judge expiry without the node clock', async () => {
     const noClock = deps({ context: async () => ({ ...MAINNET, protocolTime: Number.NaN }) });
     expect(await resolveOnsName('obsidian.obs', noClock)).toMatchObject({ ok: false, code: 'LOOKUP_UNAVAILABLE' });
@@ -254,11 +266,11 @@ describe('resolveOnsName', () => {
 
   it('keeps each failure on its own message — a failed lookup is never "invalid address"', async () => {
     const messages = new Set(
-      (['NAME_NOT_FOUND', 'LOOKUP_UNAVAILABLE', 'INVALID_ADDRESS', 'NAME_INVALID', 'MALFORMED_RECORD', 'NETWORK_MISMATCH', 'NAME_EXPIRED'] as const).map((code) =>
+      (['NAME_NOT_FOUND', 'LOOKUP_UNAVAILABLE', 'INVALID_ADDRESS', 'NAME_INVALID', 'MALFORMED_RECORD', 'NETWORK_MISMATCH', 'NAME_EXPIRED', 'NAME_LISTED'] as const).map((code) =>
         failureMessage(code),
       ),
     );
-    expect(messages.size).toBe(7);
+    expect(messages.size).toBe(8);
     expect(failureMessage('LOOKUP_UNAVAILABLE')).not.toMatch(/invalid/i);
     expect(failureMessage('NAME_NOT_FOUND')).not.toMatch(/invalid/i);
   });

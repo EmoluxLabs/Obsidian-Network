@@ -8,9 +8,10 @@
 import { describe, expect, it } from 'vitest';
 import { decodeNodeRegistryBody, encodeNodeRegistryBody } from '../../src/transactions/executors/node-registry.js';
 import { decodeOnsBody, encodeOnsBody } from '../../src/transactions/executors/ons.js';
+import { decodeMarketBody, encodeMarketBody } from '../../src/transactions/executors/marketplace.js';
 import { decodeSignedTxFromBytes } from '../../src/transactions/encode.js';
 import { parsePrivateKeyInput } from '../../src/crypto/private-key.js';
-import { NodeRegistryOp, OnsOp } from '../../src/protocol/types.js';
+import { MarketOp, NodeRegistryOp, OnsOp } from '../../src/protocol/types.js';
 
 function rng(seed: number) {
   let x = seed >>> 0 || 1;
@@ -79,6 +80,18 @@ describe('decoders survive hostile input', () => {
     for (let i = 0; i < 4000; i += 1) {
       const input = i % 4 === 0 ? bytes(random, Math.floor(random() * 200)) : mutate(random, seeds[i % seeds.length]);
       holds(decodeOnsBody, input);
+    }
+  });
+
+  it('Marketplace bodies: every op, random and mutated, and round-trips of valid bodies', () => {
+    const valid = Object.values(MarketOp)
+      .filter((op): op is number => typeof op === 'number')
+      .map((op) => encodeMarketBody({ op, name: 'alpha', amount: 123456789n, counterparty: 'dobs1' + 'q'.repeat(38), offerId: 'ab'.repeat(32) }));
+    expect(valid).toHaveLength(8);
+    for (const body of valid) expect(encodeMarketBody(decodeMarketBody(body))).toEqual(body);
+    for (let i = 0; i < 4000; i += 1) {
+      const input = i % 4 === 0 ? bytes(random, Math.floor(random() * 200)) : mutate(random, valid[i % valid.length]);
+      if (holds(decodeMarketBody, input) === 'ok') expect(encodeMarketBody(decodeMarketBody(input))).toEqual(input);
     }
   });
 

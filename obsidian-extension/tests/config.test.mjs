@@ -98,7 +98,7 @@ function fakeServer(over = {}) {
     '/app-config.json': config(),
     '/api/auth/config': { network: 'devnet', inviteOnly: true },
     '/api/rpc?path=%2Fstatus': { height: 10, genesisId: 'g'.repeat(40), chainId: 7780, networkId: 'obsidian-devnet-1', peers: 1, syncing: false, lastBlockTimestamp: now - 3 },
-    '/api/rpc?path=%2Fnetwork': { genesisId: 'g'.repeat(40), protocolVersion: '1.9.0' },
+    '/api/rpc?path=%2Fnetwork': { genesisId: 'g'.repeat(40), protocolVersion: '2.0.0' },
     ...over,
   };
   const fetchImpl = async (url) => {

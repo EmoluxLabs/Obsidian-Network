@@ -114,10 +114,10 @@ globalThis.fetch = async (url, init = {}) => {
   if (target.startsWith('/api/rpc')) {
     const path = decodeURIComponent(new URL(target, 'http://x').searchParams.get('path') ?? '');
     if (path === '/status') {
-      return json(200, { height: 30, chainId: world.chainId, protocolVersion: '1.9.0', lastBlockTimestamp: NOW, networkId: 'x', supplyObs: '0', maxSupplyObs: '21000000' });
+      return json(200, { height: 30, chainId: world.chainId, protocolVersion: '2.0.0', lastBlockTimestamp: NOW, networkId: 'x', supplyObs: '0', maxSupplyObs: '21000000' });
     }
     if (path === '/network') {
-      return json(200, { network: { name: 'mainnet', chainId: world.chainId, addressHrp: world.hrp }, protocolVersion: '1.9.0' });
+      return json(200, { network: { name: 'mainnet', chainId: world.chainId, addressHrp: world.hrp }, protocolVersion: '2.0.0' });
     }
     if (path === '/params') return json(200, { gas: { basisPoints: 2, maxGasObs: '0.01' } });
     if (path.startsWith('/names/')) {

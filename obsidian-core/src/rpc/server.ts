@@ -42,7 +42,9 @@ import { medianTimePast, potDifficulty, timeRate } from '../consensus/time.js';
 import { nodeRewardParams, popcount, rewardPeriodAt, rewardPeriodEnd, scoreNode } from '../economy/node-rewards.js';
 import { NOT_ONS_REVENUE } from '../economy/accounting.js';
 import { decodeOracleBody, encodeOracleBody } from '../transactions/executors/oracle.js';
-import { TxType } from '../protocol/types.js';
+import { TxType, MarketOp, type MarketBody, type MarketOffer } from '../protocol/types.js';
+import { decodeMarketBody, encodeMarketBody } from '../transactions/executors/marketplace.js';
+import { activeListings, incomingOffers, listingView, marketSummary, nameMarketStatus, offerView, outgoingOffers, type ListingSort } from './market-views.js';
 import type { NetworkDefinition } from '../protocol/networks.js';
 import type { NodeConfig } from '../config/config.js';
 import { OFFICIAL_HOSTS, OFFICIAL_PATTERNS, compileOrigins, originMatches, type NetworkKey } from '../config/trusted-origins.js';
@@ -414,6 +416,15 @@ export class RpcServer {
       });
     }
     if (path === '/mining/claims') return this.miningClaims(response, url);
+    if (path === '/market') return this.json(response, 200, marketSummary(this.options.chain.world, this.options.chain.protocolTime));
+    if (path === '/market/listings') return this.marketListings(response, url);
+    if (path.startsWith('/market/listing/')) return this.marketListing(response, after('/market/listing/'));
+    if (path.startsWith('/market/name/')) return this.marketName(response, after('/market/name/'));
+    if (path.startsWith('/market/offers/name/')) return this.marketOffersFor(response, 'name', after('/market/offers/name/'), url);
+    if (path.startsWith('/market/offers/incoming/')) return this.marketOffersFor(response, 'incoming', after('/market/offers/incoming/'), url);
+    if (path.startsWith('/market/offers/outgoing/')) return this.marketOffersFor(response, 'outgoing', after('/market/offers/outgoing/'), url);
+    if (path.startsWith('/market/offer/')) return this.marketOffer(response, after('/market/offer/'));
+    if (path === '/market/events') return this.marketEvents(response, url);
     if (path === '/names') return this.names(response, url);
     if (path.startsWith('/names/')) return this.name(response, after('/names/'));
     if (path === '/wallet/balance' && method === 'POST') return this.walletBalance(request, response);
@@ -716,6 +727,7 @@ export class RpcServer {
       genesisIssuedObs: formatObs(state.s.metrics.issuedGenesis),
       minedSupplyObs: formatObs(state.s.metrics.minedSupply),
       poolBalanceObs: formatObs(state.s.pool.balance),
+      marketEscrowObs: formatObs(state.s.market.escrowBalance),
       issuanceSources: ['GENESIS_ALLOCATION', 'MINING_REWARD'],
     });
   }
@@ -1386,6 +1398,8 @@ export class RpcServer {
       address: record.address,
       expiresAt: record.expiresAt,
       registeredAtHeight: record.registeredAtHeight,
+      listed: Boolean(record.listing),
+      priceSeals: record.listing ? record.listing.price.toString() : null,
     }));
     this.json(response, 200, {
       names,
@@ -1397,13 +1411,143 @@ export class RpcServer {
     });
   }
 
+  // ── Marketplace (protocol 2.0.0) ─────────────────────────────────────────
+
+  private marketListings(response: ServerResponse, url: URL): void {
+    const state = this.options.chain.world;
+    const sortParam = url.searchParams.get('sort') ?? 'newest';
+    const allowed: ListingSort[] = ['newest', 'oldest', 'price_asc', 'price_desc', 'name'];
+    if (!allowed.includes(sortParam as ListingSort)) {
+      this.json(response, 400, { error: `sort must be one of ${allowed.join(', ')}`, code: 'ERR_MALFORMED' });
+      return;
+    }
+    const seller = url.searchParams.get('seller') ?? undefined;
+    if (seller && !isValidAddress(seller, this.options.net.addressHrp)) {
+      this.json(response, 400, { error: 'invalid seller address', code: 'ERR_BAD_ADDRESS' });
+      return;
+    }
+    const prefix = (url.searchParams.get('prefix') ?? '').toLowerCase().replace(/\.obs$/, '').slice(0, 64);
+    this.json(response, 200, {
+      ...activeListings(state, {
+        seller,
+        prefix: prefix || undefined,
+        sort: sortParam as ListingSort,
+        limit: clampNumber(url.searchParams.get('limit'), 25, 1, 100),
+        offset: clampNumber(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER),
+        now: this.options.chain.protocolTime,
+      }),
+      atHeight: this.options.chain.height,
+    });
+  }
+
+  private marketListing(response: ServerResponse, rawName: string): void {
+    const name = rawName.toLowerCase().replace(/\.obs$/, '');
+    const state = this.options.chain.world;
+    const record = state.s.names.get(name);
+    if (!record || !record.listing || record.expiresAt <= this.options.chain.protocolTime) {
+      this.json(response, 404, { error: 'name is not listed', code: 'ERR_NOT_FOUND', name: `${name}.obs` });
+      return;
+    }
+    const view = listingView(record)!;
+    view.pendingOffers = state.offersForName(name, 'PENDING').length;
+    this.json(response, 200, { listing: view, atHeight: this.options.chain.height });
+  }
+
+  /** The one call a search box needs: register / buy / make an offer / expired, from chain state. */
+  private marketName(response: ServerResponse, rawName: string): void {
+    const name = rawName.toLowerCase().replace(/\.obs$/, '');
+    const state = this.options.chain.world;
+    this.json(response, 200, {
+      name: `${name}.obs`,
+      ...nameMarketStatus(state, name, this.options.chain.protocolTime),
+      atHeight: this.options.chain.height,
+    });
+  }
+
+  private marketOffersFor(response: ServerResponse, scope: 'name' | 'incoming' | 'outgoing', subject: string, url: URL): void {
+    const state = this.options.chain.world;
+    const statusParam = url.searchParams.get('status')?.toUpperCase();
+    const statuses = ['PENDING', 'ACCEPTED', 'DECLINED', 'CANCELLED', 'EXPIRED', 'INVALIDATED'];
+    if (statusParam && !statuses.includes(statusParam)) {
+      this.json(response, 400, { error: `status must be one of ${statuses.join(', ')}`, code: 'ERR_MALFORMED' });
+      return;
+    }
+    const status = statusParam as MarketOffer['status'] | undefined;
+    let offers;
+    if (scope === 'name') {
+      const name = subject.toLowerCase().replace(/\.obs$/, '');
+      offers = state.offersForName(name, status).reverse().map((offer) => offerView(state, offer));
+    } else {
+      if (!isValidAddress(subject, this.options.net.addressHrp)) {
+        this.json(response, 400, { error: 'invalid wallet address', code: 'ERR_BAD_ADDRESS' });
+        return;
+      }
+      offers = scope === 'incoming' ? incomingOffers(state, subject, status) : outgoingOffers(state, subject, status);
+    }
+    const limit = clampNumber(url.searchParams.get('limit'), 50, 1, 200);
+    const offset = clampNumber(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
+    const page = offers.slice(offset, offset + limit);
+    this.json(response, 200, {
+      offers: page,
+      total: offers.length,
+      offset,
+      limit,
+      hasMore: offset + page.length < offers.length,
+      atHeight: this.options.chain.height,
+    });
+  }
+
+  private marketOffer(response: ServerResponse, id: string): void {
+    const state = this.options.chain.world;
+    const offer = state.offer(id.toLowerCase());
+    if (!offer) {
+      this.json(response, 404, { error: 'offer not found (it may be older than the retention window)', code: 'ERR_NOT_FOUND', id });
+      return;
+    }
+    this.json(response, 200, {
+      offer: offerView(state, offer),
+      escrow: {
+        held: offer.status === 'PENDING',
+        amountSeals: offer.status === 'PENDING' ? offer.amount.toString() : '0',
+        maker: offer.maker,
+        owner: offer.owner,
+        name: `${offer.name}.obs`,
+      },
+      atHeight: this.options.chain.height,
+    });
+  }
+
+  /** Marketplace history from the indexer. Convenience only: the indexer is rebuildable and never authoritative. */
+  private marketEvents(response: ServerResponse, url: URL): void {
+    const limit = clampNumber(url.searchParams.get('limit'), 50, 1, 200);
+    const name = (url.searchParams.get('name') ?? '').toLowerCase().replace(/\.obs$/, '');
+    const address = url.searchParams.get('address') ?? '';
+    const marketTypes = new Set([
+      'ONS_LISTED', 'ONS_LISTING_UPDATED', 'ONS_DELISTED', 'ONS_SOLD', 'ONS_TRANSFERRED', 'ONS_OFFER_MADE',
+      'ONS_OFFER_ACCEPTED', 'ONS_OFFER_DECLINED', 'ONS_OFFER_CANCELLED', 'ONS_OFFER_EXPIRED', 'ONS_OFFER_INVALIDATED',
+    ]);
+    const events = this.options.indexer
+      .events(20_000)
+      .filter((event) => marketTypes.has(event.type))
+      .filter((event) => {
+        const payload = event.data as Record<string, unknown>;
+        if (name && payload.name !== name) return false;
+        if (address && !['seller', 'buyer', 'maker', 'owner', 'from', 'to', 'by'].some((key) => payload[key] === address)) return false;
+        return true;
+      })
+      .slice(0, limit);
+    this.json(response, 200, { events, note: 'Indexer history: rebuildable from the chain and never authoritative.' });
+  }
+
   private name(response: ServerResponse, rawName: string): void {
     const name = rawName.toLowerCase().replace(/\.obs$/, '');
     const record = this.options.chain.world.s.names.get(name);
     if (!record) {
-      this.json(response, 404, { error: 'name not registered', code: 'ERR_NOT_FOUND', name: `${name}.obs` });
+      this.json(response, 404, { error: 'name not registered', code: 'ERR_NOT_FOUND', name: `${name}.obs`, marketStatus: 'AVAILABLE' });
       return;
     }
+    const world = this.options.chain.world;
+    const market = nameMarketStatus(world, name, this.options.chain.protocolTime);
     this.json(response, 200, {
       name: `${record.name}.obs`,
       owner: record.owner,
@@ -1417,7 +1561,13 @@ export class RpcServer {
       pendingTransfer: record.pendingTransfer ?? null,
       recoveryAddress: record.recoveryAddress ?? null,
       pendingRecovery: record.pendingRecovery ?? null,
-      resolved: true,
+      // Marketplace (protocol 2.0.0). `locked` is the consensus lock, not a UI hint: while true the owner's ordinary
+      // operations on this name are refused and clients must not treat `address` as an active resolution.
+      marketStatus: market.status,
+      listing: market.listing,
+      locked: market.locked,
+      pendingOffers: market.pendingOffers,
+      resolved: !market.locked,
     });
   }
 
@@ -1438,11 +1588,19 @@ export class RpcServer {
     const state = this.options.chain.world;
     const account = state.getAccount(address);
     const names = [...state.s.names.values()].filter((record) => record.owner === address).map((record) => `${record.name}.obs`);
+    const locked = state.escrowLockedBy(address);
     this.json(response, 200, {
       address,
       balanceObs: formatObs(account?.balance ?? 0n),
       balanceSeals: (account?.balance ?? 0n).toString(),
+      // Escrow (protocol 2.0.0): OBS locked by this wallet's pending Marketplace offers. `balance*` is what is
+      // spendable now (escrow has already left it); `total*` is balance plus escrow.
       spendableObs: formatObs(account?.balance ?? 0n),
+      spendableSeals: (account?.balance ?? 0n).toString(),
+      lockedObs: formatObs(locked),
+      lockedSeals: locked.toString(),
+      totalObs: formatObs((account?.balance ?? 0n) + locked),
+      totalSeals: ((account?.balance ?? 0n) + locked).toString(),
       nonce: account?.nonce ?? 0,
       txCount: account?.txCount ?? 0,
       receivedObs: formatObs(account?.totalReceived ?? 0n),
@@ -1897,6 +2055,8 @@ export function encodeBodyFor(type: string, payload: Record<string, unknown>): U
       return encodeNodeRegistryBody(payload as never);
     case 'GATE_AUTHORITY':
       return encodeGateAuthorityBody(payload as never);
+    case 'ONS_MARKET':
+      return encodeMarketBody(marketPayload(payload));
     default:
       throw new Error(type ? `unknown transaction type ${type}` : 'transaction type is required');
   }
@@ -1916,11 +2076,29 @@ export function decodeBodyFor(type: string, bytes: Uint8Array): unknown {
       return decodeNodeRegistryBody(bytes);
     case 'GATE_AUTHORITY':
       return decodeGateAuthorityBody(bytes);
+    case 'ONS_MARKET':
+      return decodeMarketBody(bytes);
     case 'ORACLE':
       return decodeOracleBody(bytes);
     default:
       throw new Error(type ? `unknown transaction type ${type}` : 'transaction type is required');
   }
+}
+
+/** Accepts the numeric op or its name; amounts as decimal-seal strings or bigints. Unknown fields are ignored. */
+function marketPayload(payload: Record<string, unknown>): MarketBody {
+  const rawOp = payload.op;
+  const op = typeof rawOp === 'number' ? rawOp : (MarketOp as unknown as Record<string, number>)[String(rawOp).toUpperCase()];
+  if (!Number.isInteger(op) || MarketOp[op as number] === undefined) throw new Error(`unknown Marketplace operation ${String(rawOp)}`);
+  const amount = payload.amount === undefined || payload.amount === '' ? 0n : BigInt(payload.amount as string | bigint);
+  if (amount < 0n) throw new Error('amount must not be negative');
+  return {
+    op: op as MarketOp,
+    name: String(payload.name ?? ''),
+    amount,
+    counterparty: String(payload.counterparty ?? ''),
+    offerId: String(payload.offerId ?? ''),
+  };
 }
 
 function encodePaymentBodyRaw(payload: { to: string; amount: string | bigint; memo?: string }): Uint8Array {

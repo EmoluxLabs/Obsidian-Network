@@ -38,7 +38,7 @@ const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon 
 const PASS = 'correct horse battery staple';
 const OTHER = 'dobs148qsr3gydeljr65y4yx38ffswfv2ny4ledmnpw';
 
-const CHAIN = { chainId: 7780, addressHrp: 'dobs', protocolVersion: '1.9.0', protocolTime: 1_791_542_000, nonce: 4 };
+const CHAIN = { chainId: 7780, addressHrp: 'dobs', protocolVersion: '2.0.0', protocolTime: 1_791_542_000, nonce: 4 };
 const MINING = {
   eligible: true,
   nextClaimId: 'a0c7f9eb927778a70632b57cc87b84e0959a12e7130904ca9b1d0be9bd78c72a',

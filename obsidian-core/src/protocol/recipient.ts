@@ -22,6 +22,8 @@
  *                       network's address.
  *   NAME_EXPIRED        the node does not report expiry state, and an expired name can be
  *                       re-registered by anyone, so its old address is no longer trusted.
+ *   NAME_LISTED         the name is listed on the ONS Marketplace (protocol 2.0.0). While listed its owner cannot use it,
+ *                       so it is not an active resolution target and nothing is ever sent to it.
  *   INVALID_ADDRESS     the record's address is not a valid address for this network.
  *
  * It never decides a recipient from the spelling of a name, and it never falls back.
@@ -39,6 +41,7 @@ export type ResolutionFailureCode =
   | 'MALFORMED_RECORD'
   | 'NETWORK_MISMATCH'
   | 'NAME_EXPIRED'
+  | 'NAME_LISTED'
   | 'INVALID_ADDRESS';
 
 export interface NodeContext {
@@ -116,6 +119,8 @@ export function failureMessage(code: ResolutionFailureCode, addressHrp = 'obs'):
       return 'The ONS lookup returned an unusable answer. Transaction blocked.';
     case 'NETWORK_MISMATCH':
       return `ONS lookup came from a different network than ${networkLabel(addressHrp)}. Transaction blocked.`;
+    case 'NAME_LISTED':
+      return 'This ONS name is listed for sale on the ONS Marketplace and cannot be used as a recipient. Transaction blocked.';
     case 'NAME_EXPIRED':
       return 'This ONS name has expired, so its address is no longer trusted. Transaction blocked.';
   }
@@ -254,6 +259,11 @@ export async function resolveOnsName(raw: string, deps: ResolveDeps): Promise<Re
     return isNotFound(recordRead.reason) ? fail('NAME_NOT_FOUND', hrp) : fail('LOOKUP_UNAVAILABLE', hrp);
   }
   const record = recordRead.value;
+
+  // 2b. A name under the Marketplace lock does not resolve (consensus: its owner cannot use it).
+  if (isRecord(recordRead.value) && (recordRead.value.locked === true || recordRead.value.marketStatus === 'LISTED')) {
+    return fail('NAME_LISTED', hrp);
+  }
 
   // 3. Is it a record for the name that was asked about?
   if (

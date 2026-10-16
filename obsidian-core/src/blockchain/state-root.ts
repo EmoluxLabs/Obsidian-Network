@@ -22,6 +22,8 @@ import type {
   NodeEvidenceRecord,
   NodeRecord,
   NodeRewardPoolState,
+  MarketOffer,
+  MarketState,
   OnsRecord,
   OracleState,
 } from '../protocol/types.js';
@@ -146,6 +148,15 @@ function encodeName(w: Writer, n: OnsRecord): void {
     w.u64(BigInt(Math.trunc(offer.offeredAt)));
     w.u64(BigInt(Math.trunc(offer.offerExpiresAt)));
   }
+  // 2.0.0: an active Marketplace listing locks the name and decides who may buy it, so it is committed.
+  const listing = n.listing;
+  w.boolean(Boolean(listing));
+  if (listing) {
+    w.u128(listing.price);
+    w.string(listing.seller);
+    w.u64(BigInt(Math.trunc(listing.listedAt)));
+    w.u32(listing.listedAtHeight);
+  }
   w.string(n.recoveryAddress ?? '');
   const recovery = n.pendingRecovery;
   w.boolean(Boolean(recovery));
@@ -155,6 +166,31 @@ function encodeName(w: Writer, n: OnsRecord): void {
     w.u64(BigInt(Math.trunc(recovery.startedAt)));
     w.u64(BigInt(Math.trunc(recovery.effectiveAt)));
   }
+}
+
+function encodeMarketOffer(w: Writer, o: MarketOffer): void {
+  w.string(o.id);
+  w.string(o.name);
+  w.string(o.maker);
+  w.string(o.owner);
+  w.u128(o.amount);
+  w.string(o.status);
+  w.u64(BigInt(Math.trunc(o.createdAt)));
+  w.u32(o.createdAtHeight);
+  w.u64(BigInt(Math.trunc(o.expiresAt)));
+  w.u64(BigInt(Math.trunc(o.resolvedAt ?? 0)));
+  w.u32(o.resolvedAtHeight ?? 0);
+  w.string(o.resolvedBy ?? '');
+  w.string(o.resolvedTxId ?? '');
+}
+
+function encodeMarket(w: Writer, m: MarketState): void {
+  w.u128(m.escrowBalance);
+  w.u32(m.listingsCreated);
+  w.u32(m.salesCount);
+  w.u128(m.salesVolume);
+  w.u32(m.offersMade);
+  w.u32(m.offersAccepted);
 }
 
 function encodeOracle(w: Writer, o: OracleState): void {
@@ -331,6 +367,13 @@ export function encodeState(state: MutableState): Uint8Array {
   }
 
   encodeNodeRewards(w, state.nodeRewards);
+
+  // ONS Marketplace (2.0.0): the escrow balance and every retained offer. Two nodes that disagree about an offer
+  // disagree about money, so all of it is committed.
+  encodeMarket(w, state.market);
+  const offerIds = [...state.offers.keys()].sort();
+  w.u32(offerIds.length);
+  for (const id of offerIds) encodeMarketOffer(w, state.offers.get(id)!);
 
   // Derived finality: consensus state, so two nodes cannot disagree about it without disagreeing about the root.
   w.u32(state.finality.finalizedHeight);

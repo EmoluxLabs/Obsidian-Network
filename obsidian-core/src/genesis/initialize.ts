@@ -38,7 +38,7 @@ export const MAINNET_GENESIS_DOCUMENT: GenesisDocument = {
   chainId: 7777,
   protocolVersion: PROTOCOL_VERSION,
   timestamp: 1_767_225_600, // 2026-01-01T00:00:00Z
-  note: 'Obsidian Network v1.9.0 genesis. No premine. No validators. 100,000 OBS reserved for the first valid miner.',
+  note: 'Obsidian Network v2.0.0 genesis. No premine. No validators. 100,000 OBS reserved for the first valid miner.',
   // The gate issuer set is a protocol constant in genesis/gate-keys.ts;
   // `genesisDocumentFor` fills it in and refuses to substitute another one.
   miningGatePublicKeys: [],

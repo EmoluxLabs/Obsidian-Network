@@ -18,7 +18,11 @@ export const CONSENSUS_PARAMS = {
   /**
    * Protocol version that owns these parameters.
    *
-   * 1.9.0 is a FRESH-START protocol (new genesis, no migration of earlier chain state). Block production is a
+   * 2.0.0 adds the ONS Marketplace (fixed-price listings, purchases, owner-directed offers with consensus escrow) on top
+   * of the 1.9.0 rules below and changes the state root, so it is a new protocol identity and a new genesis id; a 1.9.x
+   * node cannot peer with a 2.0.0 node.
+   *
+   * 1.9.0 was a FRESH-START protocol (new genesis, no migration of earlier chain state). Block production is a
    * deterministic schedule over every registered, mature, live node, with no stake, bond, committee or vote; finality
    * is a pure function of chain history (producer-diversity checkpoints); a node's reward wallet is bound with the
    * node's own identity key (no wallet signature, no gas); node rewards are 90% of the ONS-fee pool by uptime score;
@@ -27,7 +31,7 @@ export const CONSENSUS_PARAMS = {
    * set and a different protocol identity: a 1.8.x node cannot peer with a 1.9.0 node. The history of the earlier
    * rules is in the git log and CHANGELOG, not here.
    */
-  protocolVersion: '1.9.0',
+  protocolVersion: '2.0.0',
 
   /**
    * MINING GATE (1.7.0). A MINING_CLAIM is valid only with a certificate from an issuer key committed in genesis
@@ -389,6 +393,25 @@ export const CONSENSUS_PARAMS = {
     recoveryDelaySeconds: 7 * 24 * 60 * 60,
     /** Grace period after expiry before the name returns to the pool. */
     graceSeconds: 30 * 24 * 60 * 60,
+    /**
+     * ONS MARKETPLACE (protocol 2.0.0, docs/marketplace-v2.0.0.md).
+     *
+     * There is NO marketplace commission: the seller of a listing receives exactly the price, the seller of an
+     * accepted offer receives exactly the offered amount. Gas is the ordinary protocol gas, charged to the buyer or
+     * offer maker at the moment value enters the protocol (a purchase, an offer) and never taken from escrow.
+     */
+    market: {
+      /** Smallest listing price and smallest offer: 0.001 OBS (anti-spam; not a fee). */
+      minPriceSeals: parseObs('0.001'),
+      /** A pending offer lapses, and its escrow returns to the maker, this long after it is made (7 days). */
+      offerSeconds: 7 * 24 * 60 * 60,
+      /** Pending offers one name can hold at once. */
+      maxPendingOffersPerName: 16,
+      /** Pending offers one account can hold at once (each locks funds). */
+      maxPendingOffersPerMaker: 32,
+      /** Settled offers stay in state this long as the audit trail (90 days); the chain's events keep them for ever. */
+      offerRetentionSeconds: 90 * 24 * 60 * 60,
+    },
     /** Protocol-reserved names that can never be registered by users. */
     reserved: [
       'obs',

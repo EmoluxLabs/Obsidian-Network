@@ -1,5 +1,5 @@
 /**
- * What the node tells the world under protocol 1.9.0: producers, finality, node registry and name ownership. These read
+ * What the node tells the world under protocol 2.0.0: producers, finality, node registry and name ownership. These read
  * the real routes of a real RPC server over a chain built from real blocks; none of it is a fixture.
  */
 import { afterEach, describe, expect, it } from 'vitest';
@@ -107,14 +107,14 @@ describe('node registry routes', () => {
 });
 
 describe('status, params and metrics', () => {
-  it('report 1.9.0 everywhere and expose producer and finality parameters instead of a bond', async () => {
+  it('report 2.0.0 everywhere and expose producer and finality parameters instead of a bond', async () => {
     const { base } = await networkWithNodes(3);
     const status = (await get(base, '/status')).json;
     expect(status.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(status.nodes).toBe(3);
     expect(status.scheduleTier).toBe('TIER2');
     expect(status).toHaveProperty('finalizedHeight');
-    expect((await get(base, '/version')).json.coreVersion ?? CORE_VERSION).toBe('1.9.0');
+    expect((await get(base, '/version')).json.coreVersion ?? CORE_VERSION).toBe('2.0.0');
     const params = (await get(base, '/params')).json;
     expect(params.consensus.producers.maturityBlocks).toBe(CONSENSUS_PARAMS.consensus.producers.maturityBlocks);
     expect(params.consensus.finality.minProducers).toBe(2);

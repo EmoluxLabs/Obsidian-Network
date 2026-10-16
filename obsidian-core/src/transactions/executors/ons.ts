@@ -19,6 +19,11 @@
  *   The address a name RESOLVES to (UPDATE_ADDRESS) is separate from who OWNS it, and separate from any node reward
  *   wallet: editing it needs the owner's signature and touches nothing else.
  *
+ * MARKETPLACE LOCK (protocol 2.0.0)
+ *   While a name has an active Marketplace listing its owner cannot use or manage it: UPDATE_ADDRESS, TRANSFER,
+ *   ACCEPT_TRANSFER, SET_RECOVERY, START_RECOVERY, FINALIZE_RECOVERY and RENEW are all refused with ERR_NAME_LISTED.
+ *   Only the Marketplace operations (executors/marketplace.ts) can end the listing: DELIST by the owner, or a BUY.
+ *
  * RECOVERY (delayed, cancellable, credential-based)
  *   The owner may name a RECOVERY ADDRESS (SET_RECOVERY). That address can START a recovery to a new owner address;
  *   it takes effect only after `recoveryDelaySeconds` (seven days) and only if the current owner has not cancelled it
@@ -42,6 +47,8 @@ import {
 } from '../../protocol/types.js';
 import { assertAddress, assertAmount, assertCanonicalAddress, assertGas } from '../helpers.js';
 import { RevenueSource } from '../../economy/accounting.js';
+import { voidPendingOffers } from '../../economy/market.js';
+import type { WorldState, ApplyContext } from '../../blockchain/state.js';
 import type { ExecutorContext } from '../types.js';
 
 const NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -115,8 +122,25 @@ function requireLiveName(state: ExecutorContext['state'], name: string, protocol
   return record;
 }
 
-/** The single place where ownership of a name changes. Everything tied to the old owner is cleared. */
-function changeOwner(record: OnsRecord, owner: string): void {
+/** The Marketplace lock: refuse an owner operation on a listed name. Enforced here, in consensus, for every client. */
+export function assertNotListed(record: OnsRecord, action: string): void {
+  if (record.listing) {
+    reject(
+      ErrCode.NAME_LISTED,
+      `"${record.name}.obs" is listed on the ONS Marketplace at ${record.listing.price} seals: it cannot ${action} until the listing is removed or the name is sold`,
+      { name: record.name, price: record.listing.price.toString() },
+    );
+  }
+}
+
+/**
+ * The single place where ownership of a name changes. Everything tied to the old owner is cleared: the transfer offer,
+ * the recovery path, and (2.0.0) any Marketplace listing and every pending Marketplace offer, whose escrow goes back
+ * to its maker in the same state transition.
+ */
+export function changeOwner(state: WorldState, apply: ApplyContext, record: OnsRecord, owner: string): void {
+  voidPendingOffers(state, apply, record.name, 'OWNER_CHANGED');
+  record.listing = undefined;
   record.owner = owner;
   record.address = owner;
   record.transferCount += 1;
@@ -182,6 +206,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       const record = state.s.names.get(name);
       if (!record) reject(ErrCode.NOT_FOUND, `"${name}.obs" is not registered`);
       if (record.owner !== tx.sender) reject(ErrCode.NAME_NOT_OWNED, 'only the owner may update a name');
+      assertNotListed(record, 'be edited');
       if (!body.address) reject(ErrCode.MALFORMED, 'a target address is required');
       assertAddress(body.address, net, 'target address');
       assertGas(tx.gas, 0n);
@@ -193,6 +218,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
     case OnsOp.TRANSFER: {
       const record = requireLiveName(state, name, protocolTime);
       if (record.owner !== tx.sender) reject(ErrCode.NAME_NOT_OWNED, 'only the owner may offer a name');
+      assertNotListed(record, 'be transferred outside the Marketplace');
       if (!body.to) reject(ErrCode.MALFORMED, 'a recipient address is required');
       assertCanonicalAddress(body.to, net, 'recipient');
       if (body.to === record.owner) reject(ErrCode.MALFORMED, 'the recipient already owns this name');
@@ -216,6 +242,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
 
     case OnsOp.ACCEPT_TRANSFER: {
       const record = requireLiveName(state, name, protocolTime);
+      assertNotListed(record, 'be transferred outside the Marketplace');
       const offer = record.pendingTransfer;
       if (!offer) reject(ErrCode.NAME_TRANSFER_STATE, `"${name}.obs" has no open transfer offer`);
       if (offer.to !== tx.sender) reject(ErrCode.UNAUTHORIZED, 'only the address the name was offered to may accept it');
@@ -226,7 +253,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       const previousOwner = record.owner;
       // Ownership, resolution and the remaining term move together. The seller's recovery address and any recovery
       // in flight are wiped: the buyer must never inherit them.
-      changeOwner(record, tx.sender);
+      changeOwner(state, apply, record, tx.sender);
       state.touchAccount(tx.sender, apply);
       state.emit('ONS_TRANSFERRED', { name, from: previousOwner, to: tx.sender, expiresAt: record.expiresAt }, apply);
       return { gasBase: 0n, detail: { name, owner: tx.sender } };
@@ -247,6 +274,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
     case OnsOp.SET_RECOVERY: {
       const record = requireLiveName(state, name, protocolTime);
       if (record.owner !== tx.sender) reject(ErrCode.NAME_NOT_OWNED, 'only the owner may set the recovery address');
+      assertNotListed(record, 'have its recovery address changed');
       if (record.pendingRecovery) {
         reject(ErrCode.NAME_RECOVERY_STATE, 'a recovery is in flight: cancel it before changing the recovery address');
       }
@@ -265,6 +293,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
 
     case OnsOp.START_RECOVERY: {
       const record = requireLiveName(state, name, protocolTime);
+      assertNotListed(record, 'be recovered');
       if (!record.recoveryAddress) reject(ErrCode.NAME_RECOVERY_STATE, `"${name}.obs" has no recovery address`);
       if (tx.sender !== record.recoveryAddress) {
         reject(ErrCode.UNAUTHORIZED, 'only the recovery address may start a recovery');
@@ -303,6 +332,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
 
     case OnsOp.FINALIZE_RECOVERY: {
       const record = requireLiveName(state, name, protocolTime);
+      assertNotListed(record, 'be recovered');
       const recovery = record.pendingRecovery;
       if (!recovery) reject(ErrCode.NAME_RECOVERY_STATE, `"${name}.obs" has no recovery in flight`);
       if (tx.sender !== recovery.by && tx.sender !== recovery.newAddress) {
@@ -313,7 +343,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       }
       assertGas(tx.gas, 0n);
       const previousOwner = record.owner;
-      changeOwner(record, recovery.newAddress);
+      changeOwner(state, apply, record, recovery.newAddress);
       state.touchAccount(record.owner, apply);
       state.emit('ONS_RECOVERED', { name, from: previousOwner, to: record.owner, expiresAt: record.expiresAt }, apply);
       return { gasBase: 0n, detail: { name, owner: record.owner } };
@@ -323,6 +353,7 @@ export function executeOns(ctx: ExecutorContext, tx: TxEnvelope): { gasBase: big
       const record = state.s.names.get(name);
       if (!record) reject(ErrCode.NOT_FOUND, `"${name}.obs" is not registered`);
       if (record.owner !== tx.sender) reject(ErrCode.NAME_NOT_OWNED, 'only the owner may renew a name');
+      assertNotListed(record, 'be renewed');
       const fee = requiredFeeSeals(state, protocolTime, CONSENSUS_PARAMS.ons.renewalFee);
       assertAmount(body.fee, { label: 'fee' });
       if (body.fee < fee) {

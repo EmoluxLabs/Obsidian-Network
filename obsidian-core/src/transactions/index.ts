@@ -17,6 +17,7 @@ import { executeOracle } from './executors/oracle.js';
 import { executeTreasury, executeGovernance } from './executors/treasury.js';
 import { executeNodeRegistry } from './executors/node-registry.js';
 import { executeGateAuthority } from './executors/gate-authority.js';
+import { executeMarket } from './executors/marketplace.js';
 
 export function executeTransaction(ctx: ExecutorContext, tx: TxEnvelope): ExecutorResult {
   switch (tx.type) {
@@ -38,6 +39,8 @@ export function executeTransaction(ctx: ExecutorContext, tx: TxEnvelope): Execut
       return executeNodeRegistry(ctx, tx);
     case TxType.GATE_AUTHORITY:
       return executeGateAuthority(ctx, tx);
+    case TxType.ONS_MARKET:
+      return executeMarket(ctx, tx);
     default:
       reject(ErrCode.UNKNOWN_TX_TYPE, `transaction type ${tx.type} is not supported by this protocol version`);
   }

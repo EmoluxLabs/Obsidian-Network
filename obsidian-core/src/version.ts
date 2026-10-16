@@ -9,17 +9,20 @@
 import { sha256Hex, utf8 } from './crypto/hash.js';
 
 /** Software version of this Obsidian Core build. */
-export const CORE_VERSION = '1.9.0';
+export const CORE_VERSION = '2.0.0';
 
 /**
  * Consensus protocol version implemented by this build. It is part of the genesis id and of every block header, so it
  * changes only with a consensus change. A software release that changes no consensus rule leaves it alone: two
  * builds with the same protocol version are the same network and peer with each other.
  */
-export const PROTOCOL_VERSION = '1.9.0';
+export const PROTOCOL_VERSION = '2.0.0';
 
 /**
  * Current lossless consensus-state snapshot format.
+ *
+ * 7 (2.0.0) adds the ONS Marketplace: a listing on each name record, the offer table and the escrow/market counters.
+ *   A 1.9.0 snapshot has none of them, and reading it as "no listings, no escrow" would invent a state, so it is refused.
  *
  * 6 (1.9.0) removes validator state and adds the producer-schedule fields of node records and the ONS transfer and
  * recovery fields; a 1.8.x snapshot is from a different protocol and is refused.
@@ -36,7 +39,7 @@ export const PROTOCOL_VERSION = '1.9.0';
  * reading an old snapshot as a new one would hand a bootstrapped chain back to
  * permissionless production.
  */
-export const STATE_SNAPSHOT_VERSION = 6;
+export const STATE_SNAPSHOT_VERSION = 7;
 
 /** Wire/peer protocol version. */
 export const WIRE_PROTOCOL_VERSION = 1;
@@ -44,6 +47,9 @@ export const WIRE_PROTOCOL_VERSION = 1;
 /**
  * Minimum Obsidian Core version permitted to peer with this build.
  * Peers below this version are rejected during handshake (hard fork guard).
+ *
+ * 2.0.0 adds the ONS_MARKET transaction and puts listings, offers and escrow into every state root, so a 1.9.x peer (which
+ * has none of it) cannot agree on a single block that touches the Marketplace: the two cannot share a chain.
  *
  * 1.9.0 replaces validator consensus with a deterministic producer schedule and voting-free finality, so every 1.8.x
  * node (which expects validator registration, finality votes and a committed committee) is rejected: the two
@@ -59,7 +65,7 @@ export const WIRE_PROTOCOL_VERSION = 1;
  * slash liability window, evidence budgets), so a 1.6.0 peer is rejected: two
  * nodes that share a protocol id but not a rule set cannot agree on a chain.
  */
-export const MIN_CORE_VERSION = '1.9.0';
+export const MIN_CORE_VERSION = '2.0.0';
 
 /**
  * Build identifier — deterministic hash of the release identity triple.

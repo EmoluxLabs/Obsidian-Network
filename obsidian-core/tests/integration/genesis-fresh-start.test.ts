@@ -1,5 +1,5 @@
 /**
- * The v1.9.0 genesis is a fresh start, and every node derives the same one.
+ * The v2.0.0 genesis is a fresh start, and every node derives the same one.
  *
  * Replaces the bootstrap-committee suite. There is no committee any more, so the properties worth pinning are:
  * the genesis identity and state root are a pure function of the document (reproducible on every node and every
@@ -61,10 +61,10 @@ describe('genesis is reproducible', () => {
     expect(new Set(ids).size).toBe(3);
   });
 
-  it('is built for protocol 1.9.0 and says so in its note', () => {
+  it('is built for protocol 2.0.0 and says so in its note', () => {
     const doc = genesisDocumentFor(getNetwork('mainnet'));
     expect(doc.protocolVersion).toBe(PROTOCOL_VERSION);
-    expect(doc.note).toMatch(/v1\.9\.0/);
+    expect(doc.note).toMatch(/v2\.0\.0/);
     expect(doc.note).toMatch(/No validators/);
     expect(doc.note).toMatch(/No premine/);
   });

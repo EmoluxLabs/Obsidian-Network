@@ -19,6 +19,8 @@ import type {
   GenesisState,
   FinalityState,
   Metrics,
+  MarketOffer,
+  MarketState,
   MiningPoolState,
   NodeEvidenceRecord,
   NodeRecord,
@@ -93,6 +95,10 @@ export function emptyNodeRewardPool(): NodeRewardPoolState {
   };
 }
 
+export function emptyMarketState(): MarketState {
+  return { escrowBalance: 0n, listingsCreated: 0, salesCount: 0, salesVolume: 0n, offersMade: 0, offersAccepted: 0 };
+}
+
 export function emptyMetrics(): Metrics {
   return {
     activeMiners: 0,
@@ -138,6 +144,13 @@ export interface MutableState {
   finality: FinalityState;
   /** Derived index, not committed: producer address → nodeId. */
   nodeProducers: Map<string, string>;
+  /** Marketplace offers of every retained status, keyed by offer id (committed in the state root). */
+  offers: Map<string, MarketOffer>;
+  /** Marketplace accounting, including the escrow balance (committed in the state root). */
+  market: MarketState;
+  /** Derived indexes, not committed: offer ids by name and by maker. Rebuilt from `offers` on every load. */
+  offersByName: Map<string, Set<string>>;
+  offersByMaker: Map<string, Set<string>>;
 }
 
 export interface ApplyContext {
@@ -188,6 +201,10 @@ export class WorldState {
       nodeRewards: emptyNodeRewardPool(),
       finality: { finalizedHeight: 0, finalizedHash: '', recent: [] },
       nodeProducers: new Map(),
+      offers: new Map(),
+      market: emptyMarketState(),
+      offersByName: new Map(),
+      offersByMaker: new Map(),
     };
   }
 
@@ -214,6 +231,8 @@ export class WorldState {
         gateEpoch: this.s.genesis.gateEpoch,
       },
       names: Object.fromEntries([...this.s.names.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
+      offers: Object.fromEntries([...this.s.offers.entries()].sort(([a], [b]) => (a < b ? -1 : 1))),
+      market: { ...this.s.market },
       oracle: { ...this.s.oracle, observations: { ...this.s.oracle.observations } },
       pool: { ...this.s.pool, recentDistributions: this.s.pool.recentDistributions.map((c) => ({ ...c })) },
       metrics: { ...this.s.metrics },
@@ -274,7 +293,26 @@ export class WorldState {
         ...v,
         pendingTransfer: v.pendingTransfer ? { ...v.pendingTransfer } : undefined,
         pendingRecovery: v.pendingRecovery ? { ...v.pendingRecovery } : undefined,
+        listing: v.listing ? { ...v.listing, price: BigInt(v.listing.price) } : undefined,
       });
+    }
+    // Fail closed, like the gate and finality state: a snapshot without the marketplace state is from a build that
+    // predates it, and reading it as "no offers, no escrow" would invent a state.
+    if (!snapshot.market || typeof snapshot.offers !== 'object' || snapshot.offers === null) {
+      throw new Error(
+        `state snapshot is missing the marketplace state (format ${snapshot.snapshotVersion ?? 'unknown'}); ` +
+          `this build requires snapshot format ${STATE_SNAPSHOT_VERSION}`,
+      );
+    }
+    s.market = {
+      ...snapshot.market,
+      escrowBalance: BigInt(snapshot.market.escrowBalance),
+      salesVolume: BigInt(snapshot.market.salesVolume),
+    };
+    for (const [k, v] of Object.entries(snapshot.offers)) {
+      const offer: MarketOffer = { ...v, amount: BigInt(v.amount) };
+      s.offers.set(k, offer);
+      indexOffer(s, offer);
     }
     s.oracle = { ...snapshot.oracle, observations: { ...snapshot.oracle.observations } };
     s.pool = { ...snapshot.pool, recentDistributions: snapshot.pool.recentDistributions.map((c) => ({ ...c })) };
@@ -511,6 +549,17 @@ export class WorldState {
     // balance, so the invariant counts it explicitly or every node payout would
     // look like a supply mismatch. There are no bonds in 1.9.0: nothing is ever locked.
     sum += this.s.nodeRewards.balance;
+    // Marketplace escrow is protocol-held value too: it left the offer maker's balance when the offer was made and
+    // returns to the maker or reaches the seller when the offer settles. It must equal the pending offers exactly.
+    sum += this.s.market.escrowBalance;
+    let pending = 0n;
+    for (const offer of this.s.offers.values()) if (offer.status === 'PENDING') pending += offer.amount;
+    if (pending !== this.s.market.escrowBalance) {
+      return {
+        ok: false,
+        reason: `escrow mismatch: held=${this.s.market.escrowBalance} pending offers=${pending}`,
+      };
+    }
     if (sum !== this.s.metrics.totalSupply) {
       return {
         ok: false,
@@ -627,6 +676,84 @@ export class WorldState {
     const oldest = currentPeriod - CONSENSUS_PARAMS.nodeRewards.evidenceWindowPeriods;
     for (const [key, record] of this.s.nodeEvidence) {
       if (record.period < oldest) this.s.nodeEvidence.delete(key);
+    }
+  }
+
+  // ── ONS Marketplace ───────────────────────────────────────────────────────
+  //
+  // Escrow is a protocol balance, not an account: funds leave the offer maker's spendable balance when the offer is
+  // made, so no transaction can spend them, and they re-enter an account only through `escrowRelease`, which every
+  // terminal offer transition calls exactly once (a settled offer is never PENDING again).
+
+  offer(id: string): MarketOffer | undefined {
+    return this.s.offers.get(id);
+  }
+
+  putOffer(offer: MarketOffer): void {
+    this.s.offers.set(offer.id, offer);
+    indexOffer(this.s, offer);
+  }
+
+  /** Offers of one name in a given status (all statuses when omitted), oldest first by id order of creation. */
+  offersForName(name: string, status?: MarketOffer['status']): MarketOffer[] {
+    const ids = this.s.offersByName.get(name);
+    if (!ids) return [];
+    const out: MarketOffer[] = [];
+    for (const id of ids) {
+      const offer = this.s.offers.get(id);
+      if (offer && (!status || offer.status === status)) out.push(offer);
+    }
+    return out.sort((a, b) => a.createdAtHeight - b.createdAtHeight || (a.id < b.id ? -1 : 1));
+  }
+
+  offersByMaker(maker: string, status?: MarketOffer['status']): MarketOffer[] {
+    const ids = this.s.offersByMaker.get(maker);
+    if (!ids) return [];
+    const out: MarketOffer[] = [];
+    for (const id of ids) {
+      const offer = this.s.offers.get(id);
+      if (offer && (!status || offer.status === status)) out.push(offer);
+    }
+    return out.sort((a, b) => a.createdAtHeight - b.createdAtHeight || (a.id < b.id ? -1 : 1));
+  }
+
+  /** Move `amount` from the maker's spendable balance into escrow. Throws on insufficient funds, leaving no trace. */
+  escrowLock(maker: string, amount: bigint, ctx: ApplyContext, reason: string): void {
+    this.debit(maker, amount, ctx, reason);
+    this.s.market.escrowBalance += amount;
+    this.delta('CREDIT', 'market.escrowBalance', amount.toString(), reason);
+  }
+
+  /** Release `amount` from escrow to `to`. Only the terminal offer transitions call this. */
+  escrowRelease(to: string, amount: bigint, ctx: ApplyContext, reason: string): void {
+    if (amount <= 0n) reject(ErrCode.AMOUNT_ZERO, 'escrow release must be positive');
+    if (this.s.market.escrowBalance < amount) {
+      reject(ErrCode.INTERNAL, 'escrow cannot cover this release', {
+        held: this.s.market.escrowBalance.toString(),
+        requested: amount.toString(),
+      });
+    }
+    this.s.market.escrowBalance -= amount;
+    this.delta('DEBIT', 'market.escrowBalance', amount.toString(), reason);
+    this.credit(to, amount, ctx, reason);
+  }
+
+  /** Total escrowed by one maker across their PENDING offers (their locked balance). */
+  escrowLockedBy(maker: string): bigint {
+    let total = 0n;
+    for (const offer of this.offersByMaker(maker, 'PENDING')) total += offer.amount;
+    return total;
+  }
+
+  /** Drop settled offers older than the retention window (bounded state; the chain's events keep the history). */
+  pruneOffers(now: number): void {
+    const cutoff = now - CONSENSUS_PARAMS.ons.market.offerRetentionSeconds;
+    for (const [id, offer] of [...this.s.offers]) {
+      if (offer.status !== 'PENDING' && (offer.resolvedAt ?? offer.createdAt) < cutoff) {
+        this.s.offers.delete(id);
+        this.s.offersByName.get(offer.name)?.delete(id);
+        this.s.offersByMaker.get(offer.maker)?.delete(id);
+      }
     }
   }
 
@@ -748,6 +875,15 @@ export class WorldState {
     this.s.metrics.activeMiners = count;
     return count;
   }
+}
+
+function indexOffer(s: MutableState, offer: MarketOffer): void {
+  let byName = s.offersByName.get(offer.name);
+  if (!byName) s.offersByName.set(offer.name, (byName = new Set()));
+  byName.add(offer.id);
+  let byMaker = s.offersByMaker.get(offer.maker);
+  if (!byMaker) s.offersByMaker.set(offer.maker, (byMaker = new Set()));
+  byMaker.add(offer.id);
 }
 
 function cloneAccount(account: Account): Account {

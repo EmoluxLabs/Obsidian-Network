@@ -40,7 +40,7 @@ async function setup() {
     lookup: null as null | ((name: string) => unknown),
   };
   const client: any = {
-    health: async () => ({ network: world.network, chainId: world.chainId, protocolVersion: '1.9.0', syncing: false, height: 5 }),
+    health: async () => ({ network: world.network, chainId: world.chainId, protocolVersion: '2.0.0', syncing: false, height: 5 }),
     pot: async () => ({ protocolTime: NOW }),
     status: async () => ({ lastBlockTimestamp: NOW, height: 5 }),
     nextNonce: async () => 0,

@@ -27,6 +27,7 @@ import type { NetworkDefinition } from '../protocol/networks.js';
 import { validateTxStructure, decodeSignedTx } from '../transactions/encode.js';
 import { executeTransaction } from '../transactions/index.js';
 import { processNameExpiry } from '../transactions/executors/ons.js';
+import { processMarketRoutine } from '../economy/market.js';
 import { processNodeRewardRoutine } from '../economy/settlement.js';
 import { processProducerBookkeeping } from '../consensus/producers.js';
 import { processFinality } from '../consensus/finality.js';
@@ -157,6 +158,8 @@ export function runBlockRoutines(
     counters: { registrations: 0, equivocationReports: 0 },
   };
   processNameExpiry(routineContext);
+  // Marketplace offers lapse, or are refunded when their name left the registry, in the block that causes it.
+  processMarketRoutine(state, routineContext.apply);
   // Producer bookkeeping first: liveness and suspension feed the reward weights and the finality base.
   processProducerBookkeeping(state, routineContext.apply, options.missedProducers ?? []);
   // Proof of Time node rewards settle by period, inside consensus, with no

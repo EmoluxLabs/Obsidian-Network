@@ -71,6 +71,12 @@ export enum TxType {
    * account decide nothing and no gas is paid (see src/mining/gate-authority.ts).
    */
   GATE_AUTHORITY = 13,
+  /**
+   * ONS Marketplace (protocol 2.0.0): fixed-price listings, purchases, and owner-directed offers with protocol escrow.
+   * Every operation is signed by the account that performs it and carries standard gas where value enters the
+   * protocol (a purchase, an offer); see src/transactions/executors/marketplace.ts and docs/marketplace-v2.0.0.md.
+   */
+  ONS_MARKET = 14,
 }
 
 /** Operations inside a GATE_AUTHORITY transaction. */
@@ -175,6 +181,82 @@ export enum OnsOp {
   CANCEL_RECOVERY = 9,
   /** The recovery address completes a recovery once its delay has passed. */
   FINALIZE_RECOVERY = 10,
+}
+
+/** Operations inside an ONS_MARKET transaction. Numbers are part of the wire format and are never reused. */
+export enum MarketOp {
+  /** The owner lists the name for a fixed price. Locks the name; voids and refunds any pending offers. */
+  LIST = 1,
+  /** The owner changes the price of an active listing. */
+  UPDATE_PRICE = 2,
+  /** The owner removes the listing and gets ordinary use of the name back. */
+  DELIST = 3,
+  /** A buyer pays the listed price; payment and ownership move in the same state transition. */
+  BUY = 4,
+  /** A buyer offers an amount for an owned, unlisted name; the amount moves into protocol escrow at once. */
+  OFFER = 5,
+  /** The owner accepts one pending offer: name to the offer maker, escrow to the owner, atomically. */
+  ACCEPT_OFFER = 6,
+  /** The owner declines one pending offer: escrow returns to the offer maker. */
+  DECLINE_OFFER = 7,
+  /** The offer maker withdraws a pending offer: escrow returns to the offer maker. */
+  CANCEL_OFFER = 8,
+}
+
+export interface MarketBody {
+  op: MarketOp;
+  name: string;
+  /** LIST/UPDATE_PRICE: the price. BUY: the price the buyer expects. OFFER: the offered amount. ACCEPT_OFFER: the amount accepted. */
+  amount: bigint;
+  /** BUY: the seller the buyer expects. OFFER: the owner the offer is addressed to. Empty otherwise. */
+  counterparty: string;
+  /** ACCEPT_OFFER / DECLINE_OFFER / CANCEL_OFFER: the offer id (the id of the transaction that created it). */
+  offerId: string;
+}
+
+/** An active fixed-price listing. It lives on the name record, so a name can never have two. */
+export interface MarketListing {
+  /** Price in seals. */
+  price: bigint;
+  /** The owner who listed it; always equal to the record's owner while the listing exists. */
+  seller: string;
+  listedAt: ProtocolTimeSeconds;
+  listedAtHeight: number;
+}
+
+export type MarketOfferStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED' | 'EXPIRED' | 'INVALIDATED';
+
+/**
+ * An owner-directed offer. `amount` is held in protocol escrow while the status is PENDING and is released exactly
+ * once when the status leaves it. The record is kept after settlement as the audit trail.
+ */
+export interface MarketOffer {
+  /** The id of the transaction that created the offer. */
+  id: string;
+  name: string;
+  maker: string;
+  /** The owner of the name when the offer was made (and the only address that may accept or decline it). */
+  owner: string;
+  amount: bigint;
+  status: MarketOfferStatus;
+  createdAt: ProtocolTimeSeconds;
+  createdAtHeight: number;
+  expiresAt: ProtocolTimeSeconds;
+  resolvedAt?: ProtocolTimeSeconds;
+  resolvedAtHeight?: number;
+  /** Who or what ended it: an address for accept/decline/cancel, or LISTED / OWNER_CHANGED / NAME_EXPIRED / OFFER_EXPIRED. */
+  resolvedBy?: string;
+  resolvedTxId?: string;
+}
+
+/** Committed marketplace accounting. `escrowBalance` is exactly the sum of the amounts of the PENDING offers. */
+export interface MarketState {
+  escrowBalance: bigint;
+  listingsCreated: number;
+  salesCount: number;
+  salesVolume: bigint;
+  offersMade: number;
+  offersAccepted: number;
 }
 
 export interface OnsBody {
@@ -381,6 +463,8 @@ export interface OnsRecord {
   recoveryAddress?: string;
   /** A recovery in flight. It takes effect only at `effectiveAt`, and the current owner may cancel until then. */
   pendingRecovery?: { by: string; newAddress: string; startedAt: ProtocolTimeSeconds; effectiveAt: ProtocolTimeSeconds };
+  /** An active Marketplace listing (protocol 2.0.0). While it exists the owner cannot use or manage the name. */
+  listing?: MarketListing;
 }
 
 export interface OracleObservation {
@@ -610,8 +694,8 @@ export interface ProtocolEvent {
 
 export interface StateSnapshot {
   /**
-   * Lossless snapshot format. 1.9.0 uses format 6 (producer schedule fields on node records, ONS transfer and
-   * recovery fields, no validator state); older snapshots are refused rather than partially read.
+   * Lossless snapshot format. 2.0.0 uses format 7 (format 6 plus the Marketplace listing, offer table and escrow
+   * counters; 6 was producer schedule fields on node records, ONS transfer and recovery fields, no validator state); older snapshots are refused rather than partially read.
    */
   snapshotVersion?: number;
   /** Network identity fields make cross-network restores fail closed. */
@@ -631,6 +715,9 @@ export interface StateSnapshot {
   accounts: Record<string, Account>;
   genesis: GenesisState;
   names: Record<string, OnsRecord>;
+  /** Marketplace offers of every status still retained, keyed by offer id. */
+  offers: Record<string, MarketOffer>;
+  market: MarketState;
   oracle: OracleState;
   pool: MiningPoolState;
   metrics: Metrics;

@@ -14,6 +14,7 @@
  * the stored blocks — see {@link Indexer.reconcile}.
  */
 
+import { decodeMarketBody, marketOpName } from '../transactions/executors/marketplace.js';
 import { appendLineSync, atomicWriteFile, readJsonLines } from '../storage/atomic.js';
 import { join } from 'node:path';
 import type { Block, ProtocolEvent, TxEnvelope } from '../protocol/types.js';
@@ -376,6 +377,16 @@ function describeTx(tx: TxEnvelope): Partial<TxIndexRecord> {
           amount: body.fee > 0n ? body.fee.toString() : undefined,
           kind: `ONS_${onsOpName(body.op)}`,
           reference: `${body.name}.obs`,
+        };
+      }
+      case TxType.ONS_MARKET: {
+        const body = decodeMarketBody(tx.body);
+        return {
+          recipient: body.counterparty || undefined,
+          amount: body.amount > 0n ? body.amount.toString() : undefined,
+          kind: `MARKET_${marketOpName(body.op)}`,
+          reference: `${body.name}.obs`,
+          note: body.offerId ? `offer ${body.offerId.slice(0, 16)}` : undefined,
         };
       }
       case TxType.ORACLE: {

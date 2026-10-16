@@ -105,6 +105,12 @@ export enum ErrCode {
   /** ONS transfer / recovery state machine. */
   NAME_TRANSFER_STATE = 'ERR_NAME_TRANSFER_STATE',
   NAME_RECOVERY_STATE = 'ERR_NAME_RECOVERY_STATE',
+  /** The name has an active Marketplace listing: the owner cannot use or manage it until the listing ends. */
+  NAME_LISTED = 'ERR_NAME_LISTED',
+  /** A Marketplace action does not match the current listing or offer state (not listed, already sold, already settled). */
+  MARKET_STATE = 'ERR_MARKET_STATE',
+  /** The price or amount in the transaction is not the one currently on the listing or offer (a stale view). */
+  MARKET_PRICE_MISMATCH = 'ERR_MARKET_PRICE_MISMATCH',
 
   // Fees
   GAS_REQUIRED = 'ERR_GAS_REQUIRED',
@@ -202,6 +208,9 @@ export const ERR_MESSAGES: Record<ErrCode, string> = {
   [ErrCode.EQUIVOCATION_INVALID]: 'The equivocation evidence does not prove two conflicting blocks signed by this node.',
   [ErrCode.NAME_TRANSFER_STATE]: 'The name has no matching open transfer offer for this action.',
   [ErrCode.NAME_RECOVERY_STATE]: 'The name has no matching recovery for this action.',
+  [ErrCode.NAME_LISTED]: 'This name is listed on the ONS Marketplace and is locked until the listing is removed or the name is sold.',
+  [ErrCode.MARKET_STATE]: 'The Marketplace listing or offer is not in a state that allows this action.',
+  [ErrCode.MARKET_PRICE_MISMATCH]: 'The price or amount does not match the current Marketplace listing or offer.',
   [ErrCode.GAS_REQUIRED]: 'Transaction does not carry the protocol-required gas.',
   [ErrCode.INTERNAL]: 'Internal node error.',
   [ErrCode.RATE_LIMITED]: 'Rate limit exceeded.',
