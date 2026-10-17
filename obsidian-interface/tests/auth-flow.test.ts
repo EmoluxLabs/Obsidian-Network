@@ -40,8 +40,8 @@ afterAll(() => {
 
 // ── known answers, computed outside the code under test ─────────────────────
 const VECTOR_ASCII = {
-  password: 'Synthetic-Fixture-Passw0rd',
-  stored: 'scrypt$32768$8$1$00112233445566778899aabbccddeeff$1b1ccc00ed3309a5088738636a8b4d092ba567b9be3ba770eec87bca805a5ff9',
+  password: 'Synthetic-Fixture-Pw-0',
+  stored: 'scrypt$32768$8$1$00112233445566778899aabbccddeeff$25b8b1a18624fb92f01ca6a6c83db69975eec26b3b67c984642a053100c5feff',
 };
 const VECTOR_UNICODE = {
   // 'ｆｕｌｌｗｉｄｔｈ' is fullwidth: NFKC folds it to 'fullwidth', and the hash was made over the folded text.
@@ -68,7 +68,7 @@ describe('password hashing: format, known answers, normalisation', () => {
   });
 
   it('the sync and async implementations are interchangeable in both directions', async () => {
-    const password = 'Interchangeable-Synthetic-2';
+    const password = 'Interchangeable-Synth-2';
     expect(await verifySecretAsync(password, hashSecret(password))).toBe(true);
     expect(verifySecret(password, await hashSecretAsync(password))).toBe(true);
   });

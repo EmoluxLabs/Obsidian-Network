@@ -196,7 +196,7 @@ if (buildDir) {
   if (loaded) {
     // The installed verifier must agree with a plain computation on a known answer. (Invented credentials, public.)
     const vector = {
-      password: 'Synthetic-Fixture-Passw0rd',
+      password: 'Synthetic-Fixture-Pw-0',
       stored: 'scrypt$32768$8$1$00112233445566778899aabbccddeeff$1b1ccc00ed3309a5088738636a8b4d092ba567b9be3ba770eec87bca805a5ff9',
     };
     const ok = await loaded.verifySecretAsync(vector.password, vector.stored).catch(() => false);
