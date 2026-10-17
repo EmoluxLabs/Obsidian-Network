@@ -29,7 +29,18 @@ verified correct end to end, so the production cause is not established from the
 - A failed disk write during registration no longer leaves a ghost account in memory or marks the Genesis Invitation spent;
   the half-made account is removed and the same invitation still works.
 
+- The invitation list shows each code spelled as it was issued (`XXXX-XXXX-XXXX-XXXX`); it used to return the store's
+  normalised form, so the same invitation had two spellings on the platform and the app depending on when it was looked at.
+
+### Changed (tests)
+- `e2e-cross-product.mjs`: the names part runs only when `FUNDER_PHRASE` (default: the standard test phrase) holds enough
+  to pay a registration fee, and says `SKIPPED` otherwise. Genesis allocates nothing, so a fresh development network has
+  no such wallet; the part used to fail with an insufficient-funds error that said nothing about the code under test.
+
 ### Added
+- `obsidian-app-web/tests/e2e-accounts-everywhere.mjs` and `e2e-browser-accounts.mjs`: one account across the platform and
+  the web app (every account route, then the real pages in a browser), and the wallet site's closed account API. See
+  [docs/web-separation.md](docs/web-separation.md).
 - `obsidian-interface/scripts/auth-diagnose.mjs`: a read-only check of the accounts file, the installed build and (at a hidden
   prompt) a typed password, that prints no secret and changes nothing.
 - Tests: `auth-flow` and `auth-diagnose` (interface), `signin-errors` (app front).

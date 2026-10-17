@@ -474,12 +474,19 @@ async function forgeClaim(w, label) {
 // ═════════════════════════════════════════════════════════════════════════════
 // 5. NAMES — one registry
 // ═════════════════════════════════════════════════════════════════════════════
-{
-  // The funded wallet: the standard test phrase holds the devnet genesis allocation.
+const FUNDER_PHRASE = process.env.FUNDER_PHRASE ?? STANDARD_PHRASE;
+const funderAddress = signing.walletFromPhrase(FUNDER_PHRASE, HRP).address;
+const funderBalance = await data.getBalance(funderAddress).then((b) => BigInt(b?.balanceSeals ?? 0), () => 0n);
+// Genesis allocates nothing to anyone, and a mining claim pays a thousandth of an OBS while a name costs fifty times
+// that, so a fresh development network has no wallet that can pay for a name. Names are checked when one is given.
+if (funderBalance < ops.parseObs((await data.getParams()).ons.registrationFeeObs) + ops.parseObs('0.02')) {
+  say(`names:    SKIPPED — the wallet for FUNDER_PHRASE (${funderAddress.slice(0, 12)}…) cannot pay a registration fee on this network; set FUNDER_PHRASE to a funded wallet to run this part`);
+} else {
+  // The funded wallet.
   store.clear();
-  const funded = await platform.Wallet.fromPhrase(STANDARD_PHRASE, HRP, PASS);
+  const funded = await platform.Wallet.fromPhrase(FUNDER_PHRASE, HRP, PASS);
   store.clear();
-  await appWallet.setupWallet({ phrase: STANDARD_PHRASE, passphrase: PASS });
+  await appWallet.setupWallet({ phrase: FUNDER_PHRASE, passphrase: PASS });
   const fee = (await data.getParams()).ons.registrationFeeObs;
   const tag = Date.now().toString(36).replace(/[^a-z0-9]/g, '');
 
@@ -516,7 +523,7 @@ async function forgeClaim(w, label) {
   // forced past the app's check, straight to the chain
   const status = await data.getStatus();
   const forgedBytes = signing.sign({
-    wallet: signing.walletFromPhrase(STANDARD_PHRASE, HRP),
+    wallet: signing.walletFromPhrase(FUNDER_PHRASE, HRP),
     chainId: net.chainId,
     protocolVersion: status.protocolVersion,
     nonce: await appWallet.getNonce(funded.address),

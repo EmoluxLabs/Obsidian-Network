@@ -316,6 +316,20 @@ describe('registration and sign-in with the same password', () => {
     expect(h.store.accountCount).toBe(1);
   });
 
+  it('an invitation is spelled the same when it is issued and when it is listed, and either spelling registers an account', async () => {
+    const h = await boot();
+    await register(h);
+    const cookie = cookieOf(await login(h));
+    const issued = ((await bodyOf(await post(h, '/api/auth/invites', {}, { cookie }))).invite as { code: string }).code;
+    expect(issued).toMatch(/^[A-Z2-9]{4}(-[A-Z2-9]{4}){3}$/);
+    const listing = await fetch(`${h.origin}/api/auth/invites`, { headers: { cookie } });
+    const listed = ((await bodyOf(listing)).invites as Array<{ code: string }>).map((i) => i.code);
+    expect(listed).toEqual([issued]);
+    // The store keys on the normalised form, so the dashed spelling, the bare one and a sloppy one are the same code.
+    const bare = issued.replace(/-/g, '').toLowerCase();
+    expect((await post(h, '/api/auth/register', { email: 'listed.synthetic.one@gmail.com', password: PASSWORD, inviteCode: bare })).status).toBe(200);
+  });
+
   it('Unicode passwords: the form the user typed at registration, and its NFKC equivalents, sign in; nothing else does', async () => {
     const h = await boot();
     const typed = 'Pässwörd-ｆｕｌｌｗｉｄｔｈ-9';

@@ -130,6 +130,45 @@ starts a service, and never touches chain data, wallets, keystores or genesis.
 * None of the three uses WebSockets, so no `Upgrade` handling is configured.
 * The platform's own `/mine/`, `/wallet/` and `/app/` pages remain part of the main platform; `/` is the landing page.
 
+## One account on every site: what is shared, and how to check it
+
+| | Platform (`obsmainnet.us.ci`) | Web App (`app.`) | Wallet web app (`wallet.`) |
+| --- | --- | --- | --- |
+| Register, sign in, second factor, invitations, recovery, link a wallet | its own pages | its own screens, through the app server's proxy | **none, by design** |
+| Where the account lives | the platform's account store | the same one (the app holds no state) | not used |
+| Session | cookie of that hostname | cookie of that hostname | none: the vault unlocks with a local password |
+
+What that means for a person, and what the checks below assert:
+
+* An account created on the platform signs in on the app, and one created on the app signs in on the platform, under any
+  spelling of the same Gmail inbox (case, dots, `+tag`, `googlemail.com`).
+* A second factor enrolled on one site is demanded and accepted on the other. A right password with no code is answered
+  `ERR_MFA_REQUIRED` (HTTP 401, like a wrong password, told apart only by `code`); the app says "code needed", not "wrong password".
+* An invitation issued on one site is listed on the other (spelled as issued) and registers an account on either; once
+  spent it is spent on both. A registered inbox is refused on both.
+* A wallet linked from one site is the account's wallet on the other; a second wallet and another account's wallet are refused.
+* Spending a recovery code on one site sets the password for all of them, clears the second factor, and ends every session
+  open on any site. Signing out of one site leaves the others' sessions alone, because cookies are per hostname.
+* The wallet web app serves no account route. A wallet made there is used on the other sites through its recovery phrase,
+  which derives the same address everywhere; vaults are per browser origin and are not shared.
+
+Run against a development network (a platform on a fresh data directory, because the first account consumes the genesis
+invitation; the platform, the app and the wallet site on **different hostnames**, because cookies ignore ports):
+
+```bash
+cd obsidian-app-web
+# every account route, through each site's own origin and cookie jar
+PLATFORM_URL=http://127.0.0.1:38788 APP_URL=http://127.0.0.1:38790 WALLET_URL=http://127.0.0.1:38791 \
+  GENESIS_CODE=OBS-GENESIS-XXXX-XXXX-XXXX-XXXX node tests/e2e-accounts-everywhere.mjs
+# the same, in a real browser, through the pages people use (npm i --no-save puppeteer-core @sparticuz/chromium)
+PLATFORM_URL=http://platform.localhost:38788 APP_URL=http://app.localhost:38790 WALLET_URL=http://wallet.localhost:38791 \
+  GENESIS_CODE=OBS-GENESIS-XXXX-XXXX-XXXX-XXXX node tests/e2e-browser-accounts.mjs
+```
+
+`obsidian-app-web/tests/e2e-cross-product.mjs` adds a real chain: claims and names made through either product are on the one ledger.
+Behind nginx, `APP_TRUST_PROXY=true` and `OBSIDIAN_INTERFACE_TRUST_PROXY=true` must both be set, or every visitor shares one
+rate-limit address.
+
 ## What a failure looks like
 
 | Symptom | Likely cause | Check |

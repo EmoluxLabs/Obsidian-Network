@@ -21,6 +21,16 @@ export function newSecret(bytes = 32): string {
 }
 
 /** Human-friendly invite code: unambiguous alphabet, grouped for readability. */
+/**
+ * An invitation as people read and copy it: groups of four, as it was issued. The store keeps the normalised form (no
+ * dashes, upper case) so that however a code is typed it is the same code; a list that handed that form back showed
+ * the same invitation under two different spellings, depending on whether it was just issued or listed later.
+ */
+export function displayInviteCode(code: string): string {
+  const bare = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return bare.length === 16 ? (bare.match(/.{4}/g) as string[]).join('-') : bare;
+}
+
 export function newInviteCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = randomBytes(16);

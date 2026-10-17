@@ -25,7 +25,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path';
 import { AccountStore, provenWallet, type Account } from './store.js';
 import { FencingError, FileLeaseBackend, LeaderElector } from './lease.js';
 import { PrimaryDiscovery } from './primary-discovery.js';
-import { newInviteCode, newSecret } from './auth.js';
+import { displayInviteCode, newInviteCode, newSecret } from './auth.js';
 import { NodePool } from './nodes.js';
 import type { GateIssuer } from './gate-issuer.js';
 import { KeyedLimiter, clientBucket } from './rate-limit.js';
@@ -835,7 +835,7 @@ export class InterfaceServer {
       const account = this.requireSession(request, response);
       if (!account) return;
       this.json(response, 200, {
-        invites: this.dependencies.store.listInvites(account.accountId),
+        invites: this.dependencies.store.listInvites(account.accountId).map((invite) => ({ ...invite, code: displayInviteCode(invite.code) })),
         issued: this.dependencies.store.countIssued(account.accountId),
         limit: this.config.maxInvitesPerAccount,
       });
