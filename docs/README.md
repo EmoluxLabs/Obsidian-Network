@@ -44,6 +44,7 @@ less than you might hope, which are called out explicitly rather than buried.
 | [upgrading-2.0.0.md](upgrading-2.0.0.md) | Moving to 2.0.0: a new genesis with no migration, what changed for each reader, a fresh devnet and a Marketplace walk-through |
 | [upgrading-2.0.2.md](upgrading-2.0.2.md) | Moving to 2.0.2: the consensus changes (minimum gas and transfer, two-slot future drift), a new genesis, what to check |
 | [attack-campaign-2.0.2.md](attack-campaign-2.0.2.md) | The five-round attack campaign: what worked against 2.0.1, what stops it now, and the one attack class that is still open (Sybil nodes) |
+| [auth-incident-2.0.2.md](auth-incident-2.0.2.md) | Sign-in refused after registration on mainnet: what was verified, the three defects fixed, a read-only diagnosis tool, and the reviewed deployment and rollback plan |
 | [upgrading-2.0.1.md](upgrading-2.0.1.md) | Moving to 2.0.1: the two consensus fixes (registration inside the grace period, canonical recipient addresses), a new genesis, what to check |
 | [upgrading-1.9.0.md](upgrading-1.9.0.md) | Moving to 1.9.0: a fresh start with no migration, what changed for each reader, a fresh devnet step by step, how to check that nodes agree |
 | [consensus-v1.9.0.md](consensus-v1.9.0.md) | The consensus specification: slots, producer schedule, eligibility, timestamps, skipped slots, duplicate blocks, fork choice, equivocation, recovery, Sybil limits, and what the tests establish |

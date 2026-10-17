@@ -402,7 +402,16 @@ export class AccountStore {
     };
     this.accounts.set(account.accountId, account);
     this.byCanonicalEmail.set(account.canonicalEmail, account.accountId);
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      // The write failed (disk full, read-only mount, a lost lease): the account must not exist in memory either. Left
+      // there, it could sign in until the next restart and then vanish, and — if it was the first account — it would
+      // make every later attempt look like a non-first registration that the Genesis Invitation can no longer open.
+      this.accounts.delete(account.accountId);
+      if (this.byCanonicalEmail.get(account.canonicalEmail) === account.accountId) this.byCanonicalEmail.delete(account.canonicalEmail);
+      throw error;
+    }
     return account;
   }
 
@@ -538,7 +547,13 @@ export class AccountStore {
     if (!invite) return;
     invite.acceptedBy = accountId;
     invite.acceptedAt = Date.now();
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      invite.acceptedBy = undefined;
+      invite.acceptedAt = undefined;
+      throw error;
+    }
   }
 
   countIssued(accountId: string): number {
@@ -637,7 +652,14 @@ export class AccountStore {
     // One-way transition. Written to disk before the caller can act on it.
     record.redeemedBy = accountId;
     record.redeemedAt = Date.now();
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      // Not durable means not redeemed: memory must not claim a spend the disk does not hold.
+      record.redeemedBy = undefined;
+      record.redeemedAt = undefined;
+      throw error;
+    }
     return { ok: true };
   }
 

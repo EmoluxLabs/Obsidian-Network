@@ -1120,6 +1120,32 @@ export class InterfaceServer {
     // Everything from here to the answer is synchronous: the invitation is spent
     // in the same breath as the account is created, so two simultaneous
     // registrations cannot both win it.
+    try {
+      this.spendInvitation(store, account, inviteCode, isFirstAccount, response);
+    } catch (error) {
+      // A failed write here would leave a stored account whose recovery codes were never shown to anyone. Take the
+      // account back out (best effort: the disk may still be failing) and let the visitor try again.
+      try {
+        store.deleteAccount(account.accountId);
+      } catch {
+        /* the original failure is the one worth reporting */
+      }
+      throw error;
+    }
+    if (response.writableEnded) return;
+
+    // The only time these codes exist in plaintext. They are not stored, not
+    // logged and cannot be re-displayed.
+    this.admit(request, response, account, {
+      recoveryCodes: recovery.codes,
+      recoveryCodesWarning:
+        'Write these down offline now. They are shown once, they are the only way to recover this mining account, and no one can reissue them.',
+      nextStep: 'SET_UP_MFA',
+    });
+  }
+
+  /** Spend the invitation for a just-created account. Answers the request itself (and returns) if the invitation is not valid. */
+  private spendInvitation(store: AccountStore, account: Account, inviteCode: string, isFirstAccount: boolean, response: ServerResponse): void {
     if (isFirstAccount) {
       const redemption = store.redeemGenesisInvite(inviteCode, account.accountId);
       if (!redemption.ok) {
@@ -1145,15 +1171,6 @@ export class InterfaceServer {
       }
       store.markInviteAccepted(invite.code, account.accountId);
     }
-
-    // The only time these codes exist in plaintext. They are not stored, not
-    // logged and cannot be re-displayed.
-    this.admit(request, response, account, {
-      recoveryCodes: recovery.codes,
-      recoveryCodesWarning:
-        'Write these down offline now. They are shown once, they are the only way to recover this mining account, and no one can reissue them.',
-      nextStep: 'SET_UP_MFA',
-    });
   }
 
   /** Sign in with Gmail + password, then MFA if it is enabled. */
@@ -1161,7 +1178,26 @@ export class InterfaceServer {
     if (!this.throttle(request, response, this.authLimiter, 'auth')) return;
     const body = await this.readJson<{ email?: string; password?: string; totp?: string }>(request);
     const store = this.dependencies.store;
-    const identity = canonicalGmail(body?.email ?? '');
+    // A request that is not a sign-in at all — an empty or cut-off body, something that is not JSON, an email or password
+    // that is not text — is said to be malformed. It used to fall through to the "credentials are not valid" answer, so a
+    // proxy that dropped the body, or a client that sent the wrong shape, looked exactly like a wrong password and sent
+    // the user (and whoever was diagnosing it) hunting in the wrong place. This depends only on the shape of the request,
+    // never on whether the account exists, so it reveals nothing about any account.
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      Array.isArray(body) ||
+      typeof body.email !== 'string' ||
+      typeof body.password !== 'string' ||
+      (body.totp !== undefined && body.totp !== null && typeof body.totp !== 'string')
+    ) {
+      this.json(response, 400, {
+        error: 'the sign-in request was empty or malformed: it must be a JSON body with an email and a password',
+        code: 'ERR_BAD_REQUEST',
+      });
+      return;
+    }
+    const identity = canonicalGmail(body.email);
 
     // One answer for "no such account" and "wrong password", so the endpoint
     // cannot be used to discover which Gmail addresses are registered. The TIME

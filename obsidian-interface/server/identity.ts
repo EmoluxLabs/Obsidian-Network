@@ -111,36 +111,63 @@ export function hashSecret(secret: string): string {
   return `scrypt$${SCRYPT_N}$${SCRYPT_R}$${SCRYPT_P}$${salt.toString('hex')}$${derived.toString('hex')}`;
 }
 
+/** A stored hash, taken apart. Only strictly well-formed records are ever parsed; anything else is not a credential. */
+interface ParsedHash {
+  n: number;
+  r: number;
+  p: number;
+  salt: Buffer;
+  expected: Buffer;
+}
+
+/** Shortest salt / derived key a stored record may carry. Hashes this code writes are 16 and 32 bytes. */
+const MIN_SALT_BYTES = 8;
+const MIN_KEY_BYTES = 16;
+
+/**
+ * Take a `scrypt$N$r$p$<salt hex>$<hash hex>` record apart, or return null.
+ *
+ * `Buffer.from(text, 'hex')` does not reject bad hex: it silently stops at the first invalid pair and drops an odd
+ * trailing digit. A record cut short by a damaged file therefore parsed as a shorter, weaker one, and the comparison then
+ * only covered the bytes that survived (one byte accepts one wrong password in 256). A record is now used only if
+ * its fields are whole decimal integers and its salt and hash are complete, even-length hex of a sane size.
+ */
+function parseStoredHash(stored: string | undefined | null): ParsedHash | null {
+  if (typeof stored !== 'string') return null;
+  const parts = stored.split('$');
+  if (parts.length !== 6 || parts[0] !== 'scrypt') return null;
+  const [, nText, rText, pText, saltHex, hashHex] = parts as [string, string, string, string, string, string];
+  for (const field of [nText, rText, pText]) if (!/^[0-9]{1,9}$/.test(field)) return null;
+  const isHex = (text: string): boolean => text.length > 0 && text.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(text);
+  if (!isHex(saltHex) || !isHex(hashHex)) return null;
+  const salt = Buffer.from(saltHex, 'hex');
+  const expected = Buffer.from(hashHex, 'hex');
+  if (salt.length < MIN_SALT_BYTES || expected.length < MIN_KEY_BYTES) return null;
+  const n = Number(nText);
+  const r = Number(rText);
+  const p = Number(pText);
+  // Node reads a parallelisation of 0 as 1, so `...$8$0$...` verified; a record that says 0 is not one this code wrote.
+  if (n < 2 || r < 1 || p < 1) return null;
+  return { n, r, p, salt, expected };
+}
+
 /** Constant-time verification. Malformed or unknown records return false. */
 export function verifySecret(secret: string, stored: string | undefined | null): boolean {
-  if (typeof secret !== 'string' || typeof stored !== 'string') return false;
-  const parts = stored.split('$');
-  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
-  const n = Number(parts[1]);
-  const r = Number(parts[2]);
-  const p = Number(parts[3]);
-  if (!Number.isInteger(n) || !Number.isInteger(r) || !Number.isInteger(p)) return false;
-  let salt: Buffer;
-  let expected: Buffer;
-  try {
-    salt = Buffer.from(parts[4], 'hex');
-    expected = Buffer.from(parts[5], 'hex');
-  } catch {
-    return false;
-  }
-  if (salt.length === 0 || expected.length === 0) return false;
+  if (typeof secret !== 'string') return false;
+  const parsed = parseStoredHash(stored);
+  if (!parsed) return false;
   let derived: Buffer;
   try {
-    derived = scryptSync(secret.normalize('NFKC'), salt, expected.length, {
-      N: n,
-      r,
-      p,
+    derived = scryptSync(secret.normalize('NFKC'), parsed.salt, parsed.expected.length, {
+      N: parsed.n,
+      r: parsed.r,
+      p: parsed.p,
       maxmem: SCRYPT_MAXMEM,
     });
   } catch {
     return false;
   }
-  return derived.length === expected.length && timingSafeEqual(derived, expected);
+  return derived.length === parsed.expected.length && timingSafeEqual(derived, parsed.expected);
 }
 
 /**
@@ -169,19 +196,12 @@ export async function hashSecretAsync(secret: string): Promise<string> {
 }
 
 export async function verifySecretAsync(secret: string, stored: string | undefined | null): Promise<boolean> {
-  if (typeof secret !== 'string' || typeof stored !== 'string') return false;
-  const parts = stored.split('$');
-  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
-  const n = Number(parts[1]);
-  const r = Number(parts[2]);
-  const p = Number(parts[3]);
-  if (!Number.isInteger(n) || !Number.isInteger(r) || !Number.isInteger(p)) return false;
-  const salt = Buffer.from(parts[4]!, 'hex');
-  const expected = Buffer.from(parts[5]!, 'hex');
-  if (salt.length === 0 || expected.length === 0) return false;
+  if (typeof secret !== 'string') return false;
+  const parsed = parseStoredHash(stored);
+  if (!parsed) return false;
   try {
-    const derived = await scryptAsync(secret, salt, expected.length, n, r, p);
-    return derived.length === expected.length && timingSafeEqual(derived, expected);
+    const derived = await scryptAsync(secret, parsed.salt, parsed.expected.length, parsed.n, parsed.r, parsed.p);
+    return derived.length === parsed.expected.length && timingSafeEqual(derived, parsed.expected);
   } catch {
     return false;
   }

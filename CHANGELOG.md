@@ -15,6 +15,27 @@ The authoritative params hash for a release is whatever `GET /params` reports on
 
 ---
 
+## Unreleased: interface authentication patch (after the 2.0.2 tag; no consensus or version change)
+
+Prompted by a report that sign-in answered 401 after a successful registration on mainnet. The registration-to-sign-in path was
+verified correct end to end, so the production cause is not established from the code (see
+[docs/auth-incident-2.0.2.md](docs/auth-incident-2.0.2.md)); three real defects found on the way are fixed.
+
+### Fixed (interface)
+- A sign-in request that is not one (empty or cut-off body, not JSON, email or password not text) is now `400 ERR_BAD_REQUEST`
+  instead of the "credentials are not valid" answer that a wrong password gets.
+- A stored password hash that is truncated or malformed (odd or invalid hex, a salt under 8 or a key under 16 bytes, a zero cost)
+  is refused instead of being compared over the bytes that survived.
+- A failed disk write during registration no longer leaves a ghost account in memory or marks the Genesis Invitation spent;
+  the half-made account is removed and the same invitation still works.
+
+### Added
+- `obsidian-interface/scripts/auth-diagnose.mjs`: a read-only check of the accounts file, the installed build and (at a hidden
+  prompt) a typed password, that prints no secret and changes nothing.
+- Tests: `auth-flow` and `auth-diagnose` (interface), `signin-errors` (app front).
+
+---
+
 ## [2.0.2]
 
 **Consensus-breaking: three consensus parameters change after a five-round attack campaign against 2.0.1, a new genesis for every network, no migration.**
