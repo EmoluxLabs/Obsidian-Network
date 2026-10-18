@@ -9,7 +9,7 @@
  */
 
 import { createServer, type Server } from 'node:http';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { connect } from 'node:net';
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -501,10 +501,17 @@ describe('site serving', () => {
     mkdirSync(join(h.config.publicDir, 'js'), { recursive: true });
     writeFileSync(join(h.config.publicDir, 'js', 'wallet.js'), 'export const x = 1;\n', 'utf8');
 
-    // With a hash: immutable, because the URL changes when the bytes do.
-    const hashed = await fetch(`${h.origin}/js/wallet.js?v=0123456789abcdef`);
+    // With ITS hash: immutable, because the URL changes when the bytes do.
+    const digest = createHash('sha256').update('export const x = 1;\n').digest('hex').slice(0, 16);
+    const hashed = await fetch(`${h.origin}/js/wallet.js?v=${digest}`);
     expect(hashed.status).toBe(200);
     expect(hashed.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+
+    // With a hash that is NOT this file's (pages from a newer build beside bundles from an older one): never cached, so the
+    // old bytes cannot be pinned under the new address.
+    const wrong = await fetch(`${h.origin}/js/wallet.js?v=0123456789abcdef`);
+    expect(wrong.status).toBe(200);
+    expect(wrong.headers.get('cache-control')).toBe('no-store');
 
     // Without one: never cached, so an upgrade can never be ignored. A browser
     // holding an old wallet bundle is how a fixed page carried on deriving

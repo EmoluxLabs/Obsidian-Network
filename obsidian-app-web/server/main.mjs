@@ -326,7 +326,10 @@ async function proxy(req, res, url) {
 function pipeFile(res, file, type) {
   const stream = createReadStream(file);
   stream.once('open', () => {
-    res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': type });
+    // Never cached. This app's pages and modules are served under fixed names (`/real.mjs`, `/js/…`), so a copy kept by a browser
+    // or by a CDN in front of it (a CDN caches `.js` by default when the origin says nothing) would keep running the previous
+    // release after an upgrade: the new screens would simply not appear.
+    res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': type, 'Cache-Control': 'no-store' });
     stream.pipe(res);
   });
   stream.once('error', () => {

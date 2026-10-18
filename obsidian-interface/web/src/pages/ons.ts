@@ -114,6 +114,13 @@ const nameButton = (name: string): HTMLElement => {
   });
   return node;
 };
+/** Opens the name in the search panel at the top, where the owner actions are, and brings that panel into view. */
+const manageButton = (name: string): HTMLElement =>
+  button('Manage', async () => {
+    lookup.value = name;
+    await doLookup(name);
+    lookupPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, { kind: 'primary' });
 
 // ── search ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -583,6 +590,7 @@ async function drawMine(): Promise<void> {
     const rows = statuses.map(({ full, status }) => {
       const input = el('input', { placeholder: 'Price in OBS', inputmode: 'decimal', autocomplete: 'off', value: '' });
       const actions: HTMLElement[] = [];
+      if (status.status === 'LISTED' || status.status === 'OWNED') actions.push(manageButton(full));
       if (status.status === 'LISTED') {
         actions.push(
           button('Update price', () => perform(`Update price of ${full}`, (w) => operations.updateListingPrice(client, w, { name: full, priceObs: (input as HTMLInputElement).value }), async () => (await client.marketName(bare(full))).listing?.priceSeals !== status.listing?.priceSeals, async () => undefined), { kind: 'ghost' }),
@@ -608,6 +616,7 @@ async function drawMine(): Promise<void> {
       ]),
       el('p', { class: 'fineprint' }, 'Locked funds belong to you and return in full when an offer is declined, cancelled, lapses or becomes invalid. They cannot be spent while locked. Gas for an offer is charged separately and never comes from escrow.'),
       el('h3', {}, 'Your names'),
+      rows.length === 0 ? '' : el('p', { class: 'fineprint' }, 'Press Manage on a name to change the address it points to, offer it to another wallet, or set a recovery address.'),
       rows.length === 0 ? el('p', { class: 'muted' }, 'This wallet owns no names.') : table(['Name', 'Status', 'Price', 'Actions'], rows),
       el('p', { class: 'fineprint' }, 'A listed name is locked: you cannot edit, transfer, renew or recover it until you remove the listing or it sells. Listing a name refunds any offers already made on it.'),
       el('h3', {}, `Offers made to you (${pendingIn.length} pending)`),

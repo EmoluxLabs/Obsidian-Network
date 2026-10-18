@@ -19,7 +19,8 @@
 
 import { OFFICIAL_PATTERNS, compileOrigins, originMatches } from './trusted-origins.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, statSync, createReadStream } from 'node:fs';
+import { existsSync, statSync, createReadStream, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { AccountStore, provenWallet, type Account } from './store.js';
@@ -627,7 +628,7 @@ export class InterfaceServer {
       // `?v=<content hash>` is written into the markup by build-sites.mjs. A
       // request that carries one is asking for an exact build and can be
       // cached forever; one that does not must be revalidated every time.
-      return this.serveFile(response, this.config.publicDir, requestPath, url.searchParams.has('v'));
+      return this.serveFile(response, this.config.publicDir, requestPath, url.searchParams.get('v'));
     }
     // No catch-all document on purpose: every product has its own directory and
     // its own index.html, so an unknown path is a real 404 rather than a page
@@ -636,7 +637,20 @@ export class InterfaceServer {
     void request;
   }
 
-  private serveFile(response: ServerResponse, root: string, relative: string, immutable = false): void {
+  private readonly digests = new Map<string, { stamp: string; digest: string }>();
+
+  /** The 16-hex content hash `build-sites.mjs` writes into the markup, memoised on size and modification time. */
+  private contentVersion(file: string): string {
+    const info = statSync(file);
+    const stamp = `${info.size}:${info.mtimeMs}`;
+    const known = this.digests.get(file);
+    if (known && known.stamp === stamp) return known.digest;
+    const digest = createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 16);
+    this.digests.set(file, { stamp, digest });
+    return digest;
+  }
+
+  private serveFile(response: ServerResponse, root: string, relative: string, requestedVersion: string | null = null): void {
     const safeRelative = normalize(relative).replace(/^([.]{2}[/\\])+/, '');
     const full = join(root, safeRelative);
     if (!full.startsWith(root.endsWith(sep) ? root : `${root}${sep}`) && full !== root) {
@@ -648,6 +662,10 @@ export class InterfaceServer {
       return;
     }
     const type = contentType(full);
+    // A `?v=` is trusted only when it IS this file's content hash. A page from a newer build that is served next to bundles
+    // from an older one (an upgrade that pulled the pages but did not rebuild) would otherwise pin the OLD bytes under the NEW
+    // address in every browser and CDN for a year, and rebuilding afterwards would not dislodge them.
+    const immutable = requestedVersion !== null && requestedVersion === this.contentVersion(full);
     // Only a content-addressed request (`?v=<hash>`) may be cached, and then
     // forever, because its URL changes whenever its bytes do. Everything else —
     // site HTML, and any bundle asked for without a hash — is revalidated, so

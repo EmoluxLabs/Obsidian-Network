@@ -218,6 +218,16 @@ test('the shell is served at / and as the fallback for a client-side route', asy
   }
 });
 
+test('the pages and modules are never cached, so an upgrade cannot leave the previous release in a browser or a CDN', async () => {
+  const { base } = await startApp({ OBSIDIAN_PLATFORM_URL: 'http://127.0.0.1:1' });
+  for (const path of ['/', '/index.html', '/real.mjs', '/screens.mjs']) {
+    const response = await fetch(`${base}${path}`);
+    assert.equal(response.status, 200, path);
+    assert.equal(response.headers.get('cache-control'), 'no-store', path);
+    await response.arrayBuffer();
+  }
+});
+
 test('a path that escapes the public root is refused', async () => {
   const { base } = await startApp({ OBSIDIAN_PLATFORM_URL: 'http://127.0.0.1:1' });
   const response = await fetch(`${base}/../server/main.mjs`, { redirect: 'manual' });

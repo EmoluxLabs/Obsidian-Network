@@ -49,6 +49,16 @@ verified correct end to end, so the production cause is not established from the
   label now carries the suffix once. (The platform wallet puts the suffix on the wire; the executor already ignored it.)
 - Tests: `credits-index.test.ts` (core).
 
+### Fixed (web sites; no consensus or version change)
+- **A deployed update could keep showing the previous screens.** (1) The Web App sent no cache header for its pages and modules,
+  so a CDN in front of it could keep serving the old `real.mjs`; they are now `Cache-Control: no-store`. (2) The platform marked any
+  `/js/…?v=<anything>` request immutable for a year; it now does so only when `v` is the file's real content hash, so a page from a
+  newer build served beside bundles from an older one (pulled, not rebuilt) cannot pin the old bytes under the new address.
+  (3) Browser bundles are build output, not in git; [docs/web-separation.md](docs/web-separation.md) now states the update as pull,
+  **rebuild**, restart, check, with `curl` checks.
+- The platform's *Your names* rows have a **Manage** button that opens the owner actions (the screens existed but only appeared after searching
+  a name, which is easy to miss).
+
 ### Added (Web App; interface only, no consensus or version change)
 - **ONS owner screens.** Every ownership operation the chain already had now has a screen in the Web App: change the address a
   name points to, offer it to another wallet, withdraw the offer, accept an offer, set or clear the recovery address, start,

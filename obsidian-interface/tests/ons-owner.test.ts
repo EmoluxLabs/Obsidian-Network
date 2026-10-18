@@ -104,4 +104,9 @@ describe('the ONS page wiring', () => {
     expect(confirm.indexOf('ownerSnapshot(now) !== snapshot')).toBeLessThan(confirm.indexOf('return act.sign(wallet)'));
     expect(confirm).toContain('act.done(await client.name(full))');
   });
+
+  it('every owned name in Your names has a Manage button that opens the owner actions', () => {
+    expect(page).toMatch(/const manageButton = /);
+    expect(page).toMatch(/if \(status\.status === 'LISTED' \|\| status\.status === 'OWNED'\) actions\.push\(manageButton\(full\)\)/);
+  });
 });

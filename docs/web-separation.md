@@ -169,11 +169,38 @@ PLATFORM_URL=http://platform.localhost:38788 APP_URL=http://app.localhost:38790 
 Behind nginx, `APP_TRUST_PROXY=true` and `OBSIDIAN_INTERFACE_TRUST_PROXY=true` must both be set, or every visitor shares one
 rate-limit address.
 
+## Updating a site that is already running: pull, REBUILD, restart, check
+
+The browser bundles are **build output and are not in git** (`.gitignore` excludes `public/js/`). Pulling new source and restarting a
+service therefore runs the new server code with the *old* pages, and the new screens do not appear. Every update is all four steps:
+
+```bash
+git pull                                        # or unpack the new release over the same directory
+cd obsidian-interface && npm ci && npm run build   # the platform: node and browser bundles, and the site pages
+cd ../obsidian-app-web && npm ci && npm run build:web   # the Web App's signing and operations bundle
+sudo systemctl restart obsidian-interface@<network> obsidian-app-web@<network>
+```
+
+Check the result at the source, not in a browser that may hold an old copy (use a private window as well):
+
+```bash
+# the platform's ONS page carries the owner screens, and its bundle is the one the page names
+curl -s https://<platform-host>/js/ons.js | grep -c 'Manage this name'          # 1 or more
+# the Web App serves the new module, and says it must not be cached
+curl -sI https://<app-host>/real.mjs | grep -i cache-control                     # no-store
+curl -s  https://<app-host>/real.mjs | grep -c ObsidianOwnerManage               # 1 or more
+```
+
+If a CDN (Cloudflare, for example) is in front of a site, purge its cache once after the first update that carries this change.
+From then on the Web App sends `Cache-Control: no-store` for its pages and modules, and the platform trusts a `?v=` address only
+when it is that file's real content hash, so a page served beside older bundles can no longer pin the old bytes under the new address.
+
 ## What a failure looks like
 
 | Symptom | Likely cause | Check |
 | --- | --- | --- |
 | a hostname shows another site's page | an old vhost claims the name, or a vhost lists the wrong upstream | `sudo nginx -T \| grep -nE 'server_name\|proxy_pass'`; `install.sh` names conflicts |
+| an update is live but a new screen is missing | the update was pulled and restarted without the rebuild, or a CDN or browser holds the old page | the four steps above; the `curl` checks against the origin; purge the CDN |
 | `502` on one hostname only | that service is down, or nginx's upstream port differs from the service's port | `systemctl status`, `check-ports.sh`, the `upstream` lines in `conf.d/obsidian-web.conf` |
 | the Web App starts and exits with code 3 | its platform is on another network | `OBSIDIAN_PLATFORM_URL` points at the mainnet platform |
 | sign-in fails behind the proxy with 429 for everyone | `TRUST_PROXY` is off, so every visitor shares one address | `OBSIDIAN_INTERFACE_TRUST_PROXY=true`, `APP_TRUST_PROXY=true` |
