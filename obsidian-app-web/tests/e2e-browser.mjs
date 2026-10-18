@@ -246,6 +246,7 @@ try {
   await type('cw0', 'wrong');
   await type('cw1', 'wrong');
   await type('cw2', 'wrong');
+  await page.click('#cksaved'); // "I have saved both the recovery phrase and the private key" — ticked once, and it must stay ticked
   await type('pp', PASS);
   await type('p2', PASS);
   await click('SEAL WALLET');

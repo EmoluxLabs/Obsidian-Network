@@ -542,13 +542,23 @@ async function withBusy(key, fn) {
   // passphrases are never carried over: they are asked for again.
   const screen = state.screen;
   const typed = [...document.querySelectorAll('#app input, #app textarea')]
-    .filter((el) => el.id && el.type !== 'password' && el.value)
+    .filter((el) => el.id && el.type !== 'password' && el.type !== 'checkbox' && el.value)
     .map((el) => [el.id, el.value]);
+  // Ticked boxes are state too. A repaint builds new elements, and a new checkbox is unticked: without this the
+  // "I have saved my recovery phrase" box cleared itself the moment the button was pressed.
+  const ticked = [...document.querySelectorAll('#app input[type=checkbox]')].filter((el) => el.id && el.checked).map((el) => el.id);
+  const retick = () => {
+    for (const id of ticked) {
+      const el = document.getElementById(id);
+      if (el) el.checked = true;
+    }
+  };
   state.busy = key;
   state.error = '';
   // A deliberate action: its fields were read before this point, so it repaints
   // unconditionally to show the busy state (the quiet background refresh does not).
   render();
+  retick();
   try {
     await fn();
   } catch (error) {
@@ -561,6 +571,7 @@ async function withBusy(key, fn) {
         const el = document.getElementById(id);
         if (el && !el.value) el.value = value;
       }
+      retick();
     }
   }
 }
@@ -872,12 +883,14 @@ function install() {
     const draft = state.setup.draft;
     const phrase = importing ? field('ph') : draft?.words.join(' ') ?? '';
     const proof = draft ? draft.check.map((_, i) => field(`cw${i}`)) : [];
+    // Read now, with the other fields: once the busy state is painted the page holds new, unticked elements.
+    const saved = document.getElementById('cksaved')?.checked === true;
     const passphrase = field('pp');
     const confirm = field('p2');
     return withBusy('setup', async () => {
       if (!importing) {
         if (!draft) return setError('Generate a recovery phrase first.');
-        if (document.getElementById('cksaved')?.checked !== true) {
+        if (!saved) {
           return setError('Confirm that you have saved both the recovery phrase and the private key.');
         }
         const right = draft.check.every((n, i) => proof[i].trim().toLowerCase() === draft.words[n - 1]);
