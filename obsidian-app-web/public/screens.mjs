@@ -1236,18 +1236,40 @@ function marketScreen(s) {
   );
 }
 
+const CREDIT_TITLES = {
+  ONS_TREASURY_SHARE: 'Treasury earnings',
+  ONS_TREASURY_RELEASE: 'Treasury earnings (released)',
+  NODE_REWARD: 'Node Runner reward',
+};
+
+/**
+ * OBS the protocol itself credited to this wallet inside a block: the treasury's 10% of an ONS fee and Node Runner rewards.
+ * No transaction names this wallet, so they are not in `transactions`; the node lists them separately and they are merged here
+ * so the list explains the balance. Each one says what it was for and links to the sale that caused it when there was one.
+ */
+function creditRow(c) {
+  const title = CREDIT_TITLES[c.kind] ?? 'Credited by the protocol';
+  const detail = [c.reference ? `for ${c.reference}` : '', c.note ?? '', `block ${c.height}`, formatTime(c.timestamp)].filter(Boolean).join(' · ');
+  const open = c.txId ? ` onclick="ObsidianExOpen('tx','${arg(c.txId)}')" style="cursor:pointer"` : '';
+  return `<div class="row"${open}><div><b>${esc(title)}</b><div class="mu" style="font-size:12px;margin-top:3px">${esc(detail)}</div></div><b class="m ok">${esc(`+${displayObsWithUnit(c.amount)}`)}</b></div>`;
+}
+
 function activity(s, limit) {
-  const txs = s.history?.transactions ?? [];
-  if (!txs.length) {
+  const txs = (s.history?.transactions ?? []).map((t) => ({ at: Number(t.timestamp) || 0, kind: 'tx', t }));
+  const credits = (s.history?.credits ?? []).map((c) => ({ at: Number(c.timestamp) || 0, kind: 'credit', c }));
+  const entries = [...txs, ...credits].sort((a, b) => b.at - a.at);
+  if (!entries.length) {
     return unavailable(
       s.walletAddress
         ? 'No transactions have been indexed for this address yet.'
         : 'Set up a wallet on this device to see its activity.',
     );
   }
-  return `<div class="card">${txs
+  return `<div class="card">${entries
     .slice(0, limit)
-    .map((t) => {
+    .map((entry) => {
+      if (entry.kind === 'credit') return creditRow(entry.c);
+      const t = entry.t;
       const incoming = typeof t.kind === 'string' && /credit|reward|received/i.test(t.kind);
       const amount = t.amount ? `${incoming ? '+' : ''}${displayObsWithUnit(t.amount)}` : '—';
       return `<div class="row" onclick="ObsidianExOpen('tx','${arg(t.txId)}')" style="cursor:pointer"><div><b>${

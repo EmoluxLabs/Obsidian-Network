@@ -415,23 +415,42 @@ async function drawDashboard(wallet: Wallet, passphrase: string): Promise<void> 
   async function refreshHistory(): Promise<void> {
     try {
       const history = await client.addressHistory(wallet.address, 20);
-      const list = history.transactions;
+      // Transactions and the OBS the protocol itself credited to this address (the treasury's share of ONS fees, Node Runner
+      // rewards) in one list, newest first. A credit has no transaction naming this wallet, so without it the list would not
+      // explain the balance.
+      const entries = [
+        ...history.transactions.map((entry) => ({ at: Number(entry.timestamp ?? 0), tx: entry })),
+        ...(history.credits ?? []).map((credit) => ({ at: Number(credit.timestamp ?? 0), credit })),
+      ].sort((a, b) => b.at - a.at);
       historyBox.replaceChildren(
         el('h3', {}, 'Recent activity'),
-        list.length === 0
+        entries.length === 0
           ? el('p', {}, 'No transactions for this address yet.')
           : el(
               'ul',
               { class: 'feed' },
-              ...list.map((entry) =>
-                el(
+              ...entries.map((entry) => {
+                if ('credit' in entry && entry.credit) {
+                  const credit = entry.credit;
+                  return el(
+                    'li',
+                    { class: 'credit' },
+                    el('strong', {}, CREDIT_TITLES[credit.kind] ?? 'Credited by the protocol'),
+                    el('span', { class: 'amount ok' }, '+', amountEl(credit.amount)),
+                    el('span', { class: 'muted' }, [credit.reference ? `for ${credit.reference}` : '', credit.note ?? '', `block ${credit.height}`].filter(Boolean).join(' · ')),
+                    credit.txId ? identifier(String(credit.txId), { kind: 'hash', label: 'Transaction id' }) : el('span', {}),
+                    el('span', { class: 'muted' }, when(Number(credit.timestamp ?? 0))),
+                  );
+                }
+                const tx = (entry as { tx: (typeof history.transactions)[number] }).tx;
+                return el(
                   'li',
                   {},
-                  identifier(entry.txId === undefined || entry.txId === null ? undefined : String(entry.txId), { kind: 'hash', label: 'Transaction id' }),
-                  el('span', {}, String(entry.kind ?? entry.type ?? 'transaction')),
-                  el('span', { class: 'muted' }, when(Number(entry.timestamp ?? 0))),
-                ),
-              ),
+                  identifier(tx.txId === undefined || tx.txId === null ? undefined : String(tx.txId), { kind: 'hash', label: 'Transaction id' }),
+                  el('span', {}, String(tx.kind ?? tx.type ?? 'transaction')),
+                  el('span', { class: 'muted' }, when(Number(tx.timestamp ?? 0))),
+                );
+              }),
             ),
       );
     } catch (error) {
@@ -439,6 +458,12 @@ async function drawDashboard(wallet: Wallet, passphrase: string): Promise<void> 
     }
   }
 }
+
+const CREDIT_TITLES: Record<string, string> = {
+  ONS_TREASURY_SHARE: 'Treasury earnings',
+  ONS_TREASURY_RELEASE: 'Treasury earnings (released)',
+  NODE_REWARD: 'Node Runner reward',
+};
 
 function drawReceive(wallet: Wallet): HTMLElement {
   return el(

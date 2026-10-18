@@ -455,6 +455,10 @@ export interface NameRecord {
   /** True while a listing locks the name: its owner cannot use it and it does not resolve. */
   locked?: boolean;
   pendingOffers?: number;
+  /** Ownership state (protocol 1.9.0): an open transfer offer, the recovery address and a recovery in flight. */
+  pendingTransfer?: { to: string; offeredAt?: number; offerExpiresAt?: number } | null;
+  recoveryAddress?: string | null;
+  pendingRecovery?: { by: string; newAddress: string; startedAt?: number; effectiveAt?: number } | null;
 }
 
 export interface MarketListing {
@@ -502,6 +506,21 @@ export interface MarketNameStatus {
   canBuy: boolean;
   canOffer: boolean;
   atHeight: number;
+}
+
+/** The treasury's share of an ONS fee or a Node Runner reward: credited by the protocol, not by a transaction to the address. */
+export interface ProtocolCredit {
+  height: number;
+  timestamp: number;
+  kind: 'ONS_TREASURY_SHARE' | 'ONS_TREASURY_RELEASE' | 'NODE_REWARD' | string;
+  /** Seals, as text. */
+  amount: string;
+  amountObs: string;
+  /** The transaction (an ONS fee) that caused it, when there was one. */
+  txId?: string;
+  /** The name or node it relates to. */
+  reference?: string;
+  note?: string;
 }
 
 /**
@@ -678,7 +697,9 @@ export class ObsidianClient {
     balancesExposed: false;
     transactions: TransactionRecord[];
     miningClaims: MiningClaim[];
-    counts: { transactions: number; miningClaims: number };
+    /** OBS the protocol credited to this address inside a block with no transaction naming it. Older nodes omit it. */
+    credits?: ProtocolCredit[];
+    counts: { transactions: number; miningClaims: number; credits?: number };
     note: string;
   }> {
     return this.request(`/address/${encodeURIComponent(address)}?limit=${limit}`);

@@ -20,6 +20,15 @@ therefore works on a chain that has never received a price submission — the
 interface reads `ons.registrationFeeObs` from `GET /params` and will not invent
 a fee if it cannot reach a node at all.
 
+**Where the treasury's earnings show.** Of every fee, 10 % is credited to the treasury wallet (the wallet that made the first valid
+mining claim on the chain) and 90 % goes to the Node Runner pool. That credit is made by consensus *inside the buyer's ONS
+transaction*: the only transaction involved is the buyer's, and it names no treasury address, so it is not in the treasury wallet's
+list of transactions. The treasury's balance and its `receivedObs` total on `GET /wallet/balance` do include it. To see each
+credit, read `credits` on `GET /address/<treasury>`: one entry per sale with its amount, time, block, the name and the sale's
+transaction id (the Web App and the platform wallet list these as *Treasury earnings*). Node Runner rewards are credited
+the same way and listed as *Node Runner reward*. The list is built by the node's indexer, so a node must be running this
+version for it to appear; the node rebuilds it once from its stored blocks when it first starts.
+
 Until 1.2.0 this fee was a dollar amount converted at an oracle median, and an
 empty feed closed registration. That is gone: a dead feed can no longer close a
 feature it does not price.
@@ -80,8 +89,19 @@ address (as a recipient or recovery address) is refused on the page before any p
 disabled. The review is checked against the node again just before signing, so a name that changed meanwhile signs nothing. The
 page says *confirmed on the chain* only after the node shows the change, never on submission.
 
-Not changed: the platform's own ONS page (`obsmainnet.us.ci`) still has registration, search, renewal and the Marketplace but not
-these owner screens, and the standalone wallet site has no ONS at all.
+### Doing it on the platform's ONS page
+
+The platform's own ONS page (`obsmainnet.us.ci/ons/`) has the same screens, for the wallet unlocked in that browser. They were left
+out of the first change only because that change was scoped to the Web App; there is no technical reason for the difference. It
+is the same flow, the same refusals and the same node re-check before signing (the rules are in `obsidian-interface/web/src/lib/ons-owner.ts`).
+The standalone wallet site has no ONS at all.
+
+Tested: unit tests (`obsidian-interface/tests/ons-owner.test.ts`) and, against a real devnet in a real browser,
+`obsidian-app-web/tests/e2e-browser-platform-ons.mjs` (wallets made by the platform's own wallet code): register; four bad addresses
+refused before any passphrase; a wrong passphrase signs nothing; change address; offer, withdraw and re-offer; a stranger sees
+nothing; accept; set recovery; start, see *complete* disabled, and cancel a recovery; list (actions lock) and remove the listing; and
+the treasury's *Treasury earnings* line on the platform wallet page after another wallet registered a name. Every result is read
+back from the chain. The same seven-day limits apply as above.
 
 Tested: unit tests for every refusal (`obsidian-app-web/tests/ops.test.mjs`), source guards (`obsidian-app-web/tests/owner-actions-ui.test.mjs`) and, against a real devnet in a
 real browser, `obsidian-app-web/tests/e2e-ons-owner.mjs`: register; refuse four kinds of bad address; wrong passphrase signs nothing; change address;

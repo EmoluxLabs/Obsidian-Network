@@ -223,9 +223,22 @@ export interface TxRecord {
   memo?: string;
 }
 
+/** OBS the protocol credited to an address inside a block with no transaction naming it (treasury share of ONS fees, Node Runner rewards). */
+export interface ProtocolCredit {
+  kind: string;
+  height: number;
+  timestamp: number;
+  amountObs: string;
+  txId?: string;
+  reference?: string;
+  note?: string;
+}
+
 export interface AddressHistory {
   address: string;
   transactions: TxRecord[];
+  /** Absent from nodes older than this field. */
+  credits: ProtocolCredit[];
 }
 
 export interface MempoolInfo {

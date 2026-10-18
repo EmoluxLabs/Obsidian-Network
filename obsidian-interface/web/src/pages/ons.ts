@@ -10,13 +10,14 @@
  */
 
 import { layout } from '../lib/shell.js';
-import { ObsidianClient, type MarketListing, type MarketNameStatus, type MarketOfferView } from '../lib/client.js';
+import { ObsidianClient, type MarketListing, type MarketNameStatus, type MarketOfferView, type NameRecord } from '../lib/client.js';
 import { Wallet } from '../lib/wallet.js';
 import { awaitConfirmation, gasFor, operations } from '../lib/operations.js';
 import { el, spinner, toast, kv, badge, table, obsUnit, obsExact, shortId, button, when, clear } from '../lib/ui.js';
 import { identifier } from '../lib/identifier.js';
 import { parseObs } from '../../core/protocol/amount.js';
 import { validateNameFormat } from '../../core/transactions/executors/ons.js';
+import { addressOf, ownerRoles, ownerSnapshot, targetProblem, type OwnerKind, type OwnerNameRecord } from '../lib/ons-owner.js';
 
 const client = new ObsidianClient();
 const lookup = el('input', { id: 'ons-lookup', placeholder: 'name.obs', autocomplete: 'off' });
@@ -124,7 +125,7 @@ async function doLookup(raw: string): Promise<void> {
   try {
     const status = await client.marketName(name);
     const record = status.status === 'AVAILABLE' ? undefined : await client.name(`${name}.obs`).catch(() => undefined);
-    drawStatus(name, status, record?.registeredAtHeight, record?.transferCount, record?.expiresAt);
+    drawStatus(name, status, record?.registeredAtHeight, record?.transferCount, record?.expiresAt, record);
   } catch (error) {
     lookupPanel.replaceChildren(
       el('h2', {}, `${name}.obs`),
@@ -135,7 +136,7 @@ async function doLookup(raw: string): Promise<void> {
   }
 }
 
-function drawStatus(name: string, status: MarketNameStatus, registeredAtHeight?: number, transferCount?: number, expiresAt?: number): void {
+function drawStatus(name: string, status: MarketNameStatus, registeredAtHeight?: number, transferCount?: number, expiresAt?: number, record?: NameRecord): void {
   const full = `${name}.obs`;
   const me = mine();
   const isOwner = Boolean(me) && status.owner === me;
@@ -172,6 +173,7 @@ function drawStatus(name: string, status: MarketNameStatus, registeredAtHeight?:
   parts.push(el('p', { class: 'fineprint' }, `Read from a node at height ${status.atHeight}. This is information, not authority: the chain re-checks everything when a transaction is included.`));
   lookupPanel.replaceChildren(...parts);
   if (status.status !== 'AVAILABLE') void drawNameOffers(name, isOwner);
+  if (status.status !== 'AVAILABLE' && record) void drawOwnerActions(full, name, record);
 }
 
 function drawListed(full: string, listing: MarketListing, isOwner: boolean): HTMLElement {
@@ -293,6 +295,195 @@ async function drawNameOffers(name: string, isOwner: boolean): Promise<void> {
     lookupPanel.append(el('h3', {}, isOwner ? 'Offers made to you' : 'Your offer'), offerTable(visible, isOwner ? 'incoming' : 'outgoing'));
   } catch {
     /* the offers panel is optional; the search result above stands on its own */
+  }
+}
+
+
+// ── ownership: change address, offer, accept, recovery (protocol 1.9.0) ────────────────────────────────────────────
+
+let networkInfo: { name: string; addressHrp: string } | undefined;
+async function networkNow(): Promise<{ name: string; addressHrp: string }> {
+  if (!networkInfo) {
+    const { network } = await client.network();
+    networkInfo = { name: network.name, addressHrp: network.addressHrp };
+  }
+  return networkInfo;
+}
+
+const OWNER_TITLES: Record<OwnerKind, string> = {
+  update: 'Change of address',
+  transfer: 'Transfer offer',
+  withdraw: 'Withdrawal of the transfer offer',
+  accept: 'Acceptance of the transfer',
+  recoverySet: 'Recovery address',
+  recoveryClear: 'Removal of the recovery address',
+  recoveryStart: 'Recovery',
+  recoveryCancel: 'Cancellation of the recovery',
+  recoveryFinalize: 'Completion of the recovery',
+};
+
+const OWNER_EFFECT: Record<OwnerKind, string> = {
+  update: 'Anyone who pays this name will pay the new address from the moment the chain confirms it. Ownership does not change. This is free: it carries no amount, so it pays no gas.',
+  transfer: 'This is an offer, not a transfer. Nothing changes hands until that wallet accepts it, within seven days. You keep the name and can withdraw the offer until then. Once it is accepted you cannot take the name back, so check the address. Free of gas.',
+  withdraw: 'The open offer is cancelled and that wallet can no longer accept it. You keep the name. Free of gas.',
+  accept: 'The name, where it resolves and its remaining term move to this wallet. The previous owner’s recovery address and any recovery in flight are removed. Free of gas.',
+  recoverySet: 'That wallet will be able to start a recovery of this name. You can cancel a recovery during its delay of seven days, as long as you still hold your wallet. Choose a wallet you control and keep apart from this one. Free of gas.',
+  recoveryClear: 'The name will have no recovery address. Free of gas.',
+  recoveryStart: 'The current owner is given seven days to cancel. After that, the recovery can be completed and the name moves to the new owner. Free of gas.',
+  recoveryCancel: 'The recovery in flight is stopped. You keep the name. Free of gas.',
+  recoveryFinalize: 'The name moves to the new owner now. Free of gas.',
+};
+
+/** The transaction for one owner action, and how the chain shows it happened. */
+function ownerAction(kind: OwnerKind, bare: string, target: string, me: string, snapshot: OwnerNameRecord) {
+  const full = `${bare}.obs`;
+  switch (kind) {
+    case 'update':
+      return { sign: (w: Wallet) => operations.updateNameAddress(client, w, { name: bare, address: target }), done: (r: NameRecord) => r.address === target };
+    case 'transfer':
+      return { sign: (w: Wallet) => operations.offerNameTransfer(client, w, { name: bare, to: target }), done: (r: NameRecord) => r.pendingTransfer?.to === target };
+    case 'withdraw':
+      return { sign: (w: Wallet) => operations.cancelNameTransfer(client, w, { name: bare }), done: (r: NameRecord) => !r.pendingTransfer };
+    case 'accept':
+      return { sign: (w: Wallet) => operations.acceptNameTransfer(client, w, { name: bare }), done: (r: NameRecord) => r.owner === me };
+    case 'recoverySet':
+      return { sign: (w: Wallet) => operations.setNameRecovery(client, w, { name: bare, address: target }), done: (r: NameRecord) => r.recoveryAddress === target };
+    case 'recoveryClear':
+      return { sign: (w: Wallet) => operations.setNameRecovery(client, w, { name: bare, address: '' }), done: (r: NameRecord) => !r.recoveryAddress };
+    case 'recoveryStart':
+      return { sign: (w: Wallet) => operations.startNameRecovery(client, w, { name: bare, newOwner: target }), done: (r: NameRecord) => r.pendingRecovery?.newAddress === target };
+    case 'recoveryCancel':
+      return { sign: (w: Wallet) => operations.cancelNameRecovery(client, w, { name: bare }), done: (r: NameRecord) => !r.pendingRecovery };
+    case 'recoveryFinalize':
+      return { sign: (w: Wallet) => operations.finalizeNameRecovery(client, w, { name: bare }), done: (r: NameRecord) => r.owner === snapshot.pendingRecovery?.newAddress };
+    default:
+      throw new Error(`unknown action ${String(kind)} on ${full}`);
+  }
+}
+
+/** Show what is about to be signed, then sign only if the name is still exactly as it was reviewed. */
+async function reviewOwner(kind: OwnerKind, bare: string, record: NameRecord, typed: string): Promise<void> {
+  const me = mine();
+  if (!me) return void toast('Create or open your wallet first: the Wallet page holds the key that signs this.', 'error');
+  const full = `${bare}.obs`;
+  const net = await networkNow();
+  const status = await client.status();
+  const now = status.lastBlockTimestamp;
+  const needsAddress = kind === 'update' || kind === 'transfer' || kind === 'recoverySet' || kind === 'recoveryStart';
+  if (needsAddress) {
+    const problem = targetProblem(kind, typed, net.addressHrp, record, now);
+    if (problem) return void toast(problem, 'error');
+  }
+  const target = needsAddress ? addressOf(typed) : '';
+  const snapshot = ownerSnapshot(record);
+  const rows: Array<[string, HTMLElement | string]> = [
+    ['Name', full],
+    ['Network', net.name],
+  ];
+  if (kind === 'update') rows.push(['Currently resolves to', record.address ? sellerLink(record.address) : '—'], ['Will resolve to', sellerLink(target)]);
+  if (kind === 'transfer') rows.push(['Current owner (you)', sellerLink(record.owner)], ['Offered to', sellerLink(target)], ['Open for', 'seven days']);
+  if (kind === 'withdraw') rows.push(['Offer to', record.pendingTransfer ? sellerLink(record.pendingTransfer.to) : '—']);
+  if (kind === 'accept') rows.push(['Current owner', sellerLink(record.owner)], ['New owner (you)', sellerLink(me)]);
+  if (kind === 'recoverySet') rows.push(['Owner (you)', sellerLink(record.owner)], ['Recovery address', sellerLink(target)]);
+  if (kind === 'recoveryClear') rows.push(['Removing', record.recoveryAddress ? sellerLink(record.recoveryAddress) : '—']);
+  if (kind === 'recoveryStart') rows.push(['Current owner', sellerLink(record.owner)], ['New owner', sellerLink(target)], ['Delay', 'seven days, and the owner can cancel']);
+  if (kind === 'recoveryCancel') rows.push(['Recovery to', record.pendingRecovery ? sellerLink(record.pendingRecovery.newAddress) : '—']);
+  if (kind === 'recoveryFinalize') rows.push(['Current owner', sellerLink(record.owner)], ['New owner', record.pendingRecovery ? sellerLink(record.pendingRecovery.newAddress) : '—']);
+  const act = ownerAction(kind, bare, target, me, record);
+  const confirm = button('Confirm and sign', async () => {
+    await perform(
+      `${OWNER_TITLES[kind]} on ${full}`,
+      async (wallet) => {
+        const now = await client.name(full).catch(() => undefined);
+        if (!now || ownerSnapshot(now) !== snapshot) throw new Error(`${full} changed while you were reviewing it. Nothing was signed: look at it again.`);
+        return act.sign(wallet);
+      },
+      async () => act.done(await client.name(full)),
+      async () => undefined,
+    );
+  }, { kind: 'primary', id: 'owner-confirm' });
+  lookupPanel.replaceChildren(
+    el('h2', {}, `Review: ${OWNER_TITLES[kind].toLowerCase()}`),
+    kv(rows),
+    el('p', { class: 'fineprint' }, OWNER_EFFECT[kind]),
+    el('p', { class: 'fineprint' }, 'Nothing is shown as done until the chain confirms it.'),
+    el('div', { class: 'row' }, confirm, button('Cancel', async () => doLookup(full), { kind: 'ghost' })),
+  );
+}
+
+/** The actions this wallet can take on a name it owns, was offered, or holds the recovery of. */
+async function drawOwnerActions(full: string, bare: string, record: NameRecord): Promise<void> {
+  const me = mine();
+  if (!me) return;
+  try {
+    const net = await networkNow();
+    const status = await client.status();
+    const roles = ownerRoles(record, me, status.lastBlockTimestamp);
+    if (!roles.involved) return;
+    const box = el('section', { id: 'owner-actions' });
+    const locked = roles.locked;
+    const lockNote = locked ? el('p', { class: 'fineprint' }, 'This name is listed on the ONS Marketplace, so the chain refuses these actions (NAME_LISTED). Remove the listing first (under "Your names" below).') : '';
+    const addressForm = (id: string, label: string, kind: OwnerKind, action: string, disabled = locked): HTMLElement[] => {
+      const input = el('input', { id, placeholder: `${net.addressHrp}1…`, autocomplete: 'off', spellcheck: 'false' }) as HTMLInputElement;
+      return [
+        el('div', { class: 'field' }, el('label', { for: id }, label), input),
+        el('div', { class: 'row' }, button(action, async () => reviewOwner(kind, bare, record, input.value), { kind: 'primary', id: `${id}-review`, disabled })),
+      ];
+    };
+    if (roles.isOwner) {
+      box.append(el('h3', {}, 'Manage this name'), lockNote);
+      box.append(el('h4', {}, 'Change the address it points to'), ...addressForm('own-update', 'New address', 'update', 'Review change of address'));
+      box.append(el('h4', {}, 'Offer it to another wallet'));
+      if (roles.offerOpen && record.pendingTransfer) {
+        box.append(
+          el('p', {}, ...['An offer is open to ', sellerLink(record.pendingTransfer.to), record.pendingTransfer.offerExpiresAt ? ` until ${when(record.pendingTransfer.offerExpiresAt)}.` : '.']),
+          el('div', { class: 'row' }, button('Withdraw the offer', async () => reviewOwner('withdraw', bare, record, ''), { kind: 'ghost', id: 'own-withdraw' })),
+        );
+      } else {
+        box.append(...addressForm('own-transfer', 'Recipient address', 'transfer', 'Review transfer offer'));
+      }
+      box.append(el('h4', {}, 'Recovery address'));
+      if (record.recoveryAddress) box.append(el('p', {}, ...['Recovery address: ', sellerLink(record.recoveryAddress)]));
+      else box.append(el('p', { class: 'muted' }, 'No recovery address is set. If you lose this wallet without one, nobody can recover the name.'));
+      if (roles.recoveryInFlight && record.pendingRecovery) {
+        box.append(
+          el('p', { class: 'error' }, ...['A recovery is in flight to ', sellerLink(record.pendingRecovery.newAddress), record.pendingRecovery.effectiveAt ? `; it can be completed from ${when(record.pendingRecovery.effectiveAt)}. If you did not expect this, cancel it now.` : '.']),
+          el('div', { class: 'row' }, button('Cancel the recovery', async () => reviewOwner('recoveryCancel', bare, record, ''), { kind: 'primary', id: 'own-recovery-cancel' })),
+        );
+      } else {
+        box.append(...addressForm('own-recovery', 'Recovery address', 'recoverySet', record.recoveryAddress ? 'Review new recovery address' : 'Review recovery address', locked));
+        if (record.recoveryAddress) box.append(el('div', { class: 'row' }, button('Remove the recovery address', async () => reviewOwner('recoveryClear', bare, record, ''), { kind: 'ghost', id: 'own-recovery-clear', disabled: locked })));
+      }
+    }
+    if (roles.offeredToMe) {
+      box.append(
+        el('h3', {}, 'Offered to your wallet'),
+        el('p', {}, ...['The owner offered this name to this wallet', record.pendingTransfer?.offerExpiresAt ? `; the offer is open until ${when(record.pendingTransfer.offerExpiresAt)}.` : '.']),
+        lockNote,
+        el('div', { class: 'row' }, button('Review and accept', async () => reviewOwner('accept', bare, record, ''), { kind: 'primary', id: 'own-accept', disabled: locked })),
+      );
+    } else if (roles.offerLapsedForMe) {
+      box.append(el('h3', {}, 'Offered to your wallet'), el('p', { class: 'muted' }, 'This offer has lapsed (offers last seven days). Ask the owner to offer it again.'));
+    }
+    if (roles.canStartRecovery) {
+      box.append(
+        el('h3', {}, 'This wallet is the recovery address'),
+        el('p', { class: 'muted' }, 'You can start a recovery to a new owner. The current owner has seven days to cancel it.'),
+        lockNote,
+        ...addressForm('own-newowner', 'New owner address', 'recoveryStart', 'Review and start recovery', locked),
+      );
+    }
+    if (roles.inRecovery && record.pendingRecovery && !roles.isOwner) {
+      const ready = roles.recoveryWaitSeconds === 0;
+      box.append(
+        el('h3', {}, 'A recovery is in flight'),
+        el('p', {}, ...['The name will move to ', sellerLink(record.pendingRecovery.newAddress), ready ? ' when you complete it.' : ` once the delay has passed (ready at ${when(record.pendingRecovery.effectiveAt ?? 0)}).`]),
+        el('div', { class: 'row' }, button('Review and complete recovery', async () => reviewOwner('recoveryFinalize', bare, record, ''), { kind: 'primary', id: 'own-finalize', disabled: !ready || locked })),
+      );
+    }
+    if (box.childNodes.length > 0) lookupPanel.append(box);
+  } catch {
+    /* the owner panel is optional; the search result above stands on its own */
   }
 }
 

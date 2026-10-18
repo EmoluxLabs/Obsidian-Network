@@ -187,6 +187,19 @@ export class RpcClient {
       return {
         address: str(o.address, 'address.address'),
         transactions: arr(o.transactions, 'address.transactions').map((t, i) => parseTxRecord(t, `address.transactions[${i}]`)),
+        // Older nodes do not send `credits`; that is an empty list, not an error.
+        credits: o.credits === undefined ? [] : arr(o.credits, 'address.credits').map((c, i) => {
+          const r = rec(c, `address.credits[${i}]`);
+          return {
+            kind: str(r.kind, `address.credits[${i}].kind`),
+            height: int(r.height, `address.credits[${i}].height`, 0),
+            timestamp: int(r.timestamp, `address.credits[${i}].timestamp`, 0),
+            amountObs: obsAmount(r.amountObs, `address.credits[${i}].amountObs`),
+            txId: optStr(r.txId, `address.credits[${i}].txId`),
+            reference: optStr(r.reference, `address.credits[${i}].reference`),
+            note: optStr(r.note, `address.credits[${i}].note`),
+          };
+        }),
       };
     });
   }

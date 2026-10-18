@@ -38,14 +38,29 @@ verified correct end to end, so the production cause is not established from the
   until its first mining claim (the first valid claim on a chain receives the one-time genesis allocation); the part used to fail
   with an insufficient-funds error that said nothing about the code under test.
 
+### Fixed (node RPC and wallets; no consensus or version change)
+- **Treasury earnings and Node Runner rewards were missing from a wallet's activity.** The treasury's 10 % of each ONS fee is
+  credited by consensus inside the buyer's transaction, and Node Runner rewards at period settlement; no transaction names the
+  receiving wallet, so the transaction list never showed them even though the balance rose. The indexer now records these
+  credits from the block events (rebuilt once from the stored blocks on first start), `GET /address/<address>` returns them as
+  `credits`, and the Web App, the standalone wallet, the platform wallet and the desktop wallet list them (*Treasury earnings*,
+  *Node Runner reward*). Needs a node running this build; an older node simply returns no `credits`. See [docs/ons.md](docs/ons.md).
+- The indexer labelled a name that a wallet sent with its `.obs` suffix twice (`name.obs.obs`) in transaction lists and credits; the
+  label now carries the suffix once. (The platform wallet puts the suffix on the wire; the executor already ignored it.)
+- Tests: `credits-index.test.ts` (core).
+
 ### Added (Web App; interface only, no consensus or version change)
 - **ONS owner screens.** Every ownership operation the chain already had now has a screen in the Web App: change the address a
   name points to, offer it to another wallet, withdraw the offer, accept an offer, set or clear the recovery address, start,
   cancel and complete a recovery. Each is a review (name, network, every address in full) and then a passphrase; bad addresses
   (email, `.obs` name, wrong network, the owner's own) are refused before signing; a listed name shows why its actions are off;
-  success is shown only after the node confirms. See [docs/ons.md](docs/ons.md). The platform's ONS page does not have these
-  screens yet. Incoming offers have no RPC, so a recipient finds the name by searching it.
+  success is shown only after the node confirms. See [docs/ons.md](docs/ons.md). Incoming offers have no RPC, so a recipient finds the name by searching it.
 - Tests: `ops.test.mjs` (refusals), `owner-actions-ui.test.mjs`, and `obsidian-app-web/tests/e2e-ons-owner.mjs` (real devnet, real browser).
+- **The same owner screens on the main platform's ONS page** (`obsmainnet.us.ci/ons/`; interface only). They were left out of the
+  first change only because that change was scoped to the Web App; there was never a technical reason. The platform page now has
+  the same actions, the same review-then-passphrase flow, the same refusals and the same re-check against the node before signing
+  (`web/src/lib/ons-owner.ts` holds the shared rules). Tests: `ons-owner.test.ts` (interface) and
+  `obsidian-app-web/tests/e2e-browser-platform-ons.mjs` (real devnet, real browser, wallets made by the platform's own wallet code).
 
 ### Added
 - `obsidian-app-web/tests/e2e-accounts-everywhere.mjs` and `e2e-browser-accounts.mjs`: one account across the platform and

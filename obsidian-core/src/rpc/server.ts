@@ -950,12 +950,27 @@ export class RpcServer {
       miner: maskAddress(claim.miner),
       rewardObs: formatObs(BigInt(claim.reward)),
     }));
+    // OBS the protocol credited to this address inside a block, with no transaction naming it: the treasury's share of an
+    // ONS fee and Node Runner rewards. Without these a wallet's list would not explain its own balance.
+    const credits = this.options.indexer.creditsFor(address, limit).map((credit) => ({
+      height: credit.height,
+      timestamp: credit.timestamp,
+      kind: credit.kind,
+      amount: credit.amount,
+      amountObs: formatObs(BigInt(credit.amount)),
+      txId: credit.txId,
+      reference: credit.reference,
+      note: credit.note,
+    }));
     this.json(response, 200, {
       address: maskAddress(address),
       maskNote: 'Public explorer output: counterparties and this address are partially masked. Balances are never exposed.',
       transactions: history,
       miningClaims: claims,
-      counts: { transactions: history.length, miningClaims: claims.length },
+      credits,
+      creditsNote:
+        'Credits are OBS the protocol itself paid into this address inside a block (treasury share of ONS fees, Node Runner rewards). They are not transactions, so they are not in `transactions`. Indexer history: rebuildable and never authoritative; the balance is.',
+      counts: { transactions: history.length, miningClaims: claims.length, credits: credits.length },
     });
   }
 

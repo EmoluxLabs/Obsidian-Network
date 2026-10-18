@@ -77,13 +77,24 @@ export const wallet: Screen = {
   },
 };
 
+const CREDIT_TITLES: Record<string, string> = {
+  ONS_TREASURY_SHARE: 'Treasury earnings',
+  ONS_TREASURY_RELEASE: 'Treasury earnings (released)',
+  NODE_REWARD: 'Node Runner reward',
+};
+
 function historyView(address: string | null): unknown {
   if (history.state === 'idle' || history.state === 'loading') return html`<div class="sub" style="margin-top:8px">Loading…</div>`;
   if (history.state === 'unavailable') return html`<div class="sub" style="margin-top:8px">${history.message}</div>`;
   if (history.state === 'error') return html`<div class="sub" style="margin-top:8px">History could not be read: ${history.message}</div>`;
   const txs = history.data.transactions;
-  if (txs.length === 0) return html`<div class="sub" style="margin-top:8px">No transactions for this address on this chain yet.</div>`;
-  return html`<table><thead><tr><th>Type</th><th>Direction</th><th>Counterparty</th><th>Amount</th><th>Status</th><th>Id</th></tr></thead><tbody>${txs.map((t) => {
+  const credits = history.data.credits ?? [];
+  if (txs.length === 0 && credits.length === 0) return html`<div class="sub" style="margin-top:8px">No transactions for this address on this chain yet.</div>`;
+  const creditTable = credits.length
+    ? html`<div class="sub" style="margin-top:8px">Credited by the protocol (no transaction names this wallet): the treasury's share of ONS fees and Node Runner rewards.</div><table><thead><tr><th>What</th><th>For</th><th>Amount</th><th>Block</th><th>Time</th><th>Sale</th></tr></thead><tbody>${credits.map((c) => html`<tr><td>${CREDIT_TITLES[c.kind] ?? 'Credited by the protocol'}</td><td>${c.reference ?? c.note ?? '—'}</td><td class="m">+${formatObs(c.amountObs)}</td><td class="m">${c.height}</td><td>${formatDateTime(c.timestamp)}</td><td class="m">${c.txId ? html`<button class="lk" data-action="explorer.open" data-q="${c.txId}">${shortHash(c.txId, 8, 6)}</button>` : '—'}</td></tr>`)}</tbody></table>`
+    : '';
+  if (txs.length === 0) return creditTable;
+  return html`${creditTable}<table><thead><tr><th>Type</th><th>Direction</th><th>Counterparty</th><th>Amount</th><th>Status</th><th>Id</th></tr></thead><tbody>${txs.map((t) => {
     const out = t.sender === address;
     const other = out ? t.recipient : t.sender;
     return html`<tr><td>${t.kind ?? t.type}</td><td>${out ? 'sent' : 'received'}</td><td class="m">${shortHash(other, 12, 6)}</td><td class="m">${t.amount !== undefined ? formatObs(t.amount) : '—'}</td><td>${badge(t.status === 'INCLUDED' ? `CONFIRMED${t.confirmations !== undefined ? ` · ${t.confirmations}` : ''}` : 'PENDING', t.status === 'INCLUDED' ? 'ok' : 'wn')}</td><td class="m"><button class="lk" data-action="tx.open" data-tx="${t.txId}">${shortHash(t.txId, 8, 6)}</button></td></tr>`;

@@ -16,6 +16,7 @@
 
 import { decodeMarketBody, marketOpName } from '../transactions/executors/marketplace.js';
 import { appendLineSync, atomicWriteFile, readJsonLines } from '../storage/atomic.js';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Block, ProtocolEvent, TxEnvelope } from '../protocol/types.js';
 import { TxType } from '../protocol/types.js';
@@ -66,16 +67,44 @@ export interface MiningClaimIndexRecord {
   timestamp: number;
 }
 
+/**
+ * OBS the protocol itself credited to an address inside a block, with no transaction naming that address: the treasury's
+ * 10% share of an ONS fee, the release of revenue the treasury was owed, and a Node Runner's reward at period settlement.
+ * These change a balance but appear in no wallet's transaction list (there is no transaction to list), so the indexer
+ * records them from the block's events. A convenience view only: the chain's balance is the authority and this is
+ * rebuildable from the blocks.
+ */
+export type CreditKind = 'ONS_TREASURY_SHARE' | 'ONS_TREASURY_RELEASE' | 'NODE_REWARD';
+
+export interface CreditIndexRecord {
+  height: number;
+  blockHash: string;
+  timestamp: number;
+  /** The credited address (full; the public route omits it because the caller already knows it). */
+  address: string;
+  /** Seals, as a decimal string. */
+  amount: string;
+  kind: CreditKind;
+  /** The transaction that caused it, when one did (an ONS fee). Node rewards come from a block routine and have none. */
+  txId?: string;
+  /** The name (ONS) or node id (reward) it relates to. */
+  reference?: string;
+  note?: string;
+}
+
 export interface IndexSummary {
   transactions: number;
   events: number;
   miningClaims: number;
+  credits?: number;
   blocks: number;
   lastHeight: number;
   diskBytes: number;
 }
 
 const MAX_ADDRESS_HISTORY = 5_000;
+/** Protocol credits kept per address in memory (the file keeps all of them until a rollback rewrites it). */
+const MAX_ADDRESS_CREDITS = 5_000;
 
 /** What the indexer needs from the chain to repair itself. */
 export interface IndexSource {
@@ -94,6 +123,12 @@ export class Indexer {
   private readonly txByAddress = new Map<string, TxIndexRecord[]>();
   private readonly claims: MiningClaimIndexRecord[] = [];
   private readonly recentEvents: EventIndexRecord[] = [];
+  private readonly credits: CreditIndexRecord[] = [];
+  private readonly creditsByAddress = new Map<string, CreditIndexRecord[]>();
+  /** The treasury wallet: the genesis claimant, learned from the claim that was awarded the genesis allocation. */
+  private treasury = '';
+  /** True when this index was written before protocol credits were recorded and must be rebuilt once. */
+  private creditsMissing = false;
   /** The block hash indexed at each height — how the indexer detects a reorg. */
   private readonly blockHashes = new Map<number, string>();
   private lastIndexedHeight = -1;
@@ -113,6 +148,9 @@ export class Indexer {
   private get claimPath(): string {
     return join(this.directory, 'mining-claims.jsonl');
   }
+  private get creditPath(): string {
+    return join(this.directory, 'credits.jsonl');
+  }
   private get blockPath(): string {
     return join(this.directory, 'blocks.jsonl');
   }
@@ -127,9 +165,15 @@ export class Indexer {
     for (const record of readJsonLines<MiningClaimIndexRecord>(this.claimPath)) {
       this.claims.push(record);
     }
+    for (const record of readJsonLines<CreditIndexRecord>(this.creditPath)) {
+      this.addCreditRecord(record, false);
+    }
     for (const record of readJsonLines<{ height: number; hash: string }>(this.blockPath)) {
       this.blockHashes.set(record.height, record.hash);
     }
+    this.treasury = this.claims.find((claim) => claim.genesisAwarded)?.miner ?? '';
+    // An index written before credits were recorded has blocks but no credits file: rebuild it once from the blocks.
+    this.creditsMissing = this.blockHashes.size > 0 && !existsSync(this.creditPath);
     const heights = [...this.blockHashes.keys()];
     this.lastIndexedHeight = heights.length > 0 ? Math.max(...heights) : -1;
     this.blockCounter = this.blockHashes.size;
@@ -185,13 +229,71 @@ export class Indexer {
         };
         this.claims.push(record);
         appendLineSync(this.claimPath, JSON.stringify(record));
+        if (record.genesisAwarded && !this.treasury) this.treasury = record.miner;
       }
     }
+    this.indexCredits(block, hash, events);
+    if (!existsSync(this.creditPath)) atomicWriteFile(this.creditPath, '');
+    this.creditsMissing = false;
     this.blockHashes.set(block.header.height, hash);
     appendLineSync(this.blockPath, JSON.stringify({ height: block.header.height, hash }));
     this.lastIndexedHeight = block.header.height;
     this.blockCounter = this.blockHashes.size;
     void state;
+  }
+
+  /** Record what the block's events show the protocol credited to an address (see {@link CreditIndexRecord}). */
+  private indexCredits(block: Block, hash: string, events: ProtocolEvent[]): void {
+    const base = { height: block.header.height, blockHash: hash, timestamp: block.header.timestamp };
+    const referenceOf = (txId: string | undefined): string | undefined => (txId ? this.txById.get(txId)?.reference : undefined);
+    for (const event of events) {
+      const txId = event.txId === undefined ? undefined : String(event.txId);
+      if (event.type === 'ONS_REVENUE' && event.data.treasuryDesignated === true && this.treasury) {
+        const amount = BigInt(String(event.data.treasuryShare ?? '0'));
+        if (amount <= 0n) continue;
+        const renewal = event.data.source === 'ONS_RENEWAL';
+        this.addCreditRecord(
+          {
+            ...base,
+            address: this.treasury,
+            amount: amount.toString(),
+            kind: 'ONS_TREASURY_SHARE',
+            txId,
+            reference: referenceOf(txId),
+            note: `treasury share of an ONS ${renewal ? 'renewal' : 'registration'} fee`,
+          },
+          true,
+        );
+      } else if (event.type === 'UNCLAIMED_REVENUE_SETTLED') {
+        const amount = BigInt(String(event.data.amount ?? '0'));
+        const address = String(event.data.treasury ?? '');
+        if (amount <= 0n || !address) continue;
+        this.addCreditRecord(
+          { ...base, address, amount: amount.toString(), kind: 'ONS_TREASURY_RELEASE', txId, note: 'treasury share recorded before the treasury wallet existed' },
+          true,
+        );
+      } else if (event.type === 'NODE_REWARDS_SETTLED') {
+        for (const entry of String(event.data.payouts ?? '').split(';')) {
+          const [nodeId, wallet, rawAmount] = entry.split('|');
+          if (!nodeId || !wallet || !rawAmount || !/^\d+$/.test(rawAmount)) continue;
+          const amount = BigInt(rawAmount);
+          if (amount <= 0n) continue;
+          this.addCreditRecord(
+            { ...base, address: wallet, amount: amount.toString(), kind: 'NODE_REWARD', reference: nodeId, note: `Node Runner reward, period ${String(event.data.period ?? '')}` },
+            true,
+          );
+        }
+      }
+    }
+  }
+
+  private addCreditRecord(record: CreditIndexRecord, persist: boolean): void {
+    this.credits.push(record);
+    const list = this.creditsByAddress.get(record.address) ?? [];
+    list.push(record);
+    if (list.length > MAX_ADDRESS_CREDITS) list.splice(0, list.length - MAX_ADDRESS_CREDITS);
+    this.creditsByAddress.set(record.address, list);
+    if (persist) appendLineSync(this.creditPath, JSON.stringify(record));
   }
 
   /**
@@ -228,6 +330,18 @@ export class Indexer {
       this.claims.splice(0, this.claims.length, ...keptClaims);
       removedAny = true;
     }
+    const keptCredits = this.credits.filter((credit) => credit.height <= height);
+    if (keptCredits.length !== this.credits.length) {
+      this.credits.splice(0, this.credits.length, ...keptCredits);
+      this.creditsByAddress.clear();
+      for (const credit of keptCredits) {
+        const list = this.creditsByAddress.get(credit.address) ?? [];
+        list.push(credit);
+        this.creditsByAddress.set(credit.address, list.length > MAX_ADDRESS_CREDITS ? list.slice(-MAX_ADDRESS_CREDITS) : list);
+      }
+      removedAny = true;
+    }
+    if (!this.claims.some((claim) => claim.genesisAwarded)) this.treasury = '';
     const keptEvents = this.recentEvents.filter((event) => event.height <= height);
     if (keptEvents.length !== this.recentEvents.length) {
       this.recentEvents.splice(0, this.recentEvents.length, ...keptEvents);
@@ -245,6 +359,7 @@ export class Indexer {
     atomicWriteFile(this.txPath, lines(records));
     atomicWriteFile(this.eventPath, lines(this.recentEvents));
     atomicWriteFile(this.claimPath, lines(this.claims));
+    atomicWriteFile(this.creditPath, lines(this.credits));
     atomicWriteFile(
       this.blockPath,
       lines([...this.blockHashes.entries()].sort((a, b) => a[0] - b[0]).map(([height, hash]) => ({ height, hash }))),
@@ -270,6 +385,8 @@ export class Indexer {
     // An index that predates per-height block records cannot be verified; the
     // safe move is a clean rebuild.
     if (this.blockHashes.size === 0 && (this.txById.size > 0 || this.claims.length > 0)) consistent = -1;
+    // An index from before protocol credits were recorded is rebuilt once, so the credits of old blocks are not missing.
+    if (this.creditsMissing && source.height >= 0) consistent = -1;
     if (consistent < this.lastIndexedHeight) this.rollbackTo(consistent);
     let indexed = 0;
     if (consistent < source.height) {
@@ -330,6 +447,11 @@ export class Indexer {
       }));
   }
 
+  /** OBS the protocol credited to this address with no transaction naming it, newest first. */
+  creditsFor(address: string, limit = 25): CreditIndexRecord[] {
+    return (this.creditsByAddress.get(address) ?? []).slice(-limit).reverse();
+  }
+
   miningClaims(limit = 25, miner?: string): MiningClaimIndexRecord[] {
     const filtered = miner ? this.claims.filter((claim) => claim.miner === miner) : this.claims;
     return filtered.slice(-limit).reverse();
@@ -345,6 +467,7 @@ export class Indexer {
       transactions: this.txById.size,
       events: this.recentEvents.length,
       miningClaims: this.claims.length,
+      credits: this.credits.length,
       blocks: this.blockCounter,
       lastHeight: this.lastIndexedHeight,
       diskBytes: 0,
@@ -359,6 +482,11 @@ export class Indexer {
  * summary rather than an exception, so one unknown transaction can never stop a
  * node from indexing a block.
  */
+/** The name as the registry keys it. A wallet may put `.obs` on the wire (the executor strips it), so a label must not double it. */
+function bareName(name: string): string {
+  return name.trim().toLowerCase().replace(/\.obs$/, '');
+}
+
 function describeTx(tx: TxEnvelope): Partial<TxIndexRecord> {
   try {
     switch (tx.type) {
@@ -376,7 +504,7 @@ function describeTx(tx: TxEnvelope): Partial<TxIndexRecord> {
           recipient: body.to || body.address || undefined,
           amount: body.fee > 0n ? body.fee.toString() : undefined,
           kind: `ONS_${onsOpName(body.op)}`,
-          reference: `${body.name}.obs`,
+          reference: `${bareName(body.name)}.obs`,
         };
       }
       case TxType.ONS_MARKET: {
@@ -385,7 +513,7 @@ function describeTx(tx: TxEnvelope): Partial<TxIndexRecord> {
           recipient: body.counterparty || undefined,
           amount: body.amount > 0n ? body.amount.toString() : undefined,
           kind: `MARKET_${marketOpName(body.op)}`,
-          reference: `${body.name}.obs`,
+          reference: `${bareName(body.name)}.obs`,
           note: body.offerId ? `offer ${body.offerId.slice(0, 16)}` : undefined,
         };
       }
