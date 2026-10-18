@@ -858,12 +858,194 @@ function nameResult(s) {
     (!r.registered && !s.walletAddress
       ? `<p class="mu" style="font-size:12.5px;margin:10px 0 0">Set up a wallet on this device to register it. Registration is a signed ONS transaction.</p>`
       : '') +
-    (r.registered && !listed && !owned && r.market?.status === 'OWNED' ? offerBlock(s, r) : '') +
+    (r.registered && !listed && !owned && r.market?.status === 'OWNED' && !holdsRole(s, r.record) ? offerBlock(s, r) : '') +
+    (r.registered && r.record ? ownerBlock(s, r) : '') +
     (r.unverified
       ? `<p class="mu" style="font-size:12px;margin:10px 0 0">This node would not answer for a single name, so availability is unconfirmed. It does not serve /names/&lt;name&gt;.</p>`
       : '') +
     `</div>`
   );
+}
+
+// ── ONS owner actions (protocol 1.9.0): change address, transfer, recovery ──────────────────────────────────
+
+/** Does the connected wallet have a part in this name: owner, the wallet an offer names, a recovery address, or a new owner? */
+function holdsRole(s, record) {
+  const me = s.walletAddress;
+  if (!me || !record) return false;
+  return (
+    record.owner === me ||
+    record.pendingTransfer?.to === me ||
+    record.recoveryAddress === me ||
+    record.pendingRecovery?.newAddress === me
+  );
+}
+
+function protocolNow(s) {
+  const t = Number(s.status?.lastBlockTimestamp ?? s.status?.timestamp);
+  return Number.isFinite(t) ? t : null;
+}
+
+const OWNER_REVIEWS = {
+  update: { title: 'REVIEW CHANGE OF ADDRESS', button: 'CONFIRM AND CHANGE ADDRESS' },
+  transfer: { title: 'REVIEW TRANSFER OFFER', button: 'CONFIRM AND OFFER THE NAME' },
+  withdraw: { title: 'REVIEW: WITHDRAW OFFER', button: 'CONFIRM AND WITHDRAW' },
+  accept: { title: 'REVIEW: ACCEPT THE NAME', button: 'CONFIRM AND TAKE THE NAME' },
+  recoverySet: { title: 'REVIEW RECOVERY ADDRESS', button: 'CONFIRM AND SET RECOVERY ADDRESS' },
+  recoveryClear: { title: 'REVIEW: REMOVE RECOVERY ADDRESS', button: 'CONFIRM AND REMOVE' },
+  recoveryStart: { title: 'REVIEW: START A RECOVERY', button: 'CONFIRM AND START RECOVERY' },
+  recoveryCancel: { title: 'REVIEW: CANCEL THE RECOVERY', button: 'CONFIRM AND CANCEL RECOVERY' },
+  recoveryFinalize: { title: 'REVIEW: COMPLETE THE RECOVERY', button: 'CONFIRM AND COMPLETE RECOVERY' },
+};
+
+function addressRow(label, address) {
+  return `<div class="row"><span>${label}</span><b class="m" style="font-size:12px">${identifierHtml(address, 'address', { label })}</b></div>`;
+}
+
+/** What the person is about to sign, in the words of what will happen. Every address is shown in full. */
+function ownerReviewPanel(s, r, review) {
+  const spec = OWNER_REVIEWS[review.kind];
+  const snap = review.snapshot;
+  let rows = `<div class="row"><span>NAME</span><b class="m">${esc(r.name)}</b></div><div class="row"><span>NETWORK</span><b>${esc(networkLabel(s))}</b></div>`;
+  let effect = '';
+  if (review.kind === 'update') {
+    rows += addressRow('NOW RESOLVES TO', snap.address) + addressRow('WILL RESOLVE TO', review.target);
+    effect = 'Anyone who pays this name will pay the new address from the moment the chain confirms it. Ownership does not change. This is free: it carries no amount, so it pays no gas.';
+  } else if (review.kind === 'transfer') {
+    rows += addressRow('OFFERED TO', review.target) + addressRow('CURRENT OWNER', snap.owner);
+    effect = 'This is an offer, not a transfer. Nothing changes hands until that wallet accepts it, within seven days. You keep the name and can withdraw the offer until then. Once it is accepted you cannot take the name back, so check every character of the address. Free of gas.';
+  } else if (review.kind === 'withdraw') {
+    rows += addressRow('OFFERED TO', snap.pendingTransfer?.to);
+    effect = 'The open offer is cancelled and that wallet can no longer accept it. You keep the name. Free of gas.';
+  } else if (review.kind === 'accept') {
+    rows += addressRow('CURRENT OWNER', snap.owner) + addressRow('YOU BECOME OWNER', review.me);
+    effect = 'The name, where it resolves and its remaining term move to this wallet. The previous owner’s recovery address and any recovery in flight are removed. Free of gas.';
+  } else if (review.kind === 'recoverySet') {
+    rows += addressRow('RECOVERY ADDRESS', review.target);
+    effect = 'That wallet will be able to START a recovery of this name. You can cancel a recovery during its delay of seven days, as long as you still hold your wallet. Choose a wallet you control and keep apart from this one. Free of gas.';
+  } else if (review.kind === 'recoveryClear') {
+    rows += addressRow('CURRENT RECOVERY ADDRESS', snap.recoveryAddress);
+    effect = 'The name will have no recovery address. Free of gas.';
+  } else if (review.kind === 'recoveryStart') {
+    rows += addressRow('CURRENT OWNER', snap.owner) + addressRow('NEW OWNER', review.target);
+    effect = 'The current owner is given seven days to cancel. After that, the recovery can be completed and the name moves to the new owner. Free of gas.';
+  } else if (review.kind === 'recoveryCancel') {
+    rows += addressRow('NEW OWNER WOULD BE', snap.pendingRecovery?.newAddress);
+    effect = 'The recovery in flight is stopped. You keep the name. Free of gas.';
+  } else if (review.kind === 'recoveryFinalize') {
+    rows += addressRow('CURRENT OWNER', snap.owner) + addressRow('NEW OWNER', snap.pendingRecovery?.newAddress);
+    effect = 'The name moves to the new owner now. Free of gas.';
+  }
+  return (
+    `<div class="card" style="margin-top:10px"><div class="lb" style="margin:0 0 6px">${spec.title}</div>${rows}</div>` +
+    `<p class="mu" style="font-size:12px;margin:8px 0 0">${effect}</p>` +
+    `<p class="mu" style="font-size:12px;margin:8px 0 0">Nothing is shown as done until the chain confirms it.</p>` +
+    designField('pp', 'VAULT PASSPHRASE', 'password', 'To sign this action') +
+    `<button class="btn p" style="margin-top:10px" onclick="ObsidianOwnerConfirm()">${busy(spec.button, s, 'ons')}</button>` +
+    `<button class="btn" onclick="ObsidianMarketCancelReview()">CANCEL</button>`
+  );
+}
+
+/**
+ * The actions this wallet can take on a name it owns, was offered, or holds the recovery of. A listed name shows why
+ * every action is off rather than hiding it (the chain refuses them with NAME_LISTED); nothing here moves OBS.
+ */
+function ownerBlock(s, r) {
+  const record = r.record;
+  const me = s.walletAddress;
+  if (!me) return '';
+  const isOwner = record.owner === me;
+  const offeredToMe = !isOwner && record.pendingTransfer?.to === me;
+  const recoveryMe = !isOwner && record.recoveryAddress === me;
+  const newOwnerMe = !isOwner && record.pendingRecovery?.newAddress === me;
+  if (!isOwner && !offeredToMe && !recoveryMe && !newOwnerMe) return '';
+
+  const review = s.market?.review && OWNER_REVIEWS[s.market.review.kind] && s.market.review.name === r.name ? s.market.review : null;
+  const heading = `<div class="lb" style="margin:14px 0 6px">${isOwner ? 'MANAGE THIS NAME' : 'THIS NAME AND YOUR WALLET'}</div>`;
+  if (review) return heading + ownerReviewPanel(s, r, review);
+
+  const now = protocolNow(s);
+  const locked = Boolean(record.locked) || r.market?.status === 'LISTED';
+  const lockedNote = `<p class="mu" style="font-size:12.5px;margin:8px 0 0;color:var(--er,#b3261e)">This name is listed on the ONS Marketplace, so the chain refuses these actions (NAME_LISTED). Remove the listing under YOUR NAMES first.</p>`;
+  const off = locked ? 'disabled' : '';
+  const button = (kind, label, primary = false) =>
+    `<button class="btn ${primary ? 'p' : ''}" ${off} style="margin-top:8px" onclick="ObsidianOwnerReview('${kind}')">${label}</button>`;
+  let html = heading;
+
+  if (isOwner) {
+    const offer = record.pendingTransfer;
+    const offerOpen = offer && (!Number.isFinite(Number(offer.offerExpiresAt)) || now === null || Number(offer.offerExpiresAt) >= now);
+    html += locked ? lockedNote : '';
+    html +=
+      `<div class="card" style="margin-top:10px"><div class="lb" style="margin:0 0 6px">WHERE IT POINTS</div>` +
+      addressRow('RESOLVES TO', record.address) +
+      `<p class="mu" style="font-size:12px;margin:6px 0 0">Changing it is free (no gas). You stay the owner.</p>` +
+      designField('oaddr', 'NEW ADDRESS', 'text', 'A wallet address, not an email') +
+      button('update', 'REVIEW CHANGE OF ADDRESS', true) +
+      `</div>`;
+    html +=
+      `<div class="card" style="margin-top:10px"><div class="lb" style="margin:0 0 6px">TRANSFER TO ANOTHER WALLET</div>` +
+      (offerOpen
+        ? addressRow('OFFERED TO', offer.to) +
+          `<div class="row"><span>OPEN UNTIL</span><b>${esc(Number.isFinite(Number(offer.offerExpiresAt)) ? formatTime(offer.offerExpiresAt) : '—')}</b></div>` +
+          `<p class="mu" style="font-size:12px;margin:6px 0 0">The recipient must accept. Until they do, the name is still yours and you can withdraw the offer.</p>` +
+          `<button class="btn" style="margin-top:8px" onclick="ObsidianOwnerReview('withdraw')">WITHDRAW THE OFFER</button>`
+        : (offer ? `<p class="mu" style="font-size:12px;margin:0 0 6px">An earlier offer to ${identifierHtml(offer.to, 'address', { label: 'Lapsed offer recipient' })} lapsed unaccepted.</p>` : '') +
+          `<p class="mu" style="font-size:12px;margin:0 0 6px">Two steps: you offer, then the recipient accepts within seven days. Nothing changes hands before that. The recipient is a wallet address, never an email.</p>` +
+          designField('otto', 'RECIPIENT WALLET ADDRESS', 'text', 'A wallet address, not an email') +
+          button('transfer', 'REVIEW TRANSFER OFFER', true)) +
+      `</div>`;
+    const recovery = record.pendingRecovery;
+    html +=
+      `<div class="card" style="margin-top:10px"><div class="lb" style="margin:0 0 6px">RECOVERY</div>` +
+      (record.recoveryAddress ? addressRow('RECOVERY ADDRESS', record.recoveryAddress) : `<div class="row"><span>RECOVERY ADDRESS</span><b>NONE</b></div>`) +
+      (recovery
+        ? `<div class="card" style="margin-top:8px"><div class="lb" style="margin:0 0 6px">A RECOVERY IS IN FLIGHT</div>` +
+          addressRow('NEW OWNER WOULD BE', recovery.newAddress) +
+          `<div class="row"><span>TAKES EFFECT</span><b>${esc(formatTime(recovery.effectiveAt))}</b></div>` +
+          `<p class="mu" style="font-size:12px;margin:6px 0 0">If you did not expect this, cancel it now. Changing the recovery address is blocked until it is cancelled or finished.</p>` +
+          `<button class="btn p" style="margin-top:8px" onclick="ObsidianOwnerReview('recoveryCancel')">CANCEL THE RECOVERY</button></div>`
+        : `<p class="mu" style="font-size:12px;margin:6px 0 0">A recovery address is a second wallet that can take the name back if you lose this one, after a delay of seven days in which you can cancel. Free of gas.</p>` +
+          designField('orec', record.recoveryAddress ? 'CHANGE RECOVERY ADDRESS' : 'RECOVERY WALLET ADDRESS', 'text', 'A wallet address, not an email') +
+          button('recoverySet', 'REVIEW RECOVERY ADDRESS', true) +
+          (record.recoveryAddress ? button('recoveryClear', 'REMOVE THE RECOVERY ADDRESS') : '')) +
+      `</div>`;
+    return html;
+  }
+
+  if (offeredToMe) {
+    const offer = record.pendingTransfer;
+    const lapsed = Number.isFinite(Number(offer.offerExpiresAt)) && now !== null && Number(offer.offerExpiresAt) < now;
+    html +=
+      `<div class="card" style="margin-top:10px"><div class="lb" style="margin:0 0 6px">OFFERED TO YOUR WALLET</div>` +
+      addressRow('OFFERED BY (OWNER)', record.owner) +
+      `<div class="row"><span>${lapsed ? 'LAPSED' : 'ACCEPT BEFORE'}</span><b>${esc(formatTime(offer.offerExpiresAt))}</b></div>` +
+      `<p class="mu" style="font-size:12px;margin:6px 0 0">Accepting makes this wallet the owner. It is free of gas. You get the remaining term; the previous owner’s recovery address is removed.</p>` +
+      (locked ? lockedNote : lapsed ? `<p class="mu" style="font-size:12.5px;margin:8px 0 0">This offer has lapsed. Ask the owner to offer it again.</p>` : '') +
+      `<button class="btn p" ${locked || lapsed ? 'disabled' : ''} style="margin-top:8px" onclick="ObsidianOwnerReview('accept')">REVIEW AND ACCEPT</button></div>`;
+  }
+
+  if (recoveryMe || newOwnerMe) {
+    const recovery = record.pendingRecovery;
+    html += `<div class="card" style="margin-top:10px"><div class="lb" style="margin:0 0 6px">RECOVERY</div>` + addressRow('CURRENT OWNER', record.owner);
+    if (!recovery) {
+      html +=
+        `<p class="mu" style="font-size:12px;margin:6px 0 0">This wallet is the recovery address of this name. A recovery moves the name to a new owner after a delay of seven days, during which the owner can cancel it. Free of gas.</p>` +
+        (locked ? lockedNote : '') +
+        designField('onew', 'NEW OWNER WALLET ADDRESS', 'text', 'A wallet address, not an email') +
+        button('recoveryStart', 'REVIEW AND START RECOVERY', true);
+    } else {
+      const ready = now !== null && now >= Number(recovery.effectiveAt);
+      html +=
+        addressRow('NEW OWNER', recovery.newAddress) +
+        `<div class="row"><span>${ready ? 'READY SINCE' : 'READY AT'}</span><b>${esc(formatTime(recovery.effectiveAt))}</b></div>` +
+        (locked ? lockedNote : '') +
+        (ready || locked ? '' : `<p class="mu" style="font-size:12.5px;margin:8px 0 0">The delay has not passed, so the chain would refuse completion now.</p>`) +
+        `<button class="btn p" ${ready && !locked ? '' : 'disabled'} style="margin-top:8px" onclick="ObsidianOwnerReview('recoveryFinalize')">REVIEW AND COMPLETE RECOVERY</button>`;
+    }
+    html += `</div>`;
+  }
+  return html;
 }
 
 // ── ONS Marketplace (protocol 2.0.0) ─────────────────────────────────────────────────────────────────────────
@@ -1010,7 +1192,8 @@ function marketScreen(s) {
             `<div style="padding:10px 0;border-bottom:1px solid var(--ln,#eee)">` +
             `<div class="row"><b class="m">${esc(n)}${/\.obs$/.test(n) ? '' : '.obs'}</b><span class="pill">${
               st?.status === 'LISTED' ? `LISTED · ${esc(displayObsWithUnit(listing.priceSeals))}` : st ? 'ACTIVE' : '—'
-            }</span></div>${controls}</div>`
+            }</span></div>` +
+            `<button class="btn" onclick="ObsidianOwnerManage('${arg(n)}')">MANAGE: ADDRESS, TRANSFER, RECOVERY</button>${controls}</div>`
           );
         })
         .join('')}</div>`
@@ -1040,6 +1223,7 @@ function marketScreen(s) {
     `<div class="lb">YOUR NAMES</div>` +
     pass +
     mine +
+    `<p class="mu" style="font-size:12px;margin:6px 0 0">Was a name offered to this wallet, or is this wallet a recovery address? Search the name above: the actions appear on its result when this wallet has a part in it.</p>` +
     `<p class="mu" style="font-size:12px;margin:6px 0 0">A listed name is locked: it cannot be edited, transferred, renewed or recovered until the listing is removed or sold. Listing refunds any offers already made on it.</p>` +
     `<div class="lb">OFFERS MADE TO YOU</div>` +
     (s.walletAddress ? offerRows(s, m.incoming, 'incoming') : unavailable('Set up a wallet to see offers.')) +

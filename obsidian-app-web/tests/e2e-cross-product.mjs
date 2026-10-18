@@ -477,8 +477,9 @@ async function forgeClaim(w, label) {
 const FUNDER_PHRASE = process.env.FUNDER_PHRASE ?? STANDARD_PHRASE;
 const funderAddress = signing.walletFromPhrase(FUNDER_PHRASE, HRP).address;
 const funderBalance = await data.getBalance(funderAddress).then((b) => BigInt(b?.balanceSeals ?? 0), () => 0n);
-// Genesis allocates nothing to anyone, and a mining claim pays a thousandth of an OBS while a name costs fifty times
-// that, so a fresh development network has no wallet that can pay for a name. Names are checked when one is given.
+// Only the FIRST valid mining claim on a chain receives the one-time genesis allocation; every later claim pays a small
+// fraction of an OBS while a name costs 0.05 OBS. So a development network has a wallet that can pay for a name only if
+// its first claim was made by that wallet (tests/e2e-ons-owner.mjs does exactly that). Names are checked when one is given.
 if (funderBalance < ops.parseObs((await data.getParams()).ons.registrationFeeObs) + ops.parseObs('0.02')) {
   say(`names:    SKIPPED — the wallet for FUNDER_PHRASE (${funderAddress.slice(0, 12)}…) cannot pay a registration fee on this network; set FUNDER_PHRASE to a funded wallet to run this part`);
 } else {

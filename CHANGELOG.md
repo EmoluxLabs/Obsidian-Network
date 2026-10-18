@@ -34,8 +34,18 @@ verified correct end to end, so the production cause is not established from the
 
 ### Changed (tests)
 - `e2e-cross-product.mjs`: the names part runs only when `FUNDER_PHRASE` (default: the standard test phrase) holds enough
-  to pay a registration fee, and says `SKIPPED` otherwise. Genesis allocates nothing, so a fresh development network has
-  no such wallet; the part used to fail with an insufficient-funds error that said nothing about the code under test.
+  to pay a registration fee, and says `SKIPPED` otherwise. A fresh development network has no wallet that can pay one
+  until its first mining claim (the first valid claim on a chain receives the one-time genesis allocation); the part used to fail
+  with an insufficient-funds error that said nothing about the code under test.
+
+### Added (Web App; interface only, no consensus or version change)
+- **ONS owner screens.** Every ownership operation the chain already had now has a screen in the Web App: change the address a
+  name points to, offer it to another wallet, withdraw the offer, accept an offer, set or clear the recovery address, start,
+  cancel and complete a recovery. Each is a review (name, network, every address in full) and then a passphrase; bad addresses
+  (email, `.obs` name, wrong network, the owner's own) are refused before signing; a listed name shows why its actions are off;
+  success is shown only after the node confirms. See [docs/ons.md](docs/ons.md). The platform's ONS page does not have these
+  screens yet. Incoming offers have no RPC, so a recipient finds the name by searching it.
+- Tests: `ops.test.mjs` (refusals), `owner-actions-ui.test.mjs`, and `obsidian-app-web/tests/e2e-ons-owner.mjs` (real devnet, real browser).
 
 ### Added
 - `obsidian-app-web/tests/e2e-accounts-everywhere.mjs` and `e2e-browser-accounts.mjs`: one account across the platform and

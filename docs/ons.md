@@ -59,6 +59,37 @@ Rules the protocol enforces:
 `GET /names/<name>` additionally shows `transferCount`, `pendingTransfer {to, offeredAt, offerExpiresAt}`, `recoveryAddress`
 and `pendingRecovery {by, newAddress, startedAt, effectiveAt}` when they exist.
 
+### Doing it in the Web App
+
+Every operation in the table above has a screen in the Web App (`app.` site, ONS tab) for the wallet that may sign it. There is
+no new rule and no new transaction: each screen builds the signed transaction the table describes and the node alone decides.
+
+* **The owner** searches the name, or presses **MANAGE** on a row of YOUR NAMES. The result shows *Manage this name*: change the
+  address it points to, offer it to another wallet (and withdraw the offer while it is open), set or clear the recovery address,
+  and cancel a recovery in flight.
+* **The recipient of an offer** has no inbox: the node publishes no list of offers made *to* an address (the market event feed
+  deliberately leaves ordinary transfer offers out), so the recipient is told the name and searches it. The result then shows
+  *Offered to your wallet* with **Review and accept**, or says the offer lapsed.
+* **The recovery address** searches the name and sees *This wallet is the recovery address*: start a recovery to a new owner.
+  Completing it stays disabled until the delay has passed and says when it becomes ready; either the recovery address or the new
+  owner can then complete it.
+
+Each action is a review first. The review shows the name, the network and every address in full; nothing is signed until the
+passphrase is typed and the confirm button is pressed. An email address, a `.obs` name, an address of another network or the owner's own
+address (as a recipient or recovery address) is refused on the page before any passphrase is asked for. A listed name shows `NAME_LISTED` and its locked actions are
+disabled. The review is checked against the node again just before signing, so a name that changed meanwhile signs nothing. The
+page says *confirmed on the chain* only after the node shows the change, never on submission.
+
+Not changed: the platform's own ONS page (`obsmainnet.us.ci`) still has registration, search, renewal and the Marketplace but not
+these owner screens, and the standalone wallet site has no ONS at all.
+
+Tested: unit tests for every refusal (`obsidian-app-web/tests/ops.test.mjs`), source guards (`obsidian-app-web/tests/owner-actions-ui.test.mjs`) and, against a real devnet in a
+real browser, `obsidian-app-web/tests/e2e-ons-owner.mjs`: register; refuse four kinds of bad address; wrong passphrase signs nothing; change address;
+offer, withdraw and re-offer; a stranger sees none of it; the recipient accepts; set a recovery address; the recovery address
+starts a recovery and *complete* is disabled; the owner cancels it; list (the owner actions lock) and remove the listing. Every
+result is read back from the chain. Not tested on a live network: completing a recovery and accepting an offer after it lapses,
+because both depend on a seven-day delay that a test cannot wait out (the pre-checks are unit-tested with a controlled clock).
+
 ### What recovery cannot do — stated plainly
 
 * The recovery address is a **credential-based, delayed and cancellable** path, not a back door. It cannot transfer, renew or

@@ -45,6 +45,7 @@ import {
 } from './signing.mjs';
 import { openVault, PassphraseError } from './vault.mjs';
 import { parseObs, formatObs } from '../../obsidian-interface/web/core/protocol/amount.js';
+import { isValidAddress } from '../../obsidian-interface/web/core/crypto/keys.js';
 
 /** How long a signed transaction stays valid. Matches the web platform's window. */
 export const VALIDITY_SECONDS = 600;
@@ -166,6 +167,33 @@ async function runOperation(deps, spec) {
 
 function refusal(reason, message, extra = {}) {
   return { ok: false, reason, message, ...extra };
+}
+
+/** A listed name is locked by consensus (`NAME_LISTED`). This says so before a passphrase is asked for. */
+function listedRefusal(record, name, action) {
+  if (record?.locked === true || record?.marketStatus === 'LISTED' || record?.listing) {
+    return refusal('NAME_LISTED', `${name} is listed on the ONS Marketplace and cannot ${action} until the listing is removed or the name is sold`);
+  }
+  return null;
+}
+
+/** An address for this network, never an email, never a name. The node checks it again; this gives the reason sooner. */
+function addressRefusal(ctx, value, what) {
+  const text = String(value ?? '').trim();
+  if (!text) return refusal('BAD_ADDRESS', `enter ${what}`);
+  if (text.includes('@')) return refusal('BAD_ADDRESS', `${what} must be a wallet address, not an email address`);
+  if (/\.obs$/i.test(text)) return refusal('BAD_ADDRESS', `${what} must be a wallet address; a .obs name is not accepted here`);
+  if (ctx?.addressHrp && !isValidAddress(text, ctx.addressHrp)) {
+    return refusal('BAD_ADDRESS', `${what} is not a valid ${ctx.addressHrp}1… wallet address for this network`);
+  }
+  return null;
+}
+
+/** An open (not lapsed) transfer offer. A record without an expiry is treated as open. */
+function offerOpen(record, ctx) {
+  if (!record.pendingTransfer) return false;
+  const lapse = Number(record.pendingTransfer.offerExpiresAt);
+  return !Number.isFinite(lapse) || lapse >= ctx.protocolTime;
 }
 
 // ── linking the wallet to the account ────────────────────────────────────────
@@ -394,6 +422,10 @@ export async function submitNameUpdate(deps, { name, address: target }) {
       const record = await deps.getName?.(name).catch(() => null);
       if (!record) return refusal('NAME_NOT_FOUND', `${name} is not registered`);
       if (record.owner !== address) return refusal('NAME_NOT_OWNED', `only the owner may update ${name}`);
+      const locked = listedRefusal(record, name, 'be edited');
+      if (locked) return locked;
+      const bad = addressRefusal(ctx, target, 'the new address');
+      if (bad) return bad;
       return { ok: true };
     },
     build() {
@@ -412,16 +444,24 @@ export async function submitNameUpdate(deps, { name, address: target }) {
  * (`submitNameTransferAccept`) within seven days, and the owner can withdraw the offer until then.
  */
 export async function submitNameTransfer(deps, { name, to }) {
-  return ownershipOperation(deps, name, OnsOp.TRANSFER, { to }, (record, address) =>
-    record.owner === address ? null : ['NAME_NOT_OWNED', `only the owner may offer ${name}`],
-  );
+  return ownershipOperation(deps, name, OnsOp.TRANSFER, { to }, (record, address, ctx) => {
+    if (record.owner !== address) return ['NAME_NOT_OWNED', `only the owner may offer ${name}`];
+    const bad = addressRefusal(ctx, to, 'the recipient');
+    if (bad) return [bad.reason, bad.message];
+    if (to === record.owner) return ['BAD_RECIPIENT', 'the recipient already owns this name'];
+    if (offerOpen(record, ctx)) return ['OFFER_OPEN', `an offer to ${record.pendingTransfer.to} is already open: withdraw it first`];
+    return null;
+  }, 'be transferred outside the Marketplace');
 }
 
 /** Take a name that was offered to this wallet. */
 export async function submitNameTransferAccept(deps, { name }) {
-  return ownershipOperation(deps, name, OnsOp.ACCEPT_TRANSFER, {}, (record, address) =>
-    record.pendingTransfer?.to === address ? null : ['NO_OFFER', `${name} has not been offered to this wallet`],
-  );
+  return ownershipOperation(deps, name, OnsOp.ACCEPT_TRANSFER, {}, (record, address, ctx) => {
+    if (record.pendingTransfer?.to !== address) return ['NO_OFFER', `${name} has not been offered to this wallet`];
+    const lapsed = Number(record.pendingTransfer.offerExpiresAt);
+    if (Number.isFinite(lapsed) && lapsed < ctx.protocolTime) return ['OFFER_LAPSED', 'the transfer offer has lapsed (offers last seven days)'];
+    return null;
+  }, 'be transferred outside the Marketplace');
 }
 
 /** Withdraw an open offer (owner only). */
@@ -433,16 +473,28 @@ export async function submitNameTransferCancel(deps, { name }) {
 
 /** Set (or clear, with an empty address) the recovery address of a name this wallet owns. */
 export async function submitNameRecoverySet(deps, { name, address: recovery }) {
-  return ownershipOperation(deps, name, OnsOp.SET_RECOVERY, { address: recovery ?? '' }, (record, address) =>
-    record.owner === address ? null : ['NAME_NOT_OWNED', `only the owner may set the recovery address of ${name}`],
-  );
+  return ownershipOperation(deps, name, OnsOp.SET_RECOVERY, { address: recovery ?? '' }, (record, address, ctx) => {
+    if (record.owner !== address) return ['NAME_NOT_OWNED', `only the owner may set the recovery address of ${name}`];
+    if (record.pendingRecovery) return ['RECOVERY_IN_FLIGHT', 'a recovery is in flight: cancel it before changing the recovery address'];
+    if (recovery) {
+      const bad = addressRefusal(ctx, recovery, 'the recovery address');
+      if (bad) return [bad.reason, bad.message];
+      if (recovery === record.owner) return ['BAD_RECIPIENT', 'the recovery address must differ from the owner'];
+    }
+    return null;
+  }, 'have its recovery address changed');
 }
 
 /** Signed by the recovery address: propose a new owner. It takes effect only after the recovery delay. */
 export async function submitNameRecoveryStart(deps, { name, newOwner }) {
-  return ownershipOperation(deps, name, OnsOp.START_RECOVERY, { address: newOwner }, (record, address) =>
-    record.recoveryAddress === address ? null : ['NOT_RECOVERY_ADDRESS', `this wallet is not the recovery address of ${name}`],
-  );
+  return ownershipOperation(deps, name, OnsOp.START_RECOVERY, { address: newOwner }, (record, address, ctx) => {
+    if (record.recoveryAddress !== address) return ['NOT_RECOVERY_ADDRESS', `this wallet is not the recovery address of ${name}`];
+    if (record.pendingRecovery) return ['RECOVERY_IN_FLIGHT', 'a recovery is already in flight'];
+    const bad = addressRefusal(ctx, newOwner, 'the new owner');
+    if (bad) return [bad.reason, bad.message];
+    if (newOwner === record.owner) return ['BAD_RECIPIENT', 'the new owner is already the owner'];
+    return null;
+  }, 'be recovered');
 }
 
 /** The current owner cancels a recovery in flight. */
@@ -454,24 +506,30 @@ export async function submitNameRecoveryCancel(deps, { name }) {
 
 /** Complete a recovery once its delay has passed (the recovery address or the new owner). */
 export async function submitNameRecoveryFinalize(deps, { name }) {
-  return ownershipOperation(deps, name, OnsOp.FINALIZE_RECOVERY, {}, (record, address) => {
+  return ownershipOperation(deps, name, OnsOp.FINALIZE_RECOVERY, {}, (record, address, ctx) => {
     const recovery = record.pendingRecovery;
     if (!recovery) return ['NO_RECOVERY', `${name} has no recovery in flight`];
-    return recovery.by === address || recovery.newAddress === address ? null : ['UNAUTHORIZED', 'only the recovery address or the new owner may complete it'];
-  });
+    if (recovery.by !== address && recovery.newAddress !== address) return ['UNAUTHORIZED', 'only the recovery address or the new owner may complete it'];
+    const effective = Number(recovery.effectiveAt);
+    if (Number.isFinite(effective) && ctx.protocolTime < effective) return ['RECOVERY_NOT_READY', 'the recovery delay has not passed yet', { effectiveAt: effective }];
+    return null;
+  }, 'be recovered');
 }
 
 /**
  * One zero-gas ONS ownership operation. The pre-check reads the on-chain record so the user gets a plain refusal
  * instead of a rejected transaction; consensus makes the same checks again and is the only authority.
  */
-async function ownershipOperation(deps, name, op, fields, check) {
+async function ownershipOperation(deps, name, op, fields, check, lockedAction) {
   return runOperation(deps, {
-    async prepare(address) {
+    async prepare(address, ctx) {
       const record = await deps.getName?.(name).catch(() => null);
       if (!record) return refusal('NAME_NOT_FOUND', `${name} is not registered`);
-      const problem = check(record, address);
-      if (problem) return refusal(problem[0], problem[1]);
+      const problem = check(record, address, ctx);
+      if (problem) return refusal(problem[0], problem[1], problem[2] ?? {});
+      // The Marketplace lock is checked after the role: a stranger is told it is not theirs, not that it is listed.
+      const locked = lockedAction ? listedRefusal(record, name, lockedAction) : null;
+      if (locked) return locked;
       return { ok: true };
     },
     build() {

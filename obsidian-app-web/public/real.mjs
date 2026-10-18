@@ -110,6 +110,15 @@ import {
   acceptNameOffer,
   declineNameOffer,
   cancelNameOffer,
+  updateNameAddress,
+  transferName,
+  acceptNameTransfer,
+  cancelNameTransfer,
+  setNameRecovery,
+  startNameRecovery,
+  cancelNameRecovery,
+  finalizeNameRecovery,
+  checkAddressText,
   recipientKind,
   resolveRecipientName,
   reconfirmRecipientName,
@@ -1145,6 +1154,128 @@ function install() {
   g.ObsidianMarketAccept = (offerId) => marketAction('Acceptance of the offer', (pass) => acceptNameOffer({ offerId }, pass), offerDone(offerId), 'pp2');
   g.ObsidianMarketDecline = (offerId) => marketAction('Decline of the offer', (pass) => declineNameOffer({ offerId }, pass), offerDone(offerId), 'pp2');
   g.ObsidianMarketCancel = (offerId) => marketAction('Cancellation of the offer', (pass) => cancelNameOffer({ offerId }, pass), offerDone(offerId), 'pp2');
+
+  // ── ONS owner actions (protocol 1.9.0): change address, transfer, recovery ───────────────────────────────────
+  //
+  // Every action is two steps. REVIEW shows what will be signed and what it will do; CONFIRM asks for the vault passphrase,
+  // re-reads the name from the node (a name that changed while it was on screen is not signed), signs, and then waits for the
+  // chain to show the new state before saying it happened. None of these moves OBS, and none pays gas.
+
+  /** The parts of a name's record an owner action depends on: if any of them changed since review, nothing is signed. */
+  const nameSnapshot = (record) => ({
+    owner: record?.owner ?? null,
+    address: record?.address ?? null,
+    pendingTransfer: record?.pendingTransfer ? { to: record.pendingTransfer.to, offerExpiresAt: record.pendingTransfer.offerExpiresAt ?? null } : null,
+    recoveryAddress: record?.recoveryAddress ?? null,
+    pendingRecovery: record?.pendingRecovery
+      ? { by: record.pendingRecovery.by, newAddress: record.pendingRecovery.newAddress, effectiveAt: record.pendingRecovery.effectiveAt ?? null }
+      : null,
+    locked: Boolean(record?.locked) || record?.marketStatus === 'LISTED',
+  });
+
+  /** `field` is the input that holds the address this action needs; `done` is how the chain shows it happened. */
+  const OWNER_ACTIONS = {
+    update: {
+      field: 'oaddr',
+      label: 'Change of address',
+      sign: (review, pass) => updateNameAddress({ name: review.name, address: review.target }, pass),
+      done: (record, review) => record.address === review.target,
+    },
+    transfer: {
+      field: 'otto',
+      label: 'Transfer offer',
+      sign: (review, pass) => transferName({ name: review.name, to: review.target }, pass),
+      done: (record, review) => record.pendingTransfer?.to === review.target,
+    },
+    withdraw: {
+      label: 'Withdrawal of the transfer offer',
+      sign: (review, pass) => cancelNameTransfer({ name: review.name }, pass),
+      done: (record) => !record.pendingTransfer,
+    },
+    accept: {
+      label: 'Acceptance of the transfer',
+      sign: (review, pass) => acceptNameTransfer({ name: review.name }, pass),
+      done: (record, review) => record.owner === review.me,
+    },
+    recoverySet: {
+      field: 'orec',
+      label: 'Recovery address',
+      sign: (review, pass) => setNameRecovery({ name: review.name, address: review.target }, pass),
+      done: (record, review) => record.recoveryAddress === review.target,
+    },
+    recoveryClear: {
+      label: 'Removal of the recovery address',
+      sign: (review, pass) => setNameRecovery({ name: review.name, address: '' }, pass),
+      done: (record) => !record.recoveryAddress,
+    },
+    recoveryStart: {
+      field: 'onew',
+      label: 'Recovery',
+      sign: (review, pass) => startNameRecovery({ name: review.name, newOwner: review.target }, pass),
+      done: (record, review) => record.pendingRecovery?.newAddress === review.target,
+    },
+    recoveryCancel: {
+      label: 'Cancellation of the recovery',
+      sign: (review, pass) => cancelNameRecovery({ name: review.name }, pass),
+      done: (record) => !record.pendingRecovery,
+    },
+    recoveryFinalize: {
+      label: 'Completion of the recovery',
+      sign: (review, pass) => finalizeNameRecovery({ name: review.name }, pass),
+      done: (record, review) => record.owner === review.snapshot.pendingRecovery?.newAddress,
+    },
+  };
+
+  /** Open a name from YOUR NAMES: the search result carries the owner's actions. */
+  g.ObsidianOwnerManage = async (name) => {
+    await g.ObsidianMarketOpen(name);
+    window.scrollTo?.(0, 0);
+  };
+
+  g.ObsidianOwnerReview = async (kind) => {
+    const result = state.ons?.result;
+    const spec = OWNER_ACTIONS[kind];
+    if (!result?.record || !spec) return;
+    if (!state.walletAddress) {
+      setError('Set up a wallet on this device first.');
+      return render();
+    }
+    let target;
+    const typed = spec.field ? field(spec.field).trim() : '';
+    if (spec.field) {
+      const checked = await checkAddressText(typed);
+      if (!checked.ok) {
+        setError(checked.message);
+        render();
+        const input = document.getElementById(spec.field);
+        if (input) input.value = typed;
+        return;
+      }
+      target = checked.address;
+    }
+    state.market.review = { kind, name: result.name, target, me: state.walletAddress, snapshot: nameSnapshot(result.record) };
+    setError('');
+    render();
+  };
+
+  g.ObsidianOwnerConfirm = () => {
+    const review = state.market.review;
+    const spec = OWNER_ACTIONS[review?.kind];
+    if (!spec) return undefined;
+    const me = state.walletAddress;
+    return marketAction(
+      `${spec.label} on ${review.name}`,
+      async (pass) => {
+        if (review.me !== me) return { ok: false, message: 'The wallet changed while this was waiting. Nothing was signed.' };
+        const now = nameSnapshot(await getName(review.name).catch(() => null));
+        if (JSON.stringify(now) !== JSON.stringify(review.snapshot)) {
+          return { ok: false, message: `${review.name} changed while you were reviewing it. Nothing was signed: look at it again.` };
+        }
+        return spec.sign(review, pass);
+      },
+      async () => spec.done(await getName(review.name), review),
+    );
+  };
 
   g.ObsidianRegisterName = (name) => {
     const feeObs = state.params?.ons?.registrationFeeObs;

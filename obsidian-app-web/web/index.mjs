@@ -77,6 +77,7 @@ export {
 } from '../../obsidian-interface/web/core/protocol/recipient.js';
 
 export { parseObs, formatObs } from '../../obsidian-interface/web/core/protocol/amount.js';
+export { isValidAddress } from '../../obsidian-interface/web/core/crypto/keys.js';
 
 export {
   createVault,

@@ -426,6 +426,96 @@ test('recovery: the owner sets the address, only that address starts it, the own
   assert.equal((await submitNameRecoveryFinalize(inFlight, { name: 'mine.obs' })).reason, 'UNAUTHORIZED');
 });
 
+// ── owner actions: refusals made before a passphrase is asked for (interface only) ──────────────────────────────
+
+const FAR = 9_999_999_999;
+// A real checksummed address for this network: the interface checks the address before it asks for a passphrase.
+const { walletFromPhrase } = await import('../web/signing.mjs');
+const PEER = walletFromPhrase('zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong', 'obs').address;
+const withContext = (extra, record) =>
+  fakeNode({
+    getContext: async () => ({ chainId: 7777, protocolVersion: '2.0.2', protocolTime: 1_700_000_000, addressHrp: 'obs', ...extra }),
+    getName: async () => record,
+  });
+
+test('a refusal asks for no passphrase and sends nothing', async () => {
+  let asked = 0;
+  const node = withContext({}, { name: 'mine', owner: ADDRESS, expiresAt: FAR });
+  node.requestPassphrase = async () => {
+    asked += 1;
+    return PASSPHRASE;
+  };
+  for (const to of ['', 'someone@gmail.com', 'mine.obs', 'obs1notanaddress', ADDRESS]) {
+    const result = await submitNameTransfer(node, { name: 'mine.obs', to });
+    assert.equal(result.ok, false, `refused: ${JSON.stringify(to)}`);
+  }
+  assert.equal(asked, 0);
+  assert.equal(node.sent.length, 0);
+});
+
+test('a recipient or address that is not a wallet address is refused with its own reason', async () => {
+  const node = withContext({}, { name: 'mine', owner: ADDRESS, expiresAt: FAR });
+  assert.equal((await submitNameTransfer(node, { name: 'mine.obs', to: 'someone@gmail.com' })).reason, 'BAD_ADDRESS');
+  assert.match((await submitNameTransfer(node, { name: 'mine.obs', to: 'someone@gmail.com' })).message, /email/);
+  assert.match((await submitNameTransfer(node, { name: 'mine.obs', to: 'friend.obs' })).message, /\.obs name/);
+  assert.match((await submitNameTransfer(node, { name: 'mine.obs', to: 'obs1notanaddress' })).message, /not a valid obs1/);
+  assert.equal((await submitNameTransfer(node, { name: 'mine.obs', to: ADDRESS })).reason, 'BAD_RECIPIENT');
+  assert.equal((await submitNameUpdate(node, { name: 'mine.obs', address: 'someone@gmail.com' })).reason, 'BAD_ADDRESS');
+  assert.equal(node.sent.length, 0);
+});
+
+test('a second offer is refused while one is open, and allowed once it has lapsed', async () => {
+  const open = withContext({}, { name: 'mine', owner: ADDRESS, pendingTransfer: { to: PEER, offerExpiresAt: 1_700_000_100 }, expiresAt: FAR });
+  assert.equal((await submitNameTransfer(open, { name: 'mine.obs', to: PEER })).reason, 'OFFER_OPEN');
+  const lapsed = withContext({}, { name: 'mine', owner: ADDRESS, pendingTransfer: { to: PEER, offerExpiresAt: 1_699_999_000 }, expiresAt: FAR });
+  assert.equal((await submitNameTransfer(lapsed, { name: 'mine.obs', to: PEER })).ok, true);
+});
+
+test('an offer that has lapsed cannot be accepted', async () => {
+  const lapsed = withContext({}, { name: 'mine', owner: PEER, pendingTransfer: { to: ADDRESS, offerExpiresAt: 1_699_999_000 }, expiresAt: FAR });
+  assert.equal((await submitNameTransferAccept(lapsed, { name: 'mine.obs' })).reason, 'OFFER_LAPSED');
+  const live = withContext({}, { name: 'mine', owner: PEER, pendingTransfer: { to: ADDRESS, offerExpiresAt: 1_700_000_100 }, expiresAt: FAR });
+  assert.equal((await submitNameTransferAccept(live, { name: 'mine.obs' })).ok, true);
+  assert.equal(lapsed.sent.length, 0);
+});
+
+test('the recovery address cannot change while a recovery is in flight, and must differ from the owner', async () => {
+  const inFlight = withContext({}, { name: 'mine', owner: ADDRESS, pendingRecovery: { by: PEER, newAddress: PEER, effectiveAt: FAR }, expiresAt: FAR });
+  assert.equal((await submitNameRecoverySet(inFlight, { name: 'mine.obs', address: PEER })).reason, 'RECOVERY_IN_FLIGHT');
+  const plain = withContext({}, { name: 'mine', owner: ADDRESS, expiresAt: FAR });
+  assert.equal((await submitNameRecoverySet(plain, { name: 'mine.obs', address: ADDRESS })).reason, 'BAD_RECIPIENT');
+  assert.equal((await submitNameRecoverySet(plain, { name: 'mine.obs', address: 'x@gmail.com' })).reason, 'BAD_ADDRESS');
+  assert.equal((await submitNameRecoverySet(plain, { name: 'mine.obs', address: PEER })).ok, true);
+});
+
+test('a recovery cannot be completed before its delay, and then can by the recovery address', async () => {
+  const record = { name: 'mine', owner: PEER, recoveryAddress: ADDRESS, pendingRecovery: { by: ADDRESS, newAddress: ADDRESS, effectiveAt: 1_700_000_500 }, expiresAt: FAR };
+  const early = withContext({}, record);
+  const refused = await submitNameRecoveryFinalize(early, { name: 'mine.obs' });
+  assert.equal(refused.reason, 'RECOVERY_NOT_READY');
+  assert.equal(early.sent.length, 0);
+  const ready = withContext({ protocolTime: 1_700_000_500 }, record);
+  assert.equal((await submitNameRecoveryFinalize(ready, { name: 'mine.obs' })).ok, true);
+});
+
+test('a listed name is locked for every owner action that consensus locks, but an offer and a recovery can still be withdrawn', async () => {
+  const listed = { name: 'mine', owner: ADDRESS, marketStatus: 'LISTED', locked: true, listing: { priceSeals: '1' }, pendingTransfer: { to: PEER, offerExpiresAt: FAR }, pendingRecovery: { by: PEER, newAddress: PEER, effectiveAt: FAR }, recoveryAddress: PEER, expiresAt: FAR };
+  const node = withContext({}, { ...listed, pendingTransfer: null, pendingRecovery: null });
+  for (const run of [
+    () => submitNameUpdate(node, { name: 'mine.obs', address: PEER }),
+    () => submitNameTransfer(node, { name: 'mine.obs', to: PEER }),
+    () => submitNameRecoverySet(node, { name: 'mine.obs', address: PEER }),
+  ]) {
+    assert.equal((await run()).reason, 'NAME_LISTED');
+  }
+  assert.equal(node.sent.length, 0);
+  assert.equal((await submitNameTransferCancel(withContext({}, listed), { name: 'mine.obs' })).ok, true);
+  assert.equal((await submitNameRecoveryCancel(withContext({}, listed), { name: 'mine.obs' })).ok, true);
+  // A stranger is told the name is not theirs, not that it is listed.
+  const stranger = withContext({}, { ...listed, owner: PEER });
+  assert.equal((await submitNameTransfer(stranger, { name: 'mine.obs', to: ADDRESS })).reason, 'NAME_NOT_OWNED');
+});
+
 test('no operation leaks the phrase into its return value', async () => {
   const node = fakeNode();
   const result = await submitClaim(node);

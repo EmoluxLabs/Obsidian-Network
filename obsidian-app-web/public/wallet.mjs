@@ -383,6 +383,21 @@ async function resolverDeps() {
   };
 }
 
+/**
+ * Whether `raw` is a wallet address on THIS network (checksum included): `{ ok: true, address }` or `{ ok: false, message }`.
+ * An email or a `.obs` name is refused with its own reason, because both are things people paste where an address goes.
+ */
+export async function checkAddressText(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return { ok: false, message: 'Enter a wallet address.' };
+  if (text.includes('@')) return { ok: false, message: 'That is an email address. Enter a wallet address: ONS names are owned by wallets, not by emails.' };
+  if (/\.obs$/i.test(text)) return { ok: false, message: 'Enter the wallet address itself. A .obs name is not accepted here.' };
+  const { addressHrp } = await getAppConfig();
+  const { isValidAddress } = await api();
+  if (!isValidAddress(text, addressHrp)) return { ok: false, message: `That is not a valid ${addressHrp}1… wallet address for this network. Check every character.` };
+  return { ok: true, address: text };
+}
+
 /** `empty`, `name` or `address` — what the recipient field holds. */
 export async function recipientKind(raw) {
   return (await api()).recipientKind(raw);
