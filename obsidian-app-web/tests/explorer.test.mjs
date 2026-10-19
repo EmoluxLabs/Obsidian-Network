@@ -47,7 +47,7 @@ const DATA = {
   claims: { activeMiners: 1, claims: [{ txId: TX, height: 82, miner: 'dobs13s4pg…rs0ff0', rewardObs: '0.000166666666666666', timestamp: 1791540604, genesisAwarded: true }] },
   names: { count: 1, names: [{ name: 'e2e-test.obs', owner: 'dobs13s4pg…rs0ff0', address: FULL, expiresAt: 1823076674, registeredAtHeight: 96 }] },
   network: {
-    nodes: { nodes: [{ url: 'http://127.0.0.1:38630', healthy: true, height: 216, latencyMs: 2, wrongNetwork: false }], genesisMismatch: false },
+    nodes: { network: 'devnet', live: true, consensusHeight: 216, genesisMismatch: false },
     producers: { tier: 'TIER2', eligible: 3, registered: 3, banned: 0, rule: 'producer(height, round) = eligibleProducers[(height + round) mod count], sorted by address' },
     finality: { available: true, finalizedHeight: 184, lag: 32, reason: 'finality advances when two thirds of the established producers have built on a block' },
     mempool: { size: 0, bytes: 0 },
@@ -71,7 +71,7 @@ test('there is a section for each thing worth looking at, and each renders real 
     blocks: [/#82/, /1 TX/],
     claims: [/ACTIVE MINERS/, /dobs13s4pg…rs0ff0/, /GENESIS ALLOCATION/, /\+0\.000167/],
     names: [/e2e-test\.obs/, /REGISTER A NAME/, /UNTIL 2027-/],
-    network: [/NODES THIS APP READS/, /HEALTHY/, /BLOCK PRODUCERS/, /FINALITY/, /FINALIZED HEIGHT/, /NODE RUNNER REWARDS/, /90% nodes/, /Can one server shut down/],
+    network: [/CONNECTION/, /REACHABLE/, /BLOCK PRODUCERS/, /FINALITY/, /FINALIZED HEIGHT/, /NODE RUNNER REWARDS/, /90% nodes/, /Can one server shut down/],
   };
   for (const [tab, patterns] of Object.entries(expected)) {
     const html = render({ tab });

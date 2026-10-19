@@ -1516,7 +1516,7 @@ All of them call **relative** URLs on the same origin:
 
 - `/api/rpc?path=/status` — allowlisted proxied reads
 - `/api/auth/...` — sign-in and invites
-- `/api/nodes/...` — node pool health
+- `/api/nodes` — whether the chain is reachable (the per-node table is `/api/nodes/detail`, server-local only)
 
 A read that carries a query can be written either way — the whole read
 percent-encoded, or the parameters beside `path`:

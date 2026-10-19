@@ -3,7 +3,7 @@
  *
  *   - the connect screen, shown instead of the app whenever there is no trustworthy server to ask;
  *   - the NODE screen: what this connection is and how healthy it is, read from the node through the
- *     server — connection, height, finality, peers, staleness, the block-producer schedule (read-only) and an
+ *     server — connection, height, finality, staleness, the block-producer schedule (read-only) and an
  *     explicit statement of what a browser extension cannot do;
  *   - a small connection summary under the landing screen, so the settings are reachable when signed out;
  *   - the handlers the Menu rows call.
@@ -64,7 +64,7 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
     } else {
       view.error = status.ok ? 'The node answered, but not with a status this extension understands.' : String(status.error?.message ?? status.error);
     }
-    view.nodes = nodes.ok && Array.isArray(nodes.value?.nodes) ? nodes.value : null;
+    view.nodes = nodes.ok && typeof nodes.value?.live === 'boolean' ? nodes.value : null;
     view.producers = producers.ok && Number.isInteger(producers.value?.registered) ? producers.value : null;
     repaint();
   }
@@ -91,7 +91,7 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
           ? `<div role="alert" style="background:#FDECEA;color:#A12626;font-size:12px;font-weight:700;padding:10px 14px;border-radius:12px;margin-bottom:12px">NOT CONNECTED \u2014 ${esc(view.error)}</div>`
           : '';
 
-    const nodes = view.nodes?.nodes ?? null;
+    const link = view.nodes;
     const producers = view.producers;
     const diag = view.diag;
 
@@ -107,25 +107,20 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
       row('BLOCK HEIGHT', dash(st?.height), 'm') +
       row('FINALIZED HEIGHT', dash(st?.finalizedHeight), 'm') +
       row('LAST BLOCK', blockAge === null ? '\u2014' : esc(ago(blockAge)) + (chainStale ? ' \u00b7 STALE' : ''), 'm') +
-      row('PEERS', dash(st?.peers), 'm') +
       row('SYNC', st ? (st.syncing ? 'SYNCING' : 'IN SYNC') : '\u2014', st && !st.syncing ? 'ok' : 'mu') +
       row('MEMPOOL', dash(st?.mempool?.transactions), 'm') +
       row('PROTOCOL', dash(st?.protocolVersion), 'm') +
       row('GENESIS', st?.genesisId ? esc(String(st.genesisId).slice(0, 12)) + '\u2026' : '\u2014', 'm') +
       `</div>` +
-      `<div class="lb">NODES BEHIND THIS SERVER</div>` +
-      (nodes
-        ? `<div class="card">${
-            nodes.length
-              ? nodes
-                  .map(
-                    (n) =>
-                      `<div class="row"><div><b class="m" style="font-size:13px">${esc(hostOf(n.url))}</b><div class="mu" style="font-size:11px">height ${dash(n.height)} \u00b7 ${n.latencyMs === undefined ? '\u2014' : esc(n.latencyMs)} ms</div></div><span class="pill" style="${n.healthy && !n.wrongNetwork ? '' : 'background:#FDECEA;color:#A12626'}">${n.wrongNetwork ? 'WRONG NETWORK' : n.healthy ? 'HEALTHY' : 'DOWN'}</span></div>`,
-                  )
-                  .join('')
-              : '<div class="row mu">The server reports no nodes.</div>'
-          }</div>`
-        : `<div class="card"><div class="row mu">${view.loading ? 'Loading\u2026' : 'Unavailable \u2014 the server did not return its node list.'}</div></div>`) +
+      // The server's connection to the chain, as one answer. The nodes behind it, and their addresses, are not published.
+      `<div class="lb">THE SERVER\u2019S LINK TO THE CHAIN</div>` +
+      (link
+        ? `<div class="card">` +
+          row('CHAIN', link.live ? 'REACHABLE' : 'UNREACHABLE', link.live ? 'ok' : 'mu') +
+          row('NETWORK HEIGHT', dash(link.consensusHeight), 'm') +
+          (link.genesisMismatch ? row('GENESIS', 'NODES DISAGREE \u2014 DO NOT SIGN', 'mu') : '') +
+          `</div>`
+        : `<div class="card"><div class="row mu">${view.loading ? 'Loading\u2026' : 'Unavailable \u2014 the server did not report its connection.'}</div></div>`) +
       `<div class="lb">BLOCK PRODUCERS</div>` +
       (producers
         ? `<div class="card">` +

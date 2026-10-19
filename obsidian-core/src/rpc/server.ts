@@ -364,14 +364,14 @@ export class RpcServer {
     if (path === '/livez') return this.livez(response);
     if (path === '/readyz') return this.readyz(response);
     if (path === '/' || path === '/health') return this.health(response);
-    if (path === '/status') return this.status(response);
+    if (path === '/status') return this.status(request, response);
     if (path === '/finality') return this.finality(response);
     if (path === '/metrics') return this.metrics(response);
     if (path === '/params') return this.params(response);
     if (path === '/version') return this.json(response, 200, versionInfo());
     if (path === '/genesis') return this.genesis(response);
     if (path === '/supply') return this.supply(response);
-    if (path === '/nodes') return this.nodes(response);
+    if (path === '/nodes') return this.nodes(request, response);
     if (path === '/peers') return this.peers(request, response);
     if (path === '/oracle') return this.oracle(response);
     if (path === '/producers') return this.producers(response);
@@ -517,7 +517,7 @@ export class RpcServer {
     });
   }
 
-  private status(response: ServerResponse): void {
+  private status(request: IncomingMessage, response: ServerResponse): void {
     const status = this.options.chain.status({ peers: this.options.p2p?.peerCount ?? 0 });
     const state = this.options.chain.world;
     this.json(response, 200, {
@@ -547,7 +547,8 @@ export class RpcServer {
         settledClaims: state.s.pool.settledClaims,
       },
       indexer: this.options.indexer.summary(),
-      p2p: this.options.p2p?.status(),
+      // For a public caller: counts, never the peer table and never the last error (it can name a peer's address).
+      p2p: this.mayShowPeers(request) ? this.options.p2p?.status() : this.publicP2pStatus(),
     });
   }
 
@@ -719,7 +720,18 @@ export class RpcServer {
     });
   }
 
-  private nodes(response: ServerResponse): void {
+  private nodes(request: IncomingMessage, response: ServerResponse): void {
+    // This used to answer EVERY caller with this node's signed announcement and the address, node id, height and score of
+    // every peer it knew: a directory of the network, served through the public interface proxy. Now it is the operator's.
+    if (!this.mayShowPeers(request)) {
+      this.json(response, 200, {
+        self: null,
+        peers: [],
+        detail: 'counts-only',
+        discovery: { protocol: 'p2p-v1', note: 'Peer addresses are shown only to a caller on this machine.' },
+      });
+      return;
+    }
     const announcement = this.options.p2p?.announcement(
       this.options.config.rpcPublicUrl || undefined,
       this.options.config.publicHost ? `ws://${this.options.config.publicHost}:${this.options.config.p2pPort}` : undefined,
@@ -756,17 +768,32 @@ export class RpcServer {
     return true;
   }
 
+  /** The operator's view: a caller on this machine without proxy headers, or the explicit `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL=true`. */
+  private mayShowPeers(request: IncomingMessage): boolean {
+    return this.options.config.rpcPublicPeerDetail || this.isLocalCaller(request);
+  }
+
+  /**
+   * The P2P status for a caller who may not see peers. Counts only: the last error (which can name a peer's address), the
+   * node id, the identity and the advertised endpoint are withheld, in /status and in the counts-only /peers answer alike.
+   */
+  private publicP2pStatus(): Record<string, unknown> | undefined {
+    const status = this.options.p2p?.status();
+    if (!status) return undefined;
+    const { peers, listening, wireProtocol } = status as { peers?: unknown; listening?: unknown; wireProtocol?: unknown };
+    return { listening, peers, wireProtocol, lastError: status.lastError ? 'withheld' : null };
+  }
+
   private peers(request: IncomingMessage, response: ServerResponse): void {
     const p2p = this.options.p2p;
-    if (this.options.config.rpcPublicPeerDetail || this.isLocalCaller(request)) {
+    if (this.mayShowPeers(request)) {
       this.json(response, 200, { p2p: p2p?.status(), connected: p2p?.activeConnections() ?? [], known: p2p?.knownPeers() ?? [], detail: 'full' });
       return;
     }
     // Everyone else gets what a dashboard needs (how many, how healthy) and nothing that maps the network: no
     // address, no node id, no recent error text (which can name a peer's address).
-    const status = p2p?.status();
     this.json(response, 200, {
-      p2p: status ? { ...status, lastError: status.lastError ? 'withheld' : null } : undefined,
+      p2p: this.publicP2pStatus(),
       connected: [],
       known: [],
       detail: 'counts-only',
@@ -1846,8 +1873,8 @@ export class RpcServer {
       coreVersion: CORE_VERSION,
       protocolVersion: PROTOCOL_VERSION,
       discovery: {
-        /** Interfaces use this to expand their node list without a central server. */
-        hint: 'Query /nodes on several known nodes and cross-check genesisId, chainId and paramsHash.',
+        /** Peer discovery is between nodes (the P2P `getaddr`/`addr` messages), not a public directory. */
+        hint: 'Nodes find each other over the P2P protocol and verify every peer by handshake. The peer table is shown to the operator of a node (GET /peers on that machine), not published.',
       },
       // Each network names its own hostnames and no other's. A devnet, staging or testnet node used to
       // advertise mainnet's too, which told anyone asking a practice chain "this is the official
@@ -1941,7 +1968,7 @@ export class RpcServer {
     const params = (payload.params !== null && typeof payload.params === 'object' && !Array.isArray(payload.params) ? payload.params : {}) as Record<string, unknown>;
     const id = typeof payload.id === 'number' || typeof payload.id === 'string' ? payload.id : null;
     try {
-      const result = await this.invokeJsonRpc(method, params);
+      const result = await this.invokeJsonRpc(method, params, this.mayShowPeers(request));
       this.json(response, 200, { jsonrpc: '2.0', id, result });
     } catch (error) {
       this.json(response, 200, {
@@ -1952,7 +1979,7 @@ export class RpcServer {
     }
   }
 
-  private async invokeJsonRpc(method: string, params: Record<string, unknown>): Promise<unknown> {
+  private async invokeJsonRpc(method: string, params: Record<string, unknown>, showPeers = false): Promise<unknown> {
     const state = this.options.chain.world;
     switch (method) {
       case 'getstatus':
@@ -2009,10 +2036,13 @@ export class RpcServer {
       }
       case 'submittransaction':
         throw new Error('use POST /tx/submit (raw signed transaction hex)');
+      // The peer table and this node's announcement map the network: the operator sees them, nobody else does (the same rule
+      // as GET /peers). A caller who may not gets an empty answer, not an error, so a client written against the old
+      // behaviour keeps working.
       case 'getpeers':
-        return this.options.p2p?.knownPeers() ?? [];
+        return showPeers ? this.options.p2p?.knownPeers() ?? [] : [];
       case 'getnodes':
-        return this.options.p2p?.announcement(this.options.config.rpcPublicUrl || undefined) ?? null;
+        return showPeers ? this.options.p2p?.announcement(this.options.config.rpcPublicUrl || undefined) ?? null : null;
       default:
         throw new Error(`unknown method ${method}`);
     }

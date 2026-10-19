@@ -11,8 +11,8 @@
  *   - `/api/auth/*`, `/api/wallet/*` and anything carrying a cookie bypass the
  *     cache entirely, so one browser's session can never leak to another.
  *   - `/api/rpc` reads may be cached for CHAIN_CACHE_SECONDS, and the cached
- *     response keeps its `x-obsidian-node` header, which names the node that
- *     actually produced the data.
+ *     response keeps its `x-obsidian-node` header. That header is only a marker
+ *     that the answer came from a node; it does not name the node.
  *   - If the origin fails, the worker returns an honest 503 describing the
  *     failure instead of fabricating chain state.
  */
@@ -31,7 +31,11 @@ const CACHEABLE_RPC_PREFIXES = [
   // score and evidence the chain already publishes to everyone.
   '/api/rpc?path=/pot',
   '/api/rpc?path=/revenue',
-  '/api/rpc?path=/nodes',
+  // The node RUNNER registry (on-chain state), never `/nodes` or `/peers`: the interface no longer serves those, and a
+  // cache must not become the place a peer list lives.
+  '/api/rpc?path=/nodes/registry',
+  '/api/rpc?path=/nodes/status/',
+  '/api/rpc?path=/nodes/rewards',
 ];
 
 const NEVER_CACHE = ['/api/auth/', '/api/wallet/', '/api/nodes/refresh'];

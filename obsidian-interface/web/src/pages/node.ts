@@ -145,7 +145,6 @@ async function lookup(nodeId: string): Promise<void> {
         ['Reward wallet', identifier(status.rewardWallet, { kind: 'address', label: 'Reward wallet address' })],
         ['Registered', status.registered ? badge('yes', 'ok') : badge(`deregistered at height ${status.deregisteredAtHeight}`, 'warn')],
         ['Registered at height', String(status.registeredAtHeight)],
-        ['Endpoint hint', status.endpoint ?? '— (an endpoint is a hint, never the identity)'],
         ['Lifetime rewards', obs(status.lifetimeRewardObs)],
         [
           'Pending wallet change',

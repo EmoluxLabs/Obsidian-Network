@@ -390,34 +390,25 @@ function linkButton(address: string): HTMLElement {
 async function drawNodes(): Promise<void> {
   try {
     const data = await client.nodes();
+    // A connection summary, not a node list: the nodes this interface reads from, and their addresses, are not published.
     nodesPanel.replaceChildren(
-      el('h2', {}, 'Nodes this interface can read'),
-      el('p', { class: 'muted' }, `Consensus height ${count(data.consensusHeight)}${data.genesisMismatch ? ' — GENESIS MISMATCH DETECTED' : ''}`),
-      table(
-        ['Node', 'Health', 'Height', 'Latency', 'Chain', 'Genesis'],
-        data.nodes.map((node) => [
-          el('span', { class: 'mono' }, node.url),
-          node.healthy ? badge('healthy', 'ok') : badge('unreachable', 'bad'),
-          count(node.height),
-          `${node.latencyMs} ms`,
-          `${node.networkId} (${node.chainId})`,
-          identifier(node.genesisId, { kind: 'id', label: 'Genesis id' }),
-        ]),
-      ),
+      el('h2', {}, 'Connection to the chain'),
+      el('p', {}, data.live ? badge('connected', 'ok') : badge('unreachable', 'bad')),
+      el('p', { class: 'muted' }, `Network height ${count(data.consensusHeight)}${data.genesisMismatch ? ' — GENESIS MISMATCH DETECTED' : ''}`),
       el('div', { class: 'row' }, refreshButton()),
-      el('p', { class: 'fineprint' }, 'Reads fail over between healthy nodes automatically. If a node\'s genesis id differs, the interface marks it instead of silently mixing two chains — and it refuses to read balances from an explorer surface at all.'),
+      el('p', { class: 'fineprint' }, 'Reads fail over between healthy nodes automatically. If a node\'s genesis id differs, the interface marks it instead of silently mixing two chains.'),
     );
   } catch (error) {
-    nodesPanel.replaceChildren(el('h2', {}, 'Nodes'), el('p', { class: 'error' }, (error as Error).message));
+    nodesPanel.replaceChildren(el('h2', {}, 'Connection to the chain'), el('p', { class: 'error' }, (error as Error).message));
   }
 }
 
 function refreshButton(): HTMLElement {
-  const button = el('button', { class: 'ghost', type: 'button' }, 'Re-check nodes now');
+  const button = el('button', { class: 'ghost', type: 'button' }, 'Re-check connection now');
   button.addEventListener('click', async () => {
     try {
       await fetch('/api/nodes/refresh', { method: 'POST' });
-      toast('Node health re-checked.', 'success');
+      toast('Connection re-checked.', 'success');
       await drawNodes();
     } catch (error) {
       toast((error as Error).message, 'error');

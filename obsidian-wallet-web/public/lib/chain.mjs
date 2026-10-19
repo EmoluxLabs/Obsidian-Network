@@ -36,7 +36,6 @@ export async function fetchNode() {
     height,
     lastBlockTimestamp: Number.isFinite(lastBlockTimestamp) ? lastBlockTimestamp : null,
     syncing: Boolean(status?.syncing),
-    peers: Number.isInteger(status?.peers) ? status.peers : null,
   };
 }
 

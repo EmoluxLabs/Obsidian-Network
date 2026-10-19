@@ -19,8 +19,8 @@
 The worker's job is: **forward, cache, and stay out of the way**.
 
 * It may serve a cached copy of a *static* asset or of `/api/rpc` **only** with a
-  short TTL, and it must always pass through the `x-obsidian-node` header so the
-  browser can see which node produced the answer.
+  short TTL, and it must always pass through the `x-obsidian-node` marker header so a
+  cached answer can be told from an interface error. The header names no node.
 * It must never serve a cached response for `POST /api/rpc`, which is how signed
   transactions travel.
 * It must never invent a response when the origin is unreachable — a stale cache

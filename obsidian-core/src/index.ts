@@ -62,6 +62,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { bindingPath, readNodeBinding, writeNodeBinding } from './node-agent.js';
 import { InterfaceSupervisor } from './cli/interface-supervisor.js';
 import { describeProposal, fetchGate, proposeGateUpdate, readProposal, renderGate, signProposal, submitProposal, writeProposal } from './cli/gate.js';
+import { installCrashReporting } from './crash-report.js';
 
 function usage(): void {
   process.stdout.write(
@@ -744,6 +745,8 @@ async function main(): Promise<void> {
       process.exitCode = 1;
   }
 }
+
+installCrashReporting();
 
 main().catch((error) => {
   if (error instanceof UsageError) {

@@ -171,7 +171,10 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
     }
     if (!options.offline) {
       for (const seed of config.seedNodes) {
-        void p2p.connectTo(seed, 'seed');
+        p2p.connectTo(seed, 'seed').catch((error: unknown) => {
+          // One unusable seed (a malformed entry) must not stop the node, or the others.
+          logger.warn('seed node ignored', { seed, error: (error as Error).message });
+        });
       }
     }
   } else {
@@ -232,18 +235,26 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
 
   // ── Loops ────────────────────────────────────────────────────────────────
   const timers: NodeJS.Timeout[] = [];
+  /** A periodic task that throws is logged with its name and run again next tick; an exception out of a timer would end the process. */
+  const guarded = (task: string, work: () => void): (() => void) => () => {
+    try {
+      work();
+    } catch (error) {
+      logger.error('periodic task failed; the node keeps running', { task, error: (error as Error).message.slice(0, 300) });
+    }
+  };
   // Sync loop: ask the best peer for blocks whenever it holds a better chain.
   timers.push(
-    setInterval(() => {
+    setInterval(guarded('sync', () => {
       const behind = p2p.behindBy() > 1;
       chain.setSyncing(behind);
       if (behind) p2p.requestSyncFromPeers();
-    }, 5_000),
+    }), 5_000),
   );
 
   // Block production loop.
   timers.push(
-    setInterval(() => {
+    setInterval(guarded('block-production', () => {
       if (!config.miningEnabled) return;
       // Still catching up: building on a stale head only mints a block nobody
       // will accept. Wait until we are level with the best peer.
@@ -281,7 +292,7 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
       } catch (error) {
         logger.error('block production failed', { error: (error as Error).message });
       }
-    }, 1_000),
+    }), 1_000),
   );
 
   // Node participation: register, heartbeat, attest and report, signed by this node's own key (see node-agent.ts).
@@ -295,19 +306,19 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
     behind: () => p2p.behindBy() > 1,
     log: (level, message, fields) => logger[level](message, fields),
   });
-  timers.push(setInterval(() => agent.tick(), AGENT_INTERVAL_SECONDS * 1_000));
+  timers.push(setInterval(guarded('node-agent', () => agent.tick()), AGENT_INTERVAL_SECONDS * 1_000));
 
   // Mempool hygiene: drop expired transactions.
   timers.push(
-    setInterval(() => {
+    setInterval(guarded('mempool-prune', () => {
       const removed = chain.mempool.pruneExpired(chain.protocolTime);
       if (removed > 0) logger.debug('pruned expired mempool transactions', { removed });
-    }, 60_000),
+    }), 60_000),
   );
 
   // Periodic status line (useful in production logs).
   timers.push(
-    setInterval(() => {
+    setInterval(guarded('status-line', () => {
       const status = chain.status({ peers: p2p.peerCount });
       logger.info('status', {
         height: status.height,
@@ -321,7 +332,7 @@ async function bootNode(options: StartOptions, lock: DataDirLock, identity0: Ret
         finalizedHeight: status.finalizedHeight,
         syncing: status.syncing,
       });
-    }, 60_000),
+    }), 60_000),
   );
 
   const stop = async (): Promise<void> => {

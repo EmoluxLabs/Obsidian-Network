@@ -140,7 +140,6 @@ void (async () => {
     stats.replaceChildren(
       stat('Blocks', count(status.height)),
       stat('Supply', obsUnit(status.supplyObs), `of ${obsUnit(status.maxSupplyObs ?? '21000000.000000000000000000')}`),
-      stat('Peers', String(status.peers)),
       stat('Reward / day', schedule ? rewardLine(schedule) : '—', schedule ? `${rewardPerClaim(schedule)} per claim` : ''),
       stat('Active miners', String(schedule?.activeMiners ?? 0)),
       // Every protocol fee is denominated in OBS, so there is nothing on this

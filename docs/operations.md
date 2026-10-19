@@ -159,7 +159,8 @@ node's own machine (a loopback connection with no forwarding headers: `X-Forward
 anyone else gets counts only. The interface proxy marks its requests with `Via`, so the public never receives detail
 through it. To publish the detail anyway set `rpcPublicPeerDetail` / `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL=true`. A reverse
 proxy in front of the node must add a forwarding header (the shipped nginx file sets `X-Forwarded-For`); a bare TCP
-proxy that adds none would look local. `/nodes` still lists known peers by design (it is how peers are found).
+proxy that adds none would look local. `/nodes`, JSON-RPC `getpeers` and `getnodes`, and the `p2p` block of `/status` follow
+the same rule (counts for everyone else): peers find each other over the P2P protocol, not through a public directory.
 
 ## 4. Peer discovery and the handshake
 

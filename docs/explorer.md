@@ -59,5 +59,5 @@ The explorer also renders what a chain needs to be checkable by its users:
 An explorer that shows a *cached* balance, a *predicted* inclusion or a
 *synthesised* fee is worse than no explorer, because it teaches users to trust a
 number that the chain never agreed to. This one shows chain data with its
-provenance attached (`x-obsidian-node`), and when it cannot reach a node it says
+provenance attached (the answer came from a node, marked by `x-obsidian-node`; the header names no node), and when it cannot reach a node it says
 so instead of guessing.

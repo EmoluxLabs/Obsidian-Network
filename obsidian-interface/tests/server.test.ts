@@ -933,12 +933,70 @@ describe('an edge host (the account store lives on ONE primary)', () => {
   });
 });
 
+describe('the interface publishes no peer or node list', () => {
+  const PROXIED = { 'x-forwarded-for': '203.0.113.50' };
+
+  it('refuses to proxy the node peer and node-directory routes, for everyone', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    for (const path of ['/peers', '/nodes']) {
+      const response = await fetch(`${h.origin}/api/rpc?path=${path}`);
+      expect(response.status, path).toBe(400);
+      expect(((await response.json()) as { code: string }).code, path).toBe('ERR_REJECTED');
+    }
+    // The node RUNNER registry is on-chain state, not a peer list, and is still served.
+    expect((await fetch(`${h.origin}/api/rpc?path=/nodes/registry`)).status).not.toBe(400);
+  });
+
+  it('answers /api/nodes with whether the chain is reachable, and never names a node', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    for (const headers of [{}, PROXIED]) {
+      const response = await fetch(`${h.origin}/api/nodes`, { headers });
+      const raw = await response.text();
+      expect(response.status).toBe(200);
+      expect(Object.keys(JSON.parse(raw)).sort()).toEqual(['consensusHeight', 'genesisMismatch', 'live', 'network']);
+      expect(raw).not.toContain(h.nodeUrl);
+      expect(raw).not.toMatch(/127\.0\.0\.1|localhost|latencyMs|peers/);
+    }
+    // The refresh route (a POST that fans out to every node) answers with the same summary, not the table.
+    const refreshed = await fetch(`${h.origin}/api/nodes/refresh`, { method: 'POST', headers: PROXIED });
+    expect(Object.keys((await refreshed.json()) as object).sort()).toEqual(['consensusHeight', 'genesisMismatch', 'live', 'network']);
+  });
+
+  it('shows the per-node table only to a caller on the server itself, and 404s a proxied caller', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const local = await fetch(`${h.origin}/api/nodes/detail`);
+    expect(local.status).toBe(200);
+    const body = (await local.json()) as { nodes: Array<{ url: string; healthy: boolean }> };
+    expect(body.nodes[0]).toMatchObject({ url: h.nodeUrl, healthy: true });
+    for (const header of ['x-forwarded-for', 'x-real-ip', 'forwarded', 'via', 'cf-connecting-ip', 'x-forwarded-host']) {
+      const refused = await fetch(`${h.origin}/api/nodes/detail`, { headers: { [header]: '203.0.113.50' } });
+      expect(refused.status, header).toBe(404);
+      expect(await refused.text()).not.toContain(h.nodeUrl);
+    }
+  });
+
+  it('keeps the internal node pool working: reads still fail over and the pool still tracks health', async () => {
+    const healthy = await startHarness();
+    const h = await harness({ nodeUrls: [healthy.nodeUrl, 'http://127.0.0.1:1'] });
+    await h.poolCheck();
+    expect((await fetch(`${h.origin}/api/rpc?path=/names`)).status).toBe(200);
+    const health = (await (await fetch(`${h.origin}/api/health`)).json()) as { healthyNodes: number; nodes: number };
+    expect(health).toMatchObject({ nodes: 2, healthyNodes: 1 });
+    expect((await fetch(`${h.origin}/api/ready`)).status).toBe(200);
+    await healthy.close();
+    await new Promise<void>((resolvePromise) => healthy.fakeNode.close(() => resolvePromise()));
+  });
+});
+
 describe('node proxy', () => {
   it('marks every call it makes to a node as proxied, so a node on this host does not show its peer addresses to visitors', async () => {
     const h = await harness();
     await h.poolCheck();
     const before = h.upstreamVia.length;
-    const response = await fetch(`${h.origin}/api/rpc?path=/peers`);
+    const response = await fetch(`${h.origin}/api/rpc?path=/status`);
     expect(response.status).toBe(200);
     expect(h.upstreamVia.slice(before)).toEqual(['1.1 obsidian-interface']);
     // And so does a read of anything else the proxy passes through.
@@ -946,12 +1004,14 @@ describe('node proxy', () => {
     expect(h.upstreamVia.slice(before).every((v) => v === '1.1 obsidian-interface')).toBe(true);
   });
 
-  it('proxies an allowlisted read and says which node answered', async () => {
+  it('proxies an allowlisted read, and does not say which node answered', async () => {
     const h = await harness();
     await h.poolCheck();
     const response = await fetch(`${h.origin}/api/rpc?path=/names`);
     expect(response.status).toBe(200);
-    expect(response.headers.get('x-obsidian-node')).toContain('http://127.0.0.1:');
+    // The header is a marker for the CDN worker ("this came from a node"); it used to carry the node's URL.
+    expect(response.headers.get('x-obsidian-node')).toBe('chain');
+    expect([...response.headers.values()].join('\n')).not.toContain('127.0.0.1');
     expect(await response.json()).toMatchObject({ count: 0 });
   });
 
@@ -1119,7 +1179,8 @@ describe('node proxy', () => {
     await h.poolCheck();
     const response = await fetch(`${h.origin}/api/rpc?path=/names`);
     expect(response.status).toBe(200);
-    expect(response.headers.get('x-obsidian-node')).toBe(healthy.nodeUrl);
+    expect(response.headers.get('x-obsidian-node')).toBe('chain');
+    expect([...response.headers.values()].join('\n')).not.toContain(healthy.nodeUrl);
   });
 
   it('says "no nodes" honestly when nothing is configured', async () => {
@@ -1145,8 +1206,10 @@ describe('node proxy', () => {
     const h = await harness();
     await h.poolCheck();
     const nodes = await (await fetch(`${h.origin}/api/nodes`)).json();
-    expect(nodes.nodes[0]).toMatchObject({ healthy: true, height: 42 });
-    expect(JSON.stringify(nodes)).not.toContain('successes');
+    // Public: reachable or not, and the network's height. Not which nodes, not their URLs, not their heights.
+    expect(nodes).toMatchObject({ live: true, consensusHeight: 42, genesisMismatch: false });
+    expect(nodes.nodes).toBeUndefined();
+    expect(JSON.stringify(nodes)).not.toMatch(/127\.0\.0\.1|http:|latencyMs|successes/);
     const health = await (await fetch(`${h.origin}/api/health`)).json();
     expect(health).toMatchObject({ status: 'ok', healthyNodes: 1 });
   });

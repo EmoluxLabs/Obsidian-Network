@@ -47,7 +47,7 @@ layout({
       table(
         ['Method', 'Route', 'Purpose'],
         [
-          ['GET', el('span', { class: 'mono' }, '/status'), 'height, head, supply, peers, genesis allocation state'],
+          ['GET', el('span', { class: 'mono' }, '/status'), 'height, head, supply, genesis allocation state'],
           ['GET', el('span', { class: 'mono' }, '/mining/status?address=…'), 'eligibility, next claim id, reward per claim (protocol time)'],
           ['POST', el('span', { class: 'mono' }, '/tx/submit'), 'submit signed transaction bytes'],
           ['POST', el('span', { class: 'mono' }, '/wallet/balance'), 'balance of an address you already know'],
@@ -112,7 +112,7 @@ layout({
 
 void (async () => {
   try {
-    const [status, network, peers] = await Promise.all([client.status(), client.network(), client.peers().catch(() => undefined)]);
+    const [status, network] = await Promise.all([client.status(), client.network()]);
     live.replaceChildren(
       el('h2', {}, 'This deployment'),
       kv([
@@ -122,8 +122,6 @@ void (async () => {
         ['Params hash', identifier(status.paramsHash, { kind: 'hash', label: 'Params hash' })],
         ['Protocol version', status.protocolVersion],
         ['Height', count(status.height)],
-        ['Peers', String(status.peers)],
-        ['Peer detail', peers ? Object.keys(peers).join(', ') : 'unavailable'],
       ]),
       el('div', { class: 'row' }, badge('self-hostable', 'ok'), badge('no key custody', 'ok'), badge('no admin mint', 'ok')),
       el('div', { class: 'row' }, copyButton(() => window.location.origin, 'Copy this interface URL')),

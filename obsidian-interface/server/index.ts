@@ -688,6 +688,31 @@ export class InterfaceServer {
 
   // ── API ───────────────────────────────────────────────────────────────────
 
+  /** What a public caller may know about the node pool: is the chain reachable, and the network's height. No node, no URL. */
+  private publicNodeSummary(): { network: string | null; live: boolean; consensusHeight: number | null; genesisMismatch: boolean } {
+    const pool = this.dependencies.pool;
+    return {
+      network: this.config.network ?? null,
+      live: pool.summary().some((node) => node.healthy),
+      consensusHeight: pool.consensusHeight() ?? null,
+      genesisMismatch: pool.genesisMismatch,
+    };
+  }
+
+  /**
+   * True only for a caller on THIS machine that did not come through a proxy: the operator at the shell, not a visitor
+   * reaching the interface through nginx or the CDN (both set a forwarding header). The same rule the node's own
+   * `GET /peers` uses.
+   */
+  private isOperatorCaller(request: IncomingMessage): boolean {
+    const ip = (request.socket.remoteAddress ?? '').replace(/^::ffff:/i, '');
+    if (ip !== '::1' && !/^127\.\d+\.\d+\.\d+$/.test(ip)) return false;
+    for (const header of ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-real-ip', 'forwarded', 'via', 'cf-connecting-ip']) {
+      if (request.headers[header] !== undefined) return false;
+    }
+    return true;
+  }
+
   private async api(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname.replace(/\/+$/, '');
 
@@ -737,7 +762,19 @@ export class InterfaceServer {
       return;
     }
 
+    // PUBLIC: whether this interface can reach the chain, and how far the network has got. It does not list the nodes the
+    // interface reads from, their URLs, their heights or their latency: that list is a map of the operator's
+    // infrastructure. The detail is `/api/nodes/detail`, for a caller on this machine only.
     if (path === '/api/nodes') {
+      this.json(response, 200, this.publicNodeSummary());
+      return;
+    }
+
+    if (path === '/api/nodes/detail') {
+      if (!this.isOperatorCaller(request)) {
+        this.json(response, 404, { error: 'not found', code: 'ERR_NOT_FOUND' });
+        return;
+      }
       this.json(response, 200, {
         network: this.config.network ?? null,
         nodes: this.dependencies.pool.summary(),
@@ -752,7 +789,7 @@ export class InterfaceServer {
       // couple of seconds for the whole deployment is plenty.
       if (!this.throttle(request, response, this.refreshLimiter, 'refresh', 1)) return;
       await this.dependencies.pool.checkAll();
-      this.json(response, 200, { nodes: this.dependencies.pool.summary() });
+      this.json(response, 200, this.publicNodeSummary());
       return;
     }
 
@@ -1468,8 +1505,6 @@ export class InterfaceServer {
       target === '/version' ||
       target === '/genesis' ||
       target === '/network' ||
-      target === '/nodes' ||
-      target === '/peers' ||
       target === '/oracle' ||
       target === '/producers' ||
       target === '/finality' ||
@@ -1557,7 +1592,9 @@ export class InterfaceServer {
           lastError = `node ${node.url} returned ${upstream.status}`;
           continue;
         }
-        this.json(response, upstream.status, safeParse(text), { 'x-obsidian-node': node.url });
+        // The header names no node. It is the marker the CDN worker keys on ("this answer came from a node, not from an
+        // interface error"), and it used to carry the node's URL: the address of every node, on every read.
+        this.json(response, upstream.status, safeParse(text), { 'x-obsidian-node': 'chain' });
         return;
       } catch (error) {
         lastError = `${node.url}: ${(error as Error).message}`;

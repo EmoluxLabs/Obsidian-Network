@@ -269,9 +269,8 @@ function defaultInterfaceAnswer(url: string): { status: number; body: unknown } 
     return {
       status: 200,
       body: {
-        nodes: [
-          { url: 'http://127.0.0.1:38630', healthy: true, height: 12, latestBlockHash: 'ef'.repeat(32), chainId: 7780, networkId: 'obsidian-devnet-1', peers: 1, latencyMs: 1 },
-        ],
+        network: 'devnet',
+        live: true,
         consensusHeight: 12,
         genesisMismatch: false,
       },

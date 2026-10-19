@@ -254,7 +254,7 @@ export async function runDiagnostics(origin, expectedName, { fetchImpl = fetch, 
       add('node', 'Node', 'fail', `wrong-network: the node reports ${String(status.networkId)} (chain ${String(status.chainId)}).`);
     } else {
       const age = Number.isFinite(status.lastBlockTimestamp) ? Math.max(0, Math.round(now() / 1000 - status.lastBlockTimestamp)) : null;
-      const parts = [`height ${height}`, `${status.peers ?? 0} peer${status.peers === 1 ? '' : 's'}`];
+      const parts = [`height ${height}`];
       if (age !== null) parts.push(`last block ${age}s ago`);
       if (status.syncing) add('node', 'Node', 'warn', `syncing: ${parts.join(' \u00b7 ')}`);
       else if (age !== null && age > staleAfterSeconds(5)) add('node', 'Node', 'warn', `stale: ${parts.join(' \u00b7 ')} \u2014 no new block for a while`);

@@ -204,14 +204,20 @@ are the one who must upgrade.
 | `data directory … is in use by another Obsidian process (pid N)` | a node is already running on that directory. Stop it; never share a data directory |
 | `fatal: listen EADDRINUSE: address already in use` | another process holds the RPC or P2P port; check `systemctl list-units 'obsidian-*'` and `ss -ltnp` |
 | RPC works locally, not remotely | that is the default on purpose: `OBSIDIAN_RPC_HOST=127.0.0.1`. Publish an interface instead of the raw RPC. |
-| A seed was down when you started and the node never retried it | it does retry: a refused connection backs off 15s, 30s, 1m, 2m… up to an hour, and configured seeds are always dialled first once the window expires. Restart only if `/peers` and `/status` disagree after several minutes. |
-| Peers keep appearing and disappearing in `/peers` | duplicate connections are closed on purpose. A node keeps **one** connection per peer identity (`nodeId`), and both ends drop the newer socket, so a two-way dial settles instead of showing the same peer twice. |
+| A seed was down when you started and the node never retried it | it does retry: a refused connection backs off 15s, 30s, 1m, 2m… up to five minutes (each delay varied by ±20 %, so nodes restarted together do not retry on the same tick), and configured seeds are always dialled first once the window expires. Restart only if `/peers` and `/status` disagree after several minutes. |
+| Peers keep appearing and disappearing in `/peers` | duplicate connections are closed on purpose. A node keeps **one** connection per peer identity (`nodeId`). When two nodes dial each other at the same moment, both keep the connection opened by the node with the lower `nodeId` and close the other, so a two-way dial settles on one link instead of closing both. A link that has gone silent loses to a fresh one. |
 | `peers` counts only one address per node behind NAT | that is expected: a peer listening on `0.0.0.0` is recorded at the IP the connection was actually observed on, plus its advertised port. Two nodes on the same host therefore see each other at `127.0.0.1`, not at the wildcard address. |
 
 ### How a node maintains its peer set
 
 * Every 15 seconds it prunes peers that have been silent for a week, retries the
-  ones whose back-off has expired, and dials configured seeds first.
+  ones whose back-off has expired, and dials configured seeds first. It never dials its
+  own address, and it counts dials already in flight, so a slow connect is not joined
+  by a second one.
+* Every 60 seconds it asks each connected peer for the addresses it knows (and once
+  right after every handshake), so a node that had one seed learns the others, and
+  keeps learning as the network changes. An address learned this way is only a hint:
+  the node dials it and verifies the peer by handshake like any other.
 * Every 20 seconds it pings each connected peer and drops a link that has been
   silent for four intervals (80 seconds), so a half-open connection to a crashed
   peer cannot sit in `/peers` forever.

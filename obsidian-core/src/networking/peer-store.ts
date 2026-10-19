@@ -54,6 +54,8 @@ export interface PeerStoreOptions {
    */
   allowLocalAddresses?: boolean;
   now?: () => number;
+  /** Uniform [0,1) source for retry jitter. Injected by tests; defaults to `Math.random`. */
+  random?: () => number;
 }
 
 /** Score thresholds. */
@@ -85,6 +87,19 @@ export const PEER_SCORE = {
  * Dishonest behaviour (invalid blocks, malformed messages) is *not* covered by
  * this curve: it still earns the full ban window.
  */
+/**
+ * The longest a peer that could not be reached is left alone before the next attempt (before jitter).
+ *
+ * This used to be the ONE-HOUR ban window, so a node that had been down for a while was not dialled again for up to an hour
+ * after it came back, and an operator saw "peers: 0" until then. Five minutes keeps the load on a genuinely gone peer at
+ * about twelve attempts an hour while a restarted peer is found again quickly. Misbehaviour (invalid blocks, malformed
+ * messages) is NOT covered: it keeps the full ban window.
+ */
+export const RETRY_CAP_MS = 5 * 60_000;
+
+/** Spread of the retry delay: a delay is multiplied by a factor in [1 - JITTER, 1 + JITTER]. */
+export const RETRY_JITTER = 0.2;
+
 export function handshakeRetryDelayMs(failureCount: number, capMs: number, baseMs = 15_000): number {
   const attempt = Math.max(1, Math.min(Math.floor(failureCount) || 1, 20));
   return Math.min(baseMs * 2 ** (attempt - 1), capMs);
@@ -127,11 +142,13 @@ export class PeerStore {
   private readonly records = new Map<string, PeerRecord>();
   private readonly options: PeerStoreOptions;
   private readonly now: () => number;
+  private readonly random: () => number;
   private dirty = false;
 
   constructor(options: PeerStoreOptions) {
     this.options = options;
     this.now = options.now ?? (() => Date.now());
+    this.random = options.random ?? Math.random;
     this.load();
     for (const seed of options.seeds) this.addSeed(seed);
   }
@@ -230,6 +247,13 @@ export class PeerStore {
 
   all(): PeerRecord[] {
     return [...this.records.values()];
+  }
+
+  /** Forget an address entirely (for example one that turned out to be this node itself). */
+  forget(address: string): boolean {
+    const removed = this.records.delete(address);
+    if (removed) this.dirty = true;
+    return removed;
   }
 
   get(address: string): PeerRecord | undefined {
@@ -345,7 +369,11 @@ export class PeerStore {
       // still drops (an unreachable address should rank below a reachable one)
       // but it is floored, because repeated network errors must not look like
       // repeated protocol misbehaviour in the operator's peer list.
-      record.bannedUntil = this.now() + handshakeRetryDelayMs(record.failureCount, this.banWindowMs);
+      // Jitter: nodes restarted together (a power cut, an upgrade) must not all retry on the same tick, again and again.
+      const draw = this.random();
+      const unit = Number.isFinite(draw) ? Math.min(1, Math.max(0, draw)) : 0.5; // a broken source means no jitter, not NaN
+      const factor = 1 + RETRY_JITTER * (2 * unit - 1);
+      record.bannedUntil = this.now() + Math.round(handshakeRetryDelayMs(record.failureCount, RETRY_CAP_MS) * factor);
       record.score = Math.max(PEER_SCORE.banBelow, record.score);
     } else if (record.score < PEER_SCORE.banBelow) {
       record.bannedUntil = this.now() + this.banWindowMs;

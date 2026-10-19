@@ -93,7 +93,6 @@ async function loadChainStats(): Promise<void> {
         ['Accumulated PoT weight', pot ? el('span', { class: 'mono' }, pot.cumulativePotWeight) : '—'],
         ['Supply', pool.state === 'mismatch' ? UNAVAILABLE : el('span', {}, amountEl(status.supplyObs), ' of ', amountEl(status.maxSupplyObs))],
         ['Mining pool', pool.state === 'ok' ? el('span', { title: `Exact: ${pool.exact}`, id: 'mining-pool-value' }, pool.value) : el('span', { id: 'mining-pool-value', class: 'muted' }, `${pool.value} — ${pool.reason}`)],
-        ['Peers', String(status.peers)],
         ['Last block', `${relativeTime(status.lastBlockTimestamp)} (${when(status.lastBlockTimestamp)})`],
         [
           'Time authority',

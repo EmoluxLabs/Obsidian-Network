@@ -427,7 +427,9 @@ describe('an interface serves exactly one network', () => {
     const health = (await (await fetch(`${h.origin}/api/health`)).json()) as { network: string; healthyNodes: number };
     expect(health.network).toBe('mainnet');
     expect(health.healthyNodes).toBe(0);
-    const nodes = (await (await fetch(`${h.origin}/api/nodes`)).json()) as { nodes: Array<{ healthy: boolean; lastError?: string }> };
+    expect(((await (await fetch(`${h.origin}/api/nodes`)).json()) as { live: boolean }).live).toBe(false);
+    // The reason is for the operator (this machine, no proxy headers), not for a visitor.
+    const nodes = (await (await fetch(`${h.origin}/api/nodes/detail`)).json()) as { nodes: Array<{ healthy: boolean; lastError?: string }> };
     expect(nodes.nodes[0]!.healthy).toBe(false);
     expect(nodes.nodes[0]!.lastError).toMatch(/wrong network.*obsidian-devnet-1.*obsidian-mainnet-1/);
   });

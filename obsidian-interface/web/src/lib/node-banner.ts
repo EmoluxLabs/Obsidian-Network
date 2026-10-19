@@ -1,22 +1,15 @@
 /** Shared status strip: shows which node the interface is reading from. */
 import { ObsidianClient } from './client.js';
-import { el, badge, short, count } from './ui.js';
+import { el, badge, count } from './ui.js';
 
 export async function renderNodeBanner(host: HTMLElement, client = new ObsidianClient()): Promise<void> {
   try {
-    const [{ nodes, consensusHeight, genesisMismatch }, status] = await Promise.all([client.nodes(), client.status()]);
-    const healthy = nodes.filter((node) => node.healthy).length;
-    const best = nodes.find((node) => node.healthy);
+    const [{ live, consensusHeight, genesisMismatch }, status] = await Promise.all([client.nodes(), client.status()]);
+    // No peer count, no node address, no latency: the strip says whether the chain is reachable and how tall it is.
     host.replaceChildren(
-      el('span', { class: 'node-pill' }, badge(healthy > 0 ? 'LIVE' : 'NO NODES', healthy > 0 ? 'ok' : 'bad')),
+      el('span', { class: 'node-pill' }, badge(live ? 'LIVE' : 'NO NODES', live ? 'ok' : 'bad')),
       el('span', {}, `height ${count(status.height)}`),
-      el(
-        'span',
-        {},
-        'peers ',
-        el('strong', {}, String(status.peers)),
-      ),
-      el('span', {}, healthy > 0 ? `reading from ${short(best?.url ?? '', 22)} (${best?.latencyMs ?? 0} ms)` : 'no healthy node'),
+      ...(live ? [] : [el('span', {}, 'the chain cannot be reached right now')]),
       ...(consensusHeight !== null ? [el('span', {}, `network height ${count(consensusHeight)}`)] : []),
       ...(genesisMismatch ? [badge('GENESIS MISMATCH', 'bad')] : []),
     );

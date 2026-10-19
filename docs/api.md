@@ -15,15 +15,15 @@ Error shape is stable:
 | Route | Returns |
 | --- | --- |
 | `GET /health` | status, core/protocol versions, network, chain id, genesis id, params hash, height, peers, syncing, supplyOk |
-| `GET /status` | everything in `/health` plus total blocks, supply, treasury wallet, `genesisAllocationClaimed`, last block timestamp, finalized height/hash, `finalityAvailable`, finality lag, `finalityEligibleProducers`, the producer tier (`scheduleTier`) and eligible-producer count |
+| `GET /status` | everything in `/health` plus total blocks, supply, treasury wallet, `genesisAllocationClaimed`, last block timestamp, finalized height/hash, `finalityAvailable`, finality lag, `finalityEligibleProducers`, the producer tier (`scheduleTier`) and eligible-producer count; its `p2p` block carries counts only unless the caller is local (same rule as `/peers`) |
 | `GET /finality` | the finality derived from chain state: `model`, `available` (and `reason` when not), `finalizedHeight`, `finalizedHash`, `headHeight`, `lag`, `eligibleProducers`, `producersSeen`, `candidateHeight`, `window`, `quorum`, `minProducers`, `derivedFrom`, `assumptions`. Checkpoint (economic) finality, not BFT; see [finality-v1.9.0.md](finality-v1.9.0.md) |
 | `GET /producers` | the producer schedule: `tier` (`TIER1`, `TIER2` or `OPEN`), `eligible`, `registered`, `banned`, the `rule`, per-node records (masked producer address, `tier1`, `registeredAtHeight`, `lastActiveAt`, `blocksProduced`, `missedSlots`, `suspensions`, `suspendedUntil`, `bannedAtHeight`), the `finality` block and recent `penalties`. There is no `/validators`: validators do not exist in 1.9.0 |
 | `GET /params` | protocol parameters, including `paramsHash`, `proofOfTime`, finality bounds and `nodeRewards` |
 | `GET /version` | version metadata and the minimum supported core version |
 | `GET /genesis` | the genesis document, its id and hash |
 | `GET /supply` | total, maximum, mining pool, treasury, per-metric breakdown, invariant result |
-| `GET /nodes` | known peers with height, genesis id, latency, direction (public by design) |
-| `GET /peers` | peer **counts** for the public; full detail (addresses, direction, latency) only for a local caller, or when `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL` is set |
+| `GET /nodes` | this node's signed announcement and the peers it knows, **only for a local caller** (or when `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL` is set); everyone else gets `{ self: null, peers: [], detail: "counts-only" }` |
+| `GET /peers` | peer **counts** for the public (no addresses, no node id, no error text, no advertised endpoint); full detail (addresses, direction, latency) only for a local caller, or when `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL` is set. JSON-RPC `getpeers` and `getnodes` follow the same rule and answer empty to everyone else |
 | `GET /gate` | the live mining gate set: `issuerKeys` (active), `revokedKeys`, `epoch`, `quorum`, network and chain ids; public keys only |
 | `GET /network` | network name, chain id, address prefix, p2p magic, genesis id, params hash and versions. `domains` lists the official hostnames **of this network only** (mainnet: `obsmainnet.us.ci`, `api.obsmainnet.us.ci` and its sites; devnet: `devnet.obsmainnet.us.ci`; testnet and staging likewise), so a practice chain cannot vouch for the names people use to check a mainnet address. `trust` says whether this node answers pages on the official domain and by which patterns; see [trusted-domains.md](trusted-domains.md) |
 | `GET /oracle` | current median price, sources, submission ages |

@@ -56,7 +56,7 @@ reads the wrong chain is worse than one that does not boot.
 
 **One interface, one network.** The network you name decides which nodes are
 accepted: a node that follows another network or chain id is excluded from every
-read (`/api/nodes` says `wrong network: …`), and if *all* of them are, the proxy
+read (`/api/nodes/detail`, on the server itself, says `wrong network: …`), and if *all* of them are, the proxy
 answers `503 ERR_WRONG_NETWORK` instead of showing another chain's data. It also
 decides the defaults, so two interfaces on one host cannot collide:
 
@@ -154,7 +154,7 @@ your own interface keeps working — only the edge copy stops.
 | --- | --- |
 | Check what it can see | `curl -s localhost:<interface port>/api/health \| jq` |
 | Force a node health sweep | `curl -s -X POST localhost:<interface port>/api/nodes/refresh` |
-| See which node answered | response header `x-obsidian-node` |
+| See which nodes the interface reads | `curl -s localhost:<interface port>/api/nodes/detail` on the server itself (loopback, no proxy headers). Public callers get only `live`, the network height and the genesis-mismatch flag from `/api/nodes`. |
 | Account/invite store | `<data-dir>/interface-accounts.json` (0600, atomic writes; a corrupt file is quarantined, never silently emptied) |
 | Logs | JSON lines on stdout; `--log-level debug` for per-request detail |
 

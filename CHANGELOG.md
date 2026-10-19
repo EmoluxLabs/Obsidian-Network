@@ -15,6 +15,49 @@ The authoritative params hash for a release is whatever `GET /params` reports on
 
 ---
 
+## Unreleased: peer privacy, peer discovery and background-failure patch (no consensus, protocol or version change)
+
+Prompted by a report that two of three mainnet nodes repeatedly stop. The production cause is **not established** from the
+code (no production access; see [docs/p2p-stability-2.0.2.md](docs/p2p-stability-2.0.2.md)). Real defects found and fixed on
+the way; the report says for each whether it was reproduced, tested or only read from the source. The wire protocol, the handshake, the params hash and every
+consensus rule are unchanged.
+
+### Changed: peers are no longer published
+- Node RPC: `GET /nodes`, JSON-RPC `getpeers` / `getnodes`, and the `p2p` block of `GET /status` now follow the rule `GET /peers`
+  already had: full detail for a caller on the node's own machine (no proxy headers) or with
+  `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL=true`; everyone else gets counts (`/nodes`: an empty directory). `GET /peers` counts-only no
+  longer includes this node's id, identity or advertised endpoint.
+- Interface: `/api/nodes` answers `{ network, live, consensusHeight, genesisMismatch }` and names no node. The table moved to
+  `/api/nodes/detail`, which answers only a caller on the server itself. `/peers` and `/nodes` are no longer proxied by
+  `/api/rpc`. The `x-obsidian-node` header is now the constant `chain` (a CDN marker), not the node's URL.
+- Pages and apps (platform, Web App, wallet web, extension): the node list, the node URLs, latency, peer counts and the
+  "Peer detail" row are gone. The Cloudflare worker and Terraform cache only the node-runner registry paths, never `/nodes`.
+- Unchanged on purpose: P2P discovery, the desktop app's operator-local peer tables, the interface's internal node pool.
+
+### Fixed: peer discovery and reconnection (obsidian-core)
+- Two nodes that dialled each other at the same moment each closed the newer link and both ended with none (reproduced six
+  rounds out of six on loopback). Both now keep the link opened by the node with the lower node id; a link
+  silent for two ping intervals loses to a fresh one.
+- A node that started with one seed never learned the others: it never asked the peers it had dialled for addresses. It now asks
+  after every handshake and every 60 s.
+- An unreachable address was retried on a fixed schedule up to one hour, with no jitter, and an outbound link that closed
+  before the handshake counted as nothing. Delay is now 15 s doubling to **5 min**, varied by ±20 %; misbehaviour keeps its one-hour ban.
+- A node no longer dials its own advertised address, and counts dials already in flight when filling its peer set.
+
+### Fixed: background failures could end the process (obsidian-core)
+- The chain-sync routine ran as an un-awaited promise with no `catch`; an exception in it was an unhandled rejection, which ends
+  a Node.js process. Sync, block-production, agent, mempool-prune and status timers are now guarded and log the failure.
+- A process that does die from an unhandled error writes one structured `fatal` line (message, stack head, uptime, memory) and
+  exits **70**, so `systemctl status` tells a software fault from a configuration error.
+
+### Verification (this sandbox; nothing was run against a live network)
+Core 1004 passed (an earlier full run: 1003 passed, 1 failed in `node-agent`, a test that is also flaky on the unmodified base);
+interface 661 passed; Web App 411; extension 51; wallet web 49; Cloudflare worker 17; three-process cluster e2e 15; repo checks
+(consistency 31, web separation 11, public peer surfaces 5). New: `p2p-discovery` (13), `peer-backoff-jitter`, `crash-report`,
+the extended `rpc-peers-privacy` (28) and the interface "no peer or node list" tests. Params hash and the four genesis ids are
+identical before and after.
+
+
 ## Unreleased: interface authentication patch (after the 2.0.2 tag; no consensus or version change)
 
 Prompted by a report that sign-in answered 401 after a successful registration on mainnet. The registration-to-sign-in path was

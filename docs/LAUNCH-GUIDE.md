@@ -603,8 +603,11 @@ Things worth knowing:
   or open a wallet. Use the device itself, or serve the interface over HTTPS (§7).
 * **Behind nginx or Cloudflare**, set `OBSIDIAN_INTERFACE_TRUST_PROXY=true` — and only then.
   Setting it on a directly exposed port lets any client forge the address the rate limits use.
-* **It checks its node.** `curl -s localhost:<port>/api/nodes` lists the nodes it reads, whether
-  each is healthy, and `lastError` if it turned one away for following another network.
+* **It checks its node.** `curl -s localhost:<port>/api/nodes` says whether the interface can reach the
+  chain (`live`), the network height and whether the nodes disagree about genesis. It does not list the
+  nodes: from the server itself, `curl -s localhost:<port>/api/nodes/detail` lists them, whether each is
+  healthy, and `lastError` if it turned one away for following another network (that route answers 404
+  to anyone coming through a proxy).
 * **Several nodes, for resilience:** `--nodes http://127.0.0.1:38630,http://other-host:38630`
   (comma separated; the interface health-checks them and fails over).
 

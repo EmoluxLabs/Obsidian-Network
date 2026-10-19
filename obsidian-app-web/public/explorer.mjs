@@ -138,7 +138,6 @@ function overview(s, ex, ui) {
       ['FINALIZED', orDash(status.finalizedHeight, (h) => `#${displayInteger(h)}`), 'm'],
       ['LAST BLOCK', esc(orDash(status.lastBlockTimestamp, formatTime)), ''],
       ['PROTOCOL', esc(orDash(status.protocolVersion)), 'm'],
-      ['PEERS', esc(orDash(status.peers)), 'm'],
       ['MEMPOOL', esc(orDash(status.mempool?.transactions ?? d?.mempool?.size)), 'm'],
     ]) +
     `<div class="lb">IDENTITY</div>` +
@@ -278,28 +277,23 @@ function network(s, ex, ui) {
   const { esc, rows, orDash } = ui;
   const d = ex.data.network;
   if (!d) return loading(ex, ui, 'the network state');
-  const nodes = d.nodes?.nodes ?? [];
+  const connection = d.nodes;
   const producers = d.producers;
   const finality = d.finality;
   const rewards = d.rewards;
   const audit = d.audit?.questions ?? [];
   return (
-    `<div class="lb">NODES THIS APP READS</div>` +
-    (nodes.length
-      ? `<div class="card">${nodes
-          .map(
-            (n) =>
-              `<div class="row"><div><b class="m" style="font-size:12px">${esc(n.url)}</b><div class="mu" style="font-size:12px;margin-top:3px">height ${esc(
-                orDash(n.height),
-              )} · ${esc(orDash(n.latencyMs, (v) => `${v} ms`))}</div></div><span class="pill" style="${
-                n.healthy && !n.wrongNetwork ? '' : 'background:#FDECEA;color:#A12626'
-              }">${n.wrongNetwork ? 'WRONG NETWORK' : n.healthy ? 'HEALTHY' : 'DOWN'}</span></div>`,
-          )
-          .join('')}</div>` +
-        (d.nodes?.genesisMismatch
+    // A connection summary, never a node list: which nodes this app reads from, and their addresses, are not published.
+    `<div class="lb">CONNECTION</div>` +
+    (typeof connection?.live === 'boolean'
+      ? rows([
+          ['CHAIN', connection.live ? 'REACHABLE' : 'UNREACHABLE', connection.live ? 'm' : ''],
+          ['NETWORK HEIGHT', esc(orDash(connection.consensusHeight)), 'm'],
+        ]) +
+        (connection.genesisMismatch
           ? `<div class="err">The nodes disagree about the genesis block. Do not sign anything until that is resolved.</div>`
           : '')
-      : ui.unavailable('No node is configured for this app.')) +
+      : ui.unavailable('The connection to the chain could not be checked.')) +
     `<div class="lb">BLOCK PRODUCERS</div>` +
     (producers
       ? rows([

@@ -25,7 +25,7 @@ reached by IP; `OBSIDIAN_SEED_NODES` accepts `host:port` and IP literals.
 | Path | Edge cache | Why |
 | --- | --- | --- |
 | `/js/*`, `/css/*`, `/assets/*` | 5 minutes, `stale-while-revalidate=60` | Content-addressed by build; a stale style sheet cannot lie about the chain |
-| `/api/rpc?path=/blocks…`, `/status`, `/names`, `/nodes…` | 5 seconds | A height five seconds old is still an honest height; the response keeps `x-obsidian-node` |
+| `/api/rpc?path=/blocks…`, `/status`, `/names`, `/nodes/registry`, `/nodes/status/…`, `/nodes/rewards` | 5 seconds | A height five seconds old is still an honest height; the response keeps its `x-obsidian-node` marker (it names no node) |
 | `/api/rpc?path=/tx/submit` (POST) | **never** | A cached acceptance receipt would be a fabricated transaction |
 | `/api/auth/*`, `/api/wallet/*` | **never** | Sessions and account state belong to one browser |
 | `/` and site documents | `no-store` | A redeploy must not leave a stale page pinned |

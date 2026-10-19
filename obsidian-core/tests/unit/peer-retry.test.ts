@@ -22,6 +22,8 @@ function store(seeds: string[] = [], start = 1_000_000): { peers: PeerStore; clo
     seeds,
     persist: false,
     now: () => clock.now,
+    // Jitter is pinned to its midpoint here: this file asserts the nominal delays. The jitter has its own test.
+    random: () => 0.5,
   });
   return { peers, clock };
 }

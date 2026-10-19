@@ -117,7 +117,8 @@ function installLiveFetch(): void {
     if (target.includes('/api/nodes')) {
       return new Response(
         JSON.stringify({
-          nodes: [{ url: NODE_URL, healthy: true, height: 1, latestBlockHash: '', chainId: 7780, networkId: 'obsidian-devnet-1', peers: 0, latencyMs: 1 }],
+          network: 'devnet',
+          live: true,
           consensusHeight: 1,
           genesisMismatch: false,
         }),

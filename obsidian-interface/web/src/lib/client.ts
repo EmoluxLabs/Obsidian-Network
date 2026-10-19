@@ -7,16 +7,15 @@
  * CORS configured) but is never required and never the default.
  */
 
-export interface NodeSummary {
-  url: string;
-  healthy: boolean;
-  height: number;
-  latestBlockHash: string;
-  chainId: number;
-  networkId: string;
-  genesisId: string;
-  peers: number;
-  latencyMs: number;
+/**
+ * What the interface says publicly about its connection to the chain. It names no node: no URL, no per-node height or
+ * latency, no peer. (The per-node table is `/api/nodes/detail`, for a caller on the server only.)
+ */
+export interface NodeConnection {
+  network: string | null;
+  live: boolean;
+  consensusHeight: number | null;
+  genesisMismatch: boolean;
 }
 
 export interface ChainStatus {
@@ -784,27 +783,21 @@ export class ObsidianClient {
   }
 
   /**
-   * The interface's own node list (which nodes it is reading from and how far
-   * each has synced). A missing or malformed answer is reported as an error with
-   * a readable message: an empty node list and a broken one are different states,
-   * and the banner must not print a `TypeError` at the user.
+   * Whether the interface can reach the chain, and the network's height. A missing or malformed answer is reported as
+   * an error with a readable message: "no node" and "a broken answer" are different states, and the banner must not
+   * print a `TypeError` at the user.
    */
-  async nodes(): Promise<{ nodes: NodeSummary[]; consensusHeight: number | null; genesisMismatch: boolean }> {
+  async nodes(): Promise<NodeConnection> {
     const response = await fetch(`${this.base}/api/nodes`);
-    if (!response.ok) throw new Error(`the interface could not list its nodes (HTTP ${response.status})`);
-    const payload = (await response.json().catch(() => undefined)) as
-      | { nodes?: NodeSummary[]; consensusHeight?: number | null; genesisMismatch?: boolean }
-      | undefined;
-    if (!payload || !Array.isArray(payload.nodes)) throw new Error('the interface returned an unexpected node list');
+    if (!response.ok) throw new Error(`the interface could not check its connection to the chain (HTTP ${response.status})`);
+    const payload = (await response.json().catch(() => undefined)) as Partial<NodeConnection> | undefined;
+    if (!payload || typeof payload.live !== 'boolean') throw new Error('the interface returned an unexpected connection status');
     return {
-      nodes: payload.nodes,
+      network: payload.network ?? null,
+      live: payload.live,
       consensusHeight: payload.consensusHeight ?? null,
       genesisMismatch: payload.genesisMismatch === true,
     };
-  }
-
-  peers(): Promise<Record<string, unknown>> {
-    return this.request('/peers');
   }
 }
 

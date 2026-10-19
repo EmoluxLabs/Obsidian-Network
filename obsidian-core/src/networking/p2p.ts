@@ -136,6 +136,11 @@ const IDENTITY_REPORT_WINDOW_MS = 10 * 60_000;
 
 /** Before the handshake completes a peer may only send a hello: nothing needs more than this. */
 const MAX_PRE_HANDSHAKE_BYTES = 64 * 1024;
+/** How often one connected peer is asked again for the addresses it knows (discovery must not stop after the handshake). */
+const ADDR_REFRESH_MS = 60_000;
+/** How often the node looks at its peer set and dials to fill it. */
+const MAINTAIN_INTERVAL_MS = 15_000;
+
 /** Inbound connections one remote address may hold at once (loopback is exempt: devnet runs on one host). */
 const MAX_INBOUND_PER_IP = 8;
 /** How long an address that kept violating the protocol stays refused. */
@@ -229,6 +234,10 @@ interface PeerLink {
   /** When the last unproductive sync attempt against this peer happened. */
   lastSyncMiss: number;
   budgets: LinkBudgets;
+  /** When this peer was last asked for its addresses (0 = never). */
+  lastAddrRequest: number;
+  /** Set once the link has been torn down, so a close that follows an error is not counted twice. */
+  dropped: boolean;
 }
 
 /** What one `getblocks` round trip came to. Everything here is local fact, nothing is taken from the peer unverified. */
@@ -324,6 +333,10 @@ export function helloDigest(hello: HelloPayload): Uint8Array {
 }
 
 export interface P2PServiceOptions {
+  /** How often the peer set is looked at and refilled (default 15 s). Tests shorten it; production leaves it alone. */
+  maintainIntervalMs?: number;
+  /** How often each peer is asked for more addresses (default 60 s). */
+  addrRefreshMs?: number;
   chain: ChainManager;
   net: NetworkDefinition;
   peers: PeerStore;
@@ -371,6 +384,8 @@ export class P2PService extends EventEmitter {
   private readonly now: () => number;
   private readonly syncBatch: number;
   private readonly syncTimeoutMs: number;
+  private readonly maintainMs: number;
+  private readonly addrRefreshMs: number;
   private readonly sink: (level: 'debug' | 'info' | 'warn' | 'error', message: string, fields?: Record<string, unknown>) => void;
   /** The last few things that went wrong with a peer (bounded), so an operator can ask "why was that peer refused?". */
   private readonly recent: Array<{ at: number; level: 'warn' | 'error'; message: string; fields: Record<string, string | number | boolean> }> = [];
@@ -381,6 +396,8 @@ export class P2PService extends EventEmitter {
   private maxInbound: number;
   private maxOutbound: number;
   private readonly dialing = new Set<string>();
+  /** Addresses that are THIS node (its advertised address, or one that answered a dial with our own identity). Never dialled, never gossiped. */
+  private readonly selfAddresses = new Set<string>();
   private server: WebSocketServer | null = null;
   private timers: NodeJS.Timeout[] = [];
   private stopping = false;
@@ -398,6 +415,8 @@ export class P2PService extends EventEmitter {
     this.onTransaction = options.onTransaction;
     this.now = options.now ?? (() => Date.now());
     this.syncBatch = Number.isInteger(options.syncBatch) ? Math.min(MAX_SYNC_BATCH, Math.max(1, options.syncBatch as number)) : MAX_SYNC_BATCH;
+    this.maintainMs = Number.isFinite(options.maintainIntervalMs) ? Math.max(50, options.maintainIntervalMs as number) : MAINTAIN_INTERVAL_MS;
+    this.addrRefreshMs = Number.isFinite(options.addrRefreshMs) ? Math.max(50, options.addrRefreshMs as number) : ADDR_REFRESH_MS;
     this.syncTimeoutMs = Number.isFinite(options.syncTimeoutMs) ? Math.max(50, options.syncTimeoutMs as number) : DEFAULT_SYNC_TIMEOUT_MS;
     const address = options.identity.address ?? addressFromPublicKey(options.identity.publicKey, options.net.addressHrp);
     this.identity = { address, publicKey: options.identity.publicKey, privateKey: options.identity.privateKey };
@@ -414,6 +433,7 @@ export class P2PService extends EventEmitter {
         const parsed = parsePeerAddress(advertised);
         this.advertiseHost = parsed.host === '0.0.0.0' ? '' : parsed.host;
         this.advertisePort = parsed.port;
+        if (this.advertiseHost && parsed.port > 0) this.selfAddresses.add(`${this.advertiseHost}:${parsed.port}`);
       } catch {
         this.sink('warn', 'ignoring malformed listenAddress', { listenAddress: advertised });
       }
@@ -527,7 +547,7 @@ export class P2PService extends EventEmitter {
       // half-open connection to a crashed peer). Idempotent: a second call is a
       // no-op because the interval list is already populated.
       this.scheduleLoops();
-      void this.maintainPeers();
+      this.background('maintain-peers', () => this.maintainPeers());
     }
     return this.port;
   }
@@ -544,7 +564,7 @@ export class P2PService extends EventEmitter {
   /** Ask the connected peer with the best chain for anything we are missing. */
   requestSyncFromPeers(): void {
     const best = this.bestPeer();
-    if (best) void this.syncFrom(best);
+    if (best) this.background('sync', () => this.syncFrom(best));
   }
 
   /**
@@ -680,9 +700,12 @@ export class P2PService extends EventEmitter {
 
   private scheduleLoops(): void {
     if (this.timers.length > 0) return;
-    this.timers.push(setInterval(() => void this.maintainPeers(), 15_000).unref());
-    this.timers.push(setInterval(() => this.pingAll(), PING_INTERVAL_MS).unref());
-    this.timers.push(setInterval(() => this.pruneRelaySets(), 60_000).unref());
+    // Every periodic task is guarded: an exception thrown inside a timer callback, or a promise that rejects with nobody
+    // waiting for it, ends the whole node process. A peer-management failure must be logged with its cause and retried on
+    // the next tick, never stop the node.
+    this.timers.push(setInterval(() => this.background('maintain-peers', () => this.maintainPeers()), this.maintainMs).unref());
+    this.timers.push(setInterval(() => this.background('ping', () => this.pingAll()), PING_INTERVAL_MS).unref());
+    this.timers.push(setInterval(() => this.background('prune-relay-sets', () => this.pruneRelaySets()), 60_000).unref());
   }
 
   async stop(): Promise<void> {
@@ -705,6 +728,33 @@ export class P2PService extends EventEmitter {
     this.peers.persist();
   }
 
+  // ── Background tasks ───────────────────────────────────────────────────────
+
+  /**
+   * Run a periodic or fire-and-forget task so that neither a synchronous throw nor a rejected promise can escape: it is
+   * logged with the task's name and the error (message and the top of the stack, never a key or a message body) and the
+   * node carries on. The next tick runs the task again.
+   */
+  private background(task: string, work: () => unknown): void {
+    try {
+      const result = work();
+      if (result && typeof (result as Promise<unknown>).catch === 'function') {
+        (result as Promise<unknown>).catch((error: unknown) => this.backgroundFailed(task, error));
+      }
+    } catch (error) {
+      this.backgroundFailed(task, error);
+    }
+  }
+
+  private backgroundFailed(task: string, error: unknown): void {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.log.error('p2p background task failed; the node keeps running', {
+      task,
+      error: failure.message.slice(0, 300),
+      stack: (failure.stack ?? '').split('\n').slice(0, 6).join(' | ').slice(0, 800),
+    });
+  }
+
   // ── Peer maintenance ───────────────────────────────────────────────────────
 
   private async maintainPeers(): Promise<void> {
@@ -715,23 +765,38 @@ export class P2PService extends EventEmitter {
     {
       const outbound = [...this.links.values()].filter((link) => !link.inbound).length;
       const target = Math.max(2, Math.min(this.maxOutbound, 8));
-      if (outbound < target) {
+      // Dials already in flight count: without them a slow connect (8 s) is joined by a second sweep's dials and the
+      // node opens more sockets than it intended.
+      const slots = target - outbound - this.dialing.size;
+      if (slots > 0) {
         const connected = new Set([...this.links.values()].map((link) => link.address));
         // Operator-configured seeds come first: if a seed was offline when this
         // node booted it must still be retried once it comes back, even when
         // gossip has already supplied us with plenty of other peers.
-        const seeds = this.peers
-          .dialable(64)
-          .filter((record) => record.source === 'seed' && !connected.has(record.address));
-        const rest = this.peers.dialable(32).filter((record) => record.source !== 'seed' && !connected.has(record.address));
-        const candidates = [...seeds, ...rest].slice(0, target - outbound);
-        for (const record of candidates) void this.dial(record);
+        const wanted = (record: PeerRecord): boolean => !connected.has(record.address) && !this.selfAddresses.has(record.address) && !this.dialing.has(record.address);
+        const seeds = this.peers.dialable(64).filter((record) => record.source === 'seed' && wanted(record));
+        const rest = this.peers.dialable(32).filter((record) => record.source !== 'seed' && wanted(record));
+        const candidates = [...seeds, ...rest].slice(0, slots);
+        for (const record of candidates) this.background('dial', () => this.dial(record));
       }
+    }
+
+    // Discovery does not end with the handshake: keep asking connected peers what they know, so a node that only had
+    // one seed learns the others, and learns again after the network changes.
+    const now = this.now();
+    for (const link of this.links.values()) {
+      if (link.hello && now - link.lastAddrRequest >= this.addrRefreshMs) this.requestAddresses(link);
     }
 
     // Keep in touch with the best peer and pull anything we are missing.
     const best = this.bestPeer();
-    if (best) void this.syncFrom(best);
+    if (best) this.background('sync', () => this.syncFrom(best));
+  }
+
+  /** Ask one connected peer for the addresses it knows (`addr` is the answer; its entries are only hints). */
+  private requestAddresses(link: PeerLink): void {
+    link.lastAddrRequest = this.now();
+    this.send(link, { v: WIRE_VERSION, t: 'getaddr' });
   }
 
   private async dial(record: PeerRecord): Promise<void> {
@@ -739,6 +804,7 @@ export class P2PService extends EventEmitter {
     // the boot-time seed dial and the first maintenance sweep would otherwise
     // open two sockets to the same peer and double-count failures against it.
     if (this.dialing.has(record.address)) return;
+    if (this.selfAddresses.has(record.address)) return;
     if (this.links.size > 0) {
       const connected = [...this.links.values()];
       if (connected.some((link) => link.address === record.address)) return;
@@ -834,11 +900,13 @@ export class P2PService extends EventEmitter {
       lateBatchUntil: 0,
       lastSyncMiss: 0,
       budgets: newLinkBudgets(this.now),
+      lastAddrRequest: 0,
+      dropped: false,
     };
     this.links.set(key, link);
 
     socket.on('message', (data: RawData) => this.onMessage(key, link, data));
-    socket.on('close', () => this.dropLink(key, link));
+    socket.on('close', (code: number, reason: Buffer) => this.dropLink(key, link, code, reason?.toString('utf8') ?? ''));
     socket.on('error', () => this.dropLink(key, link));
 
     // The acceptor speaks first with a fresh challenge. The dialer's hello must
@@ -874,9 +942,17 @@ export class P2PService extends EventEmitter {
     this.log.info('peer address refused for a while', { ip, reason, minutes: IP_BAN_MS / 60_000 });
   }
 
-  private dropLink(key: string, link: PeerLink): void {
+  private dropLink(key: string, link: PeerLink, code = 0, reason = ''): void {
+    if (link.dropped) return;
+    link.dropped = true;
     if (link.handshakeTimer) clearTimeout(link.handshakeTimer);
     this.links.delete(key);
+    // A link WE opened that ended before the handshake finished is a failed attempt: refused, rejected (another network or
+    // version), timed out, or reset. Counting it puts the address on the exponential retry curve; without this a peer that
+    // refuses this node (it answers, then closes) is dialled again on every sweep, for ever. A duplicate closed on purpose
+    // is not a failure: the peer is connected over its other link.
+    const onPurpose = code === 1000 && /^(duplicate connection|superseded)/.test(reason);
+    if (!link.inbound && !link.hello && !this.stopping && !onPurpose) this.peers.recordFailure(link.address, 'handshake');
     if (link.pending) {
       const pending = link.pending;
       link.pending = null;
@@ -1101,6 +1177,21 @@ export class P2PService extends EventEmitter {
     this.send(link, hello);
   }
 
+  /** Node id of whichever end opened `link` (for an inbound link, the peer; for one we dialled, this node). */
+  private initiatorOf(link: PeerLink, peerNodeId: string): string {
+    return link.inbound ? peerNodeId : this.nodeId;
+  }
+
+  /** Should `incoming` replace the already-established `existing` link to the same peer? Pure in the two links and the ids. */
+  private incomingWins(existing: PeerLink, incoming: PeerLink, peerNodeId: string): boolean {
+    if (this.now() - existing.lastPong > PING_INTERVAL_MS * 2) return true;
+    const existingInitiator = this.initiatorOf(existing, peerNodeId);
+    const incomingInitiator = this.initiatorOf(incoming, peerNodeId);
+    if (existingInitiator === incomingInitiator) return false;
+    const lower = this.nodeId < peerNodeId ? this.nodeId : peerNodeId;
+    return incomingInitiator === lower;
+  }
+
   private handleHello(link: PeerLink, message: P2PMessage): void {
     const hello = message.hello as HelloPayload | undefined;
     const signature = String(message.signature ?? '');
@@ -1152,6 +1243,13 @@ export class P2PService extends EventEmitter {
       this.log.debug('peer runs a newer core', { address: link.address, version: hello.version });
     }
     if (hello.identity === this.identity.address) {
+      if (!link.inbound) {
+        // The address we dialled is this node (a peer gossiped our own address back to us, or a seed names us). Remember
+        // that, so it is not dialled again on every sweep or passed on to anyone else.
+        this.selfAddresses.add(link.address);
+        this.peers.forget(link.address);
+        this.log.debug('dialled our own address; it is excluded from now on', { address: link.address });
+      }
       this.reject(link, ErrCode.MALFORMED, 'self connection refused');
       return;
     }
@@ -1182,21 +1280,29 @@ export class P2PService extends EventEmitter {
     if (hello.finalizedHeight<=localFinality.finalizedHeight && this.chain.canonicalHashAt(hello.finalizedHeight)!==hello.finalizedHash) {
       this.reject(link,ErrCode.FINALITY_CONFLICT,'peer finalized checkpoint conflicts with local history'); return;
     }
-    // One connection per peer: both ends dialled each other, or a gossiped hint
-    // led us back to a peer we already talk to. Both sides keep their OLDEST
-    // link for this nodeId and close the newer socket, so exactly one of the two
-    // duplicates survives on each end and they are the two ends of the same
-    // socket. Without this a three-node network keeps opening links until the
-    // connection limits are hit.
-    const duplicate = [...this.links.values()].find((other) => other !== link && other.nodeId && other.nodeId === hello.nodeId);
-    if (duplicate) {
-      this.log.debug('duplicate connection dropped', { address: link.address, nodeId: hello.nodeId, kept: duplicate.address });
+    // One connection per peer. Both ends can dial each other at the same moment, and then each end holds two links to the
+    // same node. The rule that picks the survivor has to give the SAME answer at both ends, or each end closes a different
+    // socket and the pair is left with none (this is what a mutual-seed configuration did on every simultaneous start):
+    // the survivor is the link opened by the node with the LOWER node id. A link that has gone quiet is not defended.
+    const established = [...this.links.entries()].find(([, other]) => other !== link && other.hello !== null && other.nodeId === hello.nodeId);
+    if (established) {
+      const [otherKey, other] = established;
+      if (!this.incomingWins(other, link, hello.nodeId)) {
+        this.log.debug('duplicate connection dropped', { address: link.address, nodeId: hello.nodeId, kept: other.address });
+        try {
+          link.socket.close(1000, 'duplicate connection');
+        } catch {
+          /* the socket is already gone */
+        }
+        return;
+      }
+      this.log.debug('duplicate connection replaced', { address: link.address, nodeId: hello.nodeId, replaced: other.address });
       try {
-        link.socket.close(1000, 'duplicate connection');
+        other.socket.close(1000, 'superseded');
       } catch {
         /* the socket is already gone */
       }
-      return;
+      this.dropLink(otherKey, other, 1000, 'superseded');
     }
 
     if (link.handshakeTimer) {
@@ -1245,10 +1351,14 @@ export class P2PService extends EventEmitter {
       // Answer with a hello that signs THE DIALER's nonce.
       this.send(link, { ...this.helloMessage(hello.nonce), t: 'hello_ack' });
       this.send(link, { v: WIRE_VERSION, t: 'status', ...this.tipFields() });
-      this.send(link, { v: WIRE_VERSION, t: 'getaddr' });
+      this.requestAddresses(link);
+    } else {
+      // The dialer used to learn nothing from the node it dialled: only the ACCEPTING side asked for addresses, so a node
+      // that had one seed never discovered any other peer. Ask too.
+      this.requestAddresses(link);
     }
 
-    if (this.peerIsBetter(link)) void this.syncFrom(link);
+    if (this.peerIsBetter(link)) this.background('sync', () => this.syncFrom(link));
     this.emit('peer', { address, nodeId: hello.nodeId, height: hello.height });
   }
 
@@ -1268,7 +1378,7 @@ export class P2PService extends EventEmitter {
       return;
     }
     this.noteTip(link, height, weight, String(message.headHash ?? ''));
-    if (this.peerIsBetter(link)) void this.syncFrom(link);
+    if (this.peerIsBetter(link)) this.background('sync', () => this.syncFrom(link));
   }
 
   private handleStatus(link: PeerLink, message: P2PMessage): void {
@@ -1281,7 +1391,8 @@ export class P2PService extends EventEmitter {
 
   private handleAddr(link: PeerLink, message: P2PMessage): void {
     const peers = Array.isArray(message.peers) ? (message.peers as Array<{ host: string; port: number }>) : [];
-    const added = this.peers.addGossiped(peers.slice(0, 64));
+    const usable = peers.slice(0, 64).filter((entry) => typeof entry?.host === 'string' && !this.selfAddresses.has(`${entry.host}:${entry.port}`));
+    const added = this.peers.addGossiped(usable);
     if (added > 0) this.log.debug('peer exchange', { from: link.address, added });
   }
 
@@ -1310,6 +1421,16 @@ export class P2PService extends EventEmitter {
    * A peer is only punished when its WHOLE attempt delivered nothing we did not already have.
    */
   private async syncFrom(link: PeerLink): Promise<void> {
+    // Never rejects. Callers fire it and forget it (`void`), so a rejection here would be an unhandled promise rejection,
+    // which ends the node process. The follower nodes are the ones that sync; the node that produces blocks hardly does.
+    try {
+      await this.runSync(link);
+    } catch (error) {
+      this.backgroundFailed('sync', error);
+    }
+  }
+
+  private async runSync(link: PeerLink): Promise<void> {
     if (link.syncing || this.stopping) return;
     if (!link.hello) return;
     if (this.now() - link.lastSyncMiss < SYNC_RETRY_GAP_MS) return;
@@ -1588,7 +1709,7 @@ export class P2PService extends EventEmitter {
         if (Number.isInteger(block.header.height) && block.header.height > link.height) {
           this.noteTip(link, block.header.height, block.header.cumulativePotWeight, hash);
         }
-        if (this.peerIsBetter(link)) void this.syncFrom(link);
+        if (this.peerIsBetter(link)) this.background('sync', () => this.syncFrom(link));
         break;
       case ErrCode.DUPLICATE_BLOCK:
       case ErrCode.STALE_BLOCK:

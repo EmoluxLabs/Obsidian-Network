@@ -65,7 +65,8 @@ variable "seed_ips" {
 locals {
   cacheable_rpc_paths = [
     "/status", "/blocks", "/names",
-    "/mining/schedule", "/oracle", "/network", "/audit", "/pot", "/revenue", "/nodes",
+    "/mining/schedule", "/oracle", "/network", "/audit", "/pot", "/revenue",
+    "/nodes/registry", "/nodes/status/", "/nodes/rewards",
   ]
   cacheable_expression = join(" or ", [
     for p in local.cacheable_rpc_paths :
@@ -83,7 +84,7 @@ resource "cloudflare_ruleset" "cache" {
 
   rules {
     action      = "set_cache_settings"
-    description = "Chain reads may be five seconds old, and keep their x-obsidian-node header"
+    description = "Chain reads may be five seconds old, and keep their x-obsidian-node marker header"
     expression  = "(${local.cacheable_expression}) and not http.cookie contains \"obsidian_session\""
     enabled     = true
 
