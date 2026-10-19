@@ -26,6 +26,8 @@ cd "$ROOT"
 
 VERSION="$(node -p "require('./obsidian-core/package.json').version")"
 INTERFACE_VERSION="$(node -p "require('./obsidian-interface/package.json').version")"
+# The protocol version is not the software version: a patch release leaves it alone (it is part of every genesis id).
+PROTOCOL="$(sed -n "s/^export const PROTOCOL_VERSION = '\([^']*\)';.*/\1/p" obsidian-core/src/version.ts)"
 RELEASES="$ROOT/releases"
 STAGING="$RELEASES/staging"
 SKIP_BUILD=0
@@ -465,7 +467,7 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
 
 ## What is in this release
 
-* **fresh-start consensus (protocol $VERSION):** no validators, no bond, no votes and no bootstrap committee. Every
+* **fresh-start consensus (protocol $PROTOCOL):** no validators, no bond, no votes and no bootstrap committee. Every
   registered, synchronised, live node joins one deterministic producer schedule derived from chain state alone
   (docs/consensus-v1.9.0.md). A chain with no producers does not halt: it falls back from established nodes to every
   registered node, and from there to an open founding state
@@ -486,6 +488,8 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   address whose recovery completes only after a delay the owner can cancel (docs/ons.md)
 * **wallets:** creation shows both the passphrase and the private key; a separate private-key recovery flow shows the
   derived address for confirmation before anything is stored
+* **2.0.3 patch (no consensus change, protocol stays $PROTOCOL):** how far finality has got is shown to the node operator only, not to the
+  public (docs/api.md); peers are no longer published, with automatic peer discovery and reconnection (docs/p2p-stability-2.0.2.md)
 * **2.0.2 attack-campaign fixes:** a pool that admits only what could be valid, a minimum gas and transfer of 0.000001 OBS,
   a two-slot future-date allowance for blocks, address-block (IPv6 /64) rate limits, per-account sign-in failure counting,
   slow-client limits on the interface, pinned CI actions; one attack class (Sybil nodes) is documented as open
@@ -493,7 +497,7 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
 * **2.0.1 consensus fixes:** a name is registrable only after its grace period (a stranger could take one inside it), and a
   recipient or pointer address must be canonical lowercase (an all-uppercase address used to credit an account nobody can
   sign for) (docs/upgrading-2.0.1.md)
-* protocol $VERSION is genesis-bound: it rejects 2.0.1 and older peers, snapshots and data, and includes no live-chain
+* protocol $PROTOCOL is genesis-bound: it rejects 2.0.1 and older peers, snapshots and data, and includes no live-chain
   migration (docs/upgrading-2.0.2.md). Earlier tags are untouched
 * the mining gate (\`MINING_CLAIM\` certificates, \`GATE_AUTHORITY\`) is unchanged
 * the archives now also carry the web app, the web wallet, the extension and the desktop sources

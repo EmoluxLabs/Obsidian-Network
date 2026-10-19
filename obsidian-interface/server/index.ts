@@ -1507,7 +1507,6 @@ export class InterfaceServer {
       target === '/network' ||
       target === '/oracle' ||
       target === '/producers' ||
-      target === '/finality' ||
       target === '/blocks' ||
       target === '/mempool' ||
       target === '/names' ||
@@ -1594,7 +1593,7 @@ export class InterfaceServer {
         }
         // The header names no node. It is the marker the CDN worker keys on ("this answer came from a node, not from an
         // interface error"), and it used to carry the node's URL: the address of every node, on every read.
-        this.json(response, upstream.status, safeParse(text), { 'x-obsidian-node': 'chain' });
+        this.json(response, upstream.status, withoutFinality(target, safeParse(text)), { 'x-obsidian-node': 'chain' });
         return;
       } catch (error) {
         lastError = `${node.url}: ${(error as Error).message}`;
@@ -1963,6 +1962,19 @@ function readCookie(request: IncomingMessage, name: string): string | undefined 
     if (key === name) return rest.join('=');
   }
   return undefined;
+}
+
+/**
+ * How far finality has got (the finalized height, its lag, the producer count behind it) is not shown to visitors. A node
+ * that has this release already leaves it out for a proxied caller; this covers a node that does not, so a half-upgraded
+ * network does not publish it either. Only the two routes that carry it are touched, and only at the top level.
+ */
+function withoutFinality(target: string, body: unknown): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  if (target !== '/status' && target !== '/producers') return body;
+  const copy = { ...(body as Record<string, unknown>) };
+  for (const key of Object.keys(copy)) if (/^(finalized|finality)/i.test(key)) delete copy[key];
+  return copy;
 }
 
 function safeParse(text: string): unknown {

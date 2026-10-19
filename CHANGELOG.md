@@ -15,7 +15,33 @@ The authoritative params hash for a release is whatever `GET /params` reports on
 
 ---
 
-## Unreleased: peer privacy, peer discovery and background-failure patch (no consensus, protocol or version change)
+## [2.0.3]
+
+**Software patch. No consensus change: `PROTOCOL_VERSION` stays 2.0.2, the params hash is `12211595855ba405b3d70f6161ef9371`, every genesis id is unchanged, and
+2.0.2 and 2.0.3 nodes share one network and peer with each other.** Only the core software version (and the interface package
+that ships with it) moves to 2.0.3. This release also carries the two patches that were recorded under "Unreleased" after 2.0.2 (below).
+
+### Changed: how far finality has got is no longer shown (obsidian-core, interface, Web App, extension)
+
+The finalized height, the finalized hash, the finality lag and the producer count behind it are not shown to the public any more.
+
+- **Node RPC:** only the operator (a caller on the node's own machine, with no forwarding header) or a node with
+  `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL=true` receives them. For everyone else `GET /finality` is a `404`, and the finality
+  fields are left out of `GET /status`, `GET /readyz` (`checks.finality` and the `finality-lagging` advisory) and `GET /producers`;
+  JSON-RPC `getfinality` returns null and `getstatus` omits them. A node answers `/readyz` with the same ready / not ready verdict.
+- **Interface:** `/finality` is no longer on the `/api/rpc` allowlist, and finality fields are stripped from proxied `/status` and
+  `/producers` bodies, so a node that has not been upgraded cannot leak them through the interface either.
+- **Web App and extension:** the FINALIZED row and FINALITY section of the explorer, the FINALIZED HEIGHT and FINALITY rows of the
+  extension, and `/finality` in the API screen are gone.
+- **Not changed:** the node still computes finality and consensus uses it exactly as before; the desktop node console (a local operator
+  tool) still shows it; `/metrics` is documented as a private, operator-scraped endpoint and still carries the finality gauges, so keep it off the
+  public internet. ONS name-recovery finalisation is a different thing and is untouched.
+- Tests: `obsidian-core/tests/security/rpc-finality-privacy.test.ts`, `obsidian-interface/tests/server.test.ts`,
+  `tests/scripts/public-finality-surfaces.test.mjs`, `obsidian-app-web/tests/explorer.test.mjs`.
+
+---
+
+## Also in 2.0.3: peer privacy, peer discovery and background-failure patch (no consensus or protocol change)
 
 Prompted by a report that two of three mainnet nodes repeatedly stop. The production cause is **not established** from the
 code (no production access; see [docs/p2p-stability-2.0.2.md](docs/p2p-stability-2.0.2.md)). Real defects found and fixed on
@@ -58,7 +84,7 @@ the extended `rpc-peers-privacy` (28) and the interface "no peer or node list" t
 identical before and after.
 
 
-## Unreleased: interface authentication patch (after the 2.0.2 tag; no consensus or version change)
+## Also in 2.0.3: interface authentication patch (made after the 2.0.2 tag; no consensus change)
 
 Prompted by a report that sign-in answered 401 after a successful registration on mainnet. The registration-to-sign-in path was
 verified correct end to end, so the production cause is not established from the code (see

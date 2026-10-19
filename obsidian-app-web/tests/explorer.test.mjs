@@ -71,12 +71,23 @@ test('there is a section for each thing worth looking at, and each renders real 
     blocks: [/#82/, /1 TX/],
     claims: [/ACTIVE MINERS/, /dobs13s4pg…rs0ff0/, /GENESIS ALLOCATION/, /\+0\.000167/],
     names: [/e2e-test\.obs/, /REGISTER A NAME/, /UNTIL 2027-/],
-    network: [/CONNECTION/, /REACHABLE/, /BLOCK PRODUCERS/, /FINALITY/, /FINALIZED HEIGHT/, /NODE RUNNER REWARDS/, /90% nodes/, /Can one server shut down/],
+    network: [/CONNECTION/, /REACHABLE/, /BLOCK PRODUCERS/, /NODE RUNNER REWARDS/, /90% nodes/, /Can one server shut down/],
   };
   for (const [tab, patterns] of Object.entries(expected)) {
     const html = render({ tab });
     clean(html, tab);
     for (const pattern of patterns) assert.match(html, pattern, `${tab} should show ${pattern}`);
+  }
+});
+
+test('no explorer tab shows how far finality has got, even when the node sends it', () => {
+  for (const tab of ['overview', 'blocks', 'claims', 'names', 'network']) {
+    const html = render({ tab });
+    assert.doesNotMatch(html, /finaliz|finality/i, `${tab} must not mention finality or a finalized height`);
+    assert.doesNotMatch(html, /#184\b|BLOCKS BEHIND HEAD/, `${tab} must not show a finalized height or its lag`);
+  }
+  for (const file of ['explorer.mjs', 'real.mjs', 'data.mjs', 'screens.mjs']) {
+    assert.doesNotMatch(readFileSync(resolve(here, '../public', file), 'utf8'), /getFinality|path=\/finality|'\/finality'|finalizedHeight/, `${file} must not read finality`);
   }
 });
 

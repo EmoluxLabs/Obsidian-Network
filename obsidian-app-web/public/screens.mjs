@@ -198,7 +198,6 @@ export const API_READS = [
   ['/mining/claims?limit=3', 'CLAIMS'],
   ['/names?limit=3', 'NAMES'],
   ['/producers', 'PRODUCERS'],
-  ['/finality', 'FINALITY'],
   ['/mempool', 'MEMPOOL'],
   ['/nodes/rewards', 'REWARDS'],
 ];

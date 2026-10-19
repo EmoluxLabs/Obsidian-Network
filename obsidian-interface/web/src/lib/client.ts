@@ -777,11 +777,6 @@ export class ObsidianClient {
     return this.request('/producers');
   }
 
-  /** The consensus-derived finalized checkpoint (GET /finality). */
-  finality(): Promise<Record<string, unknown>> {
-    return this.request('/finality');
-  }
-
   /**
    * Whether the interface can reach the chain, and the network's height. A missing or malformed answer is reported as
    * an error with a readable message: "no node" and "a broken answer" are different states, and the banner must not

@@ -134,7 +134,7 @@ Prove provenance before replacing anything: build the released tag the same way 
 is installed.
 
 ```bash
-git clone --branch v2.0.2 https://github.com/EmoluxLabs/Obsidian-Network.git /home/ubuntu/obsidian-auth-base   # same steps as above
+git clone --branch v2.0.3 https://github.com/EmoluxLabs/Obsidian-Network.git /home/ubuntu/obsidian-auth-base   # same steps as above
 diff -rq /home/ubuntu/obsidian-auth-base/obsidian-interface/dist /opt/obsidian/obsidian-interface/dist         # expected: no output
 diff -rq /home/ubuntu/obsidian-auth-base/obsidian-interface/dist /home/ubuntu/obsidian-auth-patch/obsidian-interface/dist
 ```

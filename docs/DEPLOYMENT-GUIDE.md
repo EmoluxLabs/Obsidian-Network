@@ -81,7 +81,7 @@ wrong one is how people ship old code.
 | **The delivery branch** (`arena/414b663a-obsidian-network`) | The branch this release was delivered on: the full source tree, the built release archives in `releases/`, and these docs. Clone from it to install (the launch guide's commands do) and start new work from it. | Local devnet, private testnet and rehearsals; **mainnet from the archives**. |
 | **Default branch** | Whichever branch GitHub shows first (Settings → Branches); it is what a plain `git clone` checks out. GitHub refuses to delete the default branch, so if you want only the delivery branch to remain, **make it the default first**, then delete the others. | — |
 | **Release branch** | A branch frozen for a release, e.g. `release/1.9.0`, that only receives fixes. Optional: this repository does not use one. | Optional; see §B. |
-| **Git tag** | A permanent, immovable label on one exact commit, e.g. `v2.0.2`. Unlike a branch it never moves. The release tag for this version is created by the operator from the commit the shipped archives were built from (§B6); until you create `v2.0.2` the remote does not carry it. | Tag first, then build the archive from the tag. |
+| **Git tag** | A permanent, immovable label on one exact commit, e.g. `v2.0.3`. Unlike a branch it never moves. The release tag for this version is created by the operator from the commit the shipped archives were built from (§B6); until you create `v2.0.3` the remote does not carry it. | Tag first, then build the archive from the tag. |
 | **Release archive** | The `.zip`/`.tar.gz` files in `releases/`, built by `scripts/package-releases.sh`, each listed in `SHA256SUMS`. This is what `docs/mainnet-launch.md` says to launch from. | **Mainnet. Always.** |
 | **Deployed node** | A running `obsidian-core` process with a data directory. It is not code, it is a live thing holding chain state. | — |
 | **Frontend deployment** | The static site folders (`landing/`, `mine/`, …) served by the interface, a static host, or Cloudflare Pages. | — |
@@ -156,7 +156,7 @@ out. A testnet node handed mainnet's genesis rejects it at the handshake.
 | You want | Use | Why |
 |---|---|---|
 | Run a different network | `--network <name>` | Already built in, isolated by consensus |
-| A frozen, named version | **A tag** (`v2.0.2`) | Immutable; cannot drift |
+| A frozen, named version | **A tag** (`v2.0.3`) | Immutable; cannot drift |
 | Something to deploy | **A release archive** from `releases/` | Checksummed, matches a commit |
 | Ongoing work | This work branch | One place where change happens |
 | A long-lived fix line | a `release/<line>` branch, only if needed | Optional; see §B |
@@ -391,7 +391,7 @@ Expect 11 lines, each ending `OK`.
 Then verify an archive properly:
 
 ```bash
-../scripts/verify-release.sh obsidian-core-2.0.2.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-2.0.3.tar.gz --with-tests
 ```
 
 This checks the digest, extracts to a temporary folder (never over your work),
@@ -534,7 +534,7 @@ you would have built before tagging. The point of tagging first is that the
 archives can then name an immutable commit instead of "whatever was checked out
 that afternoon".
 
-**Tag the commit you actually deploy.** A release tag is not created by this repository's commits: create `v2.0.2` on the
+**Tag the commit you actually deploy.** A release tag is not created by this repository's commits: create `v2.0.3` on the
 commit the shipped archives were built from (see `MANIFEST.json`), and tag every later release the same way. Never move a
 tag that has been pushed.
 
@@ -553,22 +553,22 @@ Confirm the version the tag is claiming. The script reads it from
 `obsidian-core/package.json` and aborts if the interface disagrees:
 
 ```bash
-node -p "require('./obsidian-core/package.json').version"     # -> 2.0.2
+node -p "require('./obsidian-core/package.json').version"     # -> 2.0.3
 ```
 
 Create and push the tag:
 
 ```bash
-git tag -a v2.0.2 -m "Obsidian Network 2.0.2 - protocol 2.0.2, ONS Marketplace, producer schedule, derived finality, node rewards, ONS ownership"
-git push origin v2.0.2
+git tag -a v2.0.3 -m "Obsidian Network 2.0.3 - protocol 2.0.2, ONS Marketplace, producer schedule, derived finality, node rewards, ONS ownership"
+git push origin v2.0.3
 ```
 
 `-a` makes an *annotated* tag, which records who made it and when. Verify it
 landed on the commit you meant:
 
 ```bash
-git show --stat v2.0.2 | head -5
-git rev-parse v2.0.2^{commit}
+git show --stat v2.0.3 | head -5
+git rev-parse v2.0.3^{commit}
 git rev-parse arena/414b663a-obsidian-network
 ```
 
@@ -577,7 +577,7 @@ The last two commands must print the **same** commit id.
 ### B6b. Rebuild the archives from the tag
 
 Because the tag points at the commit you are already standing on, you do **not**
-need to check the tag out — and you should not, because `git checkout v2.0.2`
+need to check the tag out — and you should not, because `git checkout v2.0.3`
 puts you in "detached HEAD", a state that confuses beginners and makes any
 accidental commit hard to find. Just build where you are:
 
@@ -597,7 +597,7 @@ cd ~/Obsidian-Network
    the counts back from the runs themselves.
 6. Produces the archives with `git archive`, so what you download is exactly
    what was committed.
-7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-2.0.2.md`.
+7. Writes `SHA256SUMS`, `MANIFEST.json`, and `RELEASE-NOTES-2.0.3.md`.
 
 Expect it to take several minutes; the cluster test alone starts three real
 nodes. It is the slow step on purpose.
@@ -625,12 +625,12 @@ Confirm the manifest names the tagged commit:
 grep -i commit MANIFEST.json
 ```
 
-It must show the same id as `git rev-parse v2.0.2^{commit}`.
+It must show the same id as `git rev-parse v2.0.3^{commit}`.
 
 Then verify an archive the way a stranger would, including running its tests:
 
 ```bash
-../scripts/verify-release.sh obsidian-core-2.0.2.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-2.0.3.tar.gz --with-tests
 ```
 
 This exits non-zero on a digest mismatch or an unlisted archive, so it is safe
@@ -639,7 +639,7 @@ to use as a gate in a script.
 Finally, read the generated notes:
 
 ```bash
-head -20 RELEASE-NOTES-2.0.2.md
+head -20 RELEASE-NOTES-2.0.3.md
 ```
 
 The test counts in there are **counted live during packaging**, not typed by
@@ -653,7 +653,7 @@ The archives changed, so the repository is now dirty again:
 cd ~/Obsidian-Network
 git status
 git add releases
-git commit -m "Rebuild 2.0.2 release archives from tag v2.0.2"
+git commit -m "Rebuild 2.0.3 release archives from tag v2.0.3"
 git push origin arena/414b663a-obsidian-network
 ```
 
@@ -667,8 +667,8 @@ git push origin arena/414b663a-obsidian-network
 Tags are meant to be permanent, but nothing is published yet, so:
 
 ```bash
-git tag -d v2.0.2                  # delete locally
-git push origin :refs/tags/v2.0.2  # delete on GitHub
+git tag -d v2.0.3                  # delete locally
+git push origin :refs/tags/v2.0.3  # delete on GitHub
 ```
 
 Then tag again. **Once other people have pulled a tag, never move it** - move a
@@ -1318,8 +1318,8 @@ inside the state transition.
 ```bash
 cd releases
 sha256sum -c SHA256SUMS
-../scripts/verify-release.sh obsidian-node-operator-2.0.2.tar.gz
-../scripts/verify-release.sh obsidian-core-2.0.2.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-node-operator-2.0.3.tar.gz
+../scripts/verify-release.sh obsidian-core-2.0.3.tar.gz --with-tests
 ```
 
 The operator package ships `dist/` without tests, so `--with-tests` reports
@@ -1494,7 +1494,7 @@ compile the server.
 - `obsidian-interface/dist/` (the server), unless you are hosting statics only
 
 The ready-made bundle of exactly this is the release archive
-`obsidian-interface-selfhost-2.0.2.tar.gz`.
+`obsidian-interface-selfhost-2.0.3.tar.gz`.
 
 ### F3. Where they should live
 
@@ -1886,7 +1886,7 @@ Follow `docs/node-operator.md`; this is the short version.
 
 1. **Hardware**: §D1 above.
 2. **OS**: Linux. Install Node.js 20.10+.
-3. **Install**: clone and build, or use `obsidian-node-operator-2.0.2.tar.gz`
+3. **Install**: clone and build, or use `obsidian-node-operator-2.0.3.tar.gz`
    (built `dist/`, deployment recipes, docs, `verify-release.sh`,
    `check-invariants.mjs`).
 4. **Keys**: `node dist/index.js keygen`. Set
@@ -2453,7 +2453,7 @@ server; the third logs in. After that, no password.
 
 ```bash
 # phone -> server
-scp releases/obsidian-node-operator-2.0.2.tar.gz user@server:/home/user/
+scp releases/obsidian-node-operator-2.0.3.tar.gz user@server:/home/user/
 
 # server -> phone
 scp user@server:/home/user/node-key.json.backup ~/storage/shared/
@@ -2557,9 +2557,9 @@ ssh user@your-server-ip
 ### N6. Deploy
 
 ```bash
-scp releases/obsidian-node-operator-2.0.2.tar.gz user@server:/home/user/
+scp releases/obsidian-node-operator-2.0.3.tar.gz user@server:/home/user/
 ssh user@server
-tar -xzf obsidian-node-operator-2.0.2.tar.gz
+tar -xzf obsidian-node-operator-2.0.3.tar.gz
 cd obsidian-core && npm ci --omit=dev
 ```
 
@@ -2568,9 +2568,9 @@ Then follow §D6–D8.
 ### N7. Frontend deployment
 
 ```bash
-scp releases/obsidian-interface-selfhost-2.0.2.tar.gz user@server:/home/user/
+scp releases/obsidian-interface-selfhost-2.0.3.tar.gz user@server:/home/user/
 ssh user@server
-tar -xzf obsidian-interface-selfhost-2.0.2.tar.gz
+tar -xzf obsidian-interface-selfhost-2.0.3.tar.gz
 cd obsidian-interface && npm ci --omit=dev
 ```
 
@@ -2629,7 +2629,7 @@ curl -s https://rpc1.example.org/status
 - [ ] Height 0 supply is 0; `invariantOk: true`
 
 **Release**
-- [ ] Tag created (e.g. `v2.0.2`) and pushed
+- [ ] Tag created (e.g. `v2.0.3`) and pushed
 - [ ] Archives built from the tag
 - [ ] `sha256sum -c SHA256SUMS` → 11 OK
 - [ ] `verify-release.sh ... --with-tests` passes

@@ -135,7 +135,6 @@ function overview(s, ex, ui) {
       ['CHAIN ID', esc(orDash(status.chainId)), 'm'],
       ['ADDRESS PREFIX', esc(orDash(net?.addressHrp, (v) => `${v}1…`)), 'm'],
       ['HEIGHT', orDash(status.height, (h) => `#${displayInteger(h)}`), 'm'],
-      ['FINALIZED', orDash(status.finalizedHeight, (h) => `#${displayInteger(h)}`), 'm'],
       ['LAST BLOCK', esc(orDash(status.lastBlockTimestamp, formatTime)), ''],
       ['PROTOCOL', esc(orDash(status.protocolVersion)), 'm'],
       ['MEMPOOL', esc(orDash(status.mempool?.transactions ?? d?.mempool?.size)), 'm'],
@@ -279,7 +278,6 @@ function network(s, ex, ui) {
   if (!d) return loading(ex, ui, 'the network state');
   const connection = d.nodes;
   const producers = d.producers;
-  const finality = d.finality;
   const rewards = d.rewards;
   const audit = d.audit?.questions ?? [];
   return (
@@ -304,14 +302,6 @@ function network(s, ex, ui) {
           ['RULE', esc(orDash(producers.rule)), 'm'],
         ])
       : loading(ex, ui, 'the producer schedule')) +
-    `<div class="lb">FINALITY</div>` +
-    (finality
-      ? rows([
-          ['FINALIZED HEIGHT', esc(orDash(finality.finalizedHeight)), 'm'],
-          ['BLOCKS BEHIND HEAD', esc(orDash(finality.lag)), 'm'],
-          ['STATUS', esc(orDash(finality.reason)), ''],
-        ])
-      : loading(ex, ui, 'finality')) +
     `<div class="lb">MEMPOOL</div>` +
     (d.mempool
       ? rows([

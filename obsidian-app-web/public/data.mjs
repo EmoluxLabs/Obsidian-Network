@@ -255,8 +255,6 @@ export const getMiningClaims = (miner, limit = 20) =>
 export const getPot = () => read('/pot');
 /** The deterministic producer schedule: which tier is active and how many registered nodes are eligible. */
 export const getProducers = () => read('/producers');
-/** The consensus-derived finalized checkpoint. Read from chain state; never a local timer. */
-export const getFinality = () => read('/finality');
 export const getMempool = () => read('/mempool');
 /** The node's answers to "can anyone shut this down / mint / censor", with evidence. */
 export const getAudit = (kind) => read(`/audit/${encodeURIComponent(kind)}`);

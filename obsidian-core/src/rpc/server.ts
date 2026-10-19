@@ -81,6 +81,15 @@ const POST_ONLY_PATHS: ReadonlySet<string> = new Set([
 /** Finality lag (blocks) beyond which /readyz lists `finality-lagging`. Informational: it never makes a node unready. */
 const READY_MAX_FINALITY_LAG = 64;
 
+/** The `/status` fields that report how far finality has got. Operator detail: a public caller does not get them. */
+const FINALITY_FIELDS = ['finalizedHeight', 'finalizedHash', 'finalityLag', 'finalityAvailable', 'finalityEligibleProducers', 'finalityQuorum'] as const;
+
+function withoutFinality<T extends object>(status: T): Omit<T, (typeof FINALITY_FIELDS)[number]> {
+  const copy = { ...status } as Record<string, unknown>;
+  for (const field of FINALITY_FIELDS) delete copy[field];
+  return copy as Omit<T, (typeof FINALITY_FIELDS)[number]>;
+}
+
 export class RpcServer {
   private server?: Server;
   private limiter?: KeyedLimiter;
@@ -362,10 +371,10 @@ export class RpcServer {
     const after = (prefix: string): string => decodeURIComponent(path.slice(prefix.length));
 
     if (path === '/livez') return this.livez(response);
-    if (path === '/readyz') return this.readyz(response);
+    if (path === '/readyz') return this.readyz(request, response);
     if (path === '/' || path === '/health') return this.health(response);
     if (path === '/status') return this.status(request, response);
-    if (path === '/finality') return this.finality(response);
+    if (path === '/finality') return this.finality(request, response);
     if (path === '/metrics') return this.metrics(response);
     if (path === '/params') return this.params(response);
     if (path === '/version') return this.json(response, 200, versionInfo());
@@ -374,7 +383,7 @@ export class RpcServer {
     if (path === '/nodes') return this.nodes(request, response);
     if (path === '/peers') return this.peers(request, response);
     if (path === '/oracle') return this.oracle(response);
-    if (path === '/producers') return this.producers(response);
+    if (path === '/producers') return this.producers(request, response);
     if (path === '/blocks') return this.blocks(response, url);
     if (path.startsWith('/block/')) return this.block(response, after('/block/'));
     // Write paths are matched BEFORE the /tx/:id read route on purpose: a
@@ -448,7 +457,7 @@ export class RpcServer {
    * Zero peers does NOT make a node unready (the first node of a network has none), but is reported as degraded.
    * Constant-time: it reads counters and never walks state, so it returns promptly under load.
    */
-  private readyz(response: ServerResponse): void {
+  private readyz(request: IncomingMessage, response: ServerResponse): void {
     const { chain, p2p, config } = this.options;
     const tip = chain.tip;
     const behindBy = p2p?.behindBy() ?? 0;
@@ -472,7 +481,8 @@ export class RpcServer {
     const finalityOk = finalityLag <= READY_MAX_FINALITY_LAG;
     if (!identityOk) degraded.push('identity-mismatch');
     // Advisories do not change `status` (a closed gate or slow finality is something to fix, not a reason to drain a node).
-    const advisories = [...(finalityOk ? [] : ['finality-lagging']), ...gateIssues];
+    const showFinality = this.mayShowFinality(request);
+    const advisories = [...(finalityOk || !showFinality ? [] : ['finality-lagging']), ...gateIssues];
     this.json(response, ready ? 200 : 503, {
       status: ready ? (degraded.length > 0 ? 'ready-degraded' : 'ready') : 'not-ready',
       checks: {
@@ -481,7 +491,8 @@ export class RpcServer {
         p2p: { ok: p2pOk, enabled: p2pExpected, listening: p2pStatus.listening === true, connectedPeers: connected },
         rpc: { ok: true },
         identity: { ok: identityOk, genesisId: this.options.genesisId, networkId: this.options.net.networkId },
-        finality: { ok: finalityOk, finalizedHeight: info.finalizedHeight, lag: finalityLag, maxLag: READY_MAX_FINALITY_LAG },
+        // The finalized height and its lag are the operator's: a public caller is not told how far finality has got.
+        ...(showFinality ? { finality: { ok: finalityOk, finalizedHeight: info.finalizedHeight, lag: finalityLag, maxLag: READY_MAX_FINALITY_LAG } } : {}),
         gateAuthority: { ok: gate.open && gateIssues.length === 0, open: gate.open, activeKeys: gate.issuerKeys.length, quorum: gate.quorum, epoch: gate.epoch, warnings: gateIssues },
         lastBlockAgeSeconds: tip ? Math.max(0, Math.floor(Date.now() / 1000) - tip.timestamp) : null,
       },
@@ -521,7 +532,7 @@ export class RpcServer {
     const status = this.options.chain.status({ peers: this.options.p2p?.peerCount ?? 0 });
     const state = this.options.chain.world;
     this.json(response, 200, {
-      ...status,
+      ...(this.mayShowFinality(request) ? status : withoutFinality(status)),
       supplyObs: formatObs(BigInt(status.supply)),
       maxSupplyObs: formatObs(MAX_SUPPLY_SEALS),
       supplyPercentUsed: Number((BigInt(status.supply) * 10_000n) / MAX_SUPPLY_SEALS) / 100,
@@ -556,7 +567,12 @@ export class RpcServer {
    * GET /finality — the finalized checkpoint and how it is derived. Everything here is read from the head STATE (the
    * checkpoint is a consensus value committed in the state root); no vote, certificate or local timer exists.
    */
-  private finality(response: ServerResponse): void {
+  private finality(request: IncomingMessage, response: ServerResponse): void {
+    // Finalized height, lag and the producer count behind it are not published: only the operator reads them.
+    if (!this.mayShowFinality(request)) {
+      this.json(response, 404, { error: 'not found', code: 'ERR_NOT_FOUND', path: '/finality' });
+      return;
+    }
     this.json(response, 200, {
       ...this.options.chain.finalityStatus(),
       derivedFrom: 'chain state only: a block is final once enough distinct established producers have built on it',
@@ -774,6 +790,15 @@ export class RpcServer {
   }
 
   /**
+   * The finalized checkpoint (height, lag, the producer count behind it) is operator detail, like the peer table: the same
+   * caller rule, the same explicit `OBSIDIAN_RPC_PUBLIC_PEER_DETAIL` opt-in. Consensus itself is untouched; only what an
+   * anonymous caller is told changes.
+   */
+  private mayShowFinality(request: IncomingMessage): boolean {
+    return this.mayShowPeers(request);
+  }
+
+  /**
    * The P2P status for a caller who may not see peers. Counts only: the last error (which can name a peer's address), the
    * node id, the identity and the advertised endpoint are withheld, in /status and in the counts-only /peers answer alike.
    */
@@ -823,7 +848,7 @@ export class RpcServer {
   }
 
   /** GET /producers — the schedule, derived from state. Addresses are masked like every public list. */
-  private producers(response: ServerResponse): void {
+  private producers(request: IncomingMessage, response: ServerResponse): void {
     const chain = this.options.chain;
     const state = chain.world;
     const height = chain.height + 1;
@@ -855,7 +880,7 @@ export class RpcServer {
       penalties:
         'missing slots suspends a node for a doubling back-off; signing two blocks on one parent bans it. Nothing is ' +
         'bonded, so nothing is confiscated.',
-      finality: chain.finalityStatus(),
+      ...(this.mayShowFinality(request) ? { finality: chain.finalityStatus() } : {}),
     });
   }
 
@@ -1982,10 +2007,12 @@ export class RpcServer {
   private async invokeJsonRpc(method: string, params: Record<string, unknown>, showPeers = false): Promise<unknown> {
     const state = this.options.chain.world;
     switch (method) {
-      case 'getstatus':
-        return this.options.chain.status({ peers: this.options.p2p?.peerCount ?? 0 });
+      case 'getstatus': {
+        const status = this.options.chain.status({ peers: this.options.p2p?.peerCount ?? 0 });
+        return showPeers ? status : withoutFinality(status);
+      }
       case 'getfinality':
-        return this.options.chain.finalityStatus();
+        return showPeers ? this.options.chain.finalityStatus() : null;
       case 'getblock':
         return this.options.chain.getBlockByHeight(Number(params.height ?? 0))?.header ?? null;
       case 'getblocks':

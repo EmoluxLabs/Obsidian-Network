@@ -147,7 +147,7 @@ separately under `checks`, and only the first three decide the status code:
 | Is the P2P listener up? How many peers? | `checks.p2p` | **yes** (listener); peers only `degraded: no-peers` |
 | Is it the network I pinned? | `checks.identity` (`genesisId`, `networkId`); a mismatch adds `identity-mismatch` to `degraded` | no, but `status` becomes `ready-degraded` |
 | Is consensus alive? | `checks.lastBlockAgeSeconds` | no |
-| Is finality progressing? | `checks.finality` (`finalizedHeight`, `lag`, `maxLag` 64); a lag adds `finality-lagging` to `advisories` | no |
+| Is finality progressing? | `checks.finality` (`finalizedHeight`, `lag`, `maxLag` 64); a lag adds `finality-lagging` to `advisories`. Shown to a caller on the node's machine only; a public caller gets neither | no |
 | Is the gate authority sound? | `checks.gateAuthority` (`open`, `activeKeys`, `quorum`, `epoch`, `warnings`) | no (`advisories`: `gate-closed`, `gate-single-key`, `gate-below-three-keys`) |
 | Interface role and its dependencies | interface `GET /api/ready` (`role`, `leader`, nodes) | its own 200/503 |
 
@@ -161,6 +161,8 @@ through it. To publish the detail anyway set `rpcPublicPeerDetail` / `OBSIDIAN_R
 proxy in front of the node must add a forwarding header (the shipped nginx file sets `X-Forwarded-For`); a bare TCP
 proxy that adds none would look local. `/nodes`, JSON-RPC `getpeers` and `getnodes`, and the `p2p` block of `/status` follow
 the same rule (counts for everyone else): peers find each other over the P2P protocol, not through a public directory.
+The finalized height and its lag follow it too: `/finality` is a `404`, and the finality fields of `/status`, `/readyz` and `/producers`
+are left out, for anyone who is not the operator (consensus is unchanged; only what is shown). The same switch publishes them.
 
 ## 4. Peer discovery and the handshake
 

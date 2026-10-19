@@ -87,10 +87,10 @@ Never launch from a working copy. Launch from a signed release archive.
 sha256sum -c SHA256SUMS
 
 # the artifact you will actually run
-../scripts/verify-release.sh obsidian-node-operator-2.0.2.tar.gz
+../scripts/verify-release.sh obsidian-node-operator-2.0.3.tar.gz
 
 # the same code with its test suite attached, which the operator package omits
-../scripts/verify-release.sh obsidian-core-2.0.2.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-core-2.0.3.tar.gz --with-tests
 ```
 
 Expected: every archive reports `OK`, and the verifier prints the package
@@ -109,7 +109,7 @@ who produced them, because anyone who can edit the archive can edit
 `SHA256SUMS` beside it. The signed path is:
 
 ```bash
-../scripts/verify-release.sh obsidian-node-operator-2.0.2.tar.gz --signature-only
+../scripts/verify-release.sh obsidian-node-operator-2.0.3.tar.gz --signature-only
 ```
 
 That checks the detached signature against the publisher key in

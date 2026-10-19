@@ -234,8 +234,20 @@ async function startHarness(options: { stubStatusFails?: number; nodeUrls?: stri
           networkId: 'obsidian-devnet-1',
           syncing: false,
           peers: 2,
+          // A node that has not been upgraded still sends these; the interface must not pass them on.
+          finalizedHeight: 30,
+          finalizedHash: 'fin123',
+          finalityLag: 12,
+          finalityAvailable: true,
+          finalityEligibleProducers: 3,
+          finalityQuorum: 2,
         }),
       );
+      return;
+    }
+    if (request.url === '/producers' || request.url === '/finality') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ tier: 'TIER1', eligible: 3, finality: { finalizedHeight: 30, lag: 12 }, finalizedHeight: 30 }));
       return;
     }
     if (request.url?.startsWith('/blocks') || request.url?.startsWith('/mining/status') || request.url?.startsWith('/names?prefix')) {
@@ -930,6 +942,29 @@ describe('an edge host (the account store lives on ONE primary)', () => {
     const ready = await fetch(`${h.origin}/api/ready`);
     expect((await ready.json() as { role: string }).role).toBe('primary');
     expect((await fetch(`${h.origin}/api/auth/config`)).status).toBe(200);
+  });
+});
+
+describe('the interface does not show how far finality has got', () => {
+  it('does not proxy /finality', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const response = await fetch(`${h.origin}/api/rpc?path=/finality`);
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { code: string }).code).toBe('ERR_REJECTED');
+  });
+
+  it('strips finality fields from /status and /producers even when the node still sends them', async () => {
+    const h = await harness();
+    await h.poolCheck();
+    const status = await fetch(`${h.origin}/api/rpc?path=/status`);
+    const raw = await status.text();
+    expect(status.status).toBe(200);
+    expect(JSON.parse(raw)).toMatchObject({ height: 42, genesisId: 'genesis-test' });
+    expect(raw).not.toMatch(/finaliz|finality/i);
+    const producers = await (await fetch(`${h.origin}/api/rpc?path=/producers`)).text();
+    expect(JSON.parse(producers)).toMatchObject({ tier: 'TIER1', eligible: 3 });
+    expect(producers).not.toMatch(/finaliz|finality/i);
   });
 });
 

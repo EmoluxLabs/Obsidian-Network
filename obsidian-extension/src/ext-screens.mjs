@@ -3,7 +3,7 @@
  *
  *   - the connect screen, shown instead of the app whenever there is no trustworthy server to ask;
  *   - the NODE screen: what this connection is and how healthy it is, read from the node through the
- *     server — connection, height, finality, staleness, the block-producer schedule (read-only) and an
+ *     server — connection, height, staleness, the block-producer schedule (read-only) and an
  *     explicit statement of what a browser extension cannot do;
  *   - a small connection summary under the landing screen, so the settings are reachable when signed out;
  *   - the handlers the Menu rows call.
@@ -105,7 +105,6 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
       `</div>` +
       `<div class="lb">CHAIN${st && view.error ? ' (STALE)' : ''}</div><div class="card">` +
       row('BLOCK HEIGHT', dash(st?.height), 'm') +
-      row('FINALIZED HEIGHT', dash(st?.finalizedHeight), 'm') +
       row('LAST BLOCK', blockAge === null ? '\u2014' : esc(ago(blockAge)) + (chainStale ? ' \u00b7 STALE' : ''), 'm') +
       row('SYNC', st ? (st.syncing ? 'SYNCING' : 'IN SYNC') : '\u2014', st && !st.syncing ? 'ok' : 'mu') +
       row('MEMPOOL', dash(st?.mempool?.transactions), 'm') +
@@ -128,7 +127,6 @@ export function installExtScreens({ SCREENS, esc, api, host, getState, repaint, 
           row('ELIGIBLE NOW', dash(producers.eligible), 'm') +
           row('REGISTERED NODES', dash(producers.registered), 'm') +
           row('BANNED', dash(producers.banned), 'm') +
-          row('FINALITY', dash(producers.finality?.available === undefined ? null : producers.finality.available ? 'AVAILABLE' : 'UNAVAILABLE'), 'm') +
           `</div>`
         : `<div class="card"><div class="row mu">${view.loading ? 'Loading\u2026' : 'Unavailable \u2014 the producer schedule could not be read.'}</div></div>`) +
       `<div class="card" style="margin-top:12px;padding:14px 16px"><div class="lb" style="margin:0 0 6px">NOT AVAILABLE IN A BROWSER</div>` +
