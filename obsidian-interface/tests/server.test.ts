@@ -962,6 +962,8 @@ describe('the interface does not show how far finality has got', () => {
     expect(status.status).toBe(200);
     expect(JSON.parse(raw)).toMatchObject({ height: 42, genesisId: 'genesis-test' });
     expect(raw).not.toMatch(/finaliz|finality/i);
+    // The peer count goes the same way: the fake node sends `peers: 2`, the visitor does not get it.
+    expect(JSON.parse(raw)).not.toHaveProperty('peers');
     const producers = await (await fetch(`${h.origin}/api/rpc?path=/producers`)).text();
     expect(JSON.parse(producers)).toMatchObject({ tier: 'TIER1', eligible: 3 });
     expect(producers).not.toMatch(/finaliz|finality/i);

@@ -161,6 +161,9 @@ through it. To publish the detail anyway set `rpcPublicPeerDetail` / `OBSIDIAN_R
 proxy in front of the node must add a forwarding header (the shipped nginx file sets `X-Forwarded-For`); a bare TCP
 proxy that adds none would look local. `/nodes`, JSON-RPC `getpeers` and `getnodes`, and the `p2p` block of `/status` follow
 the same rule (counts for everyone else): peers find each other over the P2P protocol, not through a public directory.
+After updating the interface, run `npm run build` (not only `npm run build:core`) and restart it: `public/js` is a build output, and an
+old bundle keeps drawing figures the server no longer sends. `GET /api/health` reports `webBundle`: `current`, or `stale` / `missing`
+(the server also logs a `warn` at start) when the pages were built from other sources than `web/src`.
 The finalized height and its lag follow it too: `/finality` is a `404`, and the finality fields of `/status`, `/readyz` and `/producers`
 are left out, for anyone who is not the operator (consensus is unchanged; only what is shown). The same switch publishes them.
 

@@ -6,9 +6,10 @@
  * the wallet needs.
  */
 import { build } from 'esbuild';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { webFingerprint } from './web-fingerprint.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -42,5 +43,8 @@ const result = await build({
   nodePaths,
   logLevel: 'info',
 });
+
+// Ties these bundles to the sources they came from; the server compares it at start (server/web-bundle.ts).
+writeFileSync(join(outdir, 'build.json'), `${JSON.stringify({ fingerprint: webFingerprint(join(root, 'web', 'src')) })}\n`);
 
 console.log(`built ${result.outputFiles?.length ?? pages.length} browser entries (browser-safe ✓)`);

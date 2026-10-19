@@ -41,6 +41,26 @@ The finalized height, the finalized hash, the finality lag and the producer coun
 
 ---
 
+## Unreleased: status strip, no peer or finality card, stale-page guard (after the 2.0.3 tag; no consensus or version change)
+
+Prompted by a report that the home page said "NODE UNREACHABLE" while other sections said active, and that cards reading
+"FINALIZED —" and "PEERS 0" were still on screen. Nothing in this tree draws those two cards any more; a page that still
+shows them is an **old bundle** (`public/js` is gitignored, so a `git pull` and a restart without `npm run build` keeps serving
+the old pages against the new server). That is the likely cause, not a proven one: the report came without the page address
+or the message shown beside the badge, and the deployment was not inspected.
+
+- **Interface status strip:** the two reads (connection summary, chain status) are independent. One failing no longer turns the
+  strip into "NODE UNREACHABLE"; it says ACTIVE, the network (MAINNET) and the height, and says NODE UNREACHABLE only when both
+  fail, with the reason. It never shows a peer count or a finality figure.
+- **Interface `/api/rpc?path=/status`:** the `peers` count and the `p2p` block are removed for visitors (finality fields already were).
+- **Web App:** the dead "NODE" mock screen in `index.html` no longer carries a PEERS row.
+- **Stale-page guard:** `npm run build:web` writes `public/js/build.json` (a fingerprint of `web/src`). The server compares it at start
+  (a `warn` line) and reports it as `webBundle` (`current`, `stale`, `missing` or `unchecked`) in `GET /api/health`. It warns; it does
+  not refuse to start. Fix: `npm run build` and restart the interface.
+- Tests: `obsidian-interface/tests/{node-banner,web-bundle}.test.ts`, `server.test.ts`, `tests/scripts/public-finality-surfaces.test.mjs`.
+
+---
+
 ## Also in 2.0.3: peer privacy, peer discovery and background-failure patch (no consensus or protocol change)
 
 Prompted by a report that two of three mainnet nodes repeatedly stop. The production cause is **not established** from the

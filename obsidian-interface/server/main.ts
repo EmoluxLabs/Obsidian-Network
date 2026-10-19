@@ -7,6 +7,7 @@
  */
 
 import { InterfaceServer } from './index.js';
+import { checkWebBundle } from './web-bundle.js';
 import { gatePassphraseFromEnv, loadGateIssuer, type GateIssuer } from './gate-issuer.js';
 import {
   INTERFACE_USAGE,
@@ -51,6 +52,14 @@ async function main(): Promise<number> {
       process.stderr.write(`interface cannot start: ${(error as Error).message}\n`);
       return 2;
     }
+  }
+
+  // A new server with an old page is how a page keeps showing what the server no longer sends. Say so loudly.
+  const bundle = checkWebBundle(loaded.config.publicDir);
+  if (bundle.state === 'stale' || bundle.state === 'missing') {
+    process.stdout.write(
+      `${JSON.stringify({ ts: new Date().toISOString(), level: 'warn', component: 'interface', message: `web bundle is ${bundle.state}: ${bundle.detail}` })}\n`,
+    );
   }
 
   const server = new InterfaceServer({ config: loaded.config, gateIssuer });

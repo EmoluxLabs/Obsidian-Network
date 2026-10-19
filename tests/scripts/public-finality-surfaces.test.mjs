@@ -46,6 +46,25 @@ test('no public page reads or shows a finalized height, its lag, or the /finalit
   assert.deepEqual(hits, []);
 });
 
+test('no public page has a FINALIZED or PEERS card, row or label at all (not even an empty one)', () => {
+  // A hidden figure with its label left behind still reads "FINALIZED —" or "PEERS 0": the whole card has to go.
+  const label = /['"`>]\s*(finalized|finalized height|finality|peers|peers connected|connected peers)\s*['"`<:]/i;
+  const files = [...PUBLIC_UI, 'obsidian-app-web/public/index.html', 'obsidian-wallet-web/public/index.html'];
+  const hits = [];
+  for (const file of files) {
+    const text = file.endsWith('.html') ? read(file) : strip(read(file));
+    // A sentence that merely says peers are not shown is prose, not a card: only a bare label is matched.
+    if (label.test(text.replace(/<span>PEERS<\/span>/g, '<span>PEERS</span>'))) hits.push(file);
+  }
+  assert.deepEqual(hits, []);
+});
+
+test('the status strip tolerates one failed read and shows no peer or finality figure', () => {
+  const banner = strip(read('obsidian-interface/web/src/lib/node-banner.ts'));
+  assert.match(banner, /Promise\.allSettled/);
+  assert.doesNotMatch(banner, /peers|finaliz|finality/i);
+});
+
 test('the interface proxy does not serve /finality and strips finality fields from /status and /producers', () => {
   const server = strip(read('obsidian-interface/server/index.ts'));
   assert.doesNotMatch(server, /target === '\/finality'/, 'the proxy allowlist must not include /finality');

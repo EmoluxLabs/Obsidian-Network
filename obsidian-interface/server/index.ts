@@ -17,6 +17,7 @@
  * about the chain.
  */
 
+import { checkWebBundle } from './web-bundle.js';
 import { OFFICIAL_PATTERNS, compileOrigins, originMatches } from './trusted-origins.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, statSync, createReadStream, readFileSync } from 'node:fs';
@@ -726,6 +727,8 @@ export class InterfaceServer {
         healthyNodes: this.dependencies.pool.summary().filter((node) => node.healthy).length,
         consensusHeight: consensusHeight ?? null,
         genesisMismatch: this.dependencies.pool.genesisMismatch,
+        // Whether the pages being served were built from the sources on disk (see server/web-bundle.ts).
+        webBundle: checkWebBundle(this.config.publicDir).state,
       });
       return;
     }
@@ -1968,12 +1971,18 @@ function readCookie(request: IncomingMessage, name: string): string | undefined 
  * How far finality has got (the finalized height, its lag, the producer count behind it) is not shown to visitors. A node
  * that has this release already leaves it out for a proxied caller; this covers a node that does not, so a half-upgraded
  * network does not publish it either. Only the two routes that carry it are touched, and only at the top level.
+ * `/status` also loses its peer count (`peers`) and its `p2p` block for the same reason.
  */
 function withoutFinality(target: string, body: unknown): unknown {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
   if (target !== '/status' && target !== '/producers') return body;
   const copy = { ...(body as Record<string, unknown>) };
   for (const key of Object.keys(copy)) if (/^(finalized|finality)/i.test(key)) delete copy[key];
+  // The count of connected peers is not shown either: no page and no API a visitor can reach says how many peers a node has.
+  if (target === '/status') {
+    delete copy.peers;
+    delete copy.p2p;
+  }
   return copy;
 }
 

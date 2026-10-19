@@ -28,7 +28,6 @@ export interface ChainStatus {
   protocolVersion: string;
   paramsHash: string;
   totalBlocks: number;
-  peers: number;
   syncing: boolean;
   supply: string;
   supplyObs: string;
