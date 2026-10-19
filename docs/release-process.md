@@ -33,7 +33,7 @@ curl -s localhost:8630/version | jq .
 
 There are two numbers, and they move for different reasons:
 
-- **Software version** (`2.0.3`) increments for any shipped change — code,
+- **Software version** (`2.0.4`) increments for any shipped change — code,
   interface, tooling, documentation. Most releases do not change consensus.
 - **Protocol version** (`2.0.2`) increments only when a rule changes: block
   validity, state transitions, encoding, hashing, or an economic parameter.
@@ -84,8 +84,8 @@ started and probed by the `docker` CI job on every push.
 
 ```bash
 git status                                  # must be clean; the script refuses a dirty tree
-git tag -a v2.0.3 -m "Obsidian Network 2.0.3 - protocol 2.0.2"
-git push origin v2.0.3
+git tag -a v2.0.4 -m "Obsidian Network 2.0.4 - protocol 2.0.2"
+git push origin v2.0.4
 ./scripts/package-releases.sh               # the release gate; takes several minutes
 cd releases && sha256sum -c SHA256SUMS      # every line must print OK
 ```
@@ -119,8 +119,8 @@ release.
 ```bash
 cd releases
 sha256sum -c SHA256SUMS                                  # integrity
-../scripts/verify-release.sh obsidian-core-2.0.3.tar.gz --with-tests
-../scripts/verify-release.sh obsidian-node-operator-2.0.3.tar.gz
+../scripts/verify-release.sh obsidian-core-2.0.4.tar.gz --with-tests
+../scripts/verify-release.sh obsidian-node-operator-2.0.4.tar.gz
 ```
 
 `verify-release.sh` refuses any archive not listed in `SHA256SUMS`, extracts into

@@ -488,6 +488,9 @@ $(ls releases/*.zip releases/*.tar.gz 2>/dev/null | sed "s|releases/|* |")
   address whose recovery completes only after a delay the owner can cancel (docs/ons.md)
 * **wallets:** creation shows both the passphrase and the private key; a separate private-key recovery flow shows the
   derived address for confirmation before anything is stored
+* **2.0.4 patch (no consensus change, protocol stays $PROTOCOL):** the home-page status strip no longer reports the node as unreachable when only
+  one of its two reads failed, the public status carries no peer count, and the server warns when the pages it serves are older than the code
+  beside it (CHANGELOG.md)
 * **2.0.3 patch (no consensus change, protocol stays $PROTOCOL):** how far finality has got is shown to the node operator only, not to the
   public (docs/api.md); peers are no longer published, with automatic peer discovery and reconnection (docs/p2p-stability-2.0.2.md)
 * **2.0.2 attack-campaign fixes:** a pool that admits only what could be valid, a minimum gas and transfer of 0.000001 OBS,

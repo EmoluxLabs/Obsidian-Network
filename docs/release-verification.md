@@ -8,15 +8,15 @@ people lose money. This page is the short, complete procedure.
 Everything lives in `releases/`:
 
 ```
-obsidian-core-2.0.3.zip / .tar.gz
-obsidian-interface-2.0.3.zip / .tar.gz
-obsidian-cloudflare-2.0.3.zip / .tar.gz
-obsidian-node-operator-2.0.3.zip / .tar.gz
-obsidian-interface-selfhost-2.0.3.zip / .tar.gz
-obsidian-network-source-2.0.3.tar.gz
+obsidian-core-2.0.4.zip / .tar.gz
+obsidian-interface-2.0.4.zip / .tar.gz
+obsidian-cloudflare-2.0.4.zip / .tar.gz
+obsidian-node-operator-2.0.4.zip / .tar.gz
+obsidian-interface-selfhost-2.0.4.zip / .tar.gz
+obsidian-network-source-2.0.4.tar.gz
 SHA256SUMS
 MANIFEST.json          # version, commit, networks, protocol constants, asset sizes
-RELEASE-NOTES-2.0.3.md
+RELEASE-NOTES-2.0.4.md
 ```
 
 ## 1b. Check who published it
@@ -74,7 +74,7 @@ sha256sum -c SHA256SUMS
 ```
 
 Every line must read `OK`. Compare the digests against the values published in
-`RELEASE-NOTES-2.0.3.md` for this version — a checksum file that travelled with
+`RELEASE-NOTES-2.0.4.md` for this version — a checksum file that travelled with
 the archive proves integrity against corruption, not against tampering; comparing
 against an independently published value is what closes that gap.
 
@@ -90,7 +90,7 @@ should contain that same tree.
 ## 4. Verify with the script
 
 ```bash
-./verify-release.sh obsidian-core-2.0.3.tar.gz --with-tests
+./verify-release.sh obsidian-core-2.0.4.tar.gz --with-tests
 ```
 
 It refuses any archive that is not listed in `SHA256SUMS`, extracts into a
@@ -101,8 +101,8 @@ that point.
 ## 5. Verify from source instead, if you prefer
 
 ```bash
-tar -xzf obsidian-network-source-2.0.3.tar.gz
-cd obsidian-network-2.0.3/obsidian-core
+tar -xzf obsidian-network-source-2.0.4.tar.gz
+cd obsidian-network-2.0.4/obsidian-core
 npm ci && npm run build && npm test        # every test passes
 cd ../obsidian-interface
 npm ci && npm run build && npm test        # every test passes
@@ -128,7 +128,7 @@ four networks at once**, with every claim in the launch guide checked, run
 
 ```bash
 mkdir -p /tmp/obsidian-verify && cd /tmp/obsidian-verify
-tar -xzf /path/to/obsidian-node-operator-2.0.3.tar.gz
+tar -xzf /path/to/obsidian-node-operator-2.0.4.tar.gz
 cd obsidian-core && npm ci --omit=dev
 OBSIDIAN_KEYSTORE_PASSPHRASE='choose-a-long-one' \
   node dist/index.js start --config config/devnet.json --data-dir ./data/devnet &
@@ -137,7 +137,7 @@ curl -s http://127.0.0.1:38630/audit/compliance | jq -c 'to_entries[] | {(.key):
 ```
 
 ```bash
-cd /tmp/obsidian-verify && tar -xzf /path/to/obsidian-interface-selfhost-2.0.3.tar.gz
+cd /tmp/obsidian-verify && tar -xzf /path/to/obsidian-interface-selfhost-2.0.4.tar.gz
 cd obsidian-interface
 node dist/server/main.js --network devnet --nodes http://127.0.0.1:38630 &       # devnet's interface port is 38788
 curl -s http://127.0.0.1:38788/api/health | jq        # {"status":"ok","healthyNodes":1,...}

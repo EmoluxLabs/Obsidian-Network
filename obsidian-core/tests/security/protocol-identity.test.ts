@@ -63,9 +63,9 @@ const OLD_HASHES = [
 
 describe('A — the published identity moves as one thing', () => {
   it('names one version everywhere, and derives the parameter hash', () => {
-    expect(CORE_VERSION).toBe('2.0.3');
+    expect(CORE_VERSION).toBe('2.0.4');
     expect(PROTOCOL_VERSION).toBe('2.0.2');
-    // A software patch moves the core version and leaves the protocol alone (the protocol is part of every genesis id): 2.0.3 is
+    // A software patch moves the core version and leaves the protocol alone (the protocol is part of every genesis id): 2.0.4 is
     // the same network as 2.0.2, and it is not older than the oldest software that speaks these rules.
     expect(compareVersions(CORE_VERSION, PROTOCOL_VERSION)).toBeGreaterThanOrEqual(0);
     expect(compareVersions(CORE_VERSION, MIN_CORE_VERSION)).toBeGreaterThanOrEqual(0);
@@ -209,8 +209,8 @@ describe('F — a mixed-version network cannot form', () => {
     }
     expect(compareVersions('2.0.2', PROTOCOL_VERSION)).toBe(0);
     expect(compareVersions('2.0.2', MIN_CORE_VERSION)).toBe(0);
-    expect(compareVersions('2.0.3', CORE_VERSION)).toBe(0);
-    expect(compareVersions('2.0.4', CORE_VERSION)).toBeGreaterThan(0);
+    expect(compareVersions('2.0.4', CORE_VERSION)).toBe(0);
+    expect(compareVersions('2.0.5', CORE_VERSION)).toBeGreaterThan(0);
   });
 
   it('registers a node on the new network without any of the removed machinery', async () => {

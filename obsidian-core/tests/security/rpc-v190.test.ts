@@ -114,7 +114,7 @@ describe('status, params and metrics', () => {
     expect(status.nodes).toBe(3);
     expect(status.scheduleTier).toBe('TIER2');
     expect(status).toHaveProperty('finalizedHeight');
-    expect((await get(base, '/version')).json.coreVersion ?? CORE_VERSION).toBe('2.0.3');
+    expect((await get(base, '/version')).json.coreVersion ?? CORE_VERSION).toBe('2.0.4');
     const params = (await get(base, '/params')).json;
     expect(params.consensus.producers.maturityBlocks).toBe(CONSENSUS_PARAMS.consensus.producers.maturityBlocks);
     expect(params.consensus.finality.minProducers).toBe(2);

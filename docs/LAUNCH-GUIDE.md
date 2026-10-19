@@ -108,12 +108,12 @@ on a phone.
 rm -rf ~/obsidian/src; mkdir -p ~/obsidian; cd ~/obsidian
 G="git -c http.version=HTTP/1.1 -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60"
 for i in 1 2 3 4 5 6 7 8; do rm -rf src; $G clone --depth 1 --filter=blob:none --no-checkout --branch arena/414b663a-obsidian-network https://github.com/EmoluxLabs/Obsidian-Network.git src && break; echo "attempt $i did not finish, trying again in 5 seconds"; sleep 5; done
-cd src && for f in SHA256SUMS obsidian-node-operator-2.0.3.tar.gz obsidian-interface-selfhost-2.0.3.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
+cd src && for f in SHA256SUMS obsidian-node-operator-2.0.4.tar.gz obsidian-interface-selfhost-2.0.4.tar.gz; do for i in 1 2 3 4 5 6 7 8; do $G checkout HEAD -- releases/$f && break; echo "$f: attempt $i did not finish, trying again in 5 seconds"; sleep 5; done; done
 ls -l releases
 ```
 
-The last line must list three files: `SHA256SUMS`, `obsidian-node-operator-2.0.3.tar.gz` (0.5 MB) and
-`obsidian-interface-selfhost-2.0.3.tar.gz` (2 MB). On a slow connection this takes a few minutes (at 15 KB/s,
+The last line must list three files: `SHA256SUMS`, `obsidian-node-operator-2.0.4.tar.gz` (0.5 MB) and
+`obsidian-interface-selfhost-2.0.4.tar.gz` (2 MB). On a slow connection this takes a few minutes (at 15 KB/s,
 about three): keep Termux open and the screen on while it runs. If it does not list all three, read the
 first line of the error and find it in the troubleshooting table at the end of this guide (§8), or use the
 browser route below. The first command removes any half-finished earlier attempt, so running this step
@@ -124,8 +124,8 @@ again is always safe. `--branch` names the branch you are installing from; this 
 again), download the two archives with your phone's browser instead. A browser resumes an interrupted
 download; `git` and `curl` in Termux cannot. Open both links and let them finish (they land in Downloads):
 
-* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-node-operator-2.0.3.tar.gz>
-* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-interface-selfhost-2.0.3.tar.gz>
+* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-node-operator-2.0.4.tar.gz>
+* <https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/obsidian-interface-selfhost-2.0.4.tar.gz>
 
 Then copy them where Step 5 expects them. `termux-setup-storage` asks for permission once; tap Allow. The
 last command fetches the checksum file (1 KB), in case the commands above did not get that far:
@@ -133,7 +133,7 @@ last command fetches the checksum file (1 KB), in case the commands above did no
 ```bash
 termux-setup-storage
 mkdir -p ~/obsidian/src/releases
-cp ~/storage/downloads/obsidian-node-operator-2.0.3.tar.gz ~/storage/downloads/obsidian-interface-selfhost-2.0.3.tar.gz ~/obsidian/src/releases/
+cp ~/storage/downloads/obsidian-node-operator-2.0.4.tar.gz ~/storage/downloads/obsidian-interface-selfhost-2.0.4.tar.gz ~/obsidian/src/releases/
 cd ~/obsidian/src/releases && curl -fL --retry 8 -o SHA256SUMS https://github.com/EmoluxLabs/Obsidian-Network/raw/arena/414b663a-obsidian-network/releases/SHA256SUMS
 ls -l
 ```
@@ -158,8 +158,8 @@ cd ~/obsidian/src/releases
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
-You must see `OK` for the two archives Step 4 downloaded, `obsidian-interface-selfhost-2.0.3.tar.gz`
-and `obsidian-node-operator-2.0.3.tar.gz`, and nothing else (`--ignore-missing` skips the other archives
+You must see `OK` for the two archives Step 4 downloaded, `obsidian-interface-selfhost-2.0.4.tar.gz`
+and `obsidian-node-operator-2.0.4.tar.gz`, and nothing else (`--ignore-missing` skips the other archives
 that `SHA256SUMS` lists). If any line says `FAILED`, or the answer is `no file was verified`, stop, delete
 `~/obsidian` and start again — do not run the code. (`SHA256SUMS` proves the files were not damaged or altered in transit; it
 does not prove who published them. See [release-verification.md](release-verification.md).)
@@ -171,8 +171,8 @@ are designed to sit side by side.
 ```bash
 mkdir -p ~/obsidian/run
 cd ~/obsidian/src/releases
-tar xzf obsidian-node-operator-2.0.3.tar.gz      -C ~/obsidian/run
-tar xzf obsidian-interface-selfhost-2.0.3.tar.gz -C ~/obsidian/run
+tar xzf obsidian-node-operator-2.0.4.tar.gz      -C ~/obsidian/run
+tar xzf obsidian-interface-selfhost-2.0.4.tar.gz -C ~/obsidian/run
 ls ~/obsidian/run        # obsidian-core  obsidian-interface  obsidian-network.sh  landing  mine ...
 ```
 
