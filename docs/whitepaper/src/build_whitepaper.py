@@ -375,7 +375,7 @@ class Doc(BaseDocTemplate):
         c.setFont('Sans-B', 8)
         c.drawString(LM, H - 9 * mm, 'OBSIDIAN NETWORK')
         c.setFont('Sans', 8)
-        c.drawRightString(W - RM, H - 9 * mm, 'WHITE PAPER  ·  VERSION 1.0')
+        c.drawRightString(W - RM, H - 9 * mm, 'WHITE PAPER  ·  VERSION 1.1')
         # logo
         s = 62 * mm
         c.drawImage(LOGO, (W - s) / 2, H - 14.8 * mm - 20 * mm - s, s, s, mask='auto', preserveAspectRatio=True)
@@ -402,7 +402,7 @@ class Doc(BaseDocTemplate):
         c.roundRect(LM, py, CW, 31 * mm, 3, fill=1, stroke=0)
         c.setFillColor(INK)
         c.setFont('Sans-B', 7.6)
-        cols = [('DOCUMENT', 'White Paper, version 1.0'), ('RELEASE', 'Obsidian Core 2.0.4 · Protocol 2.0.2'),
+        cols = [('DOCUMENT', 'White Paper, version 1.1'), ('RELEASE', 'Obsidian Core 2.0.4 · Protocol 2.0.2'),
                 ('DATE', '24 October 2026'), ('PUBLISHER', 'Emolux Labs')]
         cx = LM + 8 * mm
         for i, (k, v) in enumerate(cols):
@@ -418,14 +418,14 @@ class Doc(BaseDocTemplate):
         c.setFont('Sans', 8.4)
         c.setFillColor(ACCENT)
         lx = [('mineobs.network', 'https://mineobs.network'), ('app.mineobs.network', 'https://app.mineobs.network'),
-              ('wallet.mineobs.network', 'https://wallet.mineobs.network')]
-        total = sum(pdfmetrics.stringWidth(t, 'Sans', 8.4) for t, _ in lx) + 2 * 12 * mm
+              ('wallet.mineobs.network', 'https://wallet.mineobs.network'), ('api.mineobs.network', 'https://api.mineobs.network')]
+        total = sum(pdfmetrics.stringWidth(t, 'Sans', 8.4) for t, _ in lx) + 3 * 10 * mm
         x = (W - total) / 2
         for t, u in lx:
             wv = pdfmetrics.stringWidth(t, 'Sans', 8.4)
             c.drawString(x, 26 * mm, t)
             c.linkURL(u, (x, 26 * mm - 2, x + wv, 26 * mm + 9), relative=0)
-            x += wv + 12 * mm
+            x += wv + 10 * mm
         c.setFillColor(MUTED)
         c.setFont('Sans', 7.4)
         c.drawCentredString(W / 2, 17 * mm, 'Public Technical Documentation  ·  emoluxlabs@gmail.com  ·  github.com/EmoluxLabs/Obsidian-Network')
@@ -446,7 +446,7 @@ class Doc(BaseDocTemplate):
         c.setStrokeColor(SILVER)
         c.line(LM, 15 * mm, W - RM, 15 * mm)
         c.setFont('Sans', 7.2)
-        c.drawString(LM, 10.4 * mm, 'Public Technical Documentation  ·  Version 1.0  ·  Core 2.0.4  ·  Protocol 2.0.2')
+        c.drawString(LM, 10.4 * mm, 'Public Technical Documentation  ·  Version 1.1  ·  Core 2.0.4  ·  Protocol 2.0.2')
         c.setFillColor(INK)
         c.setFont('Sans-B', 7.8)
         c.drawRightString(W - RM, 10.4 * mm, 'Page %d' % (d.page))
@@ -514,6 +514,8 @@ def build():
         ['Fees', 'Gas of 0.02% of the amount (maximum 0.01 OBS) to the Mining Pool; 0.05 OBS for a .obs name'],
         ['Revenue', 'ONS fees only: 90% to the Node Runner Reward Pool, 10% to the treasury wallet'],
         ['Release', 'Obsidian Core 2.0.4, protocol 2.0.2, open source under Apache-2.0'],
+        ['Official links', link('https://mineobs.network', 'mineobs.network') + '  ·  ' + link('https://app.mineobs.network', 'app.mineobs.network') + '  ·  ' + link('https://wallet.mineobs.network', 'wallet.mineobs.network') + '  ·  ' + link('https://api.mineobs.network', 'api.mineobs.network')],
+        ['Genesis id and live network details', 'Visit the main web page at ' + link('https://mineobs.network')],
     ], [1.1, 3.2], bold_first=True))
 
     # 2 ─ introduction
@@ -574,6 +576,17 @@ def build():
     st.append(P('Networks are separated by genesis document, genesis id, hash, parameters hash and chain ID. A node rejects a block, '
                 'transaction or peer from another network and refuses to start on a data directory written by a different one. Address '
                 'prefixes differ on every network, so a mainnet address cannot be mistyped into a test-network transaction.'))
+    st.append(H2('3.2  Official links'))
+    st.append(P('These are the official addresses of Obsidian Network. Use only these to reach the network\'s products.'))
+    st.append(table([
+        ['Product', 'Official address', 'Purpose'],
+        ['Main web page', link('https://mineobs.network'), 'The home of the network: Mine OBS, wallet, explorer, ONS and Marketplace, node runners, developer resources and the account system'],
+        ['Web App', link('https://app.mineobs.network'), 'The full Obsidian client in a browser or on a phone'],
+        ['Wallet web app', link('https://wallet.mineobs.network'), 'The non-custodial browser wallet'],
+        ['API', link('https://api.mineobs.network'), 'The official network API'],
+    ], [1.1, 1.9, 2.6], bold_first=True))
+    st.append(callout('Genesis id and live network details',
+                      'For the genesis id and other current network information, visit the main web page at ' + link('https://mineobs.network') + '.'))
 
     # 4 ─ consensus
     st += section('4  Proof of Time consensus', 'How blocks are ordered')
@@ -873,11 +886,12 @@ def build():
     st.append(P('Five products give people access to the network. All five run against the same chain, sign transactions with the same code and show only what a node reported.', 'lead'))
     st.append(table([
         ['Product', 'Where', 'For'],
-        ['Platform', link('https://mineobs.network', 'mineobs.network'), 'Mine OBS, wallet, explorer, ONS and Marketplace, node runners, developer tools and the account system'],
+        ['Main web page', link('https://mineobs.network', 'mineobs.network'), 'Mine OBS, wallet, explorer, ONS and Marketplace, node runners, developer tools and the account system'],
         ['Web App', link('https://app.mineobs.network', 'app.mineobs.network'), 'The full Obsidian client in a browser or on a phone'],
         ['Wallet', link('https://wallet.mineobs.network', 'wallet.mineobs.network'), 'A focused non-custodial wallet'],
         ['Browser Extension', 'Chrome, Edge, Firefox', 'The Obsidian client in the toolbar, with claim alerts'],
         ['Obsidian Node', 'Windows, macOS, Linux', 'Running and operating a node, with a local dashboard'],
+        ['API', link('https://api.mineobs.network', 'api.mineobs.network'), 'The official network API (see section 14)'],
     ], [1.1, 1.4, 3], bold_first=True))
     st.append(H2('12.1  The Platform'))
     st.append(P('The Platform is the public home of the network and the account system behind mining. Its sites cover Mine OBS, Wallet, Explorer, ONS with the Marketplace, Node Runners '
@@ -971,7 +985,7 @@ def build():
 
     # 14 ─ developers
     st += section('14  Developer reference', 'Integrating with the network')
-    st.append(P('The node serves an HTTP API and a JSON-RPC endpoint. Amounts are integers of <b>seals</b>: 1 OBS = 10<super>18</super> seals. Reads are unauthenticated.', 'lead'))
+    st.append(P('The node serves an HTTP API and a JSON-RPC endpoint. Amounts are integers of <b>seals</b>: 1 OBS = 10<super>18</super> seals. Reads are unauthenticated. The official API is at ' + link('https://api.mineobs.network') + '; for the genesis id and current network details visit ' + link('https://mineobs.network') + '.', 'lead'))
     st.append(H2('14.1  Read routes'))
     st.append(table([
         ['Route', 'Returns'],
@@ -1082,10 +1096,14 @@ def build():
         ['Title', 'Obsidian Network: White Paper'],
         ['Subtitle', 'The Proof of Time Blockchain'],
         ['Coin', 'Obsidian Seal Coin (OBS)'],
-        ['Version', '1.0, 24 October 2026'],
+        ['Version', '1.1, 24 October 2026'],
         ['Describes', 'Obsidian Core 2.0.4, protocol 2.0.2, Mainnet chain ID 7777'],
         ['Publisher', 'Emolux Labs'],
-        ['Websites', link('https://mineobs.network', 'mineobs.network') + '  ·  ' + link('https://app.mineobs.network', 'app.mineobs.network') + '  ·  ' + link('https://wallet.mineobs.network', 'wallet.mineobs.network')],
+        ['Main web page', link('https://mineobs.network')],
+        ['Web App', link('https://app.mineobs.network')],
+        ['Wallet web app', link('https://wallet.mineobs.network')],
+        ['API', link('https://api.mineobs.network')],
+        ['Genesis id and network details', 'Visit ' + link('https://mineobs.network')],
         ['Source code', link('https://github.com/EmoluxLabs/Obsidian-Network', 'github.com/EmoluxLabs/Obsidian-Network') + '  ·  Apache-2.0'],
         ['Contact', link('mailto:emoluxlabs@gmail.com', 'emoluxlabs@gmail.com')],
     ], [1, 3.4], bold_first=True))
@@ -1093,6 +1111,7 @@ def build():
     st.append(H2('Version history'))
     st.append(table([
         ['Version', 'Date', 'Notes'],
+        ['1.1', '24 October 2026', 'Added the official links, including the API; genesis id and live network details point to the main web page'],
         ['1.0', '24 October 2026', 'First edition of the Obsidian Network White Paper'],
     ], [0.8, 1.4, 3.2]))
     return st
